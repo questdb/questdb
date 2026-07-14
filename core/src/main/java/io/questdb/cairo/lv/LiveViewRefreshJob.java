@@ -4833,9 +4833,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * ("SymbolMap does not exist"), or a column file -- so match on the errno (file-does-not-exist)
      * rather than a single message. Gating on {@link CairoException#isFileCannotRead()} keeps a
      * genuinely corrupt WAL file (read with errno 0) on the invalidating path rather than silently
-     * rebuilding over it; the {@code firstCycleWithoutCheckpoint} guard at the call site narrows this
-     * to the first cycle after a checkpoint-less restore/promote, where a live primary's base WAL is
-     * present and never throws.
+     * rebuilding over it.
      */
     private static boolean isBaseWalSegmentFileMissing(CairoException e) {
         return e.isFileCannotRead();
@@ -5381,6 +5379,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return rebuildActiveWindowStateFromAppliedBase(instance, "base table metadata change");
     }
 
+    /**
+     * Rebuilds the view from the applied base TABLE after a base WAL segment it needs turned out to
+     * be gone for good - an enterprise backup captures the applied base, not its WAL, so a restored
+     * view that still owed itself commits cannot read them anywhere else. {@link #o3HeadMissReplay}
+     * re-seeds the window from identity (so {@code row_number()} stays 1..N), rewrites the tier with
+     * one REPLACE_RANGE and advances the watermarks: self-contained on the base table, needing
+     * neither the WAL nor a checkpoint. The primary-side analog of the replica's applied-base lead
+     * reconstruction. Runs under the refresh latch, like every other refresh path.
+     * <p>
+     * Only carries the view as far as the base has APPLIED, because that is all the base table
+     * holds; a base still applying WAL of its own keeps its remaining commits for the next drain,
+     * which reads them from WAL if it can and comes back here if it cannot.
+     *
+     * @return true when the view recovered and must not be invalidated
+     */
+    private boolean rederiveFromAppliedBaseAfterWalLoss(LiveViewInstance instance, CairoException cause) {
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        if (baseToken == null) {
+            return false;
+        }
+        final long baseAppliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+        if (baseAppliedSeqTxn <= instance.getLastProcessedSeqTxn()) {
+            return false;
+        }
+        try {
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn);
+            // The replay flushed the whole tier to disk and advanced lastProcessed / the applied
+            // watermark, so no un-flushed lead remains. Keep refreshedUpTo == lastProcessed so a
+            // later ALTER cannot see a phantom lead.
+            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+            instance.recordRefreshSuccess();
+            LOG.info().$("live view re-derived from the applied base after base WAL loss [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", head=").$(baseAppliedSeqTxn)
+                    .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
+            return true;
+        } catch (Throwable e) {
+            LOG.error().$("live view could not re-derive from the applied base after base WAL loss [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(e).I$();
+            return false;
+        }
+    }
+
     private void refreshInstance(LiveViewInstance instance, long seqTxn) {
         // Apply-lag back-off: a prior cycle deferred this view (raw-WAL O3 or coupled dedup
         // drain) because ApplyWal2TableJob had not applied the base to the seqTxn the replay
@@ -5474,11 +5516,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // true whether the restore succeeded, missed, or failed.
                 if (!instance.isCheckpointRestoreAttempted()) {
                     instance.setCheckpointRestoreAttempted();
-                    // This view has read no base WAL since it booted, so it may still be one whose
-                    // base WAL did not survive with it (a backup captures the base TABLE, not its
-                    // segments). Arm the applied-base re-derive; the first successful drain disarms
-                    // it, so a live primary - whose WAL is always there - never keeps it.
-                    instance.setAppliedBaseRederiveArmed(true);
                     // Reconcile a durable floor left behind by a crash between the
                     // inline apply and the trailing _lv.s persist, before the head
                     // .cp restore reads appliedWatermark as disk truth.
@@ -5593,57 +5630,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // since the last flush. TransactionLogCursor treats txnLo as
                         // exclusive, so pass refreshFrom directly.
                         attempted = true;
-                        try {
-                            incrementalRefresh(instance, refreshFrom, seqTxn, true);
-                            // The base WAL is present, so this view can no longer be one that
-                            // outlived its WAL: disarm the applied-base re-derive.
-                            instance.setAppliedBaseRederiveArmed(false);
-                        } catch (CairoException e) {
-                            // Primary-only recovery: o3HeadMissReplay opens a WalWriter, which a
-                            // read-only replica refuses -- and a replica reads the applied base
-                            // table anyway (drainAppliedBaseForLead), so it never raises this error.
-                            final boolean rederiveFromAppliedBase = instance.isAppliedBaseRederiveArmed()
-                                    && !leadReconstruction
-                                    && isBaseWalSegmentFileMissing(e);
-                            if (!rederiveFromAppliedBase) {
-                                throw e;
-                            }
-                            // Enterprise backup/restore gap: re-deriving the un-flushed
-                            // lead from the raw base WAL (drainBaseWal) failed because the
-                            // backup preserved only the applied base TABLE, not the base
-                            // WAL segments -- and dropped the head .cp too (a normal
-                            // restart keeps the segments via the WalPurgeJob
-                            // lvConsumedSeqTxn purge clamp and re-derives forward). Rebuild
-                            // the tier from the applied base table instead: o3HeadMissReplay
-                            // re-seeds the window from identity (correct row_number() 1..N),
-                            // rewrites the tier with a single REPLACE_RANGE, and advances the
-                            // watermarks -- self-contained on the backed-up base, needing
-                            // neither the base WAL nor the .cp. This is the primary-side
-                            // analog of the replica's applied-base lead reconstruction and
-                            // costs no more than the dedup restart path's replay. Only a view
-                            // that has not read base WAL since a checkpoint-less restore
-                            // reaches here (a live primary's WAL is present, so its first
-                            // drain disarms this).
-                            LOG.info().$("live view lead re-derive fell back to applied base after restore [view=")
-                                    .$(instance.getDefinition().getViewName())
-                                    .$(", head=").$(seqTxn)
-                                    .$(", reason=").$safe(e.getFlyweightMessage()).I$();
-                            o3HeadMissReplay(
-                                    instance,
-                                    getWindowFactory(instance),
-                                    Numbers.LONG_NULL,
-                                    instance.getDefinition().getBaseTableToken(),
-                                    seqTxn
-                            );
-                            // o3HeadMissReplay flushed the whole tier to disk and advanced
-                            // lastProcessed/appliedWatermark, so no un-flushed lead remains.
-                            // Keep refreshedUpTo == lastProcessed so the flush block below is
-                            // skipped and a later ALTER cannot see a phantom lead.
-                            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
-                            // The view now sits at the base head, so the next drain reads WAL
-                            // written after the restore: one re-derive per restore is the contract.
-                            instance.setAppliedBaseRederiveArmed(false);
-                        }
+                        // A drain that cannot read a base WAL segment propagates: handleRefreshFailure
+                        // retries it, and a segment that is genuinely gone (a restore keeps the applied
+                        // base TABLE, not its WAL) lands on the applied-base re-derive there.
+                        incrementalRefresh(instance, refreshFrom, seqTxn, true);
                     }
                     // Flush the accumulated lead on the FLUSH EVERY cadence -- primary only. A
                     // read-only replica never flushes: its on-disk tier is materialised by the
@@ -5706,11 +5696,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         } else {
                             incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
                         }
-                        // A coupled cycle that read base WAL proves the WAL is there. (The coupled
-                        // path has no applied-base fallback of its own -- it never reads the flag --
-                        // but a later ALTER DEDUP DISABLE flips this view onto the lead path, which
-                        // does, and it must not inherit a stale arm.)
-                        instance.setAppliedBaseRederiveArmed(false);
                         instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     }
                 }
@@ -5892,6 +5877,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean tableTransient = t instanceof CairoException ce && ce.isTableDoesNotExist();
         boolean budgetExhausted = elapsedUs >= maxDurationMicros || (!tableTransient && retryCount >= maxRetry);
         if (budgetExhausted) {
+            // Last resort before a permanent invalidation: a base WAL segment the drain needs has
+            // been missing for the whole budget, so it is not coming back. That is what a restore
+            // leaves behind - a backup captures the applied base TABLE, not its WAL segments - and
+            // the view's rows are all in that table, so re-derive from it rather than brick a view
+            // whose data is right there. Spending the budget first is what separates this from a
+            // transient read fault, which clears on a retry and never reaches here.
+            if (!leadReconstruction
+                    && t instanceof CairoException walMissing
+                    && isBaseWalSegmentFileMissing(walMissing)
+                    && rederiveFromAppliedBaseAfterWalLoss(instance, walMissing)) {
+                return null;
+            }
             LOG.critical().$("live view refresh budget exhausted, invalidating [view=").$(instance.getDefinition().getViewName())
                     .$(", retryCount=").$(retryCount)
                     .$(", elapsedUs=").$(elapsedUs)

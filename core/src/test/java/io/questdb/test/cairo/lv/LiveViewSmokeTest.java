@@ -2407,6 +2407,74 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestoredViewRederivesWhenALaterWalSegmentIsGone() throws Exception {
+        // Sibling of testRestoredViewRederivesFromAppliedBaseWhenBaseWalIsGone: the drain that hits
+        // the missing base WAL is NOT the first one the restored view runs.
+        //
+        // A backup restores a patchwork of WAL segments (it keeps the applied base TABLE and
+        // whatever segments were still live), so a restored view can drain a segment that survived
+        // and only then reach one that did not. Any rule that spends the applied-base re-derive on
+        // the first cycle, or on the first successful drain, leaves that second drain with nothing
+        // to fall back on and invalidates the view for good. The re-derive fires on any base WAL
+        // segment that is gone.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+
+            // Restart, then drain a commit whose WAL segment IS there: the restored view reads base
+            // WAL successfully at least once.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 20)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            Assert.assertFalse(restored.isInvalid());
+
+            // Now a commit whose WAL does not survive: it lands in the base TABLE, and its segment
+            // goes with the rest of the base WAL the backup left behind.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 30)");
+            drainWalQueue();
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(baseToken).concat(WalUtils.WAL_NAME_BASE + "1");
+                Assert.assertTrue(
+                        "could not remove the base WAL",
+                        engine.getConfiguration().getFilesFacade().rmdir(p)
+                );
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            Assert.assertFalse(
+                    "a drain that already succeeded must not spend the re-derive the next one needs",
+                    restored.isInvalid()
+            );
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t10\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t20\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t30\t3\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSeedFilteredViewResumesAcrossRestart() throws Exception {
         // A WHERE filter drops base rows, so the sweep's data-cursor offset
         // outruns the output-row count. The restart must resume at the correct
