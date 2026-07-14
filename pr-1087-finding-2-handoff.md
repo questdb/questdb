@@ -1,8 +1,9 @@
 # PR #1087 — Finding #2 handoff: unify live-view startup and replay semantics
 
-Status: **OSS tracks 1-4 and Enterprise track 5 landed. Only the track 6 coverage tail
-remains.** The finding was deliberately left out of the Critical-findings fix commit
-(`fab9dff3a`), which addressed findings #1, #3, #4 and #5.
+Status: **OSS tracks 1-4, Enterprise track 5, and the OSS + ent fuzz halves of track 6 have
+landed. Only the restart/failure coverage tail remains.** The finding was deliberately left
+out of the Critical-findings fix commit (`fab9dff3a`), which addressed findings #1, #3, #4
+and #5.
 
 ## Where this stands (last updated 2026-07-14)
 
@@ -13,7 +14,7 @@ remains.** The finding was deliberately left out of the Critical-findings fix co
 | 3. Initial bounded seed | DONE — same commit |
 | 4. Forward refresh and applied-base replay audit | DONE — `c1da9477c0` ("Floor live view replays at the START FROM bound") |
 | 5. Enterprise reconstruction and replication | DONE — OSS `3f203bb2a8` + ent `ee61c1dda` ("Reconstruct replica live views from the START FROM bound") |
-| 6. Regression coverage | OSS fuzz done — `d333505d85` ("Fuzz all three live view start modes"). The ent fuzz generators and the restart/failure tail are open — see below |
+| 6. Regression coverage | Fuzz DONE on both sides — OSS `d333505d85`, ent `50800a3c2` (+ OSS fix `dc9a3ba641`). The restart/failure tail is open — see below |
 
 `41a7876bd9` makes event time the only membership rule on the primary: every view whose base
 has committed history CREATEs in SEEDING and seeds from its START FROM boundary, BEGINNING has
@@ -25,10 +26,9 @@ the same base rows for every start mode. `d333505d85` puts all three start modes
 first time, a boundary that CUTS the dataset — through the OSS fuzz generators, and found a real
 replay bug doing it (below).
 
-**Start here next:** the ent fuzz generators (which the OSS work now has a pattern for), then the
-restart/failure half of the primary matrix and the replica restart/lag/promotion cases. There is
-no structural gap: the membership predicate is one expression, applied in one place per path, on
-both nodes. What is left is coverage.
+**Start here next:** the restart/failure half of the primary matrix and the replica
+restart/lag/promotion cases. There is no structural gap: the membership predicate is one
+expression, applied in one place per path, on both nodes. What is left is coverage.
 
 This is not a replica-only bug. The old OSS design used commit time for initial membership
 and event time for replay membership, so the primary could change its own result after an
@@ -416,24 +416,73 @@ The replica has no equivalent: it does not run a head-miss replay, it *applies* 
 replicated REPLACE_RANGE commits. Its own floors (`max(latestSeenTs + 1, bound)` and the shared
 `effectiveReplaceRangeDeleteLo`) were checked and are unaffected.
 
+### The ent fuzz half — DONE (ent `50800a3c2`, OSS fix `dc9a3ba641`)
+
+All four ent generators draw a start mode per run. The submodule pin moved from `3f203bb2a8` to
+OSS `dc9a3ba641`.
+
+`LiveViewReplicaLeadFuzzTest` + `LiveViewReplicaLeadSymbolFuzzTest` fold the resolved boundary into
+their recompute oracle — which on a replica is *also* the content of every faked replicated flush,
+so the boundary has to be right in two places at once. Only the explicit mode cuts (it drops up to
+the first 10 forward rows), which is what puts the O3 gap pool and the delete bands below the bound.
+Phase (c)'s prefix flush now *measures* the eligible rows instead of deriving them from the batch
+size: under a cutting boundary the base row count and the view's row count part ways.
+**Negative control:** dropping `viewLowerBoundTimestamp` from the replica's cold-start lead scan
+(`EntLiveViewRefreshJob:952`) turns the explicit-mode runs red and *only* those — the one run that
+stayed green had drawn cut=0, so no row sat below its bound. 48 runs green with the floor intact.
+
+`BackupFuzzTest` + `SwitchFuzzTest` sit over a real-clock server and a historical (2022-) fuzz
+table, so the three modes are three *shapes*: BEGINNING holds the whole base history, an explicit
+literal inside the base's ts range holds part of it (fuzz O3 inserts land on both sides of the
+bound), and **NOW holds nothing** — its boundary is the CREATE wall clock, far above the data — so
+backup/restore and the role-flip chains now also run over an empty view. `BackupFuzzTest`'s
+row-count oracle counts base rows through the view's persisted boundary (read back off the
+registry, since NOW resolves a clock the test cannot predict) rather than counting them all.
+
+**Bug found and fixed here** (OSS `dc9a3ba641`; the empty-view arm found it, at roughly 1 run in 4
+of the NOW mode). A view that holds no rows never flushes, so its durable frontier lags its base by
+construction — and a *restored* view that lags cannot read the base WAL it still owes itself,
+because a backup captures the applied base TABLE and not its WAL segments. `refreshInstance`
+already had the recovery (`o3HeadMissReplay` off the applied base), but it armed it only for a view
+that came back with **no head `.cp`**, and it spent the condition on a single refresh cycle. Both
+premises are wrong:
+
+- A restored `.cp` is not evidence the base WAL came back with it — the `.cp` rides in the *view's*
+  directory, so a backup that captured one restored a view that skipped the fallback outright.
+- A restore brings back a **patchwork** of segments, so the drain that hits the missing one is not
+  necessarily the first the view runs. A cycle keyed on "the first cycle" (or, as an intermediate
+  attempt in `644e1f5dd8` had it, "the first successful drain") is already spent by then.
+
+The drain now just propagates, and the re-derive runs as the **last resort in
+`handleRefreshFailure`**: a segment missing for the whole retry budget is not coming back, and the
+view's rows are all in the applied base anyway. Spending the budget first is what separates a
+segment that is *gone* from a transient read fault — the fault clears on a retry and keeps the
+mid-drain window rebuild it has always had. (`testMidDrainRefreshFailureRebuildsWindowState` is
+exactly that case, and it fault-injects a read failure *indistinguishable* from a missing file: it
+is what caught the over-broad intermediate rule, which re-derived from a base that had not applied
+those commits yet and dropped their rows. The re-derive is now capped at the base's applied
+seqTxn.) Pinned by `testRestoredViewRederivesFromAppliedBaseWhenBaseWalIsGone` (the `.cp` case) and
+`testRestoredViewRederivesWhenALaterWalSegmentIsGone` (the patchwork case); both invalidate the
+view on `b323b5830d`.
+
+Validated: 811 OSS live-view tests green (plus `WalPurgeJobTest` / `CheckpointTest`); 20
+`BackupFuzzTest` LV runs green across all three modes, of which 8 forced onto NOW (the pre-fix
+failure mode) with the re-derive firing and no invalidation; 6 × `SwitchFuzzTest` (all three modes
+drawn); 6 × both replica-lead fuzz classes; the ent deterministic LV suites.
+
 Still TODO:
 
-- **Ent fuzz generators** (`LiveViewReplicaLeadFuzzTest`, `LiveViewReplicaLeadSymbolFuzzTest`,
-  `SwitchFuzzTest`, `BackupFuzzTest`): the track 5 migration moved them onto explicit clauses but
-  did not teach them to vary the mode. Port the OSS pattern — the four helpers above plus a
-  boundary-aware oracle — and bump the submodule pin onto `d333505d85` or later. This is the
-  natural next step and now has a worked template.
 - Seed checkpoint (`.scp`) restore and a restart immediately *before* the SEEDING-to-ACTIVE
-  transition; checkpoint-less replay under a finite boundary. (The checkpoint-less re-derive is
-  `o3HeadMissReplay`, whose boundary floor the track 4 tests and now the fuzz cover through the O3
-  and dedup triggers — what is missing is the restart harness that reaches it, which needs a base
-  WAL purge plus a missing head `.cp`.)
+  transition. The restart harness the earlier note asked for now exists — the two new
+  `LiveViewSmokeTest` restore tests remove the base WAL directory outright (`ff.rmdir` on
+  `<base>/wal1`) and rebuild the registry — so a checkpoint-less replay under a *finite* boundary is
+  a short hop from there; it just has not been written.
 - Base metadata drift and an injected mid-drain failure during seeding.
 - IN MEMORY views through the initial seed. (Fuzzed now — several arms combine `inMemory` with a
   seeding pre-CREATE base under all three modes — but there is still no deterministic test.)
-- Explicit-timestamp primary/replica parity. NOW and BEGINNING are both covered end to end now;
-  an explicit boundary is covered on the primary only. The predicate is shared, so this is a
-  coverage gap rather than a suspected bug.
+- Explicit-timestamp primary/replica parity in a *two-node* test. The in-process replica fuzz now
+  drives an explicit boundary through the replica's own reconstruction, and the predicate is shared,
+  so what is left is the end-to-end pair (`LiveViewReplicationTest` covers NOW and BEGINNING).
 - Replica reconstruction after restart, lag, and promotion under a finite boundary. (O3 is
   covered — that is what the two ent tests drive.)
 - ~~Parser/SHOW CREATE round trips and rejection of omitted `START FROM`, old `BACKFILL`,
@@ -476,20 +525,31 @@ separate implementation tracks:
    start modes, and compare every replay/restart result with a from-scratch query using the same
    boundary.~~ DONE (`d333505d85`), and it paid for itself: it found the head-miss replay's
    trigger-clamp bug (track 6).
-6. **Final integration/fuzz — ent (NEXT):** the same treatment for the four ent fuzz generators,
-   plus the submodule pin bump. The OSS arms are the template; the helpers to port are
-   `startBoundary` / `startFromClause` / `whereTail` / `assertPersistedStartBound`.
+6. ~~**Final integration/fuzz — ent:** the same treatment for the four ent fuzz generators, plus
+   the submodule pin bump.~~ DONE (ent `50800a3c2`), and it paid for itself too: the empty-view
+   (NOW) arm found the restored-view invalidation, fixed in OSS `dc9a3ba641`.
+7. **Restart/failure coverage (NEXT):** the remaining track 6 list above — the seeding restart
+   corners, metadata drift, IN MEMORY through the seed, and the replica's restart/lag/promotion
+   cases under a finite boundary.
 
 The persisted-model track defined the contract both refresh implementations consume, and
 enterprise parity did not need a second encoding: it needed the primary to stop having two
 membership rules, after which the replica's existing timestamp floor was already correct.
 
 **A note for whoever runs the fuzz next.** `mvn surefire:test` does NOT recompile. Every fuzz
-result in this handoff was taken after an explicit `mvn -pl core test-compile`; a run without one
-silently exercises the previously-compiled test class, which looks exactly like a pass. The
-negative control (break the seed sweep's bounded cursor, confirm the seed arms go red) is cheap
-and worth repeating whenever the oracle changes — it is the only thing that distinguishes "the
-fuzz covers this" from "the fuzz runs".
+result in this handoff was taken after an explicit `mvn -pl core test-compile` (or, for ent,
+`mvn -pl questdb/core,questdb-ent -am test-compile`); a run without one silently exercises the
+previously-compiled test class, which looks exactly like a pass. The negative control (break the
+membership floor, confirm the boundary-cutting runs go red) is cheap and worth repeating whenever
+the oracle changes — it is the only thing that distinguishes "the fuzz covers this" from "the fuzz
+runs".
+
+**Running the ent fuzz.** `mvn surefire:test` from `questdb-ent/` resolves the OSS core from the
+local Maven cache, not the reactor, so an OSS change is invisible until
+`mvn -pl questdb/core install -DskipTests` re-installs it. A stale cache is exactly what makes an
+OSS fix look like it did not work. And note the ent build compiles the submodule checkout at
+`questdb-enterprise/questdb/`, NOT any other OSS working copy — patching the wrong tree (easy to
+do when both are open) produces a build that silently ignores the edit.
 
 ## Acceptance criteria
 
@@ -513,9 +573,13 @@ The work is complete when:
   nodes: `_lv` carries the start kind and the resolved boundary, and it replicates verbatim into
   the sequencer directory.
 - Existing WAL purge, checkpoint, refresh-failure, schema-change, and IN MEMORY guarantees
-  remain covered and green. *(801 live-view tests green, plus `WalPurgeJobTest`, `CheckpointTest`,
+  remain covered and green. *(811 live-view tests green, plus `WalPurgeJobTest`, `CheckpointTest`,
   `ShowCreateTableTest`, the mat-view suites. The initial purge floor for a seeding view moved
-  one seqTxn lower — `seedTarget - 1` — which retains strictly more base WAL, never less.)*
+  one seqTxn lower — `seedTarget - 1` — which retains strictly more base WAL, never less. The
+  refresh-failure contract changed once, in `dc9a3ba641`: a base WAL segment that stays missing for
+  the whole retry budget now re-derives the view from the applied base instead of invalidating it.
+  A transient read fault still takes the mid-drain window rebuild, and a corrupt-but-present WAL
+  still invalidates.)*
 - ~~No `BACKFILL` syntax or behaviorally significant non-BACKFILL terminology remains.~~ Done —
   the only surviving mention is `SqlKeywords.isBackfillKeyword`, which exists solely to reject
   the old keyword and point at `START FROM BEGINNING`.
