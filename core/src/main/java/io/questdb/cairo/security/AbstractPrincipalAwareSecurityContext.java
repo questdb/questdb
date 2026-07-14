@@ -25,11 +25,12 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.function.BiFunction;
 
 /**
  * Base for the identity-only security contexts ({@link AbstractAllowAllSecurityContext} and
@@ -42,19 +43,25 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
     // first MAX_CACHED_PRINCIPALS distinct principals hold it for the process lifetime, and once it is full
     // every further principal re-derives (allocate-per-call) on each request instead of the cache growing
     // without bound. Not an LRU -- saturation degrades the uncached tail, it does not reshuffle who is cached.
+    // The bound is soft: concurrent first-derivations can each see room and overshoot by however many of them
+    // race. Bounding retention is the point, not hitting the number exactly.
     private static final int MAX_CACHED_PRINCIPALS = 256;
+    // A constant, so it captures nothing and the JVM hands back the same instance every time. A method
+    // reference to an instance method would allocate a capturing lambda on each miss; computeIfAbsent's token
+    // overload exists precisely to take `this` as a parameter instead.
+    private static final BiFunction<CharSequence, Object, SecurityContext> NEW_PRINCIPAL_CONTEXT =
+            (principal, self) -> ((AbstractPrincipalAwareSecurityContext) self).newCheckedPrincipalContext(principal);
 
     protected final boolean settingsReadOnly;
 
     // the reported principal; the singletons seed it with Constants.USER_NAME ("admin"), which is also
     // the value forPrincipal treats as the default/anonymous case (it returns the shared singleton)
     private final CharSequence principal;
-    // contexts derived for non-default principals, keyed by principal. Published copy-on-write: the
-    // (rare) write path builds a fresh immutable map under the instance lock and swaps this reference,
-    // so the lock-free reader in forPrincipal only ever sees a fully built map. These contexts model
-    // identity only (pure functions of the principal), so caching one per distinct principal lets
-    // concurrently active principals coexist instead of evicting each other.
-    private volatile CharSequenceObjHashMap<SecurityContext> principalContextCache;
+    // contexts derived for non-default principals, keyed by principal. These contexts model identity only
+    // (pure functions of the principal), so caching one per distinct principal lets concurrently active
+    // principals coexist instead of evicting each other. Reads are lock-free and hash the incoming
+    // @Transient flyweight by content, so a hit allocates nothing.
+    private final ConcurrentHashMap<SecurityContext> principalContextCache = new ConcurrentHashMap<>();
 
     protected AbstractPrincipalAwareSecurityContext(boolean settingsReadOnly, CharSequence principal) {
         this.settingsReadOnly = settingsReadOnly;
@@ -71,11 +78,10 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
      * {@code HttpConnectionContext.configureSecurityContext}), and PGWire/LineTCP derive once per
      * connection, so derived contexts are cached by principal to avoid allocating a context and
      * copying the principal on every call. The cache keeps one context per distinct principal, so
-     * concurrently active principals coexist instead of evicting each other; it is populated
-     * copy-on-write under the instance lock and read lock-free. It never evicts and is bounded at
-     * {@value #MAX_CACHED_PRINCIPALS} entries: the first {@value #MAX_CACHED_PRINCIPALS} distinct principals
-     * hold the cache for the process lifetime, and once it is full every further principal re-derives
-     * (allocate-per-call) on each request rather than the cache growing without bound.
+     * concurrently active principals coexist instead of evicting each other. It never evicts and is bounded
+     * at {@value #MAX_CACHED_PRINCIPALS} entries: the first {@value #MAX_CACHED_PRINCIPALS} distinct
+     * principals hold the cache for the process lifetime, and once it is full every further principal
+     * re-derives (allocate-per-call) on each request rather than the cache growing without bound.
      * <p>
      * The method is {@code final} and routes instance creation through the overridable
      * {@link #newPrincipalContext(CharSequence)}. That does not by itself preserve a subclass's
@@ -93,72 +99,24 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
         if (principal == null || principal.isEmpty() || Chars.equalsNc(principal, getPrincipal())) {
             return this;
         }
-        // lock-free read of the published (immutable) cache; get() is side-effect-free and hashes the
-        // incoming flyweight principal by content, so a cache hit allocates nothing
-        final CharSequenceObjHashMap<SecurityContext> cache = principalContextCache;
-        if (cache != null) {
-            final SecurityContext hit = cache.get(principal);
-            if (hit != null) {
-                return hit;
-            }
-            if (cache.size() >= MAX_CACHED_PRINCIPALS) {
-                // Saturated: this principal will not be cached, so there is nothing to publish and no reason
-                // to take the instance monitor. Deriving under the lock would turn a full cache into a
-                // process-wide bottleneck -- the monitor belongs to a static singleton shared by every
-                // protocol and every IO worker, so once saturated EVERY uncached principal would serialize
-                // on it. addPrincipalContext re-checks the cap under the lock, which settles the boundary
-                // race; this check only keeps the saturated steady state off the monitor entirely.
-                // size() is capacity - free on a map that is never mutated after publication, so it is safe
-                // to read here.
-                return newCheckedPrincipalContext(Chars.toString(principal));
-            }
+        // lock-free, and get() hashes the incoming flyweight by content, so a hit allocates nothing
+        final SecurityContext hit = principalContextCache.get(principal);
+        if (hit != null) {
+            return hit;
         }
-        return addPrincipalContext(principal);
+        if (principalContextCache.size() >= MAX_CACHED_PRINCIPALS) {
+            // saturated: derive and hand back without caching, rather than retaining contexts without bound
+            return newCheckedPrincipalContext(Chars.toString(principal));
+        }
+        // Copy the principal before it is stored: the parameter is @Transient, and the map only clones keys
+        // that are CloneableMutable, so a flyweight over a reused request buffer would be retained as-is.
+        // Racing first-derivations of the same principal converge on one instance inside computeIfAbsent.
+        return principalContextCache.computeIfAbsent(Chars.toString(principal), this, NEW_PRINCIPAL_CONTEXT);
     }
 
     @Override
     public CharSequence getPrincipal() {
         return principal;
-    }
-
-    /**
-     * Derives and caches the context for a principal not yet present in the cache. Synchronized so
-     * concurrent callers for new principals serialize on this (rare) write path; the common cache-hit
-     * path in {@link #forPrincipal(CharSequence)} never reaches here. The cache is published
-     * copy-on-write: a fresh map is built and stored into the volatile field, so the lock-free reader
-     * only ever observes a fully built, immutable map.
-     */
-    private synchronized SecurityContext addPrincipalContext(@Transient @NotNull CharSequence principal) {
-        // re-read under the lock; all writers hold this lock, so this is the latest published cache
-        final CharSequenceObjHashMap<SecurityContext> cache = principalContextCache;
-        if (cache != null) {
-            // another thread may have derived this principal while we waited for the lock
-            final SecurityContext hit = cache.get(principal);
-            if (hit != null) {
-                return hit;
-            }
-            if (cache.size() >= MAX_CACHED_PRINCIPALS) {
-                // pathological principal cardinality: stop growing and fall back to allocate-per-call
-                // instead of retaining contexts without bound. forPrincipal already takes this branch
-                // lock-free once the cache is saturated; this re-check only settles the boundary race
-                // between two threads that both saw room for one more entry.
-                return newCheckedPrincipalContext(Chars.toString(principal));
-            }
-        }
-        final String key = Chars.toString(principal);
-        final SecurityContext context = newCheckedPrincipalContext(key);
-        // pre-size to the post-insert entry count so this copy-on-write rebuild does not rehash while
-        // putAll copies the existing entries. The rebuild runs at most MAX_CACHED_PRINCIPALS times per
-        // singleton over the process lifetime, but an unsized map (default capacity 16) rehashes up its
-        // whole ramp on every one, which is O(n^2) over the fill.
-        final CharSequenceObjHashMap<SecurityContext> next =
-                new CharSequenceObjHashMap<>(cache == null ? 16 : cache.size() + 1);
-        if (cache != null) {
-            next.putAll(cache);
-        }
-        next.put(key, context);
-        principalContextCache = next;
-        return context;
     }
 
     /**

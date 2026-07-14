@@ -431,17 +431,22 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
-    public void testForPrincipalOverCapDoesNotTakeTheInstanceMonitor() throws Exception {
-        // Once the cache is saturated the derived context is not cached, so there is nothing to publish and
-        // no reason to take the instance monitor. Taking it would be a scalability cliff rather than the
-        // graceful degradation it looks like: the monitor belongs to a process-wide static singleton shared
-        // by every protocol and every IO worker, so a saturated cache would serialize EVERY subsequent
-        // uncached principal on it.
+    public void testForPrincipalNeverSerializesOnTheInstanceMonitor() throws Exception {
+        // No derivation may serialize callers on the instance monitor, cached or not. That monitor belongs to
+        // a process-wide static singleton shared by every protocol and every IO worker, so anything taking it
+        // is a scalability cliff dressed up as graceful degradation: a cache miss would stall every other
+        // miss in the process, and a saturated cache would stall every subsequent request.
         //
-        // Prove the saturated path stays off the monitor by holding the monitor from another thread: an
-        // over-cap derivation must still complete rather than block behind it.
+        // Hold the monitor from another thread and require both derivations to complete anyway -- the WRITE
+        // path (a fresh principal, which inserts) and the SATURATED path (past the cap, which does not).
+        // The write half is the one that discriminates: a cache that publishes under `synchronized` -- as a
+        // copy-on-write map keyed off the instance lock would -- cannot get past it.
+        //
+        // Both derivations run on their own thread with a bounded wait, so a cache that does take the monitor
+        // fails on the timeout instead of deadlocking the test.
         final TestAllowAllSecurityContext root = freshAllowAll();
-        for (int i = 0; i < CACHE_CAP; i++) {
+        // one slot short of the cap, so the first derivation below still inserts
+        for (int i = 0; i < CACHE_CAP - 1; i++) {
             root.forPrincipal("p" + i);
         }
 
@@ -458,23 +463,22 @@ public class SecurityContextFactoryPrincipalTest {
             }
         });
         holder.start();
+
+        final ObjList<Thread> derivers = new ObjList<>();
         try {
             Assert.assertTrue("the holder thread must acquire the monitor", monitorHeld.await(10, TimeUnit.SECONDS));
 
-            final AtomicReference<SecurityContext> derived = new AtomicReference<>();
-            final CountDownLatch done = new CountDownLatch(1);
-            final Thread deriver = new Thread(() -> {
-                derived.set(root.forPrincipal("overflow"));
-                done.countDown();
-            });
-            deriver.start();
-            Assert.assertTrue("an over-cap derivation must not block on the instance monitor",
-                    done.await(5, TimeUnit.SECONDS));
-            deriver.join();
-            TestUtils.assertEquals("overflow", derived.get().getPrincipal());
+            deriveWhileMonitorHeld(derivers, root, "uncached",
+                    "a cache-miss derivation must not block on the instance monitor");
+            // the cache is full now, so this one derives without caching
+            deriveWhileMonitorHeld(derivers, root, "overflow",
+                    "an over-cap derivation must not block on the instance monitor");
         } finally {
             releaseMonitor.countDown();
             holder.join();
+            for (int i = 0, n = derivers.size(); i < n; i++) {
+                derivers.getQuick(i).join();
+            }
         }
     }
 
@@ -571,6 +575,29 @@ public class SecurityContextFactoryPrincipalTest {
         } catch (CairoException e) {
             Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
         }
+    }
+
+    /**
+     * Derives {@code principal} on its own thread and requires it to finish while the caller holds
+     * {@code root}'s monitor. Registers the thread before waiting, so the caller can still join it if the
+     * wait times out.
+     */
+    private static void deriveWhileMonitorHeld(
+            ObjList<Thread> derivers,
+            AbstractPrincipalAwareSecurityContext root,
+            String principal,
+            String message
+    ) throws Exception {
+        final AtomicReference<SecurityContext> derived = new AtomicReference<>();
+        final CountDownLatch done = new CountDownLatch(1);
+        final Thread deriver = new Thread(() -> {
+            derived.set(root.forPrincipal(principal));
+            done.countDown();
+        });
+        derivers.add(deriver);
+        deriver.start();
+        Assert.assertTrue(message, done.await(5, TimeUnit.SECONDS));
+        TestUtils.assertEquals(principal, derived.get().getPrincipal());
     }
 
     private static TestAllowAllSecurityContext freshAllowAll() {
