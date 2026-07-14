@@ -441,6 +441,9 @@ public class HttpServer implements Closeable {
         private final IORequestProcessor<HttpConnectionContext> processor;
         private final boolean recyclableSelector;
         private final WaitProcessor rescheduleContext;
+        // Non-null in fiber mode: stages a due busy-writer retry on the connection's
+        // fiber task instead of rerunning it inline on the worker loop.
+        private final WaitProcessor.RetryLauncher retryLauncher;
         private final HttpRequestProcessorSelectorFactory selectorFactory;
         // Mutable so recycleInstance() can release the selector back to the
         // factory's recycle pool, and a subsequent run() can lazily
@@ -484,12 +487,22 @@ public class HttpServer implements Closeable {
                     assert launched : "fiber launch refused: task gate not idle";
                     return true;
                 };
+                this.retryLauncher = retry -> {
+                    // a parked retry's fd is armed for nothing and its reschedule was
+                    // enqueued after the gate reopened (onParked), so the gate is IDLE
+                    final HttpConnectionContext context = (HttpConnectionContext) retry;
+                    final HttpConnectionFiberTask task = context.getFiberTask(dispatcher, selectorFactory, rescheduleContext);
+                    task.prepareRerun();
+                    final boolean launched = fiberPool.launch(task);
+                    assert launched : "fiber rerun launch refused: task gate not idle";
+                };
             } else {
                 // Lambda reads this.selector at invocation time (field access via
                 // captured `this`), so a recycle/re-acquire cycle flows through
                 // transparently.
                 this.processor = (operation, context, disp) ->
                         owner.handleClientOperation(context, operation, this.selector, rescheduleContext, disp);
+                this.retryLauncher = null;
             }
         }
 
@@ -538,6 +551,13 @@ public class HttpServer implements Closeable {
             // dispatcher/reschedule Jobs so no path polls the IO queue before accept opens.
             if (!acceptOpen.get()) {
                 return false;
+            }
+            if (retryLauncher != null) {
+                // Fiber mode: reruns launch on fibers, and this job's selector is
+                // never dispatched into -- the tasks acquire their own per step.
+                boolean useful = dispatcher.processIOQueue(processor);
+                useful |= rescheduleContext.launchReruns(retryLauncher);
+                return useful;
             }
             if (selector == null) {
                 // Snapshot reused from Worker.snapshotPool after a prior

@@ -108,6 +108,28 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         }
     }
 
+    /**
+     * Fiber-mode counterpart of {@link #runReruns(HttpRequestProcessorSelector)}:
+     * pops every due retry and hands it to the launcher, which schedules it as a
+     * fiber task instead of running it inline on the worker loop. The launcher's
+     * gate CAS cannot be refused: a parked retry's task is IDLE, because the fiber
+     * path defers the reschedule enqueue to the task's onParked() hook -- strictly
+     * after the gate reopened (see {@link HttpConnectionFiberTask}).
+     */
+    public boolean launchReruns(RetryLauncher launcher) {
+        boolean useful = false;
+
+        while (true) {
+            Retry retry = getNextRerun();
+            if (retry != null) {
+                useful = true;
+                launcher.launch(retry);
+            } else {
+                return useful;
+            }
+        }
+    }
+
     @Override
     // This supposed to run in http execution thread / job
     public void reschedule(Retry retry) {
@@ -132,6 +154,16 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     @Override
     public boolean runSerially() {
         return processInQueue() || sendToOutQueue();
+    }
+
+    /**
+     * Re-queues a rerun that came back still-busy, advancing the attempt counter so
+     * the backoff keeps growing. Mirrors what the inline
+     * {@link #run(HttpRequestProcessorSelector, Retry)} does after a false
+     * {@code tryRerun}; the fiber path calls this from the task's onParked() hook.
+     */
+    void rescheduleNextAttempt(Retry retry) throws RetryFailedOperationException {
+        reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
     }
 
     private static int compareRetriesInQueue(Retry r1, Retry r2) {
@@ -284,5 +316,14 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             outPubSequence.done(cursor);
             return true;
         }
+    }
+
+    /**
+     * Schedules a due retry for execution; the fiber-mode dispatch job passes a
+     * launcher that stages the retry on the connection's fiber task.
+     */
+    @FunctionalInterface
+    public interface RetryLauncher {
+        void launch(Retry retry);
     }
 }

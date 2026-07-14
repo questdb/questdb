@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -99,30 +99,6 @@ public class JobRotationTest {
     }
 
     /**
-     * Stateful job standing in for HttpServer's per-clone selector + handler set.
-     * Each {@link #cloneInstance()} mints a fresh instance (clone != this, so the
-     * pool tracks it in ownedJobClones); {@link #recycleInstance()} returns it.
-     */
-    private static final class SelectorJob implements Job {
-        final AtomicInteger clonesCreated = new AtomicInteger();
-        final AtomicInteger clonesRecycled = new AtomicInteger();
-
-        @Override
-        public Job cloneInstance() {
-            clonesCreated.incrementAndGet();
-            // Share the counters with the root so the test observes the totals
-            // through clones that the worker recycles/closes during rotation.
-            return new CountingSelectorJob(clonesCreated, clonesRecycled);
-        }
-
-        @Override
-        public boolean run(@NotNull WorkerContext workerContext) {
-            // Keep the worker loop hot so re-parks drive quickly; no real work.
-            return true;
-        }
-    }
-
-    /**
      * The instance returned by {@link SelectorJob#cloneInstance()} -- carries the
      * shared counters so {@link #recycleInstance()} / {@link #closeInstance()} on a
      * clone is observable by the test through the root job.
@@ -149,6 +125,30 @@ public class JobRotationTest {
 
         @Override
         public boolean run(@NotNull WorkerContext workerContext) {
+            return true;
+        }
+    }
+
+    /**
+     * Stateful job standing in for HttpServer's per-clone selector + handler set.
+     * Each {@link #cloneInstance()} mints a fresh instance (clone != this, so the
+     * pool tracks it in ownedJobClones); {@link #recycleInstance()} returns it.
+     */
+    private static final class SelectorJob implements Job {
+        final AtomicInteger clonesCreated = new AtomicInteger();
+        final AtomicInteger clonesRecycled = new AtomicInteger();
+
+        @Override
+        public Job cloneInstance() {
+            clonesCreated.incrementAndGet();
+            // Share the counters with the root so the test observes the totals
+            // through clones that the worker recycles/closes during rotation.
+            return new CountingSelectorJob(clonesCreated, clonesRecycled);
+        }
+
+        @Override
+        public boolean run(@NotNull WorkerContext workerContext) {
+            // Keep the worker loop hot so re-parks drive quickly; no real work.
             return true;
         }
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -102,6 +102,11 @@ public abstract class QueryTask {
                 || Unsafe.cas(this, SCHEDULE_STATE_OFFSET, STATE_ENQUEUED, STATE_CANCELLED);
     }
 
+    final void markDone() {
+        boolean ok = Unsafe.cas(this, SCHEDULE_STATE_OFFSET, STATE_RUNNING, STATE_DONE);
+        assert ok : "markDone: gate not RUNNING";
+    }
+
     /**
      * Invoked by the fiber instead of a step when it shuts down with this task
      * staged but never run: the launch happened, but the fiber was marked for
@@ -146,6 +151,11 @@ public abstract class QueryTask {
     protected void onParked() {
     }
 
+    final void releaseToIdle() {
+        boolean ok = Unsafe.cas(this, SCHEDULE_STATE_OFFSET, STATE_RUNNING, STATE_IDLE);
+        assert ok : "releaseToIdle: gate not RUNNING";
+    }
+
     /**
      * Advances the query until it completes, blocks on its sink, or suspends on a
      * wait. Returns {@code true} when the task is finished (no more steps);
@@ -156,16 +166,6 @@ public abstract class QueryTask {
      * transparently -- from the adapter's point of view the call just took longer.
      */
     protected abstract boolean runStep() throws BackpressureSignal;
-
-    final void markDone() {
-        boolean ok = Unsafe.cas(this, SCHEDULE_STATE_OFFSET, STATE_RUNNING, STATE_DONE);
-        assert ok : "markDone: gate not RUNNING";
-    }
-
-    final void releaseToIdle() {
-        boolean ok = Unsafe.cas(this, SCHEDULE_STATE_OFFSET, STATE_RUNNING, STATE_IDLE);
-        assert ok : "releaseToIdle: gate not RUNNING";
-    }
 
     final boolean tryClaimRun() {
         return Unsafe.cas(this, SCHEDULE_STATE_OFFSET, STATE_ENQUEUED, STATE_RUNNING);

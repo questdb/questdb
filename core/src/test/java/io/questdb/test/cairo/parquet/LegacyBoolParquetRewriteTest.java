@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -69,58 +69,6 @@ import java.util.zip.ZipInputStream;
  */
 public class LegacyBoolParquetRewriteTest extends AbstractCairoTest {
 
-    // Unpack the archived 9.4.3 table directory into the engine's db root and let the registry
-    // discover it from its _name file. The fixture is a single zip whose entries are rooted at the
-    // table directory (legacy_bool~11/...).
-    private static void loadFixture() throws Exception {
-        final byte[] buffer = new byte[1024 * 1024];
-        final File root = new File(configuration.getDbRoot().toString());
-        try (InputStream is = LegacyBoolParquetRewriteTest.class.getResourceAsStream("/parquet-c3-legacy/legacy_bool~11.zip")) {
-            Assert.assertNotNull(is);
-            try (ZipInputStream zip = new ZipInputStream(is)) {
-                ZipEntry ze;
-                while ((ze = zip.getNextEntry()) != null) {
-                    final File dest = new File(root, ze.getName());
-                    if (!ze.isDirectory()) {
-                        final File dir = dest.getParentFile();
-                        if (!dir.exists()) {
-                            Assert.assertTrue(dir.mkdirs());
-                        }
-                        try (FileOutputStream fos = new FileOutputStream(dest)) {
-                            int n;
-                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
-                                fos.write(buffer, 0, n);
-                            }
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
-        engine.reloadTableNames();
-        engine.reconcileTableNameRegistryState();
-    }
-
-    // Reads every value of every row through CursorPrinter and returns the row count. count() reads
-    // only row counts and would not surface a per-value decode fault.
-    private static long readAll(StringSink sink) throws Exception {
-        long rows = 0;
-        try (
-                RecordCursorFactory factory = select("select * from legacy_bool", sqlExecutionContext);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            final RecordMetadata meta = factory.getMetadata();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                sink.clear();
-                CursorPrinter.println(record, meta, sink); // accesses every column of the row
-                Assert.assertTrue(sink.length() > 0);
-                rows++;
-            }
-        }
-        return rows;
-    }
-
     @Test
     public void testO3RewriteCorruptsLegacyRequiredBoolean() throws Exception {
         // Reproduces the legacy Required BOOLEAN corruption. The only no-null-sentinel column here is
@@ -175,5 +123,57 @@ public class LegacyBoolParquetRewriteTest extends AbstractCairoTest {
             assertQuery("select count() c from legacy_bool where ts in '2024-01-02' and ts < '2024-01-02T01:00:00.000000Z' and b = false")
                     .noRandomAccess().expectSize().returns("c\n60\n");
         });
+    }
+
+    // Unpack the archived 9.4.3 table directory into the engine's db root and let the registry
+    // discover it from its _name file. The fixture is a single zip whose entries are rooted at the
+    // table directory (legacy_bool~11/...).
+    private static void loadFixture() throws Exception {
+        final byte[] buffer = new byte[1024 * 1024];
+        final File root = new File(configuration.getDbRoot().toString());
+        try (InputStream is = LegacyBoolParquetRewriteTest.class.getResourceAsStream("/parquet-c3-legacy/legacy_bool~11.zip")) {
+            Assert.assertNotNull(is);
+            try (ZipInputStream zip = new ZipInputStream(is)) {
+                ZipEntry ze;
+                while ((ze = zip.getNextEntry()) != null) {
+                    final File dest = new File(root, ze.getName());
+                    if (!ze.isDirectory()) {
+                        final File dir = dest.getParentFile();
+                        if (!dir.exists()) {
+                            Assert.assertTrue(dir.mkdirs());
+                        }
+                        try (FileOutputStream fos = new FileOutputStream(dest)) {
+                            int n;
+                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
+                                fos.write(buffer, 0, n);
+                            }
+                        }
+                    }
+                    zip.closeEntry();
+                }
+            }
+        }
+        engine.reloadTableNames();
+        engine.reconcileTableNameRegistryState();
+    }
+
+    // Reads every value of every row through CursorPrinter and returns the row count. count() reads
+    // only row counts and would not surface a per-value decode fault.
+    private static long readAll(StringSink sink) throws Exception {
+        long rows = 0;
+        try (
+                RecordCursorFactory factory = select("select * from legacy_bool", sqlExecutionContext);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final RecordMetadata meta = factory.getMetadata();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                sink.clear();
+                CursorPrinter.println(record, meta, sink); // accesses every column of the row
+                Assert.assertTrue(sink.length() > 0);
+                rows++;
+            }
+        }
+        return rows;
     }
 }

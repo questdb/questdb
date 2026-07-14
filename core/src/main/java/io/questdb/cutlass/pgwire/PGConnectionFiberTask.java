@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -104,6 +104,15 @@ public final class PGConnectionFiberTask extends QueryTask {
         dispatcher.registerChannel(context, nextOperation);
     }
 
+    /**
+     * Stages the fd operation for the next step. The dispatch job calls this before
+     * launching; the launch's gate CAS publishes the write to the mounting fiber.
+     */
+    void prepare(int operation) {
+        this.operation = operation;
+        this.disconnectReason = NO_DISCONNECT;
+    }
+
     @Override
     protected boolean runStep() {
         try {
@@ -132,14 +141,5 @@ public final class PGConnectionFiberTask extends QueryTask {
             disconnectReason = DISCONNECT_REASON_SERVER_ERROR;
             return true;
         }
-    }
-
-    /**
-     * Stages the fd operation for the next step. The dispatch job calls this before
-     * launching; the launch's gate CAS publishes the write to the mounting fiber.
-     */
-    void prepare(int operation) {
-        this.operation = operation;
-        this.disconnectReason = NO_DISCONNECT;
     }
 }

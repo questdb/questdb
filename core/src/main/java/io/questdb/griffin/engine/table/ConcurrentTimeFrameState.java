@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -128,15 +128,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         return addressCache;
     }
 
-    /**
-     * Per-query tracker captured at {@link #of} for the slave time-frame
-     * cursors to charge their decoded parquet buffers; {@code null} leaves them
-     * on global-only accounting.
-     */
-    public MemoryTracker getMemoryTracker() {
-        return memoryTracker;
-    }
-
     public int getFrameCount() {
         return frameCount;
     }
@@ -147,6 +138,15 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
 
     public DirectLongList getFrameRowCounts() {
         return frameRowCounts;
+    }
+
+    /**
+     * Per-query tracker captured at {@link #of} for the slave time-frame
+     * cursors to charge their decoded parquet buffers; {@code null} leaves them
+     * on global-only accounting.
+     */
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     public LongList getPartitionCeilings() {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -88,6 +88,34 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
 
     /**
+     * CREATE/DROP arm on a read-only node: a genuine client DROP (NOT the exempted export-temp-table
+     * drop) must refuse with the standard authorization error and never call operation.execute(). Drives
+     * a real GenericDropOperation targeting an ordinary table name so the gate predicate's exemption
+     * check runs and correctly does NOT exempt it.
+     */
+    @Test
+    public void testCreateDropRefusedOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger executeCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
+                JsonQueryProcessor processor = newProcessor(readOnlyEngine);
+                try {
+                    SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine, 1);
+                    try {
+                        callExecuteDdlFenced(processor, ctx, CompiledQuery.DROP, recordingDropOperation("ordinary_client_table", executeCalled));
+                        Assert.fail("executeDdlFenced must throw CairoException.authorization on a read-only node");
+                    } catch (CairoException e) {
+                        assertReadOnlyRefusal(e);
+                    }
+                    Assert.assertEquals("operation.execute() must not be called on a read-only node", 0, executeCalled.get());
+                } finally {
+                    processor.close();
+                }
+            }
+        });
+    }
+
+    /**
      * CTAS arm: the in-lock re-check catches a flip that lands after the early-out passes but before the
      * execute. operation.execute() must not be called and isReadOnlyMode() must be consulted at least
      * twice (the pre-execution check and the authoritative in-lock re-check).
@@ -132,34 +160,6 @@ public class HttpExecDdlDemoteFenceTest extends AbstractCairoTest {
                     SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(primaryEngine, 1);
                     callExecuteDdlFenced(processor, ctx, CompiledQuery.CREATE_TABLE_AS_SELECT, fakeOperation(executeCalled));
                     Assert.assertEquals("operation.execute() must be called once on a primary node", 1, executeCalled.get());
-                } finally {
-                    processor.close();
-                }
-            }
-        });
-    }
-
-    /**
-     * CREATE/DROP arm on a read-only node: a genuine client DROP (NOT the exempted export-temp-table
-     * drop) must refuse with the standard authorization error and never call operation.execute(). Drives
-     * a real GenericDropOperation targeting an ordinary table name so the gate predicate's exemption
-     * check runs and correctly does NOT exempt it.
-     */
-    @Test
-    public void testCreateDropRefusedOnReadOnlyReplica() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger executeCalled = new AtomicInteger(0);
-            try (CairoEngine readOnlyEngine = buildReadOnlyEngine()) {
-                JsonQueryProcessor processor = newProcessor(readOnlyEngine);
-                try {
-                    SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(readOnlyEngine, 1);
-                    try {
-                        callExecuteDdlFenced(processor, ctx, CompiledQuery.DROP, recordingDropOperation("ordinary_client_table", executeCalled));
-                        Assert.fail("executeDdlFenced must throw CairoException.authorization on a read-only node");
-                    } catch (CairoException e) {
-                        assertReadOnlyRefusal(e);
-                    }
-                    Assert.assertEquals("operation.execute() must not be called on a read-only node", 0, executeCalled.get());
                 } finally {
                     processor.close();
                 }

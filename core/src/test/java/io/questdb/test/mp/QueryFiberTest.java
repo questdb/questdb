@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -96,6 +96,29 @@ public class QueryFiberTest {
     }
 
     @Test
+    public void testCloseBeforeFirstMountReleasesStagedTask() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final ContinuationQueue queue = new ContinuationQueue();
+            final QueryFiberPool pool = new QueryFiberPool(4, queue);
+            final ReleaseTrackingTask task = new ReleaseTrackingTask();
+
+            // launched (gate RUNNING, fiber staged on the queue) but not yet mounted
+            Assert.assertTrue(pool.launch(task));
+            // pool closes first: the fiber is marked for shutdown before its first mount
+            pool.close();
+
+            // the drive loop mounts the fiber; the body observes shutdown and must
+            // drive the staged task's terminal hooks instead of abandoning it
+            Assert.assertEquals(1, drainFiberQueue(queue));
+            Assert.assertFalse(task.hasRun);
+            Assert.assertTrue(task.isDone());
+            Assert.assertTrue(task.hasBeenAbandoned);
+            Assert.assertTrue(task.hasReleasedResources);
+            Assert.assertEquals(1, pool.getRetiredCount());
+        });
+    }
+
+    @Test
     public void testCloseRetiresFreeFibers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final ContinuationQueue queue = new ContinuationQueue();
@@ -135,29 +158,6 @@ public class QueryFiberTest {
             Assert.assertTrue(task.isDone());
             Assert.assertNull(task.error);
             Assert.assertTrue(task.parkedCont.isDone());
-            Assert.assertEquals(1, pool.getRetiredCount());
-        });
-    }
-
-    @Test
-    public void testCloseBeforeFirstMountReleasesStagedTask() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final ContinuationQueue queue = new ContinuationQueue();
-            final QueryFiberPool pool = new QueryFiberPool(4, queue);
-            final ReleaseTrackingTask task = new ReleaseTrackingTask();
-
-            // launched (gate RUNNING, fiber staged on the queue) but not yet mounted
-            Assert.assertTrue(pool.launch(task));
-            // pool closes first: the fiber is marked for shutdown before its first mount
-            pool.close();
-
-            // the drive loop mounts the fiber; the body observes shutdown and must
-            // drive the staged task's terminal hooks instead of abandoning it
-            Assert.assertEquals(1, drainFiberQueue(queue));
-            Assert.assertFalse(task.hasRun);
-            Assert.assertTrue(task.isDone());
-            Assert.assertTrue(task.hasBeenAbandoned);
-            Assert.assertTrue(task.hasReleasedResources);
             Assert.assertEquals(1, pool.getRetiredCount());
         });
     }
@@ -371,6 +371,26 @@ public class QueryFiberTest {
         return count;
     }
 
+    private static class BackpressureTask extends QueryTask {
+        boolean hasParked;
+        int observedStateInHook = -1;
+        int runs;
+
+        @Override
+        protected void onParked() {
+            hasParked = true;
+            observedStateInHook = getScheduleState();
+        }
+
+        @Override
+        protected boolean runStep() throws BackpressureSignal {
+            if (++runs == 1) {
+                throw BackpressureSignal.INSTANCE;
+            }
+            return true;
+        }
+    }
+
     /**
      * Mimics two consecutive wait_wal_table calls in one step: acquire, park, get
      * fired, cancel (terminal), then acquire again -- on a fiber the second acquire
@@ -400,26 +420,6 @@ public class QueryFiberTest {
                 secondWaiter = next;
                 Assert.assertTrue(next.suspend());
                 next.cancel();
-            }
-            return true;
-        }
-    }
-
-    private static class BackpressureTask extends QueryTask {
-        boolean hasParked;
-        int observedStateInHook = -1;
-        int runs;
-
-        @Override
-        protected void onParked() {
-            hasParked = true;
-            observedStateInHook = getScheduleState();
-        }
-
-        @Override
-        protected boolean runStep() throws BackpressureSignal {
-            if (++runs == 1) {
-                throw BackpressureSignal.INSTANCE;
             }
             return true;
         }
@@ -483,6 +483,15 @@ public class QueryFiberTest {
         boolean hasResumed;
         volatile WorkerContinuation parkedCont;
 
+        private long deepPark(int depth, long carry) {
+            if (depth == 0) {
+                parkedCont = WorkerContinuation.current();
+                Assert.assertTrue(WorkerContinuation.suspend());
+                return carry;
+            }
+            return deepPark(depth - 1, carry + depth) + 1;
+        }
+
         @Override
         protected void onError(Throwable th) {
             error = th;
@@ -495,15 +504,6 @@ public class QueryFiberTest {
                 frameSum = deepPark(16, 0);
             }
             return true;
-        }
-
-        private long deepPark(int depth, long carry) {
-            if (depth == 0) {
-                parkedCont = WorkerContinuation.current();
-                Assert.assertTrue(WorkerContinuation.suspend());
-                return carry;
-            }
-            return deepPark(depth - 1, carry + depth) + 1;
         }
     }
 }

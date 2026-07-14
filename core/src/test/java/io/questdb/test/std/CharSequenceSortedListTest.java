@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,23 +34,6 @@ import static org.junit.Assert.*;
 
 public class CharSequenceSortedListTest {
 
-    @Test
-    public void testOrderAndSize() {
-        CharSequenceSortedList listUnderTest = listUnderTest();
-
-        assertEquals("Finance", listUnderTest.get(0));
-        assertEquals("Knightsbridge", listUnderTest.get(1));
-        assertEquals("Osbourne", listUnderTest.get(2));
-        assertEquals("Yardstick", listUnderTest.get(3));
-        assertEquals("alpinist", listUnderTest.get(4));
-        assertEquals("hunter", listUnderTest.get(5));
-        assertEquals("nothingness", listUnderTest.get(6));
-        assertEquals("sierra", listUnderTest.get(7));
-        assertEquals("theodora", listUnderTest.get(8));
-        assertEquals("zebra", listUnderTest.get(9));
-        assertEquals(10, listUnderTest.size());
-    }
-
     public CharSequenceSortedList listUnderTest() {
         CharSequenceSortedList list = new CharSequenceSortedList(4);
 
@@ -69,132 +52,12 @@ public class CharSequenceSortedListTest {
     }
 
     @Test
-    public void testRemovalForUnder66Entries() {
-        CharSequenceSortedList listUnderTest = listUnderTest();
-
-        listUnderTest.remove("Osbourne");
-        listUnderTest.removeIndex(4);
-        listUnderTest.removeIndex(0);
-        listUnderTest.remove("Knightsbridge");
-        listUnderTest.removeIndex(5);
-        listUnderTest.remove("theodora");
-        listUnderTest.remove("Z");
-
-        assertEquals("Yardstick", listUnderTest.get(0));
-        assertEquals("alpinist", listUnderTest.get(1));
-        assertEquals("nothingness", listUnderTest.get(2));
-        assertEquals("sierra", listUnderTest.get(3));
-        assertEquals(4, listUnderTest.size());
-    }
-
-    @Test
-    public void testRemovalForOver65Entries() {
-        CharSequenceSortedList listUnderTest = new CharSequenceSortedList(677);
-
-        for (int cu = 'A'; cu < 'Z' + 1; cu++) {
-            for (int cl = 'a'; cl < 'z' + 1; cl++) {
-                listUnderTest.add(new String(new char[]{(char) cu, (char) cl}));
-            }
-        }
-
-        listUnderTest.remove("Aa");
-        listUnderTest.removeIndex(0);
-        listUnderTest.remove("Bb");
-        listUnderTest.remove("Ccc");
-        listUnderTest.removeIndex(100);
-        listUnderTest.remove("Zz");
-        listUnderTest.removeIndex(669);
-
-        int index = 0;
-        for (int cu = 'A'; cu < 'Z' + 1; cu++) {
-            for (int cl = 'a'; cl < 'z' + 1; cl++) {
-                if (index != 100 && (!(cu == 'A' && cl == 'a') && !(cu == 'A' && cl == 'b') && !(cu == 'B' && cl == 'b') && !(cu == 'Z' && cl == 'z'))) {
-                    assertEquals(new String(new char[]{(char) cu, (char) cl}), listUnderTest.get(index++));
-                }
-            }
-        }
-
-        assertEquals(670, listUnderTest.size());
-    }
-
-    @Test
     public void testClearance() {
         CharSequenceSortedList listUnderTest = listUnderTest();
 
         listUnderTest.clear();
 
         assertEquals(0, listUnderTest.size());
-    }
-
-    @Test
-    public void testToString() {
-        CharSequenceSortedList listUnderTest = listUnderTest();
-
-        assertEquals("[Finance,Knightsbridge,Osbourne,Yardstick,alpinist,hunter,nothingness,sierra,theodora,zebra]", listUnderTest.toString());
-    }
-
-    @Test
-    public void testToSink() {
-        CharSequenceSortedList listUnderTest = listUnderTest();
-        Utf16Sink b = Misc.getThreadLocalSink();
-        listUnderTest.toSink(b);
-
-        assertEquals("[Finance,Knightsbridge,Osbourne,Yardstick,alpinist,hunter,nothingness,sierra,theodora,zebra]", b.toString());
-    }
-
-    @Test
-    public void testNonEmpty() {
-        CharSequenceSortedList listUnderTestNotEmpty = listUnderTest();
-        CharSequenceSortedList listUnderTestEmpty = new CharSequenceSortedList();
-        listUnderTestEmpty.add("value");
-        listUnderTestEmpty.remove("value");
-        listUnderTestEmpty.add("SecondValue");
-        listUnderTestEmpty.removeIndex(0);
-
-        assertTrue(listUnderTestNotEmpty.size() > 0);
-        assertFalse(listUnderTestEmpty.size() > 0);
-    }
-
-    @Test
-    public void testGetAtIndex0OnEmptyList() {
-        CharSequenceSortedList list = new CharSequenceSortedList();
-
-        var e = assertThrows(ArrayIndexOutOfBoundsException.class, () -> list.get(0));
-        assertEquals("Array index out of range: 0", e.getMessage());
-    }
-
-    @Test
-    public void testRemoveAtIndexEdgeCases() {
-        CharSequenceSortedList list = new CharSequenceSortedList();
-        list.removeIndex(0);
-        CharSequenceSortedList secondList = new CharSequenceSortedList();
-        secondList.removeIndex(-1);
-        secondList.add("value");
-        secondList.removeIndex(-1);
-        secondList.removeIndex(1);
-
-        assertEquals(0, list.size());
-        assertEquals(1, secondList.size());
-    }
-
-    @Test
-    public void testRemoveNonExistentElementOnEmptyList() {
-        CharSequenceSortedList list = new CharSequenceSortedList();
-        list.remove("sample");
-
-        assertEquals(0, list.size());
-    }
-
-    @Test
-    public void testDuplicatesNotAllowed() {
-        CharSequenceSortedList list = new CharSequenceSortedList();
-
-        list.add("aaa");
-        list.add("bbb");
-        list.add("ccc");
-        list.add("aaa");
-
-        assertEquals(3, list.size());
     }
 
     @Test
@@ -214,6 +77,26 @@ public class CharSequenceSortedListTest {
         assertEquals(listCopy.get(8), listUnderTest.get(8));
         assertEquals(listCopy.get(9), listUnderTest.get(9));
         assertEquals(10, listCopy.size());
+    }
+
+    @Test
+    public void testDuplicatesNotAllowed() {
+        CharSequenceSortedList list = new CharSequenceSortedList();
+
+        list.add("aaa");
+        list.add("bbb");
+        list.add("ccc");
+        list.add("aaa");
+
+        assertEquals(3, list.size());
+    }
+
+    @Test
+    public void testGetAtIndex0OnEmptyList() {
+        CharSequenceSortedList list = new CharSequenceSortedList();
+
+        var e = assertThrows(ArrayIndexOutOfBoundsException.class, () -> list.get(0));
+        assertEquals("Array index out of range: 0", e.getMessage());
     }
 
     @Test
@@ -248,5 +131,122 @@ public class CharSequenceSortedListTest {
         assertEquals(0, list.indexOf("Finance"));
         assertEquals(9, list.indexOf("zebra"));
         assertEquals(-1, list.indexOf("test"));
+    }
+
+    @Test
+    public void testNonEmpty() {
+        CharSequenceSortedList listUnderTestNotEmpty = listUnderTest();
+        CharSequenceSortedList listUnderTestEmpty = new CharSequenceSortedList();
+        listUnderTestEmpty.add("value");
+        listUnderTestEmpty.remove("value");
+        listUnderTestEmpty.add("SecondValue");
+        listUnderTestEmpty.removeIndex(0);
+
+        assertTrue(listUnderTestNotEmpty.size() > 0);
+        assertFalse(listUnderTestEmpty.size() > 0);
+    }
+
+    @Test
+    public void testOrderAndSize() {
+        CharSequenceSortedList listUnderTest = listUnderTest();
+
+        assertEquals("Finance", listUnderTest.get(0));
+        assertEquals("Knightsbridge", listUnderTest.get(1));
+        assertEquals("Osbourne", listUnderTest.get(2));
+        assertEquals("Yardstick", listUnderTest.get(3));
+        assertEquals("alpinist", listUnderTest.get(4));
+        assertEquals("hunter", listUnderTest.get(5));
+        assertEquals("nothingness", listUnderTest.get(6));
+        assertEquals("sierra", listUnderTest.get(7));
+        assertEquals("theodora", listUnderTest.get(8));
+        assertEquals("zebra", listUnderTest.get(9));
+        assertEquals(10, listUnderTest.size());
+    }
+
+    @Test
+    public void testRemovalForOver65Entries() {
+        CharSequenceSortedList listUnderTest = new CharSequenceSortedList(677);
+
+        for (int cu = 'A'; cu < 'Z' + 1; cu++) {
+            for (int cl = 'a'; cl < 'z' + 1; cl++) {
+                listUnderTest.add(new String(new char[]{(char) cu, (char) cl}));
+            }
+        }
+
+        listUnderTest.remove("Aa");
+        listUnderTest.removeIndex(0);
+        listUnderTest.remove("Bb");
+        listUnderTest.remove("Ccc");
+        listUnderTest.removeIndex(100);
+        listUnderTest.remove("Zz");
+        listUnderTest.removeIndex(669);
+
+        int index = 0;
+        for (int cu = 'A'; cu < 'Z' + 1; cu++) {
+            for (int cl = 'a'; cl < 'z' + 1; cl++) {
+                if (index != 100 && (!(cu == 'A' && cl == 'a') && !(cu == 'A' && cl == 'b') && !(cu == 'B' && cl == 'b') && !(cu == 'Z' && cl == 'z'))) {
+                    assertEquals(new String(new char[]{(char) cu, (char) cl}), listUnderTest.get(index++));
+                }
+            }
+        }
+
+        assertEquals(670, listUnderTest.size());
+    }
+
+    @Test
+    public void testRemovalForUnder66Entries() {
+        CharSequenceSortedList listUnderTest = listUnderTest();
+
+        listUnderTest.remove("Osbourne");
+        listUnderTest.removeIndex(4);
+        listUnderTest.removeIndex(0);
+        listUnderTest.remove("Knightsbridge");
+        listUnderTest.removeIndex(5);
+        listUnderTest.remove("theodora");
+        listUnderTest.remove("Z");
+
+        assertEquals("Yardstick", listUnderTest.get(0));
+        assertEquals("alpinist", listUnderTest.get(1));
+        assertEquals("nothingness", listUnderTest.get(2));
+        assertEquals("sierra", listUnderTest.get(3));
+        assertEquals(4, listUnderTest.size());
+    }
+
+    @Test
+    public void testRemoveAtIndexEdgeCases() {
+        CharSequenceSortedList list = new CharSequenceSortedList();
+        list.removeIndex(0);
+        CharSequenceSortedList secondList = new CharSequenceSortedList();
+        secondList.removeIndex(-1);
+        secondList.add("value");
+        secondList.removeIndex(-1);
+        secondList.removeIndex(1);
+
+        assertEquals(0, list.size());
+        assertEquals(1, secondList.size());
+    }
+
+    @Test
+    public void testRemoveNonExistentElementOnEmptyList() {
+        CharSequenceSortedList list = new CharSequenceSortedList();
+        list.remove("sample");
+
+        assertEquals(0, list.size());
+    }
+
+    @Test
+    public void testToSink() {
+        CharSequenceSortedList listUnderTest = listUnderTest();
+        Utf16Sink b = Misc.getThreadLocalSink();
+        listUnderTest.toSink(b);
+
+        assertEquals("[Finance,Knightsbridge,Osbourne,Yardstick,alpinist,hunter,nothingness,sierra,theodora,zebra]", b.toString());
+    }
+
+    @Test
+    public void testToString() {
+        CharSequenceSortedList listUnderTest = listUnderTest();
+
+        assertEquals("[Finance,Knightsbridge,Osbourne,Yardstick,alpinist,hunter,nothingness,sierra,theodora,zebra]", listUnderTest.toString());
     }
 }

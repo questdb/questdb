@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -71,6 +71,150 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the commit; writer.commit() is never called and the buffered rows are rolled back.
  */
 public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
+
+    /**
+     * On a PRIMARY node the async-enqueue branch must remain reachable: the read-only re-check passes and
+     * the branch proceeds to enqueue (it does not refuse a legitimate writer-busy fallback). The enqueue
+     * itself is exercised by the protocol/integration tests; here we assert the fence does not turn the
+     * non-WAL writer-busy fallback into a refusal on a primary node.
+     */
+    @Test
+    public void testAsyncEnqueueBranchProceedsOnPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false)) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
+                } catch (Throwable e) {
+                    // The enqueue itself does not complete against a fake table on a bare engine (the
+                    // table-name registry is not built), so the branch fails after the read-only re-check
+                    // passes. The failure must NOT be the read-only refusal -- the point is the primary
+                    // node reached the enqueue rather than refusing it.
+                    final boolean readOnlyRefusal = e instanceof CairoException ce
+                            && ce.isAuthorizationError()
+                            && ce.getMessage() != null
+                            && ce.getMessage().contains("replica access is read-only");
+                    Assert.assertFalse(
+                            "a primary node must not refuse the async-enqueue branch with the read-only error",
+                            readOnlyRefusal
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * The async-enqueue fallback fence: when the WAL writer acquire throws EntryUnavailableException (the
+     * pool is exhausted), the catch branch must re-check read-only BEFORE enqueuing the operation. On a
+     * read-only (demoting) node the branch must refuse with the standard authorization error rather than
+     * route the WAL UPDATE through the legacy non-WAL writer pool, which would physical-commit it without
+     * minting a replicated sequencer txn (a silent acked-loss). A non-null event sub-sequence is supplied
+     * so the branch is the async-enqueue path, not the re-throw.
+     */
+    @Test
+    public void testAsyncEnqueueBranchRefusesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true)) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
+                    Assert.fail("the async-enqueue branch must refuse on a read-only node before enqueuing");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * On a PRIMARY node the dispatcher fence must let the operation through: apply() runs exactly once.
+     */
+    @Test
+    public void testDispatcherFenceAppliesOnPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger applyCalled = new AtomicInteger(0);
+            try (CairoEngine primaryEngine = buildPrimaryWriterEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        applyCalled.incrementAndGet();
+                        return 0;
+                    }
+                };
+                dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), null, false);
+                Assert.assertEquals("apply() must run once on a primary node", 1, applyCalled.get());
+            }
+        });
+    }
+
+    /**
+     * The OperationDispatcher fence (WAL UPDATE/ALTER over pg-wire and /exec): a flip that lands after
+     * the eager getTableWriterAPI gate passes but before the inline apply() must be caught by the
+     * in-lock re-check, so the operation is NOT externalized (apply() never runs). The eager gate
+     * consumes the first isReadOnlyMode() read (returns false, the writer is acquired as PRIMARY); the
+     * in-lock re-check consumes the second (returns true, refuse). Behavioral assertion: apply() is
+     * never reached and the refusal is the standard read-only authorization error.
+     */
+    @Test
+    public void testDispatcherFenceInLockReCheckCatchesFlip() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger applyCalled = new AtomicInteger(0);
+            try (CairoEngine flipEngine = buildFlipAfterFirstCallWriterEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(flipEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        applyCalled.incrementAndGet();
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(flipEngine), null, false);
+                    Assert.fail("dispatcher.execute() must throw authorization when the in-lock re-check sees read-only");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+                Assert.assertEquals(
+                        "apply() must not externalize the operation on the flipped node", 0, applyCalled.get());
+            }
+        });
+    }
+
+    /**
+     * A read-only engine must refuse the WAL UPDATE/ALTER dispatch at the unlocked fast-refuse, before
+     * acquiring a writer or reaching apply().
+     */
+    @Test
+    public void testDispatcherFenceRefusesOnReadOnlyReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger applyCalled = new AtomicInteger(0);
+            try (CairoEngine readOnlyEngine = buildReadOnlyWriterEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        applyCalled.incrementAndGet();
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), null, false);
+                    Assert.fail("dispatcher.execute() must throw authorization on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+                Assert.assertEquals("apply() must not run on a read-only node", 0, applyCalled.get());
+            }
+        });
+    }
 
     /**
      * INSERT ... SELECT: the in-lock re-check catches a flip that lands after the early-out passes but
@@ -198,150 +342,6 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The OperationDispatcher fence (WAL UPDATE/ALTER over pg-wire and /exec): a flip that lands after
-     * the eager getTableWriterAPI gate passes but before the inline apply() must be caught by the
-     * in-lock re-check, so the operation is NOT externalized (apply() never runs). The eager gate
-     * consumes the first isReadOnlyMode() read (returns false, the writer is acquired as PRIMARY); the
-     * in-lock re-check consumes the second (returns true, refuse). Behavioral assertion: apply() is
-     * never reached and the refusal is the standard read-only authorization error.
-     */
-    @Test
-    public void testDispatcherFenceInLockReCheckCatchesFlip() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger applyCalled = new AtomicInteger(0);
-            try (CairoEngine flipEngine = buildFlipAfterFirstCallWriterEngine()) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(flipEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        applyCalled.incrementAndGet();
-                        return 0;
-                    }
-                };
-                try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(flipEngine), null, false);
-                    Assert.fail("dispatcher.execute() must throw authorization when the in-lock re-check sees read-only");
-                } catch (CairoException e) {
-                    assertReadOnlyRefusal(e);
-                }
-                Assert.assertEquals(
-                        "apply() must not externalize the operation on the flipped node", 0, applyCalled.get());
-            }
-        });
-    }
-
-    /**
-     * A read-only engine must refuse the WAL UPDATE/ALTER dispatch at the unlocked fast-refuse, before
-     * acquiring a writer or reaching apply().
-     */
-    @Test
-    public void testDispatcherFenceRefusesOnReadOnlyReplica() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger applyCalled = new AtomicInteger(0);
-            try (CairoEngine readOnlyEngine = buildReadOnlyWriterEngine()) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        applyCalled.incrementAndGet();
-                        return 0;
-                    }
-                };
-                try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), null, false);
-                    Assert.fail("dispatcher.execute() must throw authorization on a read-only node");
-                } catch (CairoException e) {
-                    assertReadOnlyRefusal(e);
-                }
-                Assert.assertEquals("apply() must not run on a read-only node", 0, applyCalled.get());
-            }
-        });
-    }
-
-    /**
-     * On a PRIMARY node the dispatcher fence must let the operation through: apply() runs exactly once.
-     */
-    @Test
-    public void testDispatcherFenceAppliesOnPrimary() throws Exception {
-        assertMemoryLeak(() -> {
-            AtomicInteger applyCalled = new AtomicInteger(0);
-            try (CairoEngine primaryEngine = buildPrimaryWriterEngine()) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        applyCalled.incrementAndGet();
-                        return 0;
-                    }
-                };
-                dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), null, false);
-                Assert.assertEquals("apply() must run once on a primary node", 1, applyCalled.get());
-            }
-        });
-    }
-
-    /**
-     * The async-enqueue fallback fence: when the WAL writer acquire throws EntryUnavailableException (the
-     * pool is exhausted), the catch branch must re-check read-only BEFORE enqueuing the operation. On a
-     * read-only (demoting) node the branch must refuse with the standard authorization error rather than
-     * route the WAL UPDATE through the legacy non-WAL writer pool, which would physical-commit it without
-     * minting a replicated sequencer txn (a silent acked-loss). A non-null event sub-sequence is supplied
-     * so the branch is the async-enqueue path, not the re-throw.
-     */
-    @Test
-    public void testAsyncEnqueueBranchRefusesOnReadOnlyReplica() throws Exception {
-        assertMemoryLeak(() -> {
-            try (CairoEngine readOnlyEngine = buildPoolExhaustedWriterEngine(true)) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(readOnlyEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        return 0;
-                    }
-                };
-                try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(readOnlyEngine), new SCSequence(), false);
-                    Assert.fail("the async-enqueue branch must refuse on a read-only node before enqueuing");
-                } catch (CairoException e) {
-                    assertReadOnlyRefusal(e);
-                }
-            }
-        });
-    }
-
-    /**
-     * On a PRIMARY node the async-enqueue branch must remain reachable: the read-only re-check passes and
-     * the branch proceeds to enqueue (it does not refuse a legitimate writer-busy fallback). The enqueue
-     * itself is exercised by the protocol/integration tests; here we assert the fence does not turn the
-     * non-WAL writer-busy fallback into a refusal on a primary node.
-     */
-    @Test
-    public void testAsyncEnqueueBranchProceedsOnPrimary() throws Exception {
-        assertMemoryLeak(() -> {
-            try (CairoEngine primaryEngine = buildPoolExhaustedWriterEngine(false)) {
-                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(primaryEngine, "test update") {
-                    @Override
-                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
-                        return 0;
-                    }
-                };
-                try {
-                    dispatcher.execute(fakeOperation(), TestUtils.createSqlExecutionCtx(primaryEngine), new SCSequence(), false);
-                } catch (Throwable e) {
-                    // The enqueue itself does not complete against a fake table on a bare engine (the
-                    // table-name registry is not built), so the branch fails after the read-only re-check
-                    // passes. The failure must NOT be the read-only refusal -- the point is the primary
-                    // node reached the enqueue rather than refusing it.
-                    final boolean readOnlyRefusal = e instanceof CairoException ce
-                            && ce.isAuthorizationError()
-                            && ce.getMessage() != null
-                            && ce.getMessage().contains("replica access is read-only");
-                    Assert.assertFalse(
-                            "a primary node must not refuse the async-enqueue branch with the read-only error",
-                            readOnlyRefusal
-                    );
-                }
-            }
-        });
-    }
-
     // --- helpers ---
 
     private static void assertReadOnlyRefusal(CairoException e) {
@@ -366,6 +366,18 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                     default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
                 }
         );
+    }
+
+    /**
+     * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute. The
+     * dispatcher's apply() is overridden per test to count invocations, so this operation's own apply()
+     * never runs -- the fence either refuses before apply() or the test counts the call.
+     */
+    private static UpdateOperation fakeOperation() {
+        final TableToken token = new TableToken("disp_fence", "disp_fence~1", null, 1, true, false, false);
+        final ObjList<CharSequence> columns = new ObjList<>();
+        columns.add("val");
+        return new UpdateOperation(token, 1, 0, 0, columns);
     }
 
     /**
@@ -417,6 +429,22 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
     }
 
     /**
+     * A TableWriterAPI proxy that only needs to satisfy the try-with-resources close() in
+     * OperationDispatcher.execute. The fence refuses before apply() in the tests that use it, so no
+     * write method is reached; close() is the only call the dispatcher makes on a refused path.
+     */
+    private static TableWriterAPI noOpWriter() {
+        return (TableWriterAPI) Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "close" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
+                }
+        );
+    }
+
+    /**
      * isReadOnlyMode() returns false on the first call (early-out passes) and true on every
      * subsequent call (the flip happened inside the lock window).
      */
@@ -429,28 +457,6 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
             public boolean isReadOnlyMode() {
                 int n = callCount.incrementAndGet();
                 return n >= 2;
-            }
-        };
-    }
-
-    private CairoEngine buildPrimaryEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                return false;
-            }
-        };
-    }
-
-    private CairoEngine buildReadOnlyEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public boolean isReadOnlyMode() {
-                return true;
             }
         };
     }
@@ -478,38 +484,6 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         };
     }
 
-    private CairoEngine buildPrimaryWriterEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
-                return noOpWriter();
-            }
-
-            @Override
-            public boolean isReadOnlyMode() {
-                return false;
-            }
-        };
-    }
-
-    private CairoEngine buildReadOnlyWriterEngine() throws Exception {
-        String dir = temp.newFolder().getAbsolutePath();
-        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
-        return new CairoEngine(cfg, false) {
-            @Override
-            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
-                return noOpWriter();
-            }
-
-            @Override
-            public boolean isReadOnlyMode() {
-                return true;
-            }
-        };
-    }
-
     /**
      * Engine whose WAL writer acquire always throws EntryUnavailableException (the pool-exhausted
      * condition that routes OperationDispatcher.execute into the async-enqueue catch branch). The
@@ -532,31 +506,57 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
         };
     }
 
-    /**
-     * A real UpdateOperation used only to carry a TableToken into OperationDispatcher.execute. The
-     * dispatcher's apply() is overridden per test to count invocations, so this operation's own apply()
-     * never runs -- the fence either refuses before apply() or the test counts the call.
-     */
-    private static UpdateOperation fakeOperation() {
-        final TableToken token = new TableToken("disp_fence", "disp_fence~1", null, 1, true, false, false);
-        final ObjList<CharSequence> columns = new ObjList<>();
-        columns.add("val");
-        return new UpdateOperation(token, 1, 0, 0, columns);
+    private CairoEngine buildPrimaryEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return false;
+            }
+        };
     }
 
-    /**
-     * A TableWriterAPI proxy that only needs to satisfy the try-with-resources close() in
-     * OperationDispatcher.execute. The fence refuses before apply() in the tests that use it, so no
-     * write method is reached; close() is the only call the dispatcher makes on a refused path.
-     */
-    private static TableWriterAPI noOpWriter() {
-        return (TableWriterAPI) Proxy.newProxyInstance(
-                TableWriterAPI.class.getClassLoader(),
-                new Class[]{TableWriterAPI.class},
-                (proxy, method, args) -> switch (method.getName()) {
-                    case "close" -> null;
-                    default -> throw new UnsupportedOperationException(method.getName() + " not stubbed");
-                }
-        );
+    private CairoEngine buildPrimaryWriterEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                return noOpWriter();
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return false;
+            }
+        };
+    }
+
+    private CairoEngine buildReadOnlyEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
+            }
+        };
+    }
+
+    private CairoEngine buildReadOnlyWriterEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                return noOpWriter();
+            }
+
+            @Override
+            public boolean isReadOnlyMode() {
+                return true;
+            }
+        };
     }
 }

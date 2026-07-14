@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,10 +58,9 @@ import java.util.concurrent.TimeUnit;
 public class MetadataCacheSnapshotRefreshAddTablesOnlyBenchmark {
     public static final int CACHES_NUMBER_FOR_ITERATION = 10;
     private final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
-    private CharSequenceObjSortedHashMap<CairoTable>[] caches = new CharSequenceObjSortedHashMap[CACHES_NUMBER_FOR_ITERATION];
-
     @Param({"100", "1000", "10000"})
     public String size;
+    private CharSequenceObjSortedHashMap<CairoTable>[] caches = new CharSequenceObjSortedHashMap[CACHES_NUMBER_FOR_ITERATION];
     private CairoEngine engine;
 
     public static void main(String[] args) throws RunnerException {

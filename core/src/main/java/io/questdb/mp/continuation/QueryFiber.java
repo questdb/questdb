@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -94,34 +94,6 @@ public final class QueryFiber extends WorkerContinuation {
         return false;
     }
 
-    public int getYieldReason() {
-        return yieldReason;
-    }
-
-    /**
-     * Hands a claimed task to this fiber. Only legal on an unassigned fiber (fresh
-     * from the pool, or reclaimed after a free-yield); the caller must {@link #run()}
-     * it on the same thread, which supplies the ordering for the plain field write.
-     */
-    void assign(QueryTask task) {
-        assert assignedTask == null : "fiber already assigned";
-        assignedTask = task;
-    }
-
-    TimerCont getTimerCont() {
-        if (timerCont == null) {
-            timerCont = new TimerCont(this);
-        }
-        return timerCont;
-    }
-
-    TxnWaiter getTxnWaiter() {
-        if (txnWaiter == null) {
-            txnWaiter = new TxnWaiter();
-        }
-        return txnWaiter;
-    }
-
     private static void taskRunnerLoop() {
         final QueryFiber self = (QueryFiber) current();
         while (!self.isShutdown()) {
@@ -199,5 +171,29 @@ public final class QueryFiber extends WorkerContinuation {
                 // the fiber must survive a misbehaving hook
             }
         }
+    }
+
+    /**
+     * Hands a claimed task to this fiber. Only legal on an unassigned fiber (fresh
+     * from the pool, or reclaimed after a free-yield); the caller must {@link #run()}
+     * it on the same thread, which supplies the ordering for the plain field write.
+     */
+    void assign(QueryTask task) {
+        assert assignedTask == null : "fiber already assigned";
+        assignedTask = task;
+    }
+
+    TimerCont getTimerCont() {
+        if (timerCont == null) {
+            timerCont = new TimerCont(this);
+        }
+        return timerCont;
+    }
+
+    TxnWaiter getTxnWaiter() {
+        if (txnWaiter == null) {
+            txnWaiter = new TxnWaiter();
+        }
+        return txnWaiter;
     }
 }

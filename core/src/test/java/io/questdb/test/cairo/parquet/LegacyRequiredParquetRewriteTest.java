@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -56,38 +56,6 @@ import java.util.zip.ZipInputStream;
  */
 public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
 
-    // Unpack the archived 9.4.2 table directory into the engine's db root and let the registry
-    // discover it from its _name file. The fixture is a single zip whose entries are rooted at
-    // the table directory (legacy_all~18/...).
-    private static void loadFixture() throws Exception {
-        final byte[] buffer = new byte[1024 * 1024];
-        final File root = new File(configuration.getDbRoot().toString());
-        try (InputStream is = LegacyRequiredParquetRewriteTest.class.getResourceAsStream("/parquet-c3-legacy/legacy_all~18.zip")) {
-            Assert.assertNotNull(is);
-            try (ZipInputStream zip = new ZipInputStream(is)) {
-                ZipEntry ze;
-                while ((ze = zip.getNextEntry()) != null) {
-                    final File dest = new File(root, ze.getName());
-                    if (!ze.isDirectory()) {
-                        final File dir = dest.getParentFile();
-                        if (!dir.exists()) {
-                            Assert.assertTrue(dir.mkdirs());
-                        }
-                        try (FileOutputStream fos = new FileOutputStream(dest)) {
-                            int n;
-                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
-                                fos.write(buffer, 0, n);
-                            }
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
-        engine.reloadTableNames();
-        engine.reconcileTableNameRegistryState();
-    }
-
     // Cumulative list of ALTER COLUMN TYPE conversions applied one at a time. Each entry is a valid
     // conversion of a column to a different type; after each we re-read every value of every row to
     // isolate the column whose conversion breaks the (lazy) parquet read.
@@ -106,47 +74,81 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
             {"n_bin", "string"}, {"n_arr", "string"},
     };
 
-    // Reads every value of every row of legacy_all through CursorPrinter and returns the row count.
-    // count()/count_distinct only read row counts or single columns and would not catch a per-value
-    // decode fault.
-    private static long readAll(StringSink sink) throws Exception {
-        long rows = 0;
-        try (
-                RecordCursorFactory factory = select("select * from legacy_all", sqlExecutionContext);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            final RecordMetadata meta = factory.getMetadata();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                sink.clear();
-                CursorPrinter.println(record, meta, sink); // accesses every column of the row
-                Assert.assertTrue(sink.length() > 0);
-                rows++;
-            }
-        }
-        return rows;
+    @Test
+    public void testBooleanColumnTopReadsFalseAndConvertsToZero() throws Exception {
+        // QuestDB 9.4.2 wrote BOOLEAN as parquet Required, which has no def level to carry a
+        // column-top NULL, so n_bool's column-top rows (it was added after the first 100 rows) were
+        // materialised as false rather than NULL. Reading them yields false, and converting
+        // boolean->int maps false->0 / true->1 with NO NULLs -- unlike a freshly written Optional
+        // file, the legacy file cannot recover the column-top NULL for a no-sentinel type. c_bool
+        // (data for every row) likewise has no nulls.
+        assertMemoryLeak(() -> {
+            loadFixture();
+
+            // All 100 column-top rows of n_bool read false.
+            assertQuery("select n_bool, count() c from legacy_all where n_int = null")
+                    .expectSize().returns("n_bool\tc\nfalse\t100\n");
+
+            execute("alter table legacy_all alter column c_bool type int");
+            execute("alter table legacy_all alter column n_bool type int");
+            drainWalQueue();
+
+            // boolean->int yields no NULLs for either column (false->0, true->1).
+            assertQuery("select count() from legacy_all where c_bool = null")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("select count() from legacy_all where n_bool = null")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // The 100 column-top rows of n_bool converted to 0.
+            assertQuery("select count() from legacy_all where n_int = null and n_bool = 0")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+        });
     }
 
-    // Differential oracle for the lazy parquet read path over the legacy Required fixture. A native
-    // CTAS copy of the legacy data, converted via the native ALTER kernel, is the oracle; legacy_all
-    // is converted in place and stays parquet (ALTER COLUMN TYPE is lazy on a parquet partition), so
-    // its read materialises each conversion through the lazy single-pass decode arm. Each entry must
-    // target a DISTINCT column (a column has one type), so one fixture load covers the whole batch.
-    private void assertLegacyConversionsMatchNative(String[][] conversions) throws Exception {
-        loadFixture();
-        execute("create table golden as (select * from legacy_all)");
-        for (String[] conv : conversions) {
-            execute("alter table golden alter column " + conv[0] + " type " + conv[1]);
-            execute("alter table legacy_all alter column " + conv[0] + " type " + conv[1]);
-        }
-        drainWalQueue();
-        for (String[] conv : conversions) {
-            assertSqlCursors(
-                    "select ts, " + conv[0] + " from golden order by ts",
-                    "select ts, " + conv[0] + " from legacy_all order by ts"
-            );
-        }
+    @Test
+    public void testLegacySinglePassToByteShortMatchNative() throws Exception {
+        // -> byte / -> short exercise the narrow range-check converter arms (different range
+        // constants from -> int/-> long). -> date / -> timestamp share the i64 path with -> long,
+        // already covered above. A column has one type, so c_float and c_double appear once here.
+        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
+                {"c_float", "byte"}, {"c_double", "short"},
+                {"n_float", "byte"}, {"n_double", "short"},
+        }));
     }
+
+    @Test
+    public void testLegacySinglePassToIntLongMatchNative() throws Exception {
+        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
+                {"c_float", "int"}, {"c_double", "long"},
+                {"c_byte", "long"}, {"c_short", "timestamp"},
+                {"n_float", "int"}, {"n_double", "long"},
+        }));
+    }
+
+    @Test
+    public void testLegacySinglePassToLongIntMatchNative() throws Exception {
+        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
+                {"c_float", "long"}, {"c_double", "int"},
+                {"c_byte", "timestamp"}, {"c_short", "long"},
+                {"n_float", "long"}, {"n_double", "int"},
+        }));
+    }
+
+    // The tests below cover the fixed->fixed pairs that decode straight to the target in a single
+    // pass (plan_decode_conversion -> DecodeAs::Target): BYTE/SHORT -> LONG/TIMESTAMP and
+    // FLOAT/DOUBLE -> {BYTE,SHORT,INT,LONG,DATE,TIMESTAMP}, exercised against the legacy Required
+    // fixture. The Optional-schema matrix in ParquetColumnTypeConversionTest#testFixedWithAllEncodings
+    // decodes Optional pages only; here the same single-pass arms must decode legacy Required pages
+    // (BYTE/SHORT/FLOAT/DOUBLE stored without def levels) and still match the native ALTER. The
+    // FLOAT/DOUBLE sources additionally cover a Required NULL carried as an in-band NaN.
+    //
+    // Sources are the c_* columns (data in every row) plus the sentinel-bearing n_float / n_double
+    // column tops (their NULL survives a native CTAS copy as NaN). The no-sentinel column-top columns
+    // (n_byte, n_short) are deliberately excluded: a BYTE/SHORT column top in a legacy Required file
+    // reads as the stored 0 (it has no def level to carry NULL -- see
+    // testBooleanColumnTopReadsFalseAndConvertsToZero), so a native CTAS copy flattens the column top
+    // to 0 while the lazy conversion materialises it as the target NULL sentinel. That is a
+    // pre-existing divergence (the pre-flip two-pass decoder produces the same null) unrelated to the
+    // single-pass decode, so the CTAS oracle does not hold for those columns.
 
     @Test
     public void testReadLegacyRequiredParquetPartition() throws Exception {
@@ -180,82 +182,6 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
                 drainWalQueue();
                 Assert.assertEquals("re-read after converting " + conv[0] + " -> " + conv[1], 150, readAll(sink));
             }
-        });
-    }
-
-    // The tests below cover the fixed->fixed pairs that decode straight to the target in a single
-    // pass (plan_decode_conversion -> DecodeAs::Target): BYTE/SHORT -> LONG/TIMESTAMP and
-    // FLOAT/DOUBLE -> {BYTE,SHORT,INT,LONG,DATE,TIMESTAMP}, exercised against the legacy Required
-    // fixture. The Optional-schema matrix in ParquetColumnTypeConversionTest#testFixedWithAllEncodings
-    // decodes Optional pages only; here the same single-pass arms must decode legacy Required pages
-    // (BYTE/SHORT/FLOAT/DOUBLE stored without def levels) and still match the native ALTER. The
-    // FLOAT/DOUBLE sources additionally cover a Required NULL carried as an in-band NaN.
-    //
-    // Sources are the c_* columns (data in every row) plus the sentinel-bearing n_float / n_double
-    // column tops (their NULL survives a native CTAS copy as NaN). The no-sentinel column-top columns
-    // (n_byte, n_short) are deliberately excluded: a BYTE/SHORT column top in a legacy Required file
-    // reads as the stored 0 (it has no def level to carry NULL -- see
-    // testBooleanColumnTopReadsFalseAndConvertsToZero), so a native CTAS copy flattens the column top
-    // to 0 while the lazy conversion materialises it as the target NULL sentinel. That is a
-    // pre-existing divergence (the pre-flip two-pass decoder produces the same null) unrelated to the
-    // single-pass decode, so the CTAS oracle does not hold for those columns.
-
-    @Test
-    public void testLegacySinglePassToIntLongMatchNative() throws Exception {
-        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
-                {"c_float", "int"}, {"c_double", "long"},
-                {"c_byte", "long"}, {"c_short", "timestamp"},
-                {"n_float", "int"}, {"n_double", "long"},
-        }));
-    }
-
-    @Test
-    public void testLegacySinglePassToLongIntMatchNative() throws Exception {
-        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
-                {"c_float", "long"}, {"c_double", "int"},
-                {"c_byte", "timestamp"}, {"c_short", "long"},
-                {"n_float", "long"}, {"n_double", "int"},
-        }));
-    }
-
-    @Test
-    public void testLegacySinglePassToByteShortMatchNative() throws Exception {
-        // -> byte / -> short exercise the narrow range-check converter arms (different range
-        // constants from -> int/-> long). -> date / -> timestamp share the i64 path with -> long,
-        // already covered above. A column has one type, so c_float and c_double appear once here.
-        assertMemoryLeak(() -> assertLegacyConversionsMatchNative(new String[][]{
-                {"c_float", "byte"}, {"c_double", "short"},
-                {"n_float", "byte"}, {"n_double", "short"},
-        }));
-    }
-
-    @Test
-    public void testBooleanColumnTopReadsFalseAndConvertsToZero() throws Exception {
-        // QuestDB 9.4.2 wrote BOOLEAN as parquet Required, which has no def level to carry a
-        // column-top NULL, so n_bool's column-top rows (it was added after the first 100 rows) were
-        // materialised as false rather than NULL. Reading them yields false, and converting
-        // boolean->int maps false->0 / true->1 with NO NULLs -- unlike a freshly written Optional
-        // file, the legacy file cannot recover the column-top NULL for a no-sentinel type. c_bool
-        // (data for every row) likewise has no nulls.
-        assertMemoryLeak(() -> {
-            loadFixture();
-
-            // All 100 column-top rows of n_bool read false.
-            assertQuery("select n_bool, count() c from legacy_all where n_int = null")
-                    .expectSize().returns("n_bool\tc\nfalse\t100\n");
-
-            execute("alter table legacy_all alter column c_bool type int");
-            execute("alter table legacy_all alter column n_bool type int");
-            drainWalQueue();
-
-            // boolean->int yields no NULLs for either column (false->0, true->1).
-            assertQuery("select count() from legacy_all where c_bool = null")
-                    .noRandomAccess().expectSize().returns("count\n0\n");
-            assertQuery("select count() from legacy_all where n_bool = null")
-                    .noRandomAccess().expectSize().returns("count\n0\n");
-            // The 100 column-top rows of n_bool converted to 0.
-            assertQuery("select count() from legacy_all where n_int = null and n_bool = 0")
-                    .noRandomAccess().expectSize().returns("count\n100\n");
         });
     }
 
@@ -307,5 +233,79 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
                     "select * from legacy_all where ts != '2024-01-01T00:00:00.500000Z' order by ts"
             );
         });
+    }
+
+    // Unpack the archived 9.4.2 table directory into the engine's db root and let the registry
+    // discover it from its _name file. The fixture is a single zip whose entries are rooted at
+    // the table directory (legacy_all~18/...).
+    private static void loadFixture() throws Exception {
+        final byte[] buffer = new byte[1024 * 1024];
+        final File root = new File(configuration.getDbRoot().toString());
+        try (InputStream is = LegacyRequiredParquetRewriteTest.class.getResourceAsStream("/parquet-c3-legacy/legacy_all~18.zip")) {
+            Assert.assertNotNull(is);
+            try (ZipInputStream zip = new ZipInputStream(is)) {
+                ZipEntry ze;
+                while ((ze = zip.getNextEntry()) != null) {
+                    final File dest = new File(root, ze.getName());
+                    if (!ze.isDirectory()) {
+                        final File dir = dest.getParentFile();
+                        if (!dir.exists()) {
+                            Assert.assertTrue(dir.mkdirs());
+                        }
+                        try (FileOutputStream fos = new FileOutputStream(dest)) {
+                            int n;
+                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
+                                fos.write(buffer, 0, n);
+                            }
+                        }
+                    }
+                    zip.closeEntry();
+                }
+            }
+        }
+        engine.reloadTableNames();
+        engine.reconcileTableNameRegistryState();
+    }
+
+    // Reads every value of every row of legacy_all through CursorPrinter and returns the row count.
+    // count()/count_distinct only read row counts or single columns and would not catch a per-value
+    // decode fault.
+    private static long readAll(StringSink sink) throws Exception {
+        long rows = 0;
+        try (
+                RecordCursorFactory factory = select("select * from legacy_all", sqlExecutionContext);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final RecordMetadata meta = factory.getMetadata();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                sink.clear();
+                CursorPrinter.println(record, meta, sink); // accesses every column of the row
+                Assert.assertTrue(sink.length() > 0);
+                rows++;
+            }
+        }
+        return rows;
+    }
+
+    // Differential oracle for the lazy parquet read path over the legacy Required fixture. A native
+    // CTAS copy of the legacy data, converted via the native ALTER kernel, is the oracle; legacy_all
+    // is converted in place and stays parquet (ALTER COLUMN TYPE is lazy on a parquet partition), so
+    // its read materialises each conversion through the lazy single-pass decode arm. Each entry must
+    // target a DISTINCT column (a column has one type), so one fixture load covers the whole batch.
+    private void assertLegacyConversionsMatchNative(String[][] conversions) throws Exception {
+        loadFixture();
+        execute("create table golden as (select * from legacy_all)");
+        for (String[] conv : conversions) {
+            execute("alter table golden alter column " + conv[0] + " type " + conv[1]);
+            execute("alter table legacy_all alter column " + conv[0] + " type " + conv[1]);
+        }
+        drainWalQueue();
+        for (String[] conv : conversions) {
+            assertSqlCursors(
+                    "select ts, " + conv[0] + " from golden order by ts",
+                    "select ts, " + conv[0] + " from legacy_all order by ts"
+            );
+        }
     }
 }

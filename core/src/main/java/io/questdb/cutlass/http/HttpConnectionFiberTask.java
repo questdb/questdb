@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.QueryTask;
@@ -58,8 +59,19 @@ import io.questdb.network.ServerDisconnectException;
  * so the recycled context cannot be relaunched while the gate is still RUNNING. An
  * escaped throwable is logged and the connection left unregistered, faithfully
  * mirroring how the direct path unwinds the job tick.
+ *
+ * <p>The busy-writer retry path is a third trigger, next to fd events and heartbeats:
+ * a due retry launches this task with {@link #prepareRerun()} and the step calls the
+ * existing {@link HttpConnectionContext#tryRerun} unchanged. The task itself is the
+ * {@link RescheduleContext} the step passes down, and it only STAGES a reschedule;
+ * the actual {@link WaitProcessor} enqueue runs in {@code onParked()}, after the gate
+ * reopened. Enqueuing mid-step -- what the inline path does -- would start the
+ * backoff clock while the gate is still RUNNING, and a due rerun popping before the
+ * step parks would be refused by the gate and lost. A staged reschedule also
+ * suppresses any same-step fd arm, keeping the retry the connection's single wakeup
+ * trigger; the rerun re-derives the fd need when it resumes processing.
  */
-public final class HttpConnectionFiberTask extends QueryTask {
+public final class HttpConnectionFiberTask extends QueryTask implements RescheduleContext {
     private static final int ACTION_HEARTBEAT = 3;
     private static final int ACTION_NONE = 0;
     private static final int ACTION_READ = 1;
@@ -71,6 +83,9 @@ public final class HttpConnectionFiberTask extends QueryTask {
     private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
     private boolean isAbandoned;
     private boolean isDisconnectPending;
+    private boolean isRerun;
+    private boolean isRescheduleNextAttempt;
+    private boolean isReschedulePending;
     private int nextAction = ACTION_NONE;
     private int operation = IOOperation.READ;
 
@@ -84,6 +99,37 @@ public final class HttpConnectionFiberTask extends QueryTask {
         this.dispatcher = dispatcher;
         this.selectorFactory = selectorFactory;
         this.rescheduleContext = rescheduleContext;
+    }
+
+    /**
+     * The {@link RescheduleContext} the step hands to the connection: called when
+     * request processing hits a busy writer ({@code scheduleRetry} or a new request
+     * inside a rerun's receive loop). Only stages the retry; {@link #onParked()}
+     * performs the {@link WaitProcessor} enqueue once the gate has reopened.
+     */
+    @Override
+    public void reschedule(Retry retry) {
+        assert retry == context : "foreign retry staged on connection task";
+        isReschedulePending = true;
+    }
+
+    /**
+     * Mirrors the inline path's queue-full handling ({@code retry.fail} in
+     * {@link WaitProcessor}): sends the error response and arms the follow-up.
+     * Runs from {@link #onParked()} with the gate IDLE; ownership is exclusive
+     * because the failed enqueue armed no trigger and the fd is unregistered.
+     */
+    private void failRetry(RetryFailedOperationException e) {
+        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
+        try {
+            context.fail(selector, e);
+        } catch (PeerIsSlowToReadException slowToRead) {
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (ServerDisconnectException disconnect) {
+            dispatcher.disconnect(context, context.getDisconnectReason());
+        } finally {
+            selectorFactory.release(selector);
+        }
     }
 
     @Override
@@ -110,6 +156,21 @@ public final class HttpConnectionFiberTask extends QueryTask {
 
     @Override
     protected void onParked() {
+        if (isReschedulePending) {
+            // The staged retry owns the wakeup: no fd action is armed alongside it,
+            // so the due rerun's launch is the only trigger and cannot be refused.
+            isReschedulePending = false;
+            try {
+                if (isRescheduleNextAttempt) {
+                    rescheduleContext.rescheduleNextAttempt(context);
+                } else {
+                    rescheduleContext.reschedule(context);
+                }
+            } catch (RetryFailedOperationException e) {
+                failRetry(e);
+            }
+            return;
+        }
         switch (nextAction) {
             case ACTION_READ -> dispatcher.registerChannel(context, IOOperation.READ);
             case ACTION_WRITE -> dispatcher.registerChannel(context, IOOperation.WRITE);
@@ -119,11 +180,45 @@ public final class HttpConnectionFiberTask extends QueryTask {
         }
     }
 
+    /**
+     * Stages the fd operation for the next step. The dispatch job calls this before
+     * launching; the launch's gate CAS publishes the write to the mounting fiber.
+     */
+    void prepare(int operation) {
+        this.operation = operation;
+        this.isAbandoned = false;
+        this.isDisconnectPending = false;
+        this.isRerun = false;
+        this.isRescheduleNextAttempt = false;
+        this.isReschedulePending = false;
+    }
+
+    /**
+     * Stages a due busy-writer retry for the next step. The dispatch job calls this
+     * from its {@link WaitProcessor.RetryLauncher} before launching.
+     */
+    void prepareRerun() {
+        this.isAbandoned = false;
+        this.isDisconnectPending = false;
+        this.isRerun = true;
+        this.isRescheduleNextAttempt = false;
+        this.isReschedulePending = false;
+    }
+
     @Override
     protected boolean runStep() {
         final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
         try {
-            context.handleClientOperation(operation, selector, rescheduleContext);
+            if (isRerun) {
+                if (!context.tryRerun(selector, this)) {
+                    // still busy: stage the next backoff attempt, enqueued in onParked()
+                    isReschedulePending = true;
+                    isRescheduleNextAttempt = true;
+                }
+                nextAction = ACTION_NONE;
+                return false;
+            }
+            context.handleClientOperation(operation, selector, this);
             nextAction = ACTION_NONE;
             return false;
         } catch (HeartBeatException e) {
@@ -141,15 +236,5 @@ public final class HttpConnectionFiberTask extends QueryTask {
         } finally {
             selectorFactory.release(selector);
         }
-    }
-
-    /**
-     * Stages the fd operation for the next step. The dispatch job calls this before
-     * launching; the launch's gate CAS publishes the write to the mounting fiber.
-     */
-    void prepare(int operation) {
-        this.operation = operation;
-        this.isAbandoned = false;
-        this.isDisconnectPending = false;
     }
 }

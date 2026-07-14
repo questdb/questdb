@@ -135,9 +135,11 @@ the per-worker job instances live for the worker's lifetime, like on a legacy
 pool, and a fiber mount allocates nothing.
 
 Safety relies on two properties. (1) Jobs on a fiber-host pool must not
-suspend on the loop; all query suspension happens inside hosted fibers. A wait
-function reached inline anyway (a misconfigured pool, or the HTTP retry path)
-finds `WorkerContinuation.current()` null, `tryBindCurrent()` fails, and the
+suspend on the loop; all query suspension happens inside hosted fibers. In
+fiber mode the HTTP busy-writer reruns launch fiber tasks too
+(`WaitProcessor.launchReruns`), so no in-tree query path suspends inline. A
+wait function reached inline anyway (a misconfigured pool) finds
+`WorkerContinuation.current()` null, `tryBindCurrent()` fails, and the
 function takes its legacy polling fallback -- graceful degradation, not a
 failure. (2) Only fibers can appear on the pool's queue: a worker-loop cont
 could only get there via a waiter, and nothing on the pool ever binds one.
@@ -150,6 +152,43 @@ mechanism and the job-rotation machinery become dead code and can be deleted;
 `TxnWaiter`/`TimerCont`/`TimerShards`, the queue, and
 `CarrierIdentity`/`CarrierLocal` stay -- fibers migrate carriers and park the
 same way conts do today.
+
+## HTTP busy-writer reruns: reschedule is deferred to `onParked()`
+
+In fiber mode, a due retry launches the connection's
+`HttpConnectionFiberTask` (`WaitProcessor.launchReruns`) instead of running
+inline on the worker loop. The task passes ITSELF as the `RescheduleContext`
+into `handleClientOperation` / `tryRerun`, and its `reschedule()` only stages
+a flag; the actual `WaitProcessor` enqueue runs in `onParked()`, after the
+schedule gate returned to IDLE.
+
+Two reasons, both wakeup-loss shapes:
+
+1. **A mid-step enqueue starts the backoff clock while the gate is still
+   RUNNING.** The first retry fires 2ms after enqueue. If the tail of the
+   initiating step (unwind, selector release, gate CAS) is delayed past that
+   -- GC pause, preemption -- the due rerun pops, `launch()` finds the gate
+   not IDLE, and the retry is dropped with no other trigger armed: the
+   connection hangs forever. Deferral makes "retry is queued" imply "gate is
+   IDLE", so the launcher's gate CAS cannot be refused (the `assert launched`
+   in the launcher encodes this).
+
+2. **`completeRequest` can schedule a retry and keep processing.** On the
+   multipart path the retry-scheduling request is complete, and the step may
+   continue into further pipelined requests -- including a wait function
+   freezing the fiber for seconds -- with the retry already due. Inline
+   enqueue would let the rerun race the still-running step on another worker
+   (a latent double-execution window the direct dispatch path shares);
+   deferral serializes them through the gate.
+
+A staged reschedule also suppresses any same-step fd arm in `onParked()`:
+the retry stays the connection's SINGLE wakeup trigger, and the rerun
+re-derives the fd need when `tryRerun`'s receive loop resumes (it re-throws
+the peer-is-slow exceptions with the request state parked on the context).
+Queue-full (`RetryFailedOperationException`) surfaces at the deferred
+enqueue; `failRetry()` replicates the inline path's `retry.fail` semantics
+from `onParked()`, which is exclusive because the failed enqueue armed no
+trigger and the fd is unregistered.
 
 ## Continuation allocation per outer-driver iteration
 
