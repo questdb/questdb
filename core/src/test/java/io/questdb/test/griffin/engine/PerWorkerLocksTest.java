@@ -36,6 +36,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /**
  * Positive control for the slot-leak oracle.
@@ -123,9 +124,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         final int slots = 3;
         final int rounds = 2_000;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots);
-        // Plain ints: a slot is only ever written by the thread holding it, so if mutual exclusion
-        // holds these need no synchronization - and if it does not, the race is exactly what fails.
-        final int[] owners = new int[slots];
+        final AtomicIntegerArray owners = new AtomicIntegerArray(slots);
         final AtomicInteger exclusionBreaches = new AtomicInteger();
         final CyclicBarrier start = new CyclicBarrier(threads);
         final CountDownLatch done = new CountDownLatch(threads);
@@ -148,17 +147,15 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
                         // instructions so that two holders actually overlap in time: a critical
                         // section only nanoseconds long lets a broken lock go undetected simply
                         // because the two threads rarely land inside it together.
-                        if (owners[slot] != 0) {
+                        if (!owners.compareAndSet(slot, 0, threadId)) {
                             exclusionBreaches.incrementAndGet();
                         }
-                        owners[slot] = threadId;
                         for (int spin = 0; spin < 64; spin++) {
                             Os.pause();
                         }
-                        if (owners[slot] != threadId) {
+                        if (!owners.compareAndSet(slot, threadId, 0)) {
                             exclusionBreaches.incrementAndGet();
                         }
-                        owners[slot] = 0;
                         locks.releaseSlot(slot);
                     }
                 } catch (Throwable th) {

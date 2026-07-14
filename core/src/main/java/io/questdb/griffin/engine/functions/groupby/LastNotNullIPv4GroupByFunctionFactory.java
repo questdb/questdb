@@ -126,14 +126,18 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                 for (long i = rowCount - 1; i >= 0; i--) {
                     final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                     final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                    final boolean isNew = Map.isNewBatchEntry(encoded);
+                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                    final long rowId = baseRowId + rowIndex;
+                    final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                    if (!isNew && existingValue != Numbers.IPv4_NULL && rowId <= Unsafe.getLong(entryBase + rowIdOffset)) {
+                        continue;
+                    }
                     record.setRowIndex(rowIndex);
                     final int value = arg.getIPv4(record);
                     // Mirror computeFirst semantics on new entries (write through even for
                     // null values) so the state matches what the per-row path produces.
-                    if (value != Numbers.IPv4_NULL || Map.isNewBatchEntry(encoded)) {
-                        final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                        final long rowId = baseRowId + rowIndex;
-                        final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                    if (value != Numbers.IPv4_NULL || isNew) {
                         if (existingValue == Numbers.IPv4_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
                             Unsafe.putLong(entryBase + rowIdOffset, rowId);
                             Unsafe.putInt(entryBase + valueColumnOffset, value);

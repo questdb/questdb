@@ -98,14 +98,18 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final boolean isNew = Map.isNewBatchEntry(encoded);
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                if (!isNew && existingValue != Numbers.INT_NULL && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
+                    continue;
+                }
                 record.setRowIndex(rowIndex);
                 final int value = arg.getInt(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.INT_NULL || Map.isNewBatchEntry(encoded)) {
-                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                    final long rowId = baseRowId + rowIndex;
-                    final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
+                if (value != Numbers.INT_NULL || isNew) {
                     if (existingValue == Numbers.INT_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putInt(entryBase + valueColumnOffset, value);

@@ -100,14 +100,18 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final boolean isNew = Map.isNewBatchEntry(encoded);
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final char existingValue = Unsafe.getChar(entryBase + valueColumnOffset);
+                if (!isNew && existingValue != Numbers.CHAR_NULL && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
+                    continue;
+                }
                 record.setRowIndex(rowIndex);
                 final char value = arg.getChar(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (value != Numbers.CHAR_NULL || Map.isNewBatchEntry(encoded)) {
-                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                    final long rowId = baseRowId + rowIndex;
-                    final char existingValue = Unsafe.getChar(entryBase + valueColumnOffset);
+                if (value != Numbers.CHAR_NULL || isNew) {
                     if (existingValue == Numbers.CHAR_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putChar(entryBase + valueColumnOffset, value);

@@ -99,14 +99,18 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final boolean isNew = Map.isNewBatchEntry(encoded);
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final float existingValue = Unsafe.getFloat(entryBase + valueColumnOffset);
+                if (!isNew && !Numbers.isNull(existingValue) && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
+                    continue;
+                }
                 record.setRowIndex(rowIndex);
                 final float value = arg.getFloat(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
-                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                    final long rowId = baseRowId + rowIndex;
-                    final float existingValue = Unsafe.getFloat(entryBase + valueColumnOffset);
+                if (!Numbers.isNull(value) || isNew) {
                     if (Numbers.isNull(existingValue) || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putFloat(entryBase + valueColumnOffset, value);

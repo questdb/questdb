@@ -99,14 +99,18 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final boolean isNew = Map.isNewBatchEntry(encoded);
+                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                final long rowId = baseRowId + rowIndex;
+                final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
+                if (!isNew && !Numbers.isNull(existingValue) && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
+                    continue;
+                }
                 record.setRowIndex(rowIndex);
                 final double value = arg.getDouble(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
-                if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
-                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                    final long rowId = baseRowId + rowIndex;
-                    final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
+                if (!Numbers.isNull(value) || isNew) {
                     if (Numbers.isNull(existingValue) || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putDouble(entryBase + valueColumnOffset, value);
