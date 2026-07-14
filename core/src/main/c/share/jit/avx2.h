@@ -361,6 +361,12 @@ namespace questdb::avx2 {
                     case data_type_t::f32:
                         m = xmmword_ptr(column_address, input_index, shift);
                         break;
+                    case data_type_t::i64:
+                    case data_type_t::f64:
+                        // A 64-bit column already spans the four wide lanes: 4 x 8B = 32B.
+                        // It loads exactly as it does outside wide-lane mode.
+                        m = ymmword_ptr(column_address, input_index, shift);
+                        break;
                     default:
                         __builtin_unreachable();
                 }
