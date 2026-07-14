@@ -94,6 +94,12 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpIngressServerRestartFuzzTest.class);
     private static final String TABLE_NAME = "qwp_restart_fuzz";
+    // Distinct SYMBOL values the producer cycles through. Small enough that the
+    // dictionary is fully warm long before the first server bounce (the producer
+    // writes ~1k rows in the bouncer's 100ms head start), and BOUNDED so that every
+    // row past the first TAG_CARDINALITY back-references an id an earlier frame
+    // registered -- which is what makes the reconnect catch-up load-bearing here.
+    private static final int TAG_CARDINALITY = 256;
     // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
     // does not override these, so the actual buffers are this size.
     private static final int RECV_BUFFER_SIZE = 131_072;
@@ -164,7 +170,29 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                             for (int i = 0; i < batchRows; i++) {
                                 long currentId = id++;
                                 long ts = tsBase + currentId * tsStepNanos;
+                                // BOUNDED symbol cardinality, and that bound is what gives
+                                // this test its teeth. The first TAG_CARDINALITY rows grow
+                                // the dictionary (each frame carries a non-empty delta with
+                                // a climbing deltaStart); every row after that REUSES an
+                                // already-registered id, so its frame carries the global id
+                                // in the row data but an EMPTY delta section -- a pure
+                                // BACK-REFERENCE to a symbol some earlier frame registered.
+                                //
+                                // That back-reference is precisely what the reconnect
+                                // catch-up exists to make safe. When the bouncer below drops
+                                // the server, the fresh one starts with an EMPTY dictionary;
+                                // without the I/O thread re-registering the whole dictionary
+                                // first (a 0-table FLAG_DELTA_SYMBOL_DICT | FLAG_DEFER_COMMIT
+                                // frame), those back-references resolve against nothing,
+                                // QwpMessageCursor null-pads the hole, and the rows land with
+                                // SILENTLY NULL symbols. The tag assertion after the run is
+                                // what catches that.
+                                //
+                                // A distinct symbol per row would NOT work here: each frame
+                                // would register exactly the symbol its own rows use, never
+                                // back-reference, and so pass even with the catch-up removed.
                                 sender.table(TABLE_NAME)
+                                        .symbol("tag", "tag-" + (currentId % TAG_CARDINALITY))
                                         .longColumn("id", currentId)
                                         .doubleColumn("val", currentId * 1.5)
                                         .at(ts, ChronoUnit.NANOS);
@@ -259,6 +287,24 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                                 "c\td\tlo\thi\n"
                                         + expected + "\t" + expected + "\t0\t" + (expected - 1) + "\n"
                         );
+
+                // The delta-symbol-dictionary oracle. Every row's tag must be exactly
+                // "tag-<id>", and this is the assertion that proves a REAL server
+                // resolved the ids the catch-up frame re-registered after each bounce:
+                //   - a catch-up that never shipped, or that the server failed to apply,
+                //     leaves the referenced ids unregistered and QwpMessageCursor
+                //     null-pads the hole -- the column reads back NULL;
+                //   - a dictionary shifted by even one id reads back the WRONG tag.
+                // Both land here as a non-zero count. Nothing else in this suite can see
+                // that: the row-count check above passes fine with an all-NULL tag column.
+                assertQuery(
+                        "SELECT count() FROM " + TABLE_NAME
+                                + " WHERE tag IS NULL OR tag != concat('tag-', (id % "
+                                + TAG_CARDINALITY + ")::string)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
             }
         });
     }
@@ -472,10 +518,17 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
     private void createTargetTable() {
         try {
+            // `tag` is not decoration: it is what makes the QWP delta symbol
+            // dictionary engage. Without a SYMBOL column the client's sent-dictionary
+            // mirror stays empty, setWireBaselineWithCatchUp takes its else-branch, and
+            // NO catch-up frame is ever emitted -- so a symbol-free restart test cannot
+            // exercise the delta dictionary at all. With one, every reconnect below
+            // re-registers the whole dictionary against a REAL decoder.
             execute(
                     "CREATE TABLE " + TABLE_NAME + " ("
                             + "id LONG, "
                             + "val DOUBLE, "
+                            + "tag SYMBOL, "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
                             + "DEDUP UPSERT KEYS(ts, id)"
