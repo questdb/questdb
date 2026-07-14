@@ -1282,17 +1282,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     long txnMinTs = dataInfo.getMinTimestamp();
-                    if (dataInfo.getDedupMode() == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                        // A REPLACE_RANGE commit deletes [rangeLo, rangeHi) beyond its own
-                        // inserted rows, which may all sit above the frontier - or be absent
-                        // entirely in a pure-delete commit whose min timestamp reads
-                        // Long.MAX_VALUE. The range low, clamped to the view's lower bound,
-                        // is the commit's true overlap minimum. Mirrors drainBaseWal's O3
-                        // detection.
-                        final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
-                        if (deleteLo < dataInfo.getReplaceRangeTsHi()) {
-                            txnMinTs = deleteLo;
-                        }
+                    // A REPLACE_RANGE commit deletes [rangeLo, rangeHi) beyond its own inserted
+                    // rows, which may all sit above the frontier - or be absent entirely in a
+                    // pure-delete commit whose min timestamp reads Long.MAX_VALUE. Its clamped
+                    // range low is the commit's true overlap minimum. Mirrors drainBaseWal's O3
+                    // detection; see effectiveReplaceRangeDeleteLo.
+                    final long deleteLo = effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp);
+                    if (deleteLo != Numbers.LONG_NULL) {
+                        txnMinTs = deleteLo;
                     }
                     if (batchMinTs == Numbers.LONG_NULL || txnMinTs < batchMinTs) {
                         batchMinTs = txnMinTs;
@@ -1647,30 +1644,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long txnMinTs = dataInfo.getMinTimestamp();
                 boolean crossCommitO3 = latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen;
                 long o3TriggerTs = txnMinTs;
-                if (dataInfo.getDedupMode() == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
-                    // A REPLACE_RANGE data commit atomically deletes every base row in
-                    // [rangeLo, rangeHi) and inserts the commit's rows, all inside the
-                    // range (WalWriter and TableWriter both assert this). The raw WAL
-                    // carries only the inserted rows, so the deletion side is visible
-                    // solely through the commit's range metadata: a range reaching at
-                    // or below the frontier may have deleted rows the view already
-                    // emitted even when every inserted row sits above the frontier, or
-                    // when the commit carries no rows at all (a pure delete). Treat the
-                    // range low - clamped to the view's lower bound, since deletions
-                    // below it cannot affect derived rows - as the commit's effective
-                    // minimum, and compare non-strictly: a range starting exactly at
-                    // the frontier deletes the frontier row itself. The o3Replay
-                    // hand-off then re-reads the applied (post-replace) base and
-                    // rewrites the affected range, converging the view instead of
-                    // keeping ghost rows the base no longer holds. The clamped range
-                    // low also serves as the replay's lateRowTs so the head-miss
-                    // REPLACE_RANGE covers a deleted band even when the recompute
-                    // produces no output row at its bottom.
-                    final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
-                    if (deleteLo < dataInfo.getReplaceRangeTsHi()) {
-                        o3TriggerTs = deleteLo;
-                        crossCommitO3 |= latestSeen != Numbers.LONG_NULL && deleteLo <= latestSeen;
-                    }
+                // A REPLACE_RANGE data commit atomically deletes every base row in
+                // [rangeLo, rangeHi) and inserts the commit's rows, all inside the
+                // range (WalWriter and TableWriter both assert this). The raw WAL
+                // carries only the inserted rows, so the deletion side is visible
+                // solely through the commit's range metadata: a range reaching at
+                // or below the frontier may have deleted rows the view already
+                // emitted even when every inserted row sits above the frontier, or
+                // when the commit carries no rows at all (a pure delete). Treat the
+                // clamped range low as the commit's effective minimum, and compare
+                // non-strictly: a range starting exactly at the frontier deletes the
+                // frontier row itself. The o3Replay hand-off then re-reads the applied
+                // (post-replace) base and rewrites the affected range, converging the
+                // view instead of keeping ghost rows the base no longer holds. The
+                // clamped range low also serves as the replay's lateRowTs so the
+                // head-miss REPLACE_RANGE covers a deleted band even when the
+                // recompute produces no output row at its bottom.
+                final long deleteLo = effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp);
+                if (deleteLo != Numbers.LONG_NULL) {
+                    o3TriggerTs = deleteLo;
+                    crossCommitO3 |= latestSeen != Numbers.LONG_NULL && deleteLo <= latestSeen;
                 }
                 if (crossCommitO3 || dataInfo.isOutOfOrder()) {
                     if (walWriter != null) {
@@ -1849,6 +1842,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         drainResult.o3SeqTxn = o3SeqTxn;
         drainResult.stagingMaxTs = stagingMaxTs;
         drainResult.stagingMinTs = stagingMinTs;
+    }
+
+    /**
+     * The timestamp at or above which a REPLACE_RANGE commit can have removed a row the live view
+     * emitted, or {@link Numbers#LONG_NULL} when it cannot have removed one. Both drains use it as
+     * the commit's effective minimum timestamp (its inserted rows may all sit above the frontier,
+     * or be absent entirely), and the replay uses it as the REPLACE_RANGE low boundary.
+     * <p>
+     * The range low is clamped up to the view's START FROM boundary: the view holds no row below
+     * it, so a deletion down there removes nothing of the view's. That clamp is what keeps the
+     * overlap trigger and the replay in the same coordinate space as the seed and the forward
+     * drain - every path bottoms out at {@code viewLowerBoundTimestamp}.
+     * <p>
+     * The clamp cannot yield LONG_NULL, which the drains and the replay both read as "no trigger
+     * timestamp" (the O3 detection would then miss the deletion outright, stranding the deleted
+     * band's derived rows on disk as ghosts). It collides only for a BEGINNING view - whose
+     * boundary IS LONG_NULL - taking a commit whose range low is Long.MIN_VALUE. No OSS producer
+     * emits such a commit today (a mat view derives its replace range from real data timestamps),
+     * but {@link WalWriter#commitWithParams} accepts any long, so pin the result at the lowest
+     * non-null timestamp instead of resting on that. LONG_NULL is not a legal designated
+     * timestamp, so its successor still sits at or below every row the base can hold.
+     */
+    private static long effectiveReplaceRangeDeleteLo(WalEventCursor.DataInfo dataInfo, long viewLowerBoundTimestamp) {
+        if (dataInfo.getDedupMode() != WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            return Numbers.LONG_NULL;
+        }
+        final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
+        if (deleteLo >= dataInfo.getReplaceRangeTsHi()) {
+            // The range lies entirely below the view's boundary (or is empty): nothing the view
+            // holds can have been deleted, so the commit's own row minimum stands.
+            return Numbers.LONG_NULL;
+        }
+        return Math.max(deleteLo, Numbers.LONG_NULL + 1);
     }
 
     // The refresh job runs on a worker pool an in-place primary-to-replica demote never halts: it
@@ -2563,8 +2589,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Head-hit replay: rolls window state back to the head .cp's
      * snapshot moment (clear per-function maps, then restore from disk),
-     * scans the base table from {@code headMaxTs + 1} forward, and emits
-     * a single REPLACE_RANGE commit covering {@code [headMaxTs + 1, +inf)}.
+     * scans the base table from {@code headMaxTs + 1} forward (never below
+     * {@code viewLowerBoundTimestamp}), and emits a single REPLACE_RANGE
+     * commit covering that same range through positive infinity.
      * Cheaper than head-miss because the head's state already reflects
      * everything in {@code [viewLowerBoundTimestamp, headMaxTs]} - the
      * replay only re-evaluates the small tail.
@@ -2596,7 +2623,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // already covers rows up to and including headMaxTs. The same value
         // doubles as the REPLACE_RANGE low boundary so the apply step
         // rewrites only the affected partitions.
-        final long replayLowTs = headMaxTs + 1;
+        //
+        // Floored at the START FROM boundary so this path applies the same row
+        // predicate as the seed, the forward drain and the head-miss replay -
+        // head-hit is the one applied-base scan that does not start from the
+        // boundary. The clamp is redundant under the head's own invariant (a
+        // head is only ever written from seeded or drained output, which already
+        // applied the boundary, so headMaxTs >= viewLowerBoundTimestamp and
+        // headMaxTs + 1 is strictly above it), but that invariant is implicit
+        // and lives four call sites away. Stating it here costs one Math.max on
+        // a cold path and makes the property local: no head, however it was
+        // written, can pull this scan below the boundary. A head with maxTs
+        // LONG_NULL - the one head that could, since LONG_NULL + 1 admits every
+        // base row - is already refused head-hit eligibility upstream.
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        final long replayLowTs = Math.max(headMaxTs + 1, viewLowerBoundTimestamp);
         TableReader reader = waitForApply(baseToken, advanceTo);
         if (reader.getSeqTxn() != advanceTo) {
             // ApplyWal2TableJob has run ahead of the O3 trigger: the base reader
@@ -2627,17 +2668,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
             final Function filter = filterFactory.getFilter();
-            RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
-            RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
-            final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+            final PageFrameRecordCursorFactory pageFrameFactory =
+                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
             RecordMetadata outMetadata = windowFactory.getMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
             try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                 RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
-                try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
-                    tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, replayLowTs);
-                    RecordCursor source = tsLowerBoundCursor;
+                // Open the snapshot AT replayLowTs rather than scanning up to it: the
+                // inclusive-lower-bound cursor culls whole partitions and binary-searches
+                // into the first one. Head-hit exists to re-evaluate only the tail above
+                // the head, so walking every partition below headMaxTs row by row - which
+                // is what wrapping a full scan in TimestampLowerBoundCursor did - spent the
+                // very cost the branch was built to avoid. Same cursor the seed and the
+                // forward drain take, so all three agree on the boundary row for row.
+                try (RecordCursor pageCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, replayLowTs)) {
+                    RecordCursor source = pageCursor;
                     if (filter != null) {
                         filteringCursor.of(source, filter, executionContext);
                         source = filteringCursor;
@@ -2833,11 +2879,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
             final Function filter = filterFactory.getFilter();
-            RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
-            RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
-            final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+            final PageFrameRecordCursorFactory pageFrameFactory =
+                    (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
             RecordMetadata outMetadata = windowFactory.getMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+
+            // Both scans below open the snapshot AT the START FROM boundary rather than
+            // scanning up to it, the same inclusive-lower-bound cursor the seed and the
+            // forward drain take: it culls whole partitions and binary-searches into the
+            // first one instead of walking the sub-boundary history row by row. A view with
+            // a finite boundary over a long-lived base has that history in front of it on
+            // every rebuild - and a rebuild fires on any O3 commit, base metadata drift,
+            // mid-drain failure, corrupt checkpoint or checkpoint-less restart - so the
+            // walk was paid twice per rebuild (probe + recompute). BEGINNING persists
+            // Numbers.LONG_NULL (= Long.MIN_VALUE), which the cursor turns into a full scan.
 
             // Probe pass: open a separate cursor over the same source + filter
             // chain and check whether any row survives. Skipping the wipe when
@@ -2845,9 +2900,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // discards every row in the replay window) from permanently
             // erasing cumulative accumulator state for every partition.
             final boolean hasReplayRow;
-            try (RecordCursor probeCursor = pageFrameFactory.getCursor(executionContext)) {
-                tsLowerBoundCursor.of(probeCursor, baseTimestampIndex, viewLowerBoundTimestamp);
-                RecordCursor probeSource = tsLowerBoundCursor;
+            try (RecordCursor probeCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, viewLowerBoundTimestamp)) {
+                RecordCursor probeSource = probeCursor;
                 if (filter != null) {
                     filteringCursor.of(probeSource, filter, executionContext);
                     probeSource = filteringCursor;
@@ -2868,9 +2922,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
-                    try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
-                        tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, viewLowerBoundTimestamp);
-                        RecordCursor source = tsLowerBoundCursor;
+                    try (RecordCursor pageCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, viewLowerBoundTimestamp)) {
+                        RecordCursor source = pageCursor;
                         if (filter != null) {
                             filteringCursor.of(source, filter, executionContext);
                             source = filteringCursor;

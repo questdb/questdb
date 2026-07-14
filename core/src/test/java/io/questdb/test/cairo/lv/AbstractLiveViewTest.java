@@ -24,9 +24,12 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.mp.Job;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
@@ -55,6 +58,18 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
     protected static final int SEED_COMPLETION_PASSES = 2000;
 
+
+    /**
+     * Appends one {@code (ts, x)} row through a WalWriter without committing, so the caller
+     * decides the commit mode. A plain INSERT cannot produce a REPLACE_RANGE commit; only the
+     * WalWriter API can, so any test that needs one builds its rows this way. Assumes the base
+     * table's second column is a LONG named x.
+     */
+    protected static void appendRow(WalWriter walWriter, long ts, long x) {
+        TableWriter.Row row = walWriter.newRow(ts);
+        row.putLong(1, x);
+        row.append();
+    }
 
     /**
      * Runs the job until it reports no more work, up to a bounded burst. Unlike the two drive*
@@ -90,6 +105,14 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         } while (System.nanoTime() < deadlineNanos);
         Assert.fail("thread '" + thread.getName() + "' was never observed inside " + methodName
                 + "() within " + timeoutMs + "ms");
+    }
+
+    /**
+     * Parses a microsecond timestamp literal, for the tests that hand raw timestamps to a
+     * WalWriter or compare against a live view's persisted START FROM boundary.
+     */
+    protected static long ts(String timestamp) {
+        return MicrosTimestampDriver.floor(timestamp);
     }
 
     /**

@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo.lv;
 
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -478,18 +477,6 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
         });
-    }
-
-    // Appends one (ts, x) row through a WalWriter without committing; the caller
-    // decides the commit mode (plain vs replace-range).
-    private static void appendRow(WalWriter walWriter, long ts, long x) {
-        TableWriter.Row row = walWriter.newRow(ts);
-        row.putLong(1, x);
-        row.append();
-    }
-
-    private static long ts(String timestamp) {
-        return MicrosTimestampDriver.floor(timestamp);
     }
 
     private void assertLiveViewValid() {
