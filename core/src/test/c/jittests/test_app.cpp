@@ -2268,6 +2268,58 @@ public:
     }
 };
 
+class Test_ConstantCacheYmmIntegerTypeIdentity : public TestCase
+{
+public:
+    Test_ConstantCacheYmmIntegerTypeIdentity() : TestCase("ConstantCacheYmmIntegerTypeIdentity") {}
+
+    static void add(TestApp &app) { app.add(new Test_ConstantCacheYmmIntegerTypeIdentity()); }
+
+    void compile(BaseCompiler &c) override
+    {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        auto *func = cc.add_func(FuncSignature::build<void, int32_t *, int64_t *>(CallConvId::kCDecl));
+        x86::Gp i32_output = cc.new_gp64("i32_output");
+        x86::Gp i64_output = cc.new_gp64("i64_output");
+        func->set_arg(0, i32_output);
+        func->set_arg(1, i64_output);
+
+        instruction_t instructions[2] = {};
+        instructions[0].opcode = opcodes::Imm;
+        instructions[0].options = static_cast<int32_t>(data_type_t::i32);
+        instructions[0].ipayload.lo = 1;
+        instructions[1].opcode = opcodes::Imm;
+        instructions[1].options = static_cast<int32_t>(data_type_t::i64);
+        instructions[1].ipayload.lo = 1;
+
+        ConstantCacheYmm cache;
+        questdb::avx2::preload_constants_ymm(cc, instructions, 2, cache);
+        auto i32_value = questdb::avx2::read_imm(cc, instructions[0], cache);
+        auto i64_value = questdb::avx2::read_imm(cc, instructions[1], cache);
+        cc.vmovdqu(x86::xmmword_ptr(i32_output), i32_value.vec().xmm());
+        cc.vmovdqu(x86::ymmword_ptr(i64_output), i64_value.vec());
+        cc.end_func();
+    }
+
+    bool run(void *_func, String &result, String &expect) override
+    {
+        typedef void (*Func)(int32_t *, int64_t *);
+        Func func = ptr_as_func<Func>(_func);
+        int32_t i32_output[4] = {};
+        int64_t i64_output[4] = {};
+        func(i32_output, i64_output);
+
+        result.assign_format("ret=[{%d}, {%lld}]", i32_output[0], i64_output[0]);
+        expect.assign_format("ret=[{1}, {1}]");
+        for (int i = 0; i < 4; ++i)
+        {
+            if (i32_output[i] != 1 || i64_output[i] != 1)
+                return false;
+        }
+        return true;
+    }
+};
+
 void compiler_add_x86_tests(TestApp &app)
 {
     app.addT<Test_Int32Not>();
@@ -2300,6 +2352,7 @@ void compiler_add_x86_tests(TestApp &app)
     app.addT<Test_Compress256>();
     app.addT<Test_Compress256Ints>();
     app.addT<Test_WideLaneInt32GuardPageLoad>();
+    app.addT<Test_ConstantCacheYmmIntegerTypeIdentity>();
 }
 
 int main(int argc, char *argv[])
