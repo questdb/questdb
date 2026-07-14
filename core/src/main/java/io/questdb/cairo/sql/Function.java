@@ -343,22 +343,28 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * width and widening, i.e. {@code getLong(rec) == Numbers.intToLong(getInt(rec))} for every
      * record. Only meaningful for a BYTE / SHORT / INT typed function.
      * <p>
-     * It holds for every INT function that inherits
-     * {@link io.questdb.griffin.engine.functions.IntFunction}'s getLong() - columns, constants,
-     * casts, CASE, bind variables. The INT arithmetic functions (+ - * / % unary minus, abs and
-     * the bitwise ops) override getLong() to compute at long width, so an overflowing expression
-     * wraps mod 2^32 under getInt() but keeps its full value under getLong(); those return false.
-     * <p>
      * A caller that compares such a function against values of both widths - see
      * {@link io.questdb.griffin.engine.functions.bool.InLongFunctionFactory} - has to read the key
      * once per width when this is false, and reads it once when it is true.
      * <p>
-     * Any new INT-typed function that overrides getLong() must override this method as well.
+     * The default is the conservative answer, so a function only claims width stability by deriving
+     * it. {@link io.questdb.griffin.engine.functions.IntFunction},
+     * {@link io.questdb.griffin.engine.functions.ShortFunction} and
+     * {@link io.questdb.griffin.engine.functions.ByteFunction} widen their own narrow accessor in
+     * getLong(), so they return true, and every function built on them - columns, constants, casts,
+     * CASE, bind variables - inherits it. Two kinds of function must not: one that overrides that
+     * getLong() to compute at long width (the INT arithmetic and bitwise operators, whose
+     * overflowing result wraps mod 2^32 under getInt() but keeps its full value under getLong()),
+     * which overrides this method back to false; and one that implements {@link Function} directly
+     * and derives its two widths independently (json_extract), which simply inherits this default.
+     * <p>
+     * Any narrow-integer function that overrides one of those getLong()s must override this method
+     * as well. {@code IntFunctionWidthContractTest} enforces that for the IntFunction hierarchy.
      *
      * @return true if getLong() and getInt() carry the same value
      */
     default boolean isIntWidthStable() {
-        return true;
+        return false;
     }
 
     /**

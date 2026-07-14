@@ -25,9 +25,20 @@
 package io.questdb.test.griffin.engine.functions.bool;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.bool.InLongFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class InLongFunctionFactoryTest extends AbstractCairoTest {
@@ -394,6 +405,79 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowKeyOverridingGetLongIsNotAssumedWidthStable() throws Exception {
+        // json_extract(..)::int implements Function directly rather than extending IntFunction, and its
+        // getInt() and getLong() are two independent native parses: an out-of-INT-range number reads as
+        // INT_NULL at INT width and as its full value at long width. It never declared that, and
+        // isIntWidthStable() defaulted to true, so IN probed the key with getLong() only and disagreed
+        // with both '=' and the projection - exactly the divergence the split key exists to close.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (j VARCHAR)");
+            execute("INSERT INTO t VALUES ('{\"x\":5000000000}')");
+
+            // the key reads as null at INT width, and '=' agrees
+            assertQuery("SELECT json_extract(j,'$.x')::int AS k FROM t")
+                    .expectSize()
+                    .returns("k\nnull\n");
+            assertQuery("SELECT count(*) AS c FROM t WHERE json_extract(j,'$.x')::int = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+            // ... so IN must agree too
+            assertQuery("SELECT count(*) AS c FROM t WHERE json_extract(j,'$.x')::int IN (null)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+            assertQuery("SELECT count(*) AS c FROM t WHERE json_extract(j,'$.x')::int NOT IN (null)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+        });
+    }
+
+    @Test
+    public void testSplitKeyReadsSecondWidthOnlyOnMiss() throws SqlException {
+        // A split key - an INT function that computes at long width under getLong() - is the only key
+        // whose two reads can disagree, so the IN list probes it at both widths. An element matching
+        // on the first width must not make the row pay for the other: each width is evaluated only
+        // when an element actually reaches it.
+        //
+        // The list below mixes widths on purpose: the INT element reads the key at INT width, the
+        // LONG one at long width. The key carries 7, so the INT element hits and the long read is
+        // never needed.
+        try (CountingIntKey key = new CountingIntKey(7)) {
+            // two-constant path
+            try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
+                Assert.assertTrue(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls);
+                Assert.assertEquals(0, key.longCalls);
+
+                // a miss on the INT element does reach the long width
+                key.reset();
+                key.value = 11;
+                Assert.assertFalse(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls);
+                Assert.assertEquals(1, key.longCalls);
+            }
+
+            // variable path: a non-constant element forces it, and is reached first
+            key.reset();
+            key.value = 7;
+            try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
+                Assert.assertTrue(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls);
+                Assert.assertEquals(0, key.longCalls);
+
+                key.reset();
+                key.value = 11;
+                Assert.assertFalse(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls);
+                Assert.assertEquals(1, key.longCalls);
+            }
+        }
+    }
+
+    @Test
     public void testTwoConst() throws Exception {
         assertQuery("select * from x where x in (2,1)")
                 .ddl("create table x as (" +
@@ -404,5 +488,90 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                         1
                         2
                         """);
+    }
+
+    private Function newInFunction(Function key, Function... elements) throws SqlException {
+        final ObjList<Function> args = new ObjList<>();
+        final IntList argPositions = new IntList();
+        args.add(key);
+        argPositions.add(0);
+        for (Function element : elements) {
+            args.add(element);
+            argPositions.add(0);
+        }
+        return new InLongFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext);
+    }
+
+    /**
+     * Stands in for an INT arithmetic function: it computes at long width under {@code getLong()},
+     * so its two reads disagree once the INT value wraps, and it is not int-width stable. Counts the
+     * reads so a test can assert which widths a row actually evaluated.
+     */
+    private static class CountingIntKey extends IntFunction {
+        int intCalls;
+        long longCalls;
+        int value;
+
+        CountingIntKey(int value) {
+            this.value = value;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            intCalls++;
+            return value;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            longCalls++;
+            return value;
+        }
+
+        @Override
+        public boolean isIntWidthStable() {
+            return false;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return true;
+        }
+
+        void reset() {
+            intCalls = 0;
+            longCalls = 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("counting_int_key");
+        }
+    }
+
+    /**
+     * A non-constant INT element, which routes the IN list to its variable (per-row) function.
+     */
+    private static class NonConstIntElement extends IntFunction {
+        private final int value;
+
+        NonConstIntElement(int value) {
+            this.value = value;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return value;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("non_const_int_element");
+        }
     }
 }

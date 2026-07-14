@@ -72,6 +72,8 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 import static io.questdb.griffin.engine.join.AsyncWindowJoinAtom.findFunctionWithSameArg;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.*;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory.findPrevailingForMasterRow;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.addSaturating;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.subtractSaturating;
 
 /**
  * Single-threaded WINDOW JOIN factory with symbol-based join key optimization.
@@ -369,12 +371,20 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * rows the index already holds in both directions.
      * <p>
      * The SQL code generator rejects a frame whose hi is below its lo, so the margin is
-     * non-negative; it only goes non-positive on a zero-width window (nothing to amortize over)
-     * or if the span overflows, and {@code indexLookaheadHi} then falls back to the bare window
-     * bound.
+     * non-negative; it only goes non-positive on a zero-width window (nothing to amortize over),
+     * and {@code indexLookaheadHi} then falls back to the bare window bound. The span saturates
+     * rather than wraps, so a window that spans the whole timestamp range keeps a positive margin.
      */
     private static long indexLookaheadMargin(long windowLo, long windowHi) {
-        return Math.max(windowHi, windowLo + windowHi) * (INDEX_LOOKAHEAD - 1);
+        final long span = Math.max(windowHi, addSaturating(windowLo, windowHi));
+        if (span <= 0) {
+            return span;
+        }
+        try {
+            return Math.multiplyExact(span, INDEX_LOOKAHEAD - 1);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     /**
@@ -383,13 +393,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * window's most recent rows. See {@link #indexLookaheadMargin(long, long)}.
      */
     private long indexLookaheadHi(long masterTimestamp) {
-        final long windowTimestampHi = masterTimestamp + windowHi;
+        final long windowTimestampHi = addSaturating(masterTimestamp, windowHi);
         if (indexLookaheadMargin <= 0) {
             return windowTimestampHi;
         }
-        final long lookaheadHi = windowTimestampHi + indexLookaheadMargin;
         // Saturate rather than wrap: the horizon must stay at or above the window's upper bound.
-        return lookaheadHi < windowTimestampHi ? Long.MAX_VALUE : lookaheadHi;
+        return addSaturating(windowTimestampHi, indexLookaheadMargin);
     }
 
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
@@ -581,8 +590,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
                 indexRebuildCount++;
@@ -875,8 +884,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             if (masterTimestampHi > lastSlaveTimestamp) {
@@ -1131,8 +1140,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
                 indexRebuildCount++;
@@ -1375,8 +1384,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTimestampScale);
+            long masterTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTimestampScale);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             if (masterTimestampHi > lastSlaveTimestamp) {

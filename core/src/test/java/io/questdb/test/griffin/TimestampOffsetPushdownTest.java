@@ -1701,6 +1701,47 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractThrowAfterRuntimeBoundFreesModel() throws Exception {
+        // extract() analyses an AND's rhs before its lhs, so the rhs bound is already compiled into the
+        // model when the lhs conjunct throws. The exception unwound past the model and nothing freed it,
+        // leaving the bound's native buffer retained until the pool happened to hand that slot out again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM trades " +
+                            "WHERE timestamp IN 'garbage' " +
+                            "AND timestamp > alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp)",
+                    40,
+                    "Invalid date"
+            );
+        });
+    }
+
+    @Test
+    public void testBetweenRuntimeLoNonConstHiFreesBoundFunction() throws Exception {
+        // A runtime-constant BETWEEN lo bound parks in RuntimeIntervalModelBuilder.betweenBoundaryFunc
+        // until the hi bound pairs with it and moves it into dynamicRangeList. A column-dependent hi
+        // bound never pairs - BETWEEN stays a residual filter - and analyzeBetween0's finally then
+        // dropped the parked reference without closing it, orphaning its native buffer for good.
+        //
+        // Nothing throws here: the query compiles and returns the right rows, so only assertMemoryLeak
+        // sees it. alloc_ts() makes the orphan observable by holding a tracked native buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2020-01-01T12:00:00.000000Z');");
+
+            assertQuery("SELECT * FROM trades " +
+                    "WHERE timestamp BETWEEN alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) " +
+                    "AND dateadd('d', 1, timestamp)")
+                    .timestamp("timestamp")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2020-01-01T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testDynamicBoundOffsetResidualFreesTempModel() throws Exception {
         // analyzeAndOffset compiles a dynamic (runtime-constant) bound into the temp interval model,
         // then leaves it a residual filter when the offset merge cannot bake the bound into an

@@ -6013,6 +6013,91 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinStaticWindowOverflow() throws Exception {
+        // A static FOLLOWING bound large enough to push masterTs + windowHi past Long.MAX_VALUE. The
+        // designated timestamp is never negative, so this is the only direction the frame arithmetic
+        // can overflow, and the bound below is the largest one the codegen unit conversion still
+        // scales without wrapping - it means "to the end of time".
+        //
+        // The dynamic-bound cursors already saturate here (testDynamicWindowOverflowHiBound); the
+        // static-bound cursors wrapped the sum negative instead, scanned an early timestamp range and
+        // reported an empty window. The sync non-keyed cursor routes its constant bounds through the
+        // same saturating helpers as the dynamic ones, so before the fix the very same query answered
+        // differently depending on whether it ran keyed, and whether it ran parallel.
+        assertMemoryLeak(() -> {
+            // Seconds that scale to just under Long.MAX_VALUE in the master's own units.
+            final long bound = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? 9_223_372_036_854L
+                    : 9_223_372_036L;
+            execute(
+                    "CREATE TABLE master (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE slave (ts #TIMESTAMP, sym SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+            execute("""
+                    INSERT INTO master VALUES
+                    ('2023-01-01T09:00:00.000000Z'::timestamp, 'a'),
+                    ('2023-01-01T09:01:00.000000Z'::timestamp, 'a')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                    ('2023-01-01T08:59:00.000000Z'::timestamp, 'a', 10),
+                    ('2023-01-01T09:00:30.000000Z'::timestamp, 'a', 20),
+                    ('2023-01-01T09:02:00.000000Z'::timestamp, 'a', 30),
+                    ('2023-01-01T09:03:00.000000Z'::timestamp, 'b', 40)
+                    """);
+
+            final String ts = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? "000000Z" : "000000000Z";
+            // [masterTs, end of time], and (start of time, end of time] - the latter also saturates the
+            // index lookahead margin, which sums both bounds.
+            final String toEndOfTime = "RANGE BETWEEN 0 seconds PRECEDING AND " + bound + " seconds FOLLOWING ";
+            final String unbounded = "RANGE BETWEEN " + bound + " seconds PRECEDING AND " + bound + " seconds FOLLOWING ";
+
+            for (boolean parallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+
+                // keyed (fast) cursors
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s ON m.sym = s.sym " + toEndOfTime + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t50\t2\n" +
+                                "2023-01-01T09:01:00." + ts + "\t30\t1\n");
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s ON m.sym = s.sym " + toEndOfTime + "INCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t60\t3\n" +
+                                "2023-01-01T09:01:00." + ts + "\t50\t2\n");
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s ON m.sym = s.sym " + unbounded + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t60\t3\n" +
+                                "2023-01-01T09:01:00." + ts + "\t60\t3\n");
+
+                // non-keyed (general) cursors
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s " + toEndOfTime + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t90\t3\n" +
+                                "2023-01-01T09:01:00." + ts + "\t70\t2\n");
+                assertQuery("SELECT m.ts, sum(s.val) AS agg, count(*) AS cnt FROM master m " +
+                        "WINDOW JOIN slave s " + unbounded + "EXCLUDE PREVAILING")
+                        .noLeakCheck().timestamp("ts").noRandomAccess().sizeMayVary()
+                        .returns("ts\tagg\tcnt\n" +
+                                "2023-01-01T09:00:00." + ts + "\t100\t4\n" +
+                                "2023-01-01T09:01:00." + ts + "\t100\t4\n");
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinSymbolAggregateInProjection() throws Exception {
         // A SYMBOL-typed aggregate (first / last over the slave symbol column) wrapped in a
         // projection plus ORDER BY / LIMIT. The parallel window join must bind the aggregate's slave

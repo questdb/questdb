@@ -189,77 +189,85 @@ public final class WhereClauseParser implements Mutable {
         int timestampType = reader.getMetadata().getTimestampType();
         model.of(timestampType, reader.getPartitionedBy(), executionContext.getCairoEngine().getConfiguration());
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        try {
 
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
+            // pre-order iterative tree traversal
+            // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeAndIntrinsics(
-                timestampDriver,
-                translator,
-                model,
-                node,
-                m,
-                functionParser,
-                metadata,
-                executionContext,
-                isKeyColumnSuppressed, reader)) {
-            createKeyValueBindVariables(model, functionParser, executionContext);
-            return model;
-        }
+            if (removeAndIntrinsics(
+                    timestampDriver,
+                    translator,
+                    model,
+                    node,
+                    m,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    isKeyColumnSuppressed, reader)) {
+                createKeyValueBindVariables(model, functionParser, executionContext);
+                return model;
+            }
 
-        ExpressionNode root = node;
-        stack.clear();
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                if (isAndKeyword(node.token)) {
-                    if (!removeAndIntrinsics(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node.rhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            isKeyColumnSuppressed,
-                            reader)) {
-                        // Check if rhs is an OR of timestamp intrinsics
-                        if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
-                            stack.push(node.rhs);
+            ExpressionNode root = node;
+            stack.clear();
+            while (!stack.isEmpty() || node != null) {
+                if (node != null) {
+                    if (isAndKeyword(node.token)) {
+                        if (!removeAndIntrinsics(
+                                timestampDriver,
+                                translator,
+                                model,
+                                node.rhs,
+                                m,
+                                functionParser,
+                                metadata,
+                                executionContext,
+                                isKeyColumnSuppressed,
+                                reader)) {
+                            // Check if rhs is an OR of timestamp intrinsics
+                            if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
+                                stack.push(node.rhs);
+                            }
                         }
-                    }
-                    if (removeAndIntrinsics(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node.lhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            isKeyColumnSuppressed,
-                            reader)) {
-                        node = null;
-                    } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
-                        // lhs was an OR of timestamp intrinsics, successfully extracted
-                        node = null;
+                        if (removeAndIntrinsics(
+                                timestampDriver,
+                                translator,
+                                model,
+                                node.lhs,
+                                m,
+                                functionParser,
+                                metadata,
+                                executionContext,
+                                isKeyColumnSuppressed,
+                                reader)) {
+                            node = null;
+                        } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
+                            // lhs was an OR of timestamp intrinsics, successfully extracted
+                            node = null;
+                        } else {
+                            node = node.lhs;
+                        }
+                    } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
+                        // Entire OR tree was extracted as timestamp intrinsics
+                        node = stack.poll();
                     } else {
-                        node = node.lhs;
+                        node = stack.poll();
                     }
-                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
-                    // Entire OR tree was extracted as timestamp intrinsics
-                    node = stack.poll();
                 } else {
                     node = stack.poll();
                 }
-            } else {
-                node = stack.poll();
             }
+            applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
+            model.filter = collapseIntrinsicNodes(root);
+            createKeyValueBindVariables(model, functionParser, executionContext);
+            return model;
+        } catch (Throwable th) {
+            // A conjunct that already handed a runtime-bound function to the model is unwound past by
+            // the throw, and nothing else holds a reference to it. Release the model's interval filters
+            // on the way out rather than leaving them for whenever the pool hands this slot out again.
+            model.clearIntervalFilters();
+            throw th;
         }
-        applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
-        model.filter = collapseIntrinsicNodes(root);
-        createKeyValueBindVariables(model, functionParser, executionContext);
-        return model;
     }
 
     public IntrinsicModel getEmpty(int timestampType, int partitionBy, CairoConfiguration configuration) {

@@ -235,4 +235,14 @@ public abstract class IntFunction implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    /**
+     * This class widens getInt() in getLong(), so the two widths agree by construction. A subclass
+     * that overrides getLong() to compute at long width must override this back to false; see
+     * {@link Function#isIntWidthStable()}.
+     */
+    @Override
+    public boolean isIntWidthStable() {
+        return true;
+    }
 }

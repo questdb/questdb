@@ -82,12 +82,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     @Override
     public void clear() {
         if (isOwnershipTransferred) {
-            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them
+            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
+            // An unpaired boundary function never reached that list, so it is still ours to free -
+            // clearBetweenParsing() reads dynamicRangeList to tell the two apart, so it runs first.
             isOwnershipTransferred = false;
+            clearBetweenParsing();
             staticIntervals.clear();
             dynamicRangeList.clear();
             intervalApplied = false;
-            clearBetweenParsing();
         } else {
             // no build(): the accumulated functions are orphaned, free them here
             freeAndClear();
@@ -101,16 +103,29 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     public void freeAndClear() {
         isOwnershipTransferred = false;
-        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
-            betweenBoundaryFunc.close();
-        }
+        // Runs before the list is emptied: clearBetweenParsing() decides whether the parked boundary
+        // function is its own to free by looking for it in dynamicRangeList.
+        clearBetweenParsing();
         Misc.freeObjListAndClear(dynamicRangeList);
         staticIntervals.clear();
         intervalApplied = false;
-        clearBetweenParsing();
     }
 
+    /**
+     * Drops the half-parsed BETWEEN boundary. A runtime-constant lo boundary parks in
+     * {@code betweenBoundaryFunc} until the hi boundary pairs with it and moves it into
+     * {@code dynamicRangeList}; until then this builder owns it. Dropping it unpaired - the hi
+     * boundary threw, or it did not translate to an interval and BETWEEN stayed a residual filter -
+     * loses the last reference to it, so close it rather than orphan its native memory.
+     * <p>
+     * Must run before a caller empties {@code dynamicRangeList}: a paired function lives in that
+     * list and is freed (or owned by the built model) through it, and finding it there is what stops
+     * this method from double-freeing it.
+     */
     public void clearBetweenParsing() {
+        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
+            betweenBoundaryFunc.close();
+        }
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
         betweenBoundary = Numbers.LONG_NULL;

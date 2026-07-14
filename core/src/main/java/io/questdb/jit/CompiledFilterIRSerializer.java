@@ -152,6 +152,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
+    // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> containsFloatCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // Memoizes containsNarrowIntegerValue() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> containsNarrowIntCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes genuineArithType() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<ExpressionNode> genuineArithTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Overflowing constant-arithmetic fold roots that the Java filter reads at
@@ -180,6 +184,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongIntHashMap inKeyWidthOverrideByOffset = new LongIntHashMap();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     private final PredicateContext predicateContext = new PredicateContext();
+    // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Scratch priorities for the sortPredicates* insertion sorts, held in lockstep with the predicate
     // list. getPredicatePriority() walks the predicate's subtree (findOperandColumnType), so
     // recomputing it on every comparison costs O(k^2 * subtree); computing the k priorities once and
@@ -226,6 +232,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // stale mark from an earlier one (onNodeDescended / serialize() already reset before use).
         arithExprTypeCache.clear();
         genuineArithTypeCache.clear();
+        containsFloatCache.clear();
+        containsNarrowIntCache.clear();
+        requiresWideLaneArithCache.clear();
         i64WidenFoldRoots.clear();
         i64WidenLeaves.clear();
         i64WrapLeaves.clear();
@@ -453,6 +462,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node == null) {
             return false;
         }
+        final int cached = containsFloatCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached != 0;
+        }
+        final boolean result = containsFloatExpression0(node);
+        containsFloatCache.put(node, result ? 1 : 0);
+        return result;
+    }
+
+    private boolean containsFloatExpression0(ExpressionNode node) {
         if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
             final int type = arithExprType(node);
             return type == F4_TYPE || type == F8_TYPE;
@@ -502,6 +521,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node == null) {
             return false;
         }
+        final int cached = requiresWideLaneArithCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached != 0;
+        }
+        final boolean result = requiresWideLaneArithmetic0(node);
+        requiresWideLaneArithCache.put(node, result ? 1 : 0);
+        return result;
+    }
+
+    private boolean requiresWideLaneArithmetic0(ExpressionNode node) {
         if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
             if (arithExprType(node) == I8_TYPE && containsNarrowIntegerValue(node)) {
                 return true;
@@ -531,6 +560,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node == null) {
             return false;
         }
+        final int cached = containsNarrowIntCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached != 0;
+        }
+        final boolean result = containsNarrowIntegerValue0(node);
+        containsNarrowIntCache.put(node, result ? 1 : 0);
+        return result;
+    }
+
+    private boolean containsNarrowIntegerValue0(ExpressionNode node) {
         if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
             return arithExprType(node) == I4_TYPE;
         }
@@ -3525,10 +3564,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     i64WidenLeaves.clear();
                     i64WidenFoldRoots.clear();
                     i64WrapLeaves.clear();
-                    // The type caches hold nodes of the predicate we are leaving behind, and the node
-                    // pool can hand the same objects to a later filter. Drop them with the marks.
+                    // The type and wide-lane caches hold nodes of the predicate we are leaving behind,
+                    // and the node pool can hand the same objects to a later filter. Drop them with
+                    // the marks.
                     arithExprTypeCache.clear();
                     genuineArithTypeCache.clear();
+                    containsFloatCache.clear();
+                    containsNarrowIntCache.clear();
+                    requiresWideLaneArithCache.clear();
                     try {
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);

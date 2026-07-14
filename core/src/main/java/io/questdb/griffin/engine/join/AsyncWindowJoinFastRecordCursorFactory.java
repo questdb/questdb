@@ -75,6 +75,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinFastAtom.toSymbolMapKey;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.addSaturating;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.subtractSaturating;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 
 /**
@@ -350,8 +352,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+            long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowIndex != Long.MIN_VALUE) {
@@ -396,8 +398,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -499,8 +501,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+            long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowIndex != Long.MIN_VALUE) {
@@ -552,8 +554,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -650,8 +652,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -712,8 +714,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                final long masterSlaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -854,8 +856,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
-            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -902,8 +904,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                final long masterSlaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -1038,8 +1040,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-            final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-            final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+            final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+            final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -1085,8 +1087,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                final long masterSlaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = toSymbolMapKey(masterKey);
@@ -1315,8 +1317,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+                long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1362,8 +1364,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                    slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                    slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                    slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1460,8 +1462,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+                long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1513,8 +1515,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                    slaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                    slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                    slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1606,8 +1608,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -1668,8 +1670,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                    final long masterSlaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                    final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1806,8 +1808,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
@@ -1854,8 +1856,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                    final long masterSlaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                    final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
 
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
@@ -1985,8 +1987,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 record.setRowIndex(rows.get(filteredRowCount - 1));
                 final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
 
-                final long slaveTimestampLo = scaleTimestamp(masterTimestampLo - windowLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestampHi + windowHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestampLo, windowLo), masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestampHi, windowHi), masterTsScale);
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
                 int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
@@ -2033,8 +2035,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     value.setNew(true);
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long masterSlaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTsScale);
-                    final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTsScale);
+                    final long masterSlaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, windowLo), masterTsScale);
+                    final long masterSlaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, windowHi), masterTsScale);
                     final int masterKey = record.getInt(masterSymbolIndex);
                     final int idx = toSymbolMapKey(masterKey);
                     final long rowIdsPtr = slaveData.get(idx, 0);

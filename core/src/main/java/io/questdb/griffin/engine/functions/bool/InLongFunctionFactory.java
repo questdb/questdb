@@ -610,12 +610,15 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final long val0 = isKeyRead0Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
-            // Both elements read the key at the same width in the common case, so
-            // reuse val0 rather than reading the key a second time.
+            if (val0 == inVal0) {
+                return !negated;
+            }
+            // Both elements read the key at the same width in the common case, so reuse val0 rather
+            // than reading the key a second time. A split key only reaches the second read on a miss.
             final long val1 = isKeyRead1Int == isKeyRead0Int
                     ? val0
                     : (isKeyRead1Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec));
-            return negated != (val0 == inVal0 || val1 == inVal1);
+            return negated != (val1 == inVal1);
         }
 
         @Override
@@ -647,11 +650,6 @@ public class InLongFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final LongList elementConsts;
         private final IntList elementKinds;
-        // Whether some element needs the key read at INT width (wrap) / long width (widen).
-        // A string-like element may need either, so both reads are enabled and the parsed
-        // value picks the width per row; a purely INT or LONG list reads the key once per row.
-        private final boolean isKeyReadInt;
-        private final boolean isKeyReadLong;
         private final boolean isNarrowIntKey;
         private final boolean isSplitKey;
 
@@ -659,8 +657,6 @@ public class InLongFunctionFactory implements FunctionFactory {
             this.args = args;
             this.isNarrowIntKey = isNarrowIntKey;
             this.isSplitKey = isSplitKey;
-            this.isKeyReadInt = isSplitKey && hasNarrowIntElement(args);
-            this.isKeyReadLong = !isSplitKey || hasLongWidthElement(args);
             final int n = args.size();
             this.elementKinds = new IntList(n - 1);
             this.elementConsts = new LongList(n - 1);
@@ -712,18 +708,24 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Function keyFunc = args.getQuick(0);
-            // Read the key only at the width(s) some element needs (see isKeyReadInt/isKeyReadLong).
-            final long keyLong = isKeyReadLong ? keyFunc.getLong(rec) : 0L;
-            final long keyInt = isKeyReadInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyLong;
+            // Evaluate each key width at the first element that actually reaches it, and remember it
+            // for the rest of the list. A split key reads the key at both widths, so an element that
+            // matches early would otherwise pay for a key evaluation no element ever consumes.
+            long keyLong = 0;
+            long keyInt = 0;
+            boolean hasKeyLong = false;
+            boolean hasKeyInt = false;
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 final Function func = args.getQuick(i);
                 final long inVal;
-                long keyVal = keyLong;
+                // Whether this element compares against the key read at INT width (wrap) rather than
+                // long width (widen). Only a split key reads the two apart; see isSplitKey.
+                boolean isIntWidth = false;
                 switch (elementKinds.getQuick(i - 1)) {
                     case KIND_CONST_INT_WIDTH:
                         inVal = elementConsts.getQuick(i - 1);
-                        keyVal = keyInt;
+                        isIntWidth = true;
                         break;
                     case KIND_CONST_LONG_WIDTH:
                         inVal = elementConsts.getQuick(i - 1);
@@ -733,9 +735,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                         // (wrap) rather than widening an overflowing INT arithmetic via getLong().
                         if (isNarrowIntKey) {
                             inVal = Numbers.intToLong(func.getInt(rec));
-                            // keyInt is keyLong when the key is not a split one, so this holds
-                            // for a plain narrow key too.
-                            keyVal = keyInt;
+                            isIntWidth = true;
                         } else {
                             inVal = func.getLong(rec);
                         }
@@ -748,23 +748,34 @@ public class InLongFunctionFactory implements FunctionFactory {
                         inVal = Numbers.parseLongQuiet(seq == null ? null : seq.asAsciiCharSequence());
                         // An INT-range numeric string wraps the narrow key (matching
                         // IN (intLiteral) and '='); a wider value widens it.
-                        if (isSplitKey && isIntRangeValue(inVal)) {
-                            keyVal = keyInt;
-                        }
+                        isIntWidth = isIntRangeValue(inVal);
                         break;
                     case KIND_STR:
                         inVal = Numbers.parseLongQuiet(func.getStrA(rec));
-                        if (isSplitKey && isIntRangeValue(inVal)) {
-                            keyVal = keyInt;
-                        }
+                        isIntWidth = isIntRangeValue(inVal);
                         break;
                     default:
                         // KIND_NONE: no numeric value to compare, so only a null key matches. Read
-                        // the key at INT width, as '=' does against an untyped null (isIntWidthTag);
-                        // keyInt is keyLong when the key is not a split one.
+                        // the key at INT width, as '=' does against an untyped null (isIntWidthTag).
                         inVal = Numbers.LONG_NULL;
-                        keyVal = keyInt;
+                        isIntWidth = true;
                         break;
+                }
+                // The two widths coincide unless the key is split, so a plain key only ever
+                // evaluates the long read.
+                final long keyVal;
+                if (isIntWidth && isSplitKey) {
+                    if (!hasKeyInt) {
+                        keyInt = Numbers.intToLong(keyFunc.getInt(rec));
+                        hasKeyInt = true;
+                    }
+                    keyVal = keyInt;
+                } else {
+                    if (!hasKeyLong) {
+                        keyLong = keyFunc.getLong(rec);
+                        hasKeyLong = true;
+                    }
+                    keyVal = keyLong;
                 }
                 if (inVal == keyVal) {
                     return !negated;
