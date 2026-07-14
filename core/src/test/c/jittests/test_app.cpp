@@ -37,6 +37,11 @@
 #include <bitset>
 #include <iostream>
 
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include "cmdline.h"
 #include "performancetimer.h"
 
@@ -2200,6 +2205,69 @@ public:
     }
 };
 
+class Test_WideLaneInt32GuardPageLoad : public TestCase
+{
+public:
+    Test_WideLaneInt32GuardPageLoad() : TestCase("WideLaneInt32GuardPageLoad") {}
+
+    static void add(TestApp &app) { app.add(new Test_WideLaneInt32GuardPageLoad()); }
+
+    void compile(BaseCompiler &c) override
+    {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        auto *func = cc.add_func(FuncSignature::build<void, void **, int32_t *>(CallConvId::kCDecl));
+        x86::Gp data_ptr = cc.new_gp64("data_ptr");
+        x86::Gp output_ptr = cc.new_gp64("output_ptr");
+        func->set_arg(0, data_ptr);
+        func->set_arg(1, output_ptr);
+        x86::Gp unused_ptr = cc.new_gp64("unused_ptr");
+        x86::Gp input_index = cc.new_gp64("input_index");
+        cc.xor_(unused_ptr, unused_ptr);
+        cc.xor_(input_index, input_index);
+        ColumnAddressCache cache;
+        auto value = questdb::avx2::read_mem(
+                cc, data_type_t::i32, 0, data_ptr, unused_ptr, input_index, true, cache
+        );
+        cc.vmovdqu(x86::xmmword_ptr(output_ptr), value.vec().xmm());
+        cc.end_func();
+    }
+
+    bool run(void *_func, String &result, String &expect) override
+    {
+        typedef void (*Func)(void **, int32_t *);
+        Func func = ptr_as_func<Func>(_func);
+        int32_t output[4] = {};
+        const int32_t expected[4] = {-7, 0, 42, INT32_MAX};
+#ifndef _WIN32
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (page_size <= 0)
+            return false;
+        void *mapping = mmap(nullptr, 2 * static_cast<size_t>(page_size), PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapping == MAP_FAILED)
+            return false;
+        auto *input = reinterpret_cast<int32_t *>(
+                static_cast<char *>(mapping) + page_size - sizeof(expected)
+        );
+        memcpy(input, expected, sizeof(expected));
+        if (mprotect(static_cast<char *>(mapping) + page_size, page_size, PROT_NONE) != 0)
+        {
+            munmap(mapping, 2 * static_cast<size_t>(page_size));
+            return false;
+        }
+        void *columns[] = {input};
+        func(columns, output);
+        munmap(mapping, 2 * static_cast<size_t>(page_size));
+#else
+        void *columns[] = {const_cast<int32_t *>(expected)};
+        func(columns, output);
+#endif
+        result.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", output[0], output[1], output[2], output[3]);
+        expect.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", expected[0], expected[1], expected[2], expected[3]);
+        return memcmp(output, expected, sizeof(expected)) == 0;
+    }
+};
+
 void compiler_add_x86_tests(TestApp &app)
 {
     app.addT<Test_Int32Not>();
@@ -2231,6 +2299,7 @@ void compiler_add_x86_tests(TestApp &app)
     app.addT<Test_Int32EqNull>();
     app.addT<Test_Compress256>();
     app.addT<Test_Compress256Ints>();
+    app.addT<Test_WideLaneInt32GuardPageLoad>();
 }
 
 int main(int argc, char *argv[])
