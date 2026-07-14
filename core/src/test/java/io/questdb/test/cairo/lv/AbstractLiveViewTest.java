@@ -26,12 +26,15 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.mp.Job;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 
@@ -175,6 +178,27 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         if (!completed) {
             Assert.fail("seed of live view '" + viewName + "' did not complete within "
                     + SEED_COMPLETION_PASSES + " passes; the view is still SEEDING");
+        }
+    }
+
+    /**
+     * Removes the view's rolling seed checkpoint {@code <key>.scp}, so a following restart has no
+     * resume source and the sweep has to re-run from offset 0 behind its skip-write floor. A no-op
+     * when the view holds no {@code .scp} (nothing has been written yet, or the sweep completed and
+     * retired it).
+     */
+    protected void unlinkSeedCheckpointFile(LiveViewInstance instance) {
+        final long key = instance.getHeadSeedCpKey();
+        if (key == Numbers.LONG_NULL) {
+            return;
+        }
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .slash();
+            LiveViewCheckpointWriter.appendScpFileName(p, key);
+            engine.getConfiguration().getFilesFacade().removeQuiet(p.$());
         }
     }
 }

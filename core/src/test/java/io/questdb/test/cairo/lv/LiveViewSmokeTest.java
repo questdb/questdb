@@ -260,25 +260,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
     // fresh one is not a path production takes (the pool keeps jobs alive).
 
-    // Removes the view's rolling seed checkpoint file, simulating a crash
-    // before the .scp the latest committed turn would have written (or a view
-    // whose functions cannot snapshot). Recovery then has no resume source and
-    // re-sweeps from offset 0, skip-writing the on-disk prefix.
-    private void unlinkSeedCheckpointFile(LiveViewInstance instance) {
-        long key = instance.getHeadSeedCpKey();
-        if (key == Numbers.LONG_NULL) {
-            return;
-        }
-        try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot())
-                    .concat(instance.getLiveViewToken())
-                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
-                    .slash();
-            LiveViewCheckpointWriter.appendScpFileName(p, key);
-            engine.getConfiguration().getFilesFacade().removeQuiet(p.$());
-        }
-    }
-
     // Walks the LV's compiled factory to its WindowRecordCursorFactory and
     // returns its window function list. Mirrors the unwrap logic in
     // LiveViewRefreshJob; tests use this to reach non-anchored windows which

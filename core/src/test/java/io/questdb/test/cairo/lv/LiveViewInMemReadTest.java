@@ -2426,6 +2426,89 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSeededDiskPrefixStitchesWithRamLeadUnderStartFromBoundary() throws Exception {
+        // IN MEMORY through the initial seed. Every other tier test in this class builds its
+        // on-disk prefix with a FLUSH; here the prefix is what the SEED sweep wrote, under a
+        // START FROM boundary that cuts the base in half.
+        //
+        // The seed deliberately does not populate the tier - it appends straight to the LV WAL and
+        // applies inline - so the tier is empty when the view flips ACTIVE, and the first drain
+        // afterwards fills it with the lead alone. The read therefore has to stitch a RAM lead onto
+        // a disk prefix the tier never staged, and the seam has to be cut in the VIEW's row space,
+        // not the base's: four base rows sit below the boundary and are in neither tier. A seam
+        // derived from base rows would land four rows off and either duplicate the boundary row or
+        // drop it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Four rows below the boundary, four at or above it.
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:01.000000Z', 1)," +
+                    "('2026-04-01T00:00:02.000000Z', 2)," +
+                    "('2026-04-01T00:00:03.000000Z', 3)," +
+                    "('2026-04-01T00:00:04.000000Z', 4)," +
+                    "('2026-04-01T00:00:05.000000Z', 5)," +
+                    "('2026-04-01T00:00:06.000000Z', 6)," +
+                    "('2026-04-01T00:00:07.000000Z', 7)," +
+                    "('2026-04-01T00:00:08.000000Z', 8)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM '2026-04-01T00:00:05.000000Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Seed: the four admitted rows land on disk, and nothing lands in the tier.
+                driveSeedToCompletion(job, "lv");
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("the seed must admit exactly the rows at or above the boundary",
+                        4, instance.getLvRowsTotal());
+
+                // The seed leaves lastFlushTimeUs unset so the first drain after it flushes
+                // immediately, whatever the clock says.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-04-01T00:00:10.000000Z', 10)," +
+                        "('2026-04-01T00:00:11.000000Z', 11)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Two more rows, with the clock still pinned at 0 and FLUSH EVERY at 1s: the
+                // deadline has not come round again since that flush, so these stay in the RAM
+                // lead on top of a disk prefix that is the seeded rows plus the flushed pair.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-04-01T00:00:12.000000Z', 12)," +
+                        "('2026-04-01T00:00:13.000000Z', 13)");
+                drainWalQueue();
+                drainJob(job);
+            }
+
+            // The seam. A flush publishes into the tier incrementally - only a rebuild
+            // (stageInMemoryWindowFromDisk) ever re-reads the LV table's whole resident window -
+            // and the seed publishes nothing at all, so the four seeded rows are in NO tier slot
+            // even though the 30m window covers them. The tier holds the flushed pair plus the
+            // un-flushed lead, and the read stitches those 4 RAM rows onto a 6-row disk prefix
+            // whose first four rows only the seed ever wrote.
+            InnerRead read = readInner("SELECT * FROM lv");
+            Assert.assertTrue("the post-seed read must route through the tier", read.routingEligible);
+            Assert.assertEquals("the seeded rows never enter the tier; only post-seed rows are resident",
+                    4, read.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, read.leadRowsServed);
+
+            // The stitched read equals a from-scratch recompute over the admitted base rows, with
+            // one gapless row_number() spanning the seam.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base " +
+                            "WHERE ts >= '2026-04-01T00:00:05.000000Z'");
+
+            // Forcing the tier off drops to the applied prefix: the four seeded rows plus the
+            // flushed pair, and none of the four below the boundary.
+            assertDiskOnlyMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base " +
+                            "WHERE ts >= '2026-04-01T00:00:05.000000Z' AND ts <= '2026-04-01T00:00:11.000000Z'");
+        });
+    }
+
+    @Test
     public void testRestartReplaysCheckpointCadenceGap() throws Exception {
         // The head .cp is written on a cadence (rows / duration), not every flush,
         // so its base seqTxn can lag the applied point: the on-disk LV table holds
