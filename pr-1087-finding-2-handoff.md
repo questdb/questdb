@@ -13,7 +13,7 @@ remains.** The finding was deliberately left out of the Critical-findings fix co
 | 3. Initial bounded seed | DONE — same commit |
 | 4. Forward refresh and applied-base replay audit | DONE — `c1da9477c0` ("Floor live view replays at the START FROM bound") |
 | 5. Enterprise reconstruction and replication | DONE — OSS `3f203bb2a8` + ent `ee61c1dda` ("Reconstruct replica live views from the START FROM bound") |
-| 6. Regression coverage | mostly done; the restart/failure and fuzz tail is open — see below |
+| 6. Regression coverage | OSS fuzz done — `d333505d85` ("Fuzz all three live view start modes"). The ent fuzz generators and the restart/failure tail are open — see below |
 
 `41a7876bd9` makes event time the only membership rule on the primary: every view whose base
 has committed history CREATEs in SEEDING and seeds from its START FROM boundary, BEGINNING has
@@ -21,11 +21,13 @@ no floor at all, and the seed / forward / replay paths all apply the same predic
 `c1da9477c0` finishes the primary side: every applied-base re-derive now bottoms out at the
 boundary, and it uses the same inclusive-lower-bound cursor to get there. `ee61c1dda` bumps the
 enterprise submodule pin onto that work and closes the replica side, so both nodes now select
-the same base rows for every start mode.
+the same base rows for every start mode. `d333505d85` puts all three start modes — and, for the
+first time, a boundary that CUTS the dataset — through the OSS fuzz generators, and found a real
+replay bug doing it (below).
 
-**Start here next:** the track 6 tail (below) — the restart/failure half of the primary matrix,
-the fuzz generators, and the replica restart/lag/promotion cases. There is no longer a
-structural gap: the membership predicate is one expression, applied in one place per path, on
+**Start here next:** the ent fuzz generators (which the OSS work now has a pattern for), then the
+restart/failure half of the primary matrix and the replica restart/lag/promotion cases. There is
+no structural gap: the membership predicate is one expression, applied in one place per path, on
 both nodes. What is left is coverage.
 
 This is not a replica-only bug. The old OSS design used commit time for initial membership
@@ -367,27 +369,76 @@ The enterprise half (track 5) landed in `ee61c1dda`. The ent suite carries 99 mi
 - ~~A BEGINNING replica taking a REPLACE_RANGE with `rangeLo == Long.MIN_VALUE`.~~
   `testReplicaConvergesAfterReplaceRangeFromMinTimestamp` (`LiveViewReplicaLeadReconstructionTest`).
 
+### The OSS fuzz half — DONE (`d333505d85`)
+
+Every arm of `LiveViewFuzzTest` (28 tests, 20 generator arms) now draws its start mode per run
+and folds the resolved boundary into its own recompute oracle. The shared pieces are four
+helpers — `startBoundary` / `startFromClause` / `whereTail` / `assertPersistedStartBound` — so an
+arm converts in about ten lines.
+
+What actually changed about the coverage, beyond "three clauses instead of two":
+
+- **The boundary can now CUT the dataset.** This is the whole point. NOW resolves the CREATE-moment
+  clock, which every arm pins *below* its data — so a NOW run has a finite bound that still admits
+  everything (worth having: the scans open AT a real timestamp, culling partitions and binary-
+  searching, rather than from LONG_NULL). Only the explicit mode can put base rows BELOW the bound,
+  and it cuts at a random row, endpoints included. That is what exercises the seed's partial sweep,
+  the forward path's below-bound rejects, and every replay's floor.
+- **Pre-CREATE history is now independent of the mode.** A base with committed history at CREATE
+  seeds under *every* mode; the boundary alone decides how much of it the sweep emits — including
+  nothing, the empty-seed corner (`lvRowsTotal=0`) that is the common case in production and was
+  previously unreachable by fuzz.
+- **The dedup and replace-range arms lost their "seed floor guards"** (pinning the earliest row
+  pre-CREATE so no later row fell below BEGINNING's old min-ts floor). That floor no longer exists.
+- The invalidation arm deliberately stays on one mode; its oracle is the view's own output
+  snapshotted and compared back, which a boundary could empty. Said so in the code.
+
+Validated: 8 consecutive full-class runs green (~1500 fuzz runs, modes drawn 524/519/469), plus a
+**negative control** — breaking the seed sweep's bounded cursor turns the seed arms red instantly,
+so the new coverage demonstrably fails when the boundary is wrong.
+
+**Bug found and fixed here** (`o3HeadMissReplay`, OSS-only). The head-miss replay deletes and
+rewrites its output from the triggering DATA commit's lowest touched timestamp, precisely so a
+replacement that drops a row out of the view's filter cannot strand it: the recompute's lowest
+*surviving* row sits above such a row, so flooring the delete there would step over it. But the
+replay refused to use a trigger below the view's lower bound at all, falling back to that
+surviving-row floor. A commit reaching below the bound is *routine* once a boundary cuts the base —
+its sub-boundary rows are simply not the view's — so a dedup upsert that both touched a
+sub-boundary row and dropped the view's lowest row out of its `WHERE` left the stale row behind,
+duplicating a `row_number()` with the row that legitimately took it. The zero-surviving-row branch
+carried the same gate and stranded the whole emptied view as ghosts. The trigger is now clamped UP
+to the bound (the lowest ts the view can hold) rather than discarded; for BEGINNING the clamp is an
+identity, and a non-DATA / recovery trigger still authorises no deletion, so the frozen-prefix rule
+is unchanged. Pinned RED-first by `testDedupReplacementSpanningTheBoundaryDropsTheStaleRow` and
+`testDedupReplacementSpanningTheBoundaryClearsTheEmptiedView` (`LiveViewStartFromReplayTest`).
+
+The replica has no equivalent: it does not run a head-miss replay, it *applies* the primary's
+replicated REPLACE_RANGE commits. Its own floors (`max(latestSeenTs + 1, bound)` and the shared
+`effectiveReplaceRangeDeleteLo`) were checked and are unaffected.
+
 Still TODO:
 
+- **Ent fuzz generators** (`LiveViewReplicaLeadFuzzTest`, `LiveViewReplicaLeadSymbolFuzzTest`,
+  `SwitchFuzzTest`, `BackupFuzzTest`): the track 5 migration moved them onto explicit clauses but
+  did not teach them to vary the mode. Port the OSS pattern — the four helpers above plus a
+  boundary-aware oracle — and bump the submodule pin onto `d333505d85` or later. This is the
+  natural next step and now has a worked template.
 - Seed checkpoint (`.scp`) restore and a restart immediately *before* the SEEDING-to-ACTIVE
   transition; checkpoint-less replay under a finite boundary. (The checkpoint-less re-derive is
-  `o3HeadMissReplay`, whose boundary floor the track 4 tests now cover through the O3 and dedup
-  triggers — what is missing is the restart harness that reaches it, which needs a base WAL purge
-  plus a missing head `.cp`.)
+  `o3HeadMissReplay`, whose boundary floor the track 4 tests and now the fuzz cover through the O3
+  and dedup triggers — what is missing is the restart harness that reaches it, which needs a base
+  WAL purge plus a missing head `.cp`.)
 - Base metadata drift and an injected mid-drain failure during seeding.
-- IN MEMORY views through the initial seed.
-- Fuzz: teach the generators to pick all three start modes (they currently pick BEGINNING or NOW
-  only, and NOW always over an empty base, so the seed path is fuzzed only via BEGINNING). This
-  applies to the ent fuzz generators too (`LiveViewReplicaLeadFuzzTest`,
-  `LiveViewReplicaLeadSymbolFuzzTest`, `SwitchFuzzTest`, `BackupFuzzTest`), which the track 5
-  migration moved onto explicit clauses but did not teach to vary them.
+- IN MEMORY views through the initial seed. (Fuzzed now — several arms combine `inMemory` with a
+  seeding pre-CREATE base under all three modes — but there is still no deterministic test.)
 - Explicit-timestamp primary/replica parity. NOW and BEGINNING are both covered end to end now;
   an explicit boundary is covered on the primary only. The predicate is shared, so this is a
   coverage gap rather than a suspected bug.
 - Replica reconstruction after restart, lag, and promotion under a finite boundary. (O3 is
-  covered — that is what the two new tests drive.)
+  covered — that is what the two ent tests drive.)
 - ~~Parser/SHOW CREATE round trips and rejection of omitted `START FROM`, old `BACKFILL`,
   malformed literals, duplicates, expressions, and NULL.~~ Landed with track 1.
+- ~~Fuzz: teach the OSS generators to pick all three start modes.~~ Landed — see above.
 
 Use fluent `assertQuery(...).returns(...)`, deterministic clocks, and deterministic worker
 drains/hooks. Do not use timing sleeps or `returnsOnce(...)` for these stable results.
@@ -421,13 +472,24 @@ separate implementation tracks:
    recreate, lag, restart, and promotion coverage.~~ DONE (`ee61c1dda`) for the metadata, the
    predicate, and the parity/recreate coverage. Lag, restart and promotion under a finite
    boundary remain on the track 6 list.
-5. **Final integration/fuzz (NEXT):** update the live-view fuzz generators — OSS and ent — to
-   choose all three start modes, and compare every replay/restart result with a from-scratch
-   query using the same boundary.
+5. ~~**Final integration/fuzz — OSS:** update the live-view fuzz generators to choose all three
+   start modes, and compare every replay/restart result with a from-scratch query using the same
+   boundary.~~ DONE (`d333505d85`), and it paid for itself: it found the head-miss replay's
+   trigger-clamp bug (track 6).
+6. **Final integration/fuzz — ent (NEXT):** the same treatment for the four ent fuzz generators,
+   plus the submodule pin bump. The OSS arms are the template; the helpers to port are
+   `startBoundary` / `startFromClause` / `whereTail` / `assertPersistedStartBound`.
 
 The persisted-model track defined the contract both refresh implementations consume, and
 enterprise parity did not need a second encoding: it needed the primary to stop having two
 membership rules, after which the replica's existing timestamp floor was already correct.
+
+**A note for whoever runs the fuzz next.** `mvn surefire:test` does NOT recompile. Every fuzz
+result in this handoff was taken after an explicit `mvn -pl core test-compile`; a run without one
+silently exercises the previously-compiled test class, which looks exactly like a pass. The
+negative control (break the seed sweep's bounded cursor, confirm the seed arms go red) is cheap
+and worth repeating whenever the oracle changes — it is the only thing that distinguishes "the
+fuzz covers this" from "the fuzz runs".
 
 ## Acceptance criteria
 
