@@ -109,6 +109,7 @@ import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastTimestampToStrFunctionFactory;
@@ -4990,7 +4991,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionAllFactory, executionContext, null);
         }
         return unionAllFactory;
     }
@@ -7704,7 +7705,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateQuery(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
-            return generateSetFactory(model, factory, executionContext);
+            return generateSetFactory(model, factory, executionContext, null);
         }
         return factory;
     }
@@ -9975,7 +9976,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSetFactory(
             IQueryModel model,
             RecordCursorFactory factoryA,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            // Tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
+            // chain. null at the head of a chain (accumulateUnionSymbolColumns seeds it from
+            // the first branch) and for EXCEPT / INTERSECT (which never re-symbolise).
+            @Nullable BitSet symbolUnionColumns
     ) throws SqlException {
         RecordCursorFactory factoryB = null;
         ObjList<Function> castFunctionsA = null;
@@ -10005,7 +10010,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_UNION_CONSTRUCTOR
+                            SET_UNION_CONSTRUCTOR,
+                            accumulateUnionSymbolColumns(symbolUnionColumns, metadataA, metadataB)
                     );
                 }
                 case IQueryModel.SET_OPERATION_UNION_ALL: {
@@ -10023,7 +10029,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryB,
                             castFunctionsA,
                             castFunctionsB,
-                            unionMetadata
+                            unionMetadata,
+                            accumulateUnionSymbolColumns(symbolUnionColumns, metadataA, metadataB)
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT: {
@@ -10042,7 +10049,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_EXCEPT_CONSTRUCTOR
+                            SET_EXCEPT_CONSTRUCTOR,
+                            null // EXCEPT keeps side-A symbols as-is; never re-symbolise
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT_ALL: {
@@ -10080,7 +10088,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            SET_INTERSECT_CONSTRUCTOR
+                            SET_INTERSECT_CONSTRUCTOR,
+                            null // INTERSECT keeps side-A symbols as-is; never re-symbolise
                     );
                 }
                 case IQueryModel.SET_OPERATION_INTERSECT_ALL: {
@@ -10901,7 +10910,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
-            RecordMetadata unionMetadata
+            RecordMetadata unionMetadata,
+            @Nullable BitSet symbolUnionColumns
     ) throws SqlException {
         final RecordCursorFactory unionFactory = new UnionAllRecordCursorFactory(
                 unionMetadata,
@@ -10912,9 +10922,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
         }
-        return unionFactory;
+        return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
     }
 
     private RecordCursorFactory generateUnionFactory(
@@ -10925,7 +10935,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordMetadata unionMetadata,
-            SetRecordCursorFactoryConstructor constructor
+            SetRecordCursorFactoryConstructor constructor,
+            @Nullable BitSet symbolUnionColumns
     ) throws SqlException {
         writeSymbolAsString.clear();
         valueTypes.clear();
@@ -10963,9 +10974,89 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
-            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
+            return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
         }
-        return unionFactory;
+        return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
+    }
+
+    // Accumulates, across a UNION [ALL] chain, the columns that are SYMBOL on every contributing
+    // branch. Seeds from the first branch (metadataA) when acc is null, then clears any column that
+    // is not SYMBOL in the next branch (metadataB). At recursive levels acc is non-null and metadataA
+    // is the STRING-downcast running union, so it is deliberately not re-read. maybeResymboliseUnion
+    // casts the survivors back to SYMBOL once, at the end of the chain.
+    private BitSet accumulateUnionSymbolColumns(@Nullable BitSet acc, RecordMetadata metadataA, RecordMetadata metadataB) {
+        final int columnCount = metadataA.getColumnCount();
+        if (acc == null) {
+            acc = new BitSet();
+            for (int i = 0; i < columnCount; i++) {
+                if (isSymbol(metadataA.getColumnType(i))) {
+                    acc.set(i);
+                }
+            }
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (acc.get(i) && !isSymbol(metadataB.getColumnType(i))) {
+                acc.unset(i);
+            }
+        }
+        return acc;
+    }
+
+    // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
+    // symbolUnionColumns) and that the chain downcast to STRING (see getUnionCastType). The cast
+    // sits outside the union, so it builds one dictionary over the merged stream instead of trying
+    // to reconcile the per-branch dictionaries the wire cannot merge. It mirrors
+    // generateSelectVirtualWithSubQuery: functions resolve column references through priorityMetadata
+    // (base column i maps to i + reservedSlots). Columns that are not re-symbolised pass through
+    // unchanged; the union factory is returned as-is when there is nothing to re-symbolise.
+    private RecordCursorFactory maybeResymboliseUnion(
+            RecordCursorFactory unionFactory,
+            @Nullable BitSet symbolUnionColumns
+    ) throws SqlException {
+        if (symbolUnionColumns == null) {
+            return unionFactory;
+        }
+        final RecordMetadata baseMetadata = unionFactory.getMetadata();
+        final int columnCount = baseMetadata.getColumnCount();
+        boolean resymbolise = false;
+        for (int i = 0; i < columnCount; i++) {
+            if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
+                resymbolise = true;
+                break;
+            }
+        }
+        if (!resymbolise) {
+            return unionFactory;
+        }
+        // The +1 reserved slot matches the projection convention in generateSelectVirtualWithSubQuery.
+        final int reservedSlots = columnCount + 1;
+        final PriorityMetadata priorityMetadata = new PriorityMetadata(reservedSlots, baseMetadata);
+        final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
+        final ObjList<Function> functions = new ObjList<>(reservedSlots);
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final String columnName = baseMetadata.getColumnName(i);
+                final Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
+                final Function function;
+                final TableColumnMetadata m;
+                if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
+                    function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    // A cast-to-symbol builds its dictionary lazily, so the symbol table is not static.
+                    m = new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata());
+                } else {
+                    function = baseColumn;
+                    m = new TableColumnMetadata(columnName, baseMetadata.getColumnType(i), function.getMetadata());
+                }
+                functions.add(function);
+                virtualMetadata.add(m);
+                priorityMetadata.add(m);
+            }
+            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, unionFactory, reservedSlots);
+        } catch (Throwable e) {
+            Misc.freeObjList(functions);
+            Misc.free(unionFactory);
+            throw e;
+        }
     }
 
     private RecordCursorFactory generateUnnest(

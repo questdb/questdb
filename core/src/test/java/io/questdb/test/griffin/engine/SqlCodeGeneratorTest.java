@@ -8381,6 +8381,62 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolAndStringStaysString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE ts (s STRING)");
+            execute("INSERT INTO ta VALUES ('a'), ('b')");
+            execute("INSERT INTO ts VALUES ('c')");
+
+            // A branch that is not SYMBOL keeps the union result STRING: re-symbolisation only
+            // kicks in when every contributing branch is SYMBOL.
+            assertResultColumnType("SELECT s FROM ta UNION ALL SELECT s FROM ts", 0, ColumnType.STRING);
+            assertResultColumnType("SELECT s FROM ts UNION ALL SELECT s FROM ta", 0, ColumnType.STRING);
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCastsBackToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tc (s SYMBOL, v LONG)");
+            execute("INSERT INTO ta VALUES ('a', 1), ('b', 2)");
+            execute("INSERT INTO tb VALUES ('c', 3), ('a', 4)");
+            execute("INSERT INTO tc VALUES ('d', 5)");
+
+            // UNION ALL of two SYMBOL columns comes back as SYMBOL, re-symbolised once at the end
+            // of the chain, rather than left as the STRING the union produces internally.
+            assertResultColumnType("SELECT s FROM ta UNION ALL SELECT s FROM tb", 0, ColumnType.SYMBOL);
+            // UNION (distinct) too.
+            assertResultColumnType("SELECT s FROM ta UNION SELECT s FROM tb", 0, ColumnType.SYMBOL);
+            // N-way chain: still SYMBOL, wrapped only once at the outermost level.
+            assertResultColumnType("SELECT s FROM ta UNION ALL SELECT s FROM tb UNION ALL SELECT s FROM tc", 0, ColumnType.SYMBOL);
+            // Constant symbols have no backing table dictionary yet still round-trip.
+            assertResultColumnType(
+                    "SELECT cast('x' AS SYMBOL) s FROM long_sequence(1) UNION ALL SELECT cast('y' AS SYMBOL) s FROM long_sequence(1)",
+                    0,
+                    ColumnType.SYMBOL
+            );
+            // EXCEPT keeps side-A symbols natively (unaffected by re-symbolisation).
+            assertResultColumnType("SELECT s FROM ta EXCEPT SELECT s FROM tb", 0, ColumnType.SYMBOL);
+
+            // Values survive the re-symbolisation (UNION ALL preserves branch order). Declare the
+            // union cursor's capabilities as the harness expects: no random access, determined size.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb").noRandomAccess().expectSize().returns("s\na\nb\nc\na\n");
+        });
+    }
+
+    private static void assertResultColumnType(CharSequence sql, int columnIndex, int expectedType) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(
+                    ColumnType.nameOf(expectedType),
+                    ColumnType.nameOf(factory.getMetadata().getColumnType(columnIndex))
+            );
+        }
+    }
+
+    @Test
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {
