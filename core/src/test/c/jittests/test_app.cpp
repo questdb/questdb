@@ -243,6 +243,14 @@ int TestApp::run()
 }
 
 ////
+// int32_not is the scalar backend's boolean NOT (bin_not), not a bitwise complement. Every operand it
+// can receive is a truth value in {0, 1}: a comparison zeroes its destination and writes it with
+// setcc, and a BOOLEAN column holds one byte of 0 or 1. The row gate drops a row whose final value is
+// zero and keeps every other one (compiler.cpp: test mask, mask; jz next_row - cbz on aarch64), so
+// NOT has to map 1 -> 0 and 0 -> 1. A bitwise complement would map 1 -> -2, which is non-zero, i.e.
+// still true, and a NOT filter would select every row. This test used to assert ~x - a contract the
+// function never had and the backend cannot use - so it failed on master; and had the implementation
+// been the complement it asserted, it would have passed while the filter returned wrong rows.
 class Test_Int32Not : public TestCase
 {
 public:
@@ -275,7 +283,7 @@ public:
         int32_t expectRet = 0;
 
         resultRet = func(0);
-        expectRet = ~0;
+        expectRet = 1;
 
         result.assign_format("ret={%d}", resultRet);
         expect.assign_format("ret={%d}", expectRet);
@@ -283,15 +291,7 @@ public:
             return false;
 
         resultRet = func(1);
-        expectRet = ~1;
-
-        result.assign_format("ret={%d}", resultRet);
-        expect.assign_format("ret={%d}", expectRet);
-        if (resultRet != expectRet)
-            return false;
-
-        resultRet = func(42);
-        expectRet = ~42;
+        expectRet = 0;
 
         result.assign_format("ret={%d}", resultRet);
         expect.assign_format("ret={%d}", expectRet);
