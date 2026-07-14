@@ -35,7 +35,6 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.StringSink;
