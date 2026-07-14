@@ -49,7 +49,7 @@ import java.util.stream.Stream;
  * INT function that overrides {@code getLong()} to compute at long width and forgets to flip the
  * flag. {@link io.questdb.griffin.engine.functions.bool.InLongFunctionFactory} reads the flag to
  * decide whether an IN key must be read once per element width or once per row, so a stale {@code
- * true} makes {@code (a * b) IN (1, 5000000000)} compare the wrong key value against the wrong
+ * true} makes {@code (a * b) IN (1, 5_000_000_000)} compare the wrong key value against the wrong
  * element - the exact divergence the per-element width was added to close.
  * <p>
  * Rather than trust a hand-kept list, this walks the compiled classes: every {@link IntFunction}

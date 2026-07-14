@@ -41,7 +41,7 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
         // A constant INT+INT that overflows wraps mod 2^32, exactly like the column/
         // bind path - it is no longer folded to a wider LONG. Wider numeric/temporal
         // casts still widen.
-        assertQuery("SELECT 2147483647 + 3").expectSize().returns("column\n-2147483646\n");
+        assertQuery("SELECT 2_147_483_647 + 3").expectSize().returns("column\n-2147483646\n");
     }
 
     @Test

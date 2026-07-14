@@ -1095,7 +1095,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     (3, '2024-01-01T02:00:00.000000Z', 10),
                     (4, '2024-01-01T03:00:00.000000Z', 100),
                     (5, '2024-01-01T04:00:00.000000Z', 1000),
-                    (6, '2024-01-02T01:00:00.000000Z', 10000)
+                    (6, '2024-01-02T01:00:00.000000Z', 10_000)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -2571,7 +2571,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
-                    (-30000, '2024-01-01T00:00:00.000000Z'),
+                    (-30_000, '2024-01-01T00:00:00.000000Z'),
                     (-200, '2024-01-01T01:00:00.000000Z'),
                     (-74, '2024-01-01T02:00:00.000000Z'),
                     (0, '2024-01-01T03:00:00.000000Z'),
@@ -2580,7 +2580,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // val = 0 must not skip the row group whose min is -30000.
+            // val = 0 must not skip the row group whose min is -30_000.
             // An unsigned-extended inline min of 35536 would be greater than 0
             // and would drop every match.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
@@ -2600,9 +2600,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             -74
                             """);
 
-            // val = -32000 sits below the row group min (-30000); should skip.
+            // val = -32_000 sits below the row group min (-30_000); should skip.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT val FROM x WHERE val = -32000")
+            assertQuery("SELECT val FROM x WHERE val = -32_000")
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -3970,7 +3970,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT val FROM x WHERE val > 10000")
+            assertQuery("SELECT val FROM x WHERE val > 10_000")
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -4057,7 +4057,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQuery("SELECT val FROM x WHERE val > 10000")
+            assertQuery("SELECT val FROM x WHERE val > 10_000")
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -4942,21 +4942,21 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // must wrap mod 2^32 in the parquet pushdown like the native INT-precision scan.
         // Before the fix the pushdown read the un-wrapped LONG and wrongly pruned a
         // parquet partition, so a partial-parquet table disagreed with its native sibling.
-        //   (-2649 * 965823) wraps to INT +1_736_502_169 (> any row): const>col matches all.
-        //   ( 2649 * 965823) wraps to INT -1_736_502_169 (< any row): col>const matches all.
+        //   (-2649 * 965_823) wraps to INT +1_736_502_169 (> any row): const>col matches all.
+        //   ( 2649 * 965_823) wraps to INT -1_736_502_169 (< any row): col>const matches all.
         assertMemoryLeak(() -> {
             for (String type : new String[]{"BYTE", "SHORT", "INT"}) {
                 createNativeAndPartialParquetNarrowColumn(type);
 
                 // Positive wrap: every row passes; wrongly pruned on HEAD.
-                assertNativeMatchesPartialParquet("(-2649::SHORT * (965823)::INT) > c6", "c6\n1\n2\n");
-                assertNativeMatchesPartialParquet("c6 < (-2649::SHORT * (965823)::INT)", "c6\n1\n2\n");
+                assertNativeMatchesPartialParquet("(-2649::SHORT * (965_823)::INT) > c6", "c6\n1\n2\n");
+                assertNativeMatchesPartialParquet("c6 < (-2649::SHORT * (965_823)::INT)", "c6\n1\n2\n");
                 // Negative wrap: every row passes; wrongly pruned on HEAD from the other side.
-                assertNativeMatchesPartialParquet("c6 > (2649::SHORT * (965823)::INT)", "c6\n1\n2\n");
+                assertNativeMatchesPartialParquet("c6 > (2649::SHORT * (965_823)::INT)", "c6\n1\n2\n");
 
                 // Controls: the wrapped constant excludes every row (pass on HEAD too).
-                assertNativeMatchesPartialParquet("c6 > (-2649::SHORT * (965823)::INT)", "c6\n");
-                assertNativeMatchesPartialParquet("c6 < (2649::SHORT * (965823)::INT)", "c6\n");
+                assertNativeMatchesPartialParquet("c6 > (-2649::SHORT * (965_823)::INT)", "c6\n");
+                assertNativeMatchesPartialParquet("c6 < (2649::SHORT * (965_823)::INT)", "c6\n");
 
                 execute("DROP TABLE tn");
                 execute("DROP TABLE tp");

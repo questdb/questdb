@@ -90,8 +90,8 @@ public class SqlJitCompilerWideningBenchmark {
 
         engine.execute(
                 "create table if not exists " + TABLE_NAME + " as (select" +
-                        " ((x % 2000001) - 1000000)::int i32," +
-                        " timestamp_sequence(400000000000, 500000000) ts" +
+                        " ((x % 2_000_001) - 1_000_000)::int i32," +
+                        " timestamp_sequence(400_000_000_000, 500_000_000) ts" +
                         " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)",
                 ctx
         );
@@ -213,9 +213,9 @@ public class SqlJitCompilerWideningBenchmark {
 
     public enum Predicate {
         // Direct INT-to-LONG comparison: four-lane AVX2 in SIMD mode.
-        WIDENED("i32 < 5000000000"),
+        WIDENED("i32 < 5_000_000_000"),
         // Same widening plus a selective ordinary INT conjunct; still four-lane AVX2.
-        WIDENED_SELECTIVE("i32 < 5000000000 and i32 > 0"),
+        WIDENED_SELECTIVE("i32 < 5_000_000_000 and i32 > 0"),
         // Eight-lane AVX2 throughput control with the same result as WIDENED_SELECTIVE.
         ORDINARY("i32 > 0");
 

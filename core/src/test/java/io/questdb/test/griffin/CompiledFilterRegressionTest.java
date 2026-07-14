@@ -70,7 +70,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testBoolean() throws Exception {
         final String query = "x where bool1 or bool2 = false";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_boolean() bool1," +
                 " rnd_boolean() bool2" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -80,7 +80,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testBooleanOperators() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_int() i32," +
@@ -107,7 +107,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testChar() throws Exception {
         final String query = "x where ch > 'A' and ch < 'Z'";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_char() ch" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -122,7 +122,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0 " +
                 "and c9 > 0 and c10 > 0 and c11 > 0 and c12 > 0";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long() c1," +
                 " rnd_long() c2," +
                 " rnd_long() c3," +
@@ -147,7 +147,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "and f1 > 0.0 and f2 > 0.0 and f3 > 0.0 " +
                 "and d1 > 0.0 and d2 > 0.0 and d3 > 0.0";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int() i1," +
                 " rnd_int() i2," +
                 " rnd_int() i3," +
@@ -171,7 +171,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "c1 > 0 and c2 > 0 and c3 > 0 and c4 > 0 " +
                 "and c5 > 0 and c6 > 0 and c7 > 0 and c8 > 0";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long() c1," +
                 " rnd_long() c2," +
                 " rnd_long() c3," +
@@ -187,7 +187,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_int() i32," +
@@ -206,7 +206,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnArithmeticsNullComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
@@ -229,39 +229,39 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // widening on for the whole predicate. An overflowing narrow-int arithmetic
         // COLUMN product on the wrap-side of the INT-width comparison was then
         // sign-extended and computed at 64 bits, diverging from the Java filter's
-        // MulInt#getInt (which wraps mod 2^32): for ((a*b) = -727379968) = (nl > 0)
+        // MulInt#getInt (which wraps mod 2^32): for ((a*b) = -727_379_968) = (nl > 0)
         // the Java filter returned {1,3} and the JIT {2,4,5}. The narrow-arith leaf
         // widening is now derived per-comparison (i64WrapLeaves), so both agree.
         assertMemoryLeak(() -> {
-            execute("create table p as (select cast(1000000 as int) a, cast(1000000 as int) b," +
+            execute("create table p as (select cast(1_000_000 as int) a, cast(1_000_000 as int) b," +
                     " cast(x as long) rid," +
-                    " cast(case x when 1 then 1000000000000 when 3 then 5 else 0 end as long) nl," +
-                    " x::short cs, x::byte cbyte, timestamp_sequence(0, 1000000) k" +
+                    " cast(case x when 1 then 1_000_000_000_000 when 3 then 5 else 0 end as long) nl," +
+                    " x::short cs, x::byte cbyte, timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(5)) timestamp(k)");
             // Previously diverging shapes: an INT-width comparison of a narrow-int
             // product, ANDed as a boolean equality with a LONG comparison.
             // Absolute pin: only rows 1 and 3 (nl > 0) survive; the pre-fix JIT returned {2,4,5}.
-            assertJitMatchesJava("p where ((a*b) = -727379968) = (nl > 0)", true,
+            assertJitMatchesJava("p where ((a*b) = -727_379_968) = (nl > 0)", true,
                     "a\tb\trid\tnl\tcs\tcbyte\tk\n" +
                             "1000000\t1000000\t1\t1000000000000\t1\t1\t1970-01-01T00:00:00.000000Z\n" +
                             "1000000\t1000000\t3\t5\t3\t3\t1970-01-01T00:00:02.000000Z\n");
             assertJitMatchesJava("p where ((a*b) > 0) = (nl > 0)", true);           // no magic constant
-            assertJitMatchesJava("p where (nl > 0) = ((a*b) = -727379968)", true);  // operand order
-            assertJitMatchesJava("p where ((a*b) <> -727379968) = (nl > 0)", true);
+            assertJitMatchesJava("p where (nl > 0) = ((a*b) = -727_379_968)", true);  // operand order
+            assertJitMatchesJava("p where ((a*b) <> -727_379_968) = (nl > 0)", true);
             // The plain narrow column read on the LONG-comparison side sign-extends
             // value-preservingly; only the narrow product on the INT side wraps.
             assertJitMatchesJava("p where (cs = nl) = (a*b > 0)", true);
-            assertJitMatchesJava("p where (cbyte = nl) = (a*b = -727379968)", true);
+            assertJitMatchesJava("p where (cbyte = nl) = (a*b = -727_379_968)", true);
             // Controls: a LONG-width comparison inside the boolean equality still
             // widens the product on both paths.
             assertJitMatchesJava("p where (a*b > nl) = (nl > 0)", true);
             // Controls: single comparison, AND, OR each form separate predicate
             // contexts and were always correct.
-            assertJitMatchesJava("p where (a*b) = -727379968", true);
-            assertJitMatchesJava("p where (a*b) = -727379968 and nl > 0", true);
-            assertJitMatchesJava("p where (a*b) = -727379968 or nl > 0", true);
+            assertJitMatchesJava("p where (a*b) = -727_379_968", true);
+            assertJitMatchesJava("p where (a*b) = -727_379_968 and nl > 0", true);
+            assertJitMatchesJava("p where (a*b) = -727_379_968 or nl > 0", true);
             // Control: INT arith directly compared to a LONG column widens.
-            assertJitMatchesJava("p where a*b >= -432577000000L", true);
+            assertJitMatchesJava("p where a*b >= -432_577_000_000L", true);
         });
     }
 
@@ -280,13 +280,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // widened leaf emits SX_I64 (no AVX2 path), which forces scalar mode - the query
         // still JIT-compiles (usesCompiledFilter stays true), it just runs scalar.
         assertMemoryLeak(() -> {
-            execute("create table p as (select cast(1000000 as int) a, cast(1000000 as int) b," +
-                    " cast(case x when 1 then 1000000000000 else 0 end as long) nl," +
+            execute("create table p as (select cast(1_000_000 as int) a, cast(1_000_000 as int) b," +
+                    " cast(case x when 1 then 1_000_000_000_000 else 0 end as long) nl," +
                     " cast(1.0 as float) f32, x::short cs, x::byte cbyte," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(5)) timestamp(k)");
             // Primary repro: a narrow-int product vs a LONG column, in a boolean equality
-            // with a float sibling. a*b = 10^12 at long width but -727379968 wrapped at
+            // with a float sibling. a*b = 10^12 at long width but -727_379_968 wrapped at
             // int32. Absolute pin: only rows where (a*b > nl) matches (f32 > 0 = true),
             // i.e. nl = 0 (rows 2..5). The pre-fix JIT returned no rows.
             assertJitMatchesJava("p where ((a*b) > nl) = (f32 > 0)", true,
@@ -304,9 +304,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("p where (cbyte > nl) = (f32 > 0)", true);
             // Over-widening guard: an INT-width comparison of the narrow product must
             // still WRAP even with a float present - cmpType stays I4 there, so the
-            // product folds to exactly -727379968 and matches every row. Absolute pin:
-            // all 5 rows survive ((a*b) = -727379968 is true, f32 > 0 is true).
-            assertJitMatchesJava("p where ((a*b) = -727379968) = (f32 > 0)", true,
+            // product folds to exactly -727_379_968 and matches every row. Absolute pin:
+            // all 5 rows survive ((a*b) = -727_379_968 is true, f32 > 0 is true).
+            assertJitMatchesJava("p where ((a*b) = -727_379_968) = (f32 > 0)", true,
                     "a\tb\tnl\tf32\tcs\tcbyte\tk\n" +
                             "1000000\t1000000\t1000000000000\t1.0\t1\t1\t1970-01-01T00:00:00.000000Z\n" +
                             "1000000\t1000000\t0\t1.0\t2\t2\t1970-01-01T00:00:01.000000Z\n" +
@@ -329,7 +329,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // ARM64 fcmp with NaN sets NZCV=0011. Ordered less-than must use MI (not LT),
         // and ordered less-or-equal must use LS (not LE), otherwise NaN compares as true.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -347,7 +347,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnFloatConstantComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int() i32," +
                 " rnd_long() i64," +
                 " rnd_float() f32," +
@@ -366,7 +366,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Float equality uses epsilon comparison internally. ARM64 must use
         // GT (ordered, false for NaN) not HI (unsigned, true for NaN).
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -387,7 +387,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Previously is_float() used numeric_limits<float>::min() (smallest positive
         // normal) as lower bound, causing all negative floats to be promoted to f64.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -406,7 +406,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // element size (S vs D), requiring fcvt conversion.
         final String query = "x where f32 > 0.0 and f64 > 0.0 and f32 < 0.5 and f64 < 0.5";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -416,7 +416,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnIntConstantComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_int() i32," +
@@ -436,7 +436,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final int boundary = 42;
         Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x as byte) i8," +
                 " cast(x as short) i16," +
                 " cast(x as int) i32," +
@@ -454,7 +454,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnLessThanNullComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
@@ -488,7 +488,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "and c3 > 0 and c3 < 100 and c4 > 0 and c4 < 100 " +
                 "and c5 > 0 and c5 < 100";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 200, 0) c1," +
                 " rnd_long(0, 200, 0) c2," +
                 " rnd_long(0, 200, 0) c3," +
@@ -504,7 +504,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 + i64 > 100 and i64 * 2 < 180";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -517,7 +517,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "i32 > 10 and i32 < 90 and i64 > 20 and i64 < 80 " +
                 "and f64 > 0.1 and f64 < 0.9";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(0, 100, 0) i32," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_double() f64" +
@@ -532,7 +532,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 > 10 and i64 < 90 and i64 != 50";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -546,7 +546,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "and c5 > 5 and c6 > 6 and c7 > 7 and c8 > 8 " +
                 "and c9 > 9 and c10 > 10";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) c1," +
                 " rnd_long(0, 100, 0) c2," +
                 " rnd_long(0, 100, 0) c3," +
@@ -567,71 +567,71 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // (which used a LONG column). A FLOAT anywhere in the predicate suppresses the
         // predicate-global narrow-i64 widening, so markFloatI64WidenLeaves is the ONLY pass
         // that can sign-extend a narrow-int arithmetic subtree read at long width. For
-        // ((a*b) = 4999999999) = (f32 > 0) it correctly widens the product's leaves (a, b) so
+        // ((a*b) = 4_999_999_999) = (f32 > 0) it correctly widens the product's leaves (a, b) so
         // the JIT computes a*b = 5e9 at 64 bits, but it returned at the bare CONSTANT leaf and
-        // left 4999999999 unwidened. The type observer sees only INT and FLOAT columns (both
+        // left 4_999_999_999 unwidened. The type observer sees only INT and FLOAT columns (both
         // 4 bytes, so hasMixedSizes() is false), types the constant down to F4, and
-        // serializeNumber rounds it to the nearest float - 4999999999 -> 5.0e9f (floats near
+        // serializeNumber rounds it to the nearest float - 4_999_999_999 -> 5.0e9f (floats near
         // 2^32 are 512 apart) - so the JIT float-compared 5e9 == 5.0e9f and matched, while the
-        // Java filter reads MulInt#getLong vs the LONG literal (5e9 == 4999999999, no match).
+        // Java filter reads MulInt#getLong vs the LONG literal (5e9 == 4_999_999_999, no match).
         // JIT returned every row, Java none. markI64Widen now widens a bare out-of-INT-range
         // integer constant compared against a narrow-int arithmetic operand, so
         // serializeConstant emits a full I8 IMM. The widened product forces scalar mode
         // (SX_I64 has no AVX2 path); the query still JIT-compiles (usesCompiledFilter stays
         // true).
         assertMemoryLeak(() -> {
-            execute("create table p as (select cast(100000 as int) a, cast(50000 as int) b," +
+            execute("create table p as (select cast(100_000 as int) a, cast(50_000 as int) b," +
                     " cast(1.0 as float) f32, cast(1.0 as double) f64," +
                     " x::short cs, x::byte cbyte," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(5)) timestamp(k)");
-            // Primary repro: a*b = 5e9 at long width but 4999999999 rounds to 5.0e9f. Absolute
-            // pin: the equality is false on the Java path (5e9 != 4999999999), so the boolean
+            // Primary repro: a*b = 5e9 at long width but 4_999_999_999 rounds to 5.0e9f. Absolute
+            // pin: the equality is false on the Java path (5e9 != 4_999_999_999), so the boolean
             // equality with (f32 > 0 = true) is false for every row - 0 rows. The pre-fix JIT
             // returned all 5.
-            assertJitMatchesJava("select cs from p where ((a*b) = 4999999999) = (f32 > 0)", true, "cs\n");
+            assertJitMatchesJava("select cs from p where ((a*b) = 4_999_999_999) = (f32 > 0)", true, "cs\n");
             // Every comparison operator diverges the same way (the constant rounds up to 5e9f):
             // > flips true->false, <= flips false->true, <> flips true->false. Absolute pin the
-            // > case: (a*b) > 4999999999 is true, so the boolean equality is true for all rows.
-            assertJitMatchesJava("select cs from p where ((a*b) > 4999999999) = (f32 > 0)", true,
+            // > case: (a*b) > 4_999_999_999 is true, so the boolean equality is true for all rows.
+            assertJitMatchesJava("select cs from p where ((a*b) > 4_999_999_999) = (f32 > 0)", true,
                     "cs\n1\n2\n3\n4\n5\n");
-            assertJitMatchesJava("select cs from p where ((a*b) <= 4999999999) = (f32 > 0)", true, "cs\n");
-            assertJitMatchesJava("select cs from p where ((a*b) <> 4999999999) = (f32 > 0)", true,
+            assertJitMatchesJava("select cs from p where ((a*b) <= 4_999_999_999) = (f32 > 0)", true, "cs\n");
+            assertJitMatchesJava("select cs from p where ((a*b) <> 4_999_999_999) = (f32 > 0)", true,
                     "cs\n1\n2\n3\n4\n5\n");
-            // Non-diverging operators (5e9 >= / < 5e9f agree with 5e9 >= / < 4999999999): the
+            // Non-diverging operators (5e9 >= / < 5e9f agree with 5e9 >= / < 4_999_999_999): the
             // fix must keep them correct.
-            assertJitMatchesJava("p where ((a*b) >= 4999999999) = (f32 > 0)", true);
-            assertJitMatchesJava("p where ((a*b) < 4999999999) = (f32 > 0)", true);
+            assertJitMatchesJava("p where ((a*b) >= 4_999_999_999) = (f32 > 0)", true);
+            assertJitMatchesJava("p where ((a*b) < 4_999_999_999) = (f32 > 0)", true);
             // Operand order (constant on the left, and the two comparisons swapped).
-            assertJitMatchesJava("p where (4999999999 = (a*b)) = (f32 > 0)", true);
-            assertJitMatchesJava("p where (f32 > 0) = ((a*b) = 4999999999)", true);
+            assertJitMatchesJava("p where (4_999_999_999 = (a*b)) = (f32 > 0)", true);
+            assertJitMatchesJava("p where (f32 > 0) = ((a*b) = 4_999_999_999)", true);
             // Through a NOT wrapper.
-            assertJitMatchesJava("p where not (((a*b) = 4999999999) = (f32 > 0))", true);
+            assertJitMatchesJava("p where not (((a*b) = 4_999_999_999) = (f32 > 0))", true);
 
             // SAFE boundaries - must keep passing, do not over-widen:
             // Negated / folded constant is an OPERATION handled by the fold-root path, not by
-            // the bare-CONSTANT widen: (a*b) < -4999999999 is false, so the equality is false.
-            assertJitMatchesJava("p where ((a*b) < -4999999999) = (f32 > 0)", true);
+            // the bare-CONSTANT widen: (a*b) < -4_999_999_999 is false, so the equality is false.
+            assertJitMatchesJava("p where ((a*b) < -4_999_999_999) = (f32 > 0)", true);
             // AND / OR siblings split into separate predicate contexts (no float suppression on
-            // the (a*b) = 4999999999 sub-predicate, so needsNarrowI64Widening handles it).
-            assertJitMatchesJava("p where (a*b) = 4999999999 and f32 > 0", true);
-            assertJitMatchesJava("p where (a*b) = 4999999999 or f32 > 0", true);
+            // the (a*b) = 4_999_999_999 sub-predicate, so needsNarrowI64Widening handles it).
+            assertJitMatchesJava("p where (a*b) = 4_999_999_999 and f32 > 0", true);
+            assertJitMatchesJava("p where (a*b) = 4_999_999_999 or f32 > 0", true);
             // A DOUBLE sibling makes hasMixedSizes() true (I4 vs F8), so serializeUntypedNumber
             // already emits an exact I8 - the fix widens redundantly, result unchanged.
-            assertJitMatchesJava("p where ((a*b) = 4999999999) = (f64 > 0)", true);
+            assertJitMatchesJava("p where ((a*b) = 4_999_999_999) = (f64 > 0)", true);
             // BYTE / SHORT products cannot reach 2^31 and their I1 / I2 size differs from F4, so
             // the constant is already mixed-size (exact I8) and never hits the float gap.
-            assertJitMatchesJava("p where ((cbyte * cbyte) = 4999999999) = (f32 > 0)", true);
-            assertJitMatchesJava("p where ((cs * cs) = 4999999999) = (f32 > 0)", true);
-            // A constant-fold root (2500000000 + 2499999999 = 4999999999) is collapsed by
+            assertJitMatchesJava("p where ((cbyte * cbyte) = 4_999_999_999) = (f32 > 0)", true);
+            assertJitMatchesJava("p where ((cs * cs) = 4_999_999_999) = (f32 > 0)", true);
+            // A constant-fold root (2_500_000_000 + 2_499_999_999 = 4_999_999_999) is collapsed by
             // descend() and widened by markI64WidenFoldRoots, not the bare-CONSTANT path.
-            assertJitMatchesJava("p where ((a*b) > (2500000000 + 2499999999)) = (f32 > 0)", true);
+            assertJitMatchesJava("p where ((a*b) > (2_500_000_000 + 2_499_999_999)) = (f32 > 0)", true);
             // An IN key takes its per-element width from serializeIn's inKeyWidthOverride.
-            assertJitMatchesJava("p where ((a*b) in (4999999999)) = (f32 > 0)", true);
-            // Over-widening guard: an IN-RANGE constant (705032704 = 5e9 wrapped mod 2^32) must
+            assertJitMatchesJava("p where ((a*b) in (4_999_999_999)) = (f32 > 0)", true);
+            // Over-widening guard: an IN-RANGE constant (705_032_704 = 5e9 wrapped mod 2^32) must
             // still WRAP against the INT-width product - cmpType stays I4, the constant stays
             // I4, and MulInt#getInt matches it on both paths. Absolute pin: all 5 rows survive.
-            assertJitMatchesJava("select cs from p where ((a*b) = 705032704) = (f32 > 0)", true,
+            assertJitMatchesJava("select cs from p where ((a*b) = 705_032_704) = (f32 > 0)", true,
                     "cs\n1\n2\n3\n4\n5\n");
         });
     }
@@ -639,7 +639,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testConstantColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_int() i32," +
@@ -668,7 +668,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "and i64 != 30 and i64 != 40 and i64 != 50 and i64 != 60 " +
                 "and i64 != 70 and i64 != 80 and i64 != 90";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 200, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -682,7 +682,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "and f32 > 0.1 and f32 < 0.9 and f64 > 0.2 and f64 < 0.8 " +
                 "and i32 != 50 and i64 != 100 and f32 != 0.5 and f64 != 0.5";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(0, 200, 0) i32," +
                 " rnd_long(0, 300, 0) i64," +
                 " rnd_float() f32," +
@@ -698,7 +698,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "i64 > 1 and i64 < 100 and i64 != 50 and i64 != 51 " +
                 "and i64 != 52 and i64 != 53 and i64 != 54 and i64 != 55";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 200, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -708,13 +708,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testConstantFoldDivisionAtIntWidth() throws Exception {
         // A folded constant with a non-modular operator (division) must replicate
         // the Java filter's per-op INT wrapping at an INT-width comparison.
-        // (1000000 * 1000000) / 7 folds in long to 142857142857, whose low 32
-        // bits are +1123222089, but DivInt#getInt computes
-        // (int) (1000000 * 1000000) / 7 = -103911424. Folding in long and
+        // (1_000_000 * 1_000_000) / 7 folds in long to 142_857_142_857, whose low 32
+        // bits are +1_123_222_089, but DivInt#getInt computes
+        // (int) (1_000_000 * 1_000_000) / 7 = -103_911_424. Folding in long and
         // truncating diverged: the JIT returned 0 rows where the Java filter
         // returned every row.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x - 100 as byte) i8," +
                 " cast(x - 100 as short) i16," +
                 " cast(x - 100 as int) i32," +
@@ -722,13 +722,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
-            // Per-op INT wrap = -103911424; every narrow/INT row (>= -99) exceeds it.
-            assertQueryNotNullNoLeakCheck("x where i8 > (1000000 * 1000000) / 7");
-            assertQueryNotNullNoLeakCheck("x where i16 > (1000000 * 1000000) / 7");
-            assertQueryNotNullNoLeakCheck("x where i32 > (1000000 * 1000000) / 7");
-            // LONG column reads full long width via DivInt#getLong = 142857142857;
+            // Per-op INT wrap = -103_911_424; every narrow/INT row (>= -99) exceeds it.
+            assertQueryNotNullNoLeakCheck("x where i8 > (1_000_000 * 1_000_000) / 7");
+            assertQueryNotNullNoLeakCheck("x where i16 > (1_000_000 * 1_000_000) / 7");
+            assertQueryNotNullNoLeakCheck("x where i32 > (1_000_000 * 1_000_000) / 7");
+            // LONG column reads full long width via DivInt#getLong = 142_857_142_857;
             // no i64 row reaches it, and the I8 fold path already agreed here.
-            assertQueryNullableNoLeakCheck("x where i64 > (1000000 * 1000000) / 7");
+            assertQueryNullableNoLeakCheck("x where i64 > (1_000_000 * 1_000_000) / 7");
         });
     }
 
@@ -737,27 +737,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // An inner constant product that wraps to EXACTLY INT_NULL (-2^31)
         // poisons the rest of an INT-width fold: the Java filter's
         // MulInt/AddInt#getInt return INT_NULL once an operand is INT_NULL, so
-        // i8 > (65536 * 32768) * 2 collapses to i8 > NULL (no rows). The JIT I4
+        // i8 > (65_536 * 32_768) * 2 collapses to i8 > NULL (no rows). The JIT I4
         // fold did pure modular arithmetic (-2^31 * 2 = 0) and returned i8 > 0
         // (rows). tryFoldConstantArithI4 now propagates INT_NULL like the
         // runtime ops, so both paths agree.
         assertMemoryLeak(() -> {
-            execute("create table x as (select timestamp_sequence(0, 1000000) k," +
+            execute("create table x as (select timestamp_sequence(0, 1_000_000) k," +
                     " cast(x - 2 as byte) i8," +
                     " cast(x - 2 as short) i16," +
                     " cast(x - 2 as int) i32," +
                     " (x - 2) i64" +
                     " from long_sequence(5)) timestamp(k)");
-            // INT-width comparisons: inner 65536 * 32768 wraps to INT_NULL, so
+            // INT-width comparisons: inner 65_536 * 32_768 wraps to INT_NULL, so
             // the whole fold is NULL and no row matches.
             // Absolute pin: the fold collapses to NULL, so no row matches (header only); the
             // pre-fix JIT read i8 > 0 and returned rows.
-            assertJitMatchesJava("x where i8 > (65536 * 32768) * 2", true, "k\ti8\ti16\ti32\ti64\n");
-            assertJitMatchesJava("x where i16 > (65536 * 32768) * 2", true);
-            assertJitMatchesJava("x where i32 > (65536 * 32768) * 2", true);
+            assertJitMatchesJava("x where i8 > (65_536 * 32_768) * 2", true, "k\ti8\ti16\ti32\ti64\n");
+            assertJitMatchesJava("x where i16 > (65_536 * 32_768) * 2", true);
+            assertJitMatchesJava("x where i32 > (65_536 * 32_768) * 2", true);
             // LONG column promotes to long width: getLong() never wraps onto the
-            // sentinel, so the constant is the genuine 4294967296 on both paths.
-            assertJitMatchesJava("x where i64 > (65536 * 32768) * 2", true);
+            // sentinel, so the constant is the genuine 4_294_967_296 on both paths.
+            assertJitMatchesJava("x where i64 > (65_536 * 32_768) * 2", true);
         });
     }
 
@@ -767,34 +767,34 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // product that lands EXACTLY on Long.MIN_VALUE (-2^63, the LONG null
         // sentinel) poisons the rest of a long-width fold: the Java filter's
         // MulLong/AddLong#getLong return LONG_NULL once an operand is LONG_NULL,
-        // so i64 = (4611686018427387904 * -2) + 5 folds the RHS to NULL and
+        // so i64 = (4_611_686_018_427_387_904 * -2) + 5 folds the RHS to NULL and
         // matches the null row. The JIT long fold kept computing full-width
         // arithmetic ((2^62 * -2) + 5 = Long.MIN + 5) and matched no row.
         // tryFoldConstantArith now propagates LONG_NULL, so both paths agree.
         assertMemoryLeak(() -> {
-            execute("create table lp as (select timestamp_sequence(0, 1000000) k," +
+            execute("create table lp as (select timestamp_sequence(0, 1_000_000) k," +
                     " case when x = 1 then cast(null as long) else x end i64" +
                     " from long_sequence(3)) timestamp(k)");
-            // 4611686018427387904 = 2^62; 2^62 * -2 = Long.MIN (intermediate),
+            // 4_611_686_018_427_387_904 = 2^62; 2^62 * -2 = Long.MIN (intermediate),
             // + 5 a non-sentinel final. The fold collapses to LONG_NULL on both
             // paths, so only the null row matches '='.
             // Absolute pin: the fold collapses to LONG_NULL, so only the null row matches '=';
             // the pre-fix JIT computed Long.MIN + 5 and matched nothing.
-            assertJitMatchesJava("lp where i64 = (4611686018427387904 * -2) + 5", true,
+            assertJitMatchesJava("lp where i64 = (4_611_686_018_427_387_904 * -2) + 5", true,
                     "k\ti64\n" +
                             "1970-01-01T00:00:00.000000Z\tnull\n");
-            assertJitMatchesJava("lp where i64 <> (4611686018427387904 * -2) + 5", true);
-            assertJitMatchesJava("lp where i64 in (1, (4611686018427387904 * -2) + 5)", true);
-            assertJitMatchesJava("lp where i64 not in (1, (4611686018427387904 * -2) + 5)", true);
+            assertJitMatchesJava("lp where i64 <> (4_611_686_018_427_387_904 * -2) + 5", true);
+            assertJitMatchesJava("lp where i64 in (1, (4_611_686_018_427_387_904 * -2) + 5)", true);
+            assertJitMatchesJava("lp where i64 not in (1, (4_611_686_018_427_387_904 * -2) + 5)", true);
             // Control: a fold whose FINAL value is Long.MIN agrees coincidentally
             // (both paths emit the sentinel), so it was never a divergence.
-            assertJitMatchesJava("lp where i64 = 4611686018427387904 * -2", true);
+            assertJitMatchesJava("lp where i64 = 4_611_686_018_427_387_904 * -2", true);
         });
     }
 
     @Test
     public void testConstantFoldRootUnderLongWithFloat() throws Exception {
-        // An overflowing constant product (258558 * -259815) nested under a LONG
+        // An overflowing constant product (258_558 * -259_815) nested under a LONG
         // add (c0 + ...) is read at long width by AddLong#getLong, so the Java
         // filter never wraps it. A FLOAT in the predicate suppressed the global
         // narrow-i64 widening, and the old check only looked at LONG *leaves*, so the
@@ -803,23 +803,23 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // full I8 IMM.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c0 LONG, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), " +
-                    "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
-                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
+            execute("INSERT INTO t SELECT rnd_long(-1_000_000, 1_000_000, 8), " +
+                    "rnd_int(-1_000_000, 1_000_000, 8), rnd_float(8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L) " +
                     "FROM long_sequence(122)");
             // Previously diverging shapes: fold root under a genuine LONG op with a
             // FLOAT comparison. Still JIT-compiled, now correct.
             // Absolute pin: the fold is a large negative long, so no float c9 is <= it and Java
             // returns 0 rows; the pre-fix JIT wrapped it to a small I4 and returned every row.
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (258558 * -259815))", true,
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (258_558 * -259_815))", true,
                     "c0\tc8\tc9\tts\n");
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 - (258558 * -259815))", true);
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((258558 * -259815) + c0)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 - (258_558 * -259_815))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((258_558 * -259_815) + c0)", true);
             // Control: direct float-vs-overflow comparison still wraps via
             // getDouble(getInt()), so the wrapped I4 fold remains correct.
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (258558 * -259815)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (258_558 * -259_815)", true);
             // Control: pure-INT arithmetic under a float wraps (no genuine LONG).
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 + (258558 * -259815))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 + (258_558 * -259_815))", true);
         });
     }
 
@@ -829,33 +829,33 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // SINGLE predicate context, so a predicate-global width signal applies
         // one width to both comparisons. An overflowing INT fold then took the
         // wrong width:
-        //   - I4-where-I8: (1000000 * 1000000 > i64) = (f32 > 0) - the fold
+        //   - I4-where-I8: (1_000_000 * 1_000_000 > i64) = (f32 > 0) - the fold
         //     feeds a LONG comparison and must read at long width, but the float
         //     suppressed global widening and the fold root went unmarked, so the
         //     JIT emitted a wrapped I4 (Java 2 rows, JIT 0).
-        //   - I8-where-I4: (ci > 1000000 * 1000000) = (cl > 0) - the fold feeds
+        //   - I8-where-I4: (ci > 1_000_000 * 1_000_000) = (cl > 0) - the fold feeds
         //     an INT comparison and must wrap, but the predicate-global
         //     long-widening (driven by the sibling LONG comparison) forced it to
         //     I8 (Java 3 rows, JIT 0).
         // The fold width is now derived from the fold's own comparison context.
         assertMemoryLeak(() -> {
-            execute("create table x as (select timestamp_sequence(0, 1000000) k, x id," +
-                    " (case when x = 1 then 0L when x = 2 then 5L else 2000000000000L end) i64," +
+            execute("create table x as (select timestamp_sequence(0, 1_000_000) k, x id," +
+                    " (case when x = 1 then 0L when x = 2 then 5L else 2_000_000_000_000L end) i64," +
                     " x::int ci, x::long cl, 1.0f f32" +
                     " from long_sequence(3)) timestamp(k)");
             // Previously diverging shapes, both directions.
             // Absolute pin: Java keeps ids 1 and 2; the pre-fix JIT wrapped the fold and
             // returned 0 rows.
-            assertJitMatchesJava("select id from x where (1000000 * 1000000 > i64) = (f32 > 0)", true,
+            assertJitMatchesJava("select id from x where (1_000_000 * 1_000_000 > i64) = (f32 > 0)", true,
                     "id\n1\n2\n");
-            assertJitMatchesJava("select id from x where (ci > 1000000 * 1000000) = (cl > 0)", true);
+            assertJitMatchesJava("select id from x where (ci > 1_000_000 * 1_000_000) = (cl > 0)", true);
             // Controls: single comparison, AND, OR each split into separate
             // predicate contexts and were always correct.
-            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000", true);
-            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000 and cl > 0", true);
-            assertJitMatchesJava("select id from x where ci > 1000000 * 1000000 or cl > 0", true);
+            assertJitMatchesJava("select id from x where ci > 1_000_000 * 1_000_000", true);
+            assertJitMatchesJava("select id from x where ci > 1_000_000 * 1_000_000 and cl > 0", true);
+            assertJitMatchesJava("select id from x where ci > 1_000_000 * 1_000_000 or cl > 0", true);
             // Control: the LONG column reads the fold at long width on both paths.
-            assertJitMatchesJava("select id from x where i64 > 1000000 * 1000000", true);
+            assertJitMatchesJava("select id from x where i64 > 1_000_000 * 1_000_000", true);
         });
     }
 
@@ -863,44 +863,44 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testConstantOperandWidthUnderBooleanEquality() throws Exception {
         // The constant-operand analog of testColumnArithmeticWidthUnderBooleanEquality.
         // A boolean equality of two comparisons - (cmp) = (cmp) - forms a SINGLE
-        // predicate context, so a sibling LONG comparison (here i32*3000000000, whose
+        // predicate context, so a sibling LONG comparison (here i32*3_000_000_000, whose
         // out-of-INT-range constant promotes to long) turns the predicate-global
         // narrow-i64 widening on for the whole predicate. The narrow-int COLUMN leaf
         // on the wrap-side comparison is already kept at i32 (i64WrapLeaves), but the
         // in-range CONSTANT operand it multiplies with (the 2 in i32*2) was still
         // widened to i64 by serializeConstant, so the JIT promoted the whole product
         // to long width and never wrapped - MulInt#getInt wraps mod 2^32 in the Java
-        // filter. For (i32*3000000000 > 0) = (i32*2 > 5) the Java filter returned
+        // filter. For (i32*3_000_000_000 > 0) = (i32*2 > 5) the Java filter returned
         // 2 rows and the JIT 4. serializeConstant now keeps an i64WrapLeaves constant
         // at i32, matching the wrap-side column, so both agree. JIT stays enabled.
         assertMemoryLeak(() -> {
             execute("create table t (i32 int, i64 long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values " +
-                    "(2147483647, 1, 0)," +
-                    "(2147483646, 2, 1000000)," +
-                    "(3, 3, 2000000)," +
-                    "(null, null, 3000000)");
+                    "(2_147_483_647, 1, 0)," +
+                    "(2_147_483_646, 2, 1_000_000)," +
+                    "(3, 3, 2_000_000)," +
+                    "(null, null, 3_000_000)");
             // Previously diverging shapes: an in-range constant operand on the wrap
             // side of an INT-width comparison, paired with a LONG-width comparison.
             // Absolute pin: Java keeps 2 rows (i32=3 and the null row); the pre-fix JIT widened
             // the in-range "2" operand and returned 4.
-            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 * 2 > 5)", true,
+            assertJitMatchesJava("t where (i32 * 3_000_000_000 > 0) = (i32 * 2 > 5)", true,
                     "i32\ti64\tts\n" +
                             "3\t3\t1970-01-01T00:00:02.000000Z\n" +
                             "null\tnull\t1970-01-01T00:00:03.000000Z\n");
-            assertJitMatchesJava("t where (i32 * 2 > 5) = (i32 * 3000000000 > 0)", true); // operand order
-            assertJitMatchesJava("t where (i32 * 3000000000 > 0) <> (i32 * 2 > 5)", true);
+            assertJitMatchesJava("t where (i32 * 2 > 5) = (i32 * 3_000_000_000 > 0)", true); // operand order
+            assertJitMatchesJava("t where (i32 * 3_000_000_000 > 0) <> (i32 * 2 > 5)", true);
             // The LONG-comparison side is an out-of-INT-range constant equality.
-            assertJitMatchesJava("t where (i32 = 2147483648) = (i32 * 2 > 5)", true);
+            assertJitMatchesJava("t where (i32 = 2_147_483_648) = (i32 * 2 > 5)", true);
             // Addition instead of multiplication on the wrap side.
-            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 + 2000000000 > 5)", true);
+            assertJitMatchesJava("t where (i32 * 3_000_000_000 > 0) = (i32 + 2_000_000_000 > 5)", true);
             // Mixed-size path (i64 observed too): serializeUntypedNumber keeps the 2 at i32.
-            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 * 2 > 5) and i64 > 0", true);
+            assertJitMatchesJava("t where (i32 * 3_000_000_000 > 0) = (i32 * 2 > 5) and i64 > 0", true);
             // Controls: single comparison, AND, OR each form separate predicate
             // contexts and already wrapped the constant on both paths.
             assertJitMatchesJava("t where i32 * 2 > 5", true);
-            assertJitMatchesJava("t where i32 * 2 > 5 and i32 * 3000000000 > 0", true);
-            assertJitMatchesJava("t where i32 * 2 > 5 or i32 * 3000000000 > 0", true);
+            assertJitMatchesJava("t where i32 * 2 > 5 and i32 * 3_000_000_000 > 0", true);
+            assertJitMatchesJava("t where i32 * 2 > 5 or i32 * 3_000_000_000 > 0", true);
         });
     }
 
@@ -910,15 +910,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // vectorized. A BYTE column compares at INT width, so the JIT folds the
         // constant to a wrapped I4 IMM, matching the Java filter's getInt() wrap.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x - 100 as byte) i8" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
             // -1.04e17 wraps to +1_699_321_072 at INT width; no BYTE exceeds it.
-            assertQueryNullableNoLeakCheck("x where i8 > -286452 * (-952151 * -382988)");
+            assertQueryNullableNoLeakCheck("x where i8 > -286_452 * (-952_151 * -382_988)");
             // Symmetric: +1.04e17 wraps to -1_699_321_072, below every BYTE.
-            assertQueryNotNullNoLeakCheck("x where i8 > 286452 * (952151 * 382988)");
+            assertQueryNotNullNoLeakCheck("x where i8 > 286_452 * (952_151 * 382_988)");
         });
     }
 
@@ -927,15 +927,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // INT column compares at INT width: the JIT wraps the constant (I4) like
         // the Java filter rather than widening to i64.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x - 100 as int) i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
             // Wraps to +1_699_321_072: no INT row exceeds it.
-            assertQueryNullableNoLeakCheck("x where i32 > -286452 * (-952151 * -382988)");
+            assertQueryNullableNoLeakCheck("x where i32 > -286_452 * (-952_151 * -382_988)");
             // Wraps to -1_699_321_072: below every INT row.
-            assertQueryNotNullNoLeakCheck("x where i32 > 286452 * (952151 * 382988)");
+            assertQueryNotNullNoLeakCheck("x where i32 > 286_452 * (952_151 * 382_988)");
         });
     }
 
@@ -944,15 +944,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // A LONG column promotes the comparison to LONG: both the Java filter
         // (getLong()) and the JIT (i64 fold) read full long width and never wrap.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " (x - 100) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
             // -1.04e17 stays -1.04e17 at LONG width; every LONG row exceeds it.
-            assertQueryNotNullNoLeakCheck("x where i64 > -286452 * (-952151 * -382988)");
+            assertQueryNotNullNoLeakCheck("x where i64 > -286_452 * (-952_151 * -382_988)");
             // +1.04e17 stays +1.04e17; no LONG row exceeds it.
-            assertQueryNullableNoLeakCheck("x where i64 > 286452 * (952151 * 382988)");
+            assertQueryNullableNoLeakCheck("x where i64 > 286_452 * (952_151 * 382_988)");
         });
     }
 
@@ -960,15 +960,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testConstantOverflowFoldOnShortColumn() throws Exception {
         // A SHORT column promotes to INT, so the constant wraps at INT width.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x - 100 as short) i16" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertMemoryLeak(() -> {
             execute(ddl);
             // Wraps to +1_699_321_072: no SHORT row exceeds it.
-            assertQueryNullableNoLeakCheck("x where i16 > -286452 * (-952151 * -382988)");
+            assertQueryNullableNoLeakCheck("x where i16 > -286_452 * (-952_151 * -382_988)");
             // Wraps to -1_699_321_072: below every SHORT row.
-            assertQueryNotNullNoLeakCheck("x where i16 > 286452 * (952151 * 382988)");
+            assertQueryNotNullNoLeakCheck("x where i16 > 286_452 * (952_151 * 382_988)");
         });
     }
 
@@ -976,7 +976,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testConstantOverflowFoldVariousOps() throws Exception {
         // The fold path covers +, -, *, /, and unary minus uniformly.
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x - 100 as byte) i8," +
                 " (x - 100) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -985,16 +985,16 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // i64 values lie in [-99, 414]; the four constants all evaluate to a
             // value below every i64 row, so > matches every row and exercises
             // the fold path uniformly across all four operators.
-            assertQueryNotNullNoLeakCheck("x where i64 > -5000000000 + -5000000000");
-            assertQueryNotNullNoLeakCheck("x where i64 > -5000000000 - 5000000000");
-            assertQueryNotNullNoLeakCheck("x where i64 > -100000 * 100000");
-            assertQueryNotNullNoLeakCheck("x where i64 > -1000000000000 / 1");
+            assertQueryNotNullNoLeakCheck("x where i64 > -5_000_000_000 + -5_000_000_000");
+            assertQueryNotNullNoLeakCheck("x where i64 > -5_000_000_000 - 5_000_000_000");
+            assertQueryNotNullNoLeakCheck("x where i64 > -100_000 * 100_000");
+            assertQueryNotNullNoLeakCheck("x where i64 > -1_000_000_000_000 / 1");
             // Unary minus over an overflowing product. The i64 column promotes
             // to LONG and reads full width (-1.04e17); every row passes.
-            assertQueryNotNullNoLeakCheck("x where i64 > -(286452 * (-952151 * -382988))");
+            assertQueryNotNullNoLeakCheck("x where i64 > -(286_452 * (-952_151 * -382_988))");
             // Same constant on a BYTE column compares at INT width: wraps to
             // +1_699_321_072, which no BYTE row exceeds (wrapped-I4 fold path).
-            assertQueryNullableNoLeakCheck("x where i8 > -(286452 * (-952151 * -382988))");
+            assertQueryNullableNoLeakCheck("x where i8 > -(286_452 * (-952_151 * -382_988))");
         });
     }
 
@@ -1004,7 +1004,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String ddl = "create table x as " +
                 "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
                 " rnd_double() price, \n" +
-                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                " timestamp_sequence(172_800_000_000, 360_000_000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
         assertQueryNotNullNoCount(query, ddl);
     }
@@ -1013,7 +1013,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testDate() throws Exception {
         final String query = "x where d1 != d2";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d1," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d2" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1024,7 +1024,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testDateNull() throws Exception {
         final String query = "x where d <> null";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 5) d" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNullable(query, ddl);
@@ -1047,7 +1047,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table dc as (select" +
                     " x rid," +
-                    " cast(100000 as int) a," +
+                    " cast(100_000 as int) a," +
                     " cast(1000 as int) b," +
                     " x::short cs," +
                     " x::byte cbyte," +
@@ -1060,7 +1060,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     // wrongly widens under an INT comparison matches nothing.
                     " cast(case x when 1 then -449_931_736 when 2 then 0 when 3 then -447_929_736" +
                     " when 4 then 1 else 0 end as int) ni," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(5)) timestamp(k)");
             // Deep all-narrow-int spine read at INT width: every node is narrow, so the marker walk
             // prunes at the root; the JIT must still wrap (getInt) exactly like the Java filter. The
@@ -1083,19 +1083,19 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("select rid from dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) >= 101_000_000_000_000L", true,
                     "rid\n1\n2\n3\n4\n5\n");
             // Deep spine with an overflowing pure-constant fold at the leaf: narrow (wraps) vs long
-            // (widens) contexts must each still agree. 1000000 * 1000000 folds to an INT-typed node
+            // (widens) contexts must each still agree. 1_000_000 * 1_000_000 folds to an INT-typed node
             // whose getInt() wraps to -727_379_968 and whose getLong() widens to 10^12, so + 1 + 2 + 3
             // yields -727_379_962 against the INT column a and 1_000_000_000_006 against the LONG
             // column nl. Both pins name the value directly, so a fold at the wrong width fails here
             // rather than agreeing on both paths.
-            assertJitMatchesJava("select rid from dc where (a + ((((1000000 * 1000000) + 1) + 2) + 3)) = -727_279_962", true,
+            assertJitMatchesJava("select rid from dc where (a + ((((1_000_000 * 1_000_000) + 1) + 2) + 3)) = -727_279_962", true,
                     "rid\n1\n2\n3\n4\n5\n");
-            assertJitMatchesJava("select rid from dc where (a + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true,
+            assertJitMatchesJava("select rid from dc where (a + ((((1_000_000 * 1_000_000) + 1) + 2) + 3)) > 0", true,
                     "rid\n");
             // nl is 0 on row 3, so the widened fold is the only value that can match there.
-            assertJitMatchesJava("select rid from dc where (nl + ((((1000000 * 1000000) + 1) + 2) + 3)) = 1_000_000_000_006L", true,
+            assertJitMatchesJava("select rid from dc where (nl + ((((1_000_000 * 1_000_000) + 1) + 2) + 3)) = 1_000_000_000_006L", true,
                     "rid\n3\n");
-            assertJitMatchesJava("select rid from dc where (nl + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true,
+            assertJitMatchesJava("select rid from dc where (nl + ((((1_000_000 * 1_000_000) + 1) + 2) + 3)) > 0", true,
                     "rid\n1\n2\n3\n4\n5\n");
         });
     }
@@ -1108,9 +1108,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // observer types the constant F4; a co-present float also suppresses the global
         // narrow-i64 widening. serializeConstant then emitted the constant as a lossy
         // 32-bit float and the predicate vectorized, but AVX2 convert() has no i32->i64
-        // path, so i32 * 3000000000 was computed as a float multiply. The Java filter
+        // path, so i32 * 3_000_000_000 was computed as a float multiply. The Java filter
         // computes it at long width (MulInt#getLong) and only then converts to floating
-        // point, so for i32=7 it kept the row (21000000000 > 20999999488.0) while the JIT
+        // point, so for i32=7 it kept the row (21_000_000_000 > 20999999488.0) while the JIT
         // dropped it (20999999488.0f > 20999999488.0f is false).
         // The serializer now flags the out-of-range integer operand: it emits a full I8
         // IMM and runs scalar, where the scalar convert() widens the narrow column to i64
@@ -1118,35 +1118,35 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (i32 int, i64 long, fcol float, dcol double, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values " +
-                    "(7, 7, 20999999488.0, 20999999488.0, 0)," +           // 7*3e9=21000000000 > fcol; float multiply drops it
-                    "(-7, -7, 20999999488.0, 20999999488.0, 1000000)," +   // negative operand exercised via the fold path
-                    "(1, 1, 2000000000000.0, 2000000000000.0, 2000000)," + // addition: 1+2e12 > fcol; float add loses the 1
-                    "(46341, 46341, 5.0, 5.0, 3000000)," +
-                    "(0, 0, -1.0, -1.0, 4000000)," +
-                    "(null, null, 1.0, 1.0, 5000000)");
+                    "(7, 7, 20999999488.0, 20999999488.0, 0)," +           // 7*3e9=21_000_000_000 > fcol; float multiply drops it
+                    "(-7, -7, 20999999488.0, 20999999488.0, 1_000_000)," +   // negative operand exercised via the fold path
+                    "(1, 1, 2000000000000.0, 2000000000000.0, 2_000_000)," + // addition: 1+2e12 > fcol; float add loses the 1
+                    "(46_341, 46_341, 5.0, 5.0, 3_000_000)," +
+                    "(0, 0, -1.0, -1.0, 4_000_000)," +
+                    "(null, null, 1.0, 1.0, 5_000_000)");
             // Previously diverging shapes fixed by this change: an out-of-INT-range integer
             // constant as a bare (non-negated) arithmetic operand, alongside a FLOAT column.
             // Still JIT-compiled, now correct.
-            // Absolute pin: the i32=7 boundary row (21000000000 > 20999999488.0 at long width)
+            // Absolute pin: the i32=7 boundary row (21_000_000_000 > 20999999488.0 at long width)
             // survives; the pre-fix JIT computed it as a float multiply and dropped it.
-            assertJitMatchesJava("t where i32 * 3000000000 > fcol", true,
+            assertJitMatchesJava("t where i32 * 3_000_000_000 > fcol", true,
                     "i32\ti64\tfcol\tdcol\tts\n" +
                             "7\t7\t2.1E10\t2.0999999488E10\t1970-01-01T00:00:00.000000Z\n" +
                             "46341\t46341\t5.0\t5.0\t1970-01-01T00:00:03.000000Z\n" +
                             "0\t0\t-1.0\t-1.0\t1970-01-01T00:00:04.000000Z\n");
-            assertJitMatchesJava("t where i32 + 2000000000000 > fcol", true);
+            assertJitMatchesJava("t where i32 + 2_000_000_000_000 > fcol", true);
             // An AND chain with a LONG column splits into per-comparison predicate contexts,
-            // so the "i32 * 3000000000 > fcol" comparison is again pure INT+FLOAT and diverged.
-            assertJitMatchesJava("t where i32 * 3000000000 > fcol and i64 > 0", true);
-            // Control: a negated out-of-range operand (-3000000000) is a unary-minus subtree
+            // so the "i32 * 3_000_000_000 > fcol" comparison is again pure INT+FLOAT and diverged.
+            assertJitMatchesJava("t where i32 * 3_000_000_000 > fcol and i64 > 0", true);
+            // Control: a negated out-of-range operand (-3_000_000_000) is a unary-minus subtree
             // that descend() folds via its own long-width path, so it was already correct.
-            assertJitMatchesJava("t where i32 * -3000000000 > fcol", true);
+            assertJitMatchesJava("t where i32 * -3_000_000_000 > fcol", true);
             // Control: a DOUBLE column makes the predicate mixed-size (INT 4B, DOUBLE 8B),
             // which already runs scalar and emits the constant as I8 - correct before too.
-            assertJitMatchesJava("t where i32 * 3000000000 > dcol", true);
+            assertJitMatchesJava("t where i32 * 3_000_000_000 > dcol", true);
             // Control: a direct FLOAT-vs-out-of-range-constant comparison is not an
             // arithmetic operand; it stays vectorized and unchanged.
-            assertJitMatchesJava("t where fcol > 3000000000", true);
+            assertJitMatchesJava("t where fcol > 3_000_000_000", true);
             // Control: an in-range constant operand wraps at INT width under a float on
             // both paths (getInt), so it must not widen.
             assertJitMatchesJava("t where i32 * 3 > fcol", true);
@@ -1158,37 +1158,37 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // A FLOAT column compared directly against an out-of-INT-range integer constant
         // diverged. INT and FLOAT are both 4 bytes, so hasMixedSizes() is false and the type
         // observer types the constant F4; serializeNumber then emitted it as a lossy 32-bit
-        // float (3000000200 rounds to 3000000256f). The JIT compared at float width, while the
+        // float (3_000_000_200 rounds to 3_000_000_256f). The JIT compared at float width, while the
         // Java filter promotes both operands to double and compares exactly. For a stored
-        // fcol=3000000256.0 the JIT dropped the row on "> 3000000200" (3000000256f > 3000000256f
+        // fcol=3000000256.0 the JIT dropped the row on "> 3_000_000_200" (3_000_000_256f > 3_000_000_256f
         // is false) that Java kept (3000000256.0 > 3000000200.0 is true), and it spuriously
-        // matched the row on "= 3000000200" that Java rejected.
+        // matched the row on "= 3_000_000_200" that Java rejected.
         // The serializer now widens the constant to a full I8 IMM; four-lane AVX2 promotes the
         // float column to double. JIT stays enabled and vectorized.
         assertMemoryLeak(() -> {
             execute("create table t (fcol float, dcol double, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values " +
-                    "(3000000256.0, 3000000256.0, 0)," +     // boundary: 3000000200 rounds to this float
-                    "(3000000000.0, 3000000000.0, 1000000)," +
-                    "(5.0, 5.0, 2000000)," +
-                    "(null, null, 3000000)");
+                    "(3000000256.0, 3000000256.0, 0)," +     // boundary: 3_000_000_200 rounds to this float
+                    "(3000000000.0, 3000000000.0, 1_000_000)," +
+                    "(5.0, 5.0, 2_000_000)," +
+                    "(null, null, 3_000_000)");
             // Operators that diverged on the boundary row before the fix.
-            // Absolute pin: at float width 3000000256f > 3000000256f is false, but the stored
+            // Absolute pin: at float width 3_000_000_256f > 3_000_000_256f is false, but the stored
             // fcol promotes to double (3000000256.0 > 3000000200.0 is true), so Java keeps the
             // boundary row; the pre-fix JIT dropped it.
-            assertJitMatchesJava("t where fcol > 3000000200", true,
+            assertJitMatchesJava("t where fcol > 3_000_000_200", true,
                     "fcol\tdcol\tts\n" +
                             "3.0000003E9\t3.000000256E9\t1970-01-01T00:00:00.000000Z\n");
-            assertJitMatchesJava("t where fcol >= 3000000200", true);
-            assertJitMatchesJava("t where fcol = 3000000200", true);
-            assertJitMatchesJava("t where fcol <> 3000000200", true);
-            assertJitMatchesJava("t where fcol < 3000000200", true);
-            assertJitMatchesJava("t where fcol <= 3000000200", true);
+            assertJitMatchesJava("t where fcol >= 3_000_000_200", true);
+            assertJitMatchesJava("t where fcol = 3_000_000_200", true);
+            assertJitMatchesJava("t where fcol <> 3_000_000_200", true);
+            assertJitMatchesJava("t where fcol < 3_000_000_200", true);
+            assertJitMatchesJava("t where fcol <= 3_000_000_200", true);
             // Single-value IN reduces to equality on the FLOAT key.
-            assertJitMatchesJava("t where fcol in (3000000200)", true);
+            assertJitMatchesJava("t where fcol in (3_000_000_200)", true);
             // Control: a DOUBLE column stores 8 bytes and compares exactly on both paths, so it
             // stays vectorized and unchanged.
-            assertJitMatchesJava("t where dcol > 3000000200", true);
+            assertJitMatchesJava("t where dcol > 3_000_000_200", true);
             // Control: an in-range constant compares at int width on both paths (the observer
             // types it I4 and int-parse succeeds), so it must not widen.
             assertJitMatchesJava("t where fcol > 5", true);
@@ -1200,7 +1200,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x " +
                 "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_geohash(4) geo8," +
                 " rnd_geohash(12) geo16," +
                 " rnd_geohash(16) geo32," +
@@ -1213,7 +1213,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testGeoHashNull() throws Exception {
         final String query = "x where geo8 <> null or geo16 <> null or geo32 <> null or geo64 <> null";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_geohash(4) geo8," +
                 " rnd_geohash(15) geo16," +
                 " rnd_geohash(16) geo32," +
@@ -1226,7 +1226,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testGeoHashValue() throws Exception {
         final String query = "x where geo8a = geo8b";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_geohash(4) geo8a," +
                 " rnd_geohash(4) geo8b" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1240,7 +1240,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String ddl = "create table x as " +
                 "(select rnd_str('ABB','HBC','DXR') str, \n" +
                 " rnd_double() price, \n" +
-                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                " timestamp_sequence(172_800_000_000, 360_000_000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
         assertQueryNotNullNoCount(query, ddl);
     }
@@ -1249,7 +1249,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testHugeFilter() throws Exception {
         final int N = 682; // depends on memory configuration for a jit IR
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long() i64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
 
@@ -1266,7 +1266,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorChained() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) a," +
                 " rnd_int(1, 10, 0) b," +
                 " rnd_int(1, 10, 0) c" +
@@ -1289,7 +1289,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorFloat() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_float() f32," +
                 " rnd_double() f64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1303,7 +1303,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorFloatWithNull() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_float(5) f32," +
                 " rnd_double(5) f64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1317,7 +1317,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorInt() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) i32," +
                 " rnd_long(1, 10, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1331,7 +1331,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorIntWithNull() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 5) i32," +
                 " rnd_long(1, 10, 5) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1348,7 +1348,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 in (1, 2, 3, 4, 5, 6, 7, 8, 9)";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(1, 20, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -1360,7 +1360,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "(a in (1, 2) and b > 5) or (a in (8, 9) and b < 3)";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) a," +
                 " rnd_int(1, 10, 0) b" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -1375,7 +1375,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // widths can disagree about the sentinel. The JIT now keeps the key at i32 for the NULL
         // pairing, mirroring the Java InLong path, and the filter stays vectorized (no sx_i64).
         //
-        // Row 1: a*b = 65536*32768 wraps onto INT_NULL, so the row IS null; at long width the
+        // Row 1: a*b = 65_536*32_768 wraps onto INT_NULL, so the row IS null; at long width the
         //        product is +2^31, which is not LONG_NULL - the old code missed the row.
         // Row 2: a*b = -2^30 * 2 wraps onto INT_NULL the same way (long width: -2^31).
         // Row 3: a*b*c = 2^30 * 8 * 2^30 has value 0, but its long-width product overflows exactly
@@ -1388,7 +1388,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " cast(case when x = 1 then 32_768 when x = 2 then 2 when x = 3 then 8 else 3 end as int) b," +
                     " cast(case when x = 3 then 1_073_741_824 else 1 end as int) c," +
                     " cast(x as int) rn," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(64)) timestamp(k)");
 
             // RED on HEAD: IN (null) selected no row at all (it probed the widened key against
@@ -1445,34 +1445,34 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // C1 regression: an overflowing INT arithmetic CONSTANT key on the left of a multi-value
         // IN() list. `k IN (e0, e1, ...)` is `k = e0 OR k = e1 OR ...`, and the Java filter reads
         // the key at EACH element's '=' width - widened (getLong, 10^12) against a LONG/TIMESTAMP
-        // element, wrapped (getInt, -727379968) against an INT element. The JIT re-serializes the
+        // element, wrapped (getInt, -727_379_968) against an INT element. The JIT re-serializes the
         // key per element (serializeIn) but folded it to a single wrapped I4 IMM for the whole list
         // (one width per node), so against a LONG element it matched the wrapped image instead of
         // the widened value. serializeIn now drives the key's fold width per element via
         // inKeyFoldWidthOverride, exactly as the elements are folded. The table carries the widened
-        // value (10^12) and its wrapped INT image (-727379968) so a wrong key width matches the
+        // value (10^12) and its wrapped INT image (-727_379_968) so a wrong key width matches the
         // wrong row instead of the right one.
         // Every assertion carries an absolute pin. Parity alone is not an oracle: this PR moves the
         // Java IN path and the JIT toward the same width model, so a shared wrong key width matches
         // the wrong row on both paths and passes.
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(v as long) i64, cast(v as timestamp) tsc " +
-                    "from (select 1000000000000 v union all select -727379968 v))");
+                    "from (select 1_000_000_000_000 v union all select -727_379_968 v))");
             final String header = "i64\ttsc\n";
             final String widened = "1000000000000\t1970-01-12T13:46:40.000000Z\n";
             final String wrapped = "-727379968\t1969-12-31T23:47:52.620032Z\n";
             // LONG element: the key must widen to 10^12 and match the widened row, not the wrapped one.
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, 5)", true, header + widened);
-            assertJitMatchesJava("x where (1000000 * 1000000) in (5, i64)", true, header + widened);        // order independent
-            assertJitMatchesJava("x where (1000000 * 1000000) in (5, 6, i64)", true, header + widened);     // multi value
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, i64)", true, header + widened);      // all long
-            assertJitMatchesJava("x where (1000000 * 1000000) not in (i64, 5)", true, header + wrapped);    // inverse
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (i64, 5)", true, header + widened);
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (5, i64)", true, header + widened);        // order independent
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (5, 6, i64)", true, header + widened);     // multi value
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (i64, i64)", true, header + widened);      // all long
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) not in (i64, 5)", true, header + wrapped);    // inverse
             // TIMESTAMP element widens the key the same way.
-            assertJitMatchesJava("x where (1000000 * 1000000) in (tsc, 5)", true, header + widened);
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (tsc, 5)", true, header + widened);
             // Controls: '=' and single-value IN already widened; an INT element still wraps the key.
-            assertJitMatchesJava("x where (1000000 * 1000000) = i64", true, header + widened);
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64)", true, header + widened);
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, -727379968)", true, header + widened + wrapped);
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) = i64", true, header + widened);
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (i64)", true, header + widened);
+            assertJitMatchesJava("x where (1_000_000 * 1_000_000) in (i64, -727_379_968)", true, header + widened + wrapped);
         });
     }
 
@@ -1502,7 +1502,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // An overflowing INT arithmetic fold inside an IN() list against a LONG column: the
         // Java filter reads the IN element at long width (10^12), so the JIT must too. The
         // table carries both the widened value (10^12) and its wrapped INT image
-        // (-727379968) so a wrong fold matches the wrong row instead of returning empty.
+        // (-727_379_968) so a wrong fold matches the wrong row instead of returning empty.
         // markI64WidenFoldRoots used to bail on the IN node (it is a FUNCTION, not an
         // OPERATION) for the single-value form, and could not derive the comparison width
         // for the multi-value form (the operands live in args with lhs/rhs null), so it
@@ -1511,14 +1511,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // on BOTH paths (this PR moves the Java filter and the JIT together), so parity alone passes.
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(v as long) i64 " +
-                    "from (select 1000000000000 v union all select -727379968 v))");
+                    "from (select 1_000_000_000_000 v union all select -727_379_968 v))");
             final String widened = "i64\n1000000000000\n";
             final String wrapped = "i64\n-727379968\n";
-            assertJitMatchesJava("x where i64 in (1000000 * 1000000)", true, widened);          // single value
-            assertJitMatchesJava("x where i64 in (1, 1000000 * 1000000)", true, widened);       // two values
-            assertJitMatchesJava("x where i64 in (1, 2, 1000000 * 1000000)", true, widened);    // multi value
-            assertJitMatchesJava("x where i64 not in (1, 1000000 * 1000000)", true, wrapped);   // inverse
-            assertJitMatchesJava("x where i64 = 1000000 * 1000000", true, widened);             // control: plain '='
+            assertJitMatchesJava("x where i64 in (1_000_000 * 1_000_000)", true, widened);          // single value
+            assertJitMatchesJava("x where i64 in (1, 1_000_000 * 1_000_000)", true, widened);       // two values
+            assertJitMatchesJava("x where i64 in (1, 2, 1_000_000 * 1_000_000)", true, widened);    // multi value
+            assertJitMatchesJava("x where i64 not in (1, 1_000_000 * 1_000_000)", true, wrapped);   // inverse
+            assertJitMatchesJava("x where i64 = 1_000_000 * 1_000_000", true, widened);             // control: plain '='
         });
     }
 
@@ -1529,31 +1529,31 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // still read the KEY via getLong(), which WIDENS an overflowing INT arithmetic. So IN
         // disagreed with '=' even with the JIT off, and the JIT (which computes the key at I4 and
         // wraps) disagreed with the Java IN. The key is now read at INT width too, symmetric with
-        // the elements. a + a = 3*10^9 wraps to INT -1294967296; '=' (EqInt) and the JIT both wrap,
+        // the elements. a + a = 3*10^9 wraps to INT -1_294_967_296; '=' (EqInt) and the JIT both wrap,
         // so a correctly-wrapping IN matches the single row.
         assertMemoryLeak(() -> {
-            execute("create table x as (select cast(1500000000 as int) a, cast(1500000000 as int) b)");
+            execute("create table x as (select cast(1_500_000_000 as int) a, cast(1_500_000_000 as int) b)");
 
             // const IN shapes: the JIT wraps the key at I4, the Java IN must wrap too.
-            assertJitMatchesJava("x where (a + a) in (1500000000 + 1500000000)", true);        // single const
-            assertJitMatchesJava("x where (a + a) in (1, 1500000000 + 1500000000)", true);     // two const
-            assertJitMatchesJava("x where (a + a) in (1, 2, 1500000000 + 1500000000)", true);  // multi const
-            assertJitMatchesJava("x where (a + a) not in (1500000000 + 1500000000)", true);    // inverse
+            assertJitMatchesJava("x where (a + a) in (1_500_000_000 + 1_500_000_000)", true);        // single const
+            assertJitMatchesJava("x where (a + a) in (1, 1_500_000_000 + 1_500_000_000)", true);     // two const
+            assertJitMatchesJava("x where (a + a) in (1, 2, 1_500_000_000 + 1_500_000_000)", true);  // multi const
+            assertJitMatchesJava("x where (a + a) not in (1_500_000_000 + 1_500_000_000)", true);    // inverse
             // an in-range literal equal to the wrapped key must match too (pre-existing slice).
-            assertJitMatchesJava("x where (a + a) in (-1294967296)", true);
-            assertJitMatchesJava("x where (a + a) = 1500000000 + 1500000000", true);           // control: '='
+            assertJitMatchesJava("x where (a + a) in (-1_294_967_296)", true);
+            assertJitMatchesJava("x where (a + a) = 1_500_000_000 + 1_500_000_000", true);           // control: '='
 
             // Java (JIT-disabled) IN must agree with '=' across the const InLong* variants.
-            Assert.assertEquals(1, runQuery("x where (a + a) in (1500000000 + 1500000000)"));      // single
-            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 1500000000 + 1500000000)"));   // two
-            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 2, 1500000000 + 1500000000)"));// multi
-            Assert.assertEquals(0, runQuery("x where (a + a) not in (1500000000 + 1500000000)"));  // inverse
-            Assert.assertEquals(1, runQuery("x where (a + a) = 1500000000 + 1500000000"));         // '='
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1_500_000_000 + 1_500_000_000)"));      // single
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 1_500_000_000 + 1_500_000_000)"));   // two
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1, 2, 1_500_000_000 + 1_500_000_000)"));// multi
+            Assert.assertEquals(0, runQuery("x where (a + a) not in (1_500_000_000 + 1_500_000_000)"));  // inverse
+            Assert.assertEquals(1, runQuery("x where (a + a) = 1_500_000_000 + 1_500_000_000"));         // '='
 
             // runtime-const variant: a bind variable forces InLongRuntimeConstFunction. The const
             // element still matches the wrapped key; :p (= 0) does not.
             bindVariableService.setInt("p", 0);
-            Assert.assertEquals(1, runQuery("x where (a + a) in (1500000000 + 1500000000, :p)"));
+            Assert.assertEquals(1, runQuery("x where (a + a) in (1_500_000_000 + 1_500_000_000, :p)"));
 
             // var variant: a non-constant element forces InLongVarFunction.
             Assert.assertEquals(1, runQuery("x where (a + a) in (b + b)"));
@@ -1571,32 +1571,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // elements at INT width (wrap), matching '='. The columns hold the wrapped image of
         // each overflow product so the correct (wrapping) behaviour matches a row.
         assertMemoryLeak(() -> {
-            // 1000000 * 1000000 = 10^12 wraps to INT -727379968; 3 * 1431655767 = 2^32 + 5
+            // 1_000_000 * 1_000_000 = 10^12 wraps to INT -727_379_968; 3 * 1_431_655_767 = 2^32 + 5
             // wraps to INT 5 (matchable by SHORT/BYTE keys too).
-            execute("create table x as (select cast(-727379968 as int) i32b, " +
+            execute("create table x as (select cast(-727_379_968 as int) i32b, " +
                     "cast(5 as int) i32, cast(5 as short) i16, cast(5 as byte) i8)");
 
             // INT key, canonical 10^12 product, JIT-vs-Java parity across IN forms.
-            assertJitMatchesJava("x where i32b in (1000000 * 1000000)", true);         // single value
-            assertJitMatchesJava("x where i32b in (1, 1000000 * 1000000)", true);      // two values
-            assertJitMatchesJava("x where i32b in (1, 2, 1000000 * 1000000)", true);   // multi value
-            assertJitMatchesJava("x where i32b not in (1, 1000000 * 1000000)", true);  // inverse
-            assertJitMatchesJava("x where i32b = 1000000 * 1000000", true);            // control: '='
+            assertJitMatchesJava("x where i32b in (1_000_000 * 1_000_000)", true);         // single value
+            assertJitMatchesJava("x where i32b in (1, 1_000_000 * 1_000_000)", true);      // two values
+            assertJitMatchesJava("x where i32b in (1, 2, 1_000_000 * 1_000_000)", true);   // multi value
+            assertJitMatchesJava("x where i32b not in (1, 1_000_000 * 1_000_000)", true);  // inverse
+            assertJitMatchesJava("x where i32b = 1_000_000 * 1_000_000", true);            // control: '='
 
             // The Java (JIT-disabled) IN must agree with '=' - it widened before the fix.
-            Assert.assertEquals(1, runQuery("x where i32b in (1000000 * 1000000)"));
-            Assert.assertEquals(1, runQuery("x where i32b = 1000000 * 1000000"));
+            Assert.assertEquals(1, runQuery("x where i32b in (1_000_000 * 1_000_000)"));
+            Assert.assertEquals(1, runQuery("x where i32b = 1_000_000 * 1_000_000"));
 
             // INT/SHORT/BYTE keys all wrap the element to 5 and match.
-            assertJitMatchesJava("x where i32 in (3 * 1431655767)", true);
-            assertJitMatchesJava("x where i16 in (3 * 1431655767)", true);
-            assertJitMatchesJava("x where i8 in (3 * 1431655767)", true);
-            Assert.assertEquals(1, runQuery("x where i32 in (3 * 1431655767)"));
-            Assert.assertEquals(1, runQuery("x where i16 in (3 * 1431655767)"));
-            Assert.assertEquals(1, runQuery("x where i8 in (3 * 1431655767)"));
-            Assert.assertEquals(1, runQuery("x where i32 = 3 * 1431655767"));
-            Assert.assertEquals(1, runQuery("x where i16 = 3 * 1431655767"));
-            Assert.assertEquals(1, runQuery("x where i8 = 3 * 1431655767"));
+            assertJitMatchesJava("x where i32 in (3 * 1_431_655_767)", true);
+            assertJitMatchesJava("x where i16 in (3 * 1_431_655_767)", true);
+            assertJitMatchesJava("x where i8 in (3 * 1_431_655_767)", true);
+            Assert.assertEquals(1, runQuery("x where i32 in (3 * 1_431_655_767)"));
+            Assert.assertEquals(1, runQuery("x where i16 in (3 * 1_431_655_767)"));
+            Assert.assertEquals(1, runQuery("x where i8 in (3 * 1_431_655_767)"));
+            Assert.assertEquals(1, runQuery("x where i32 = 3 * 1_431_655_767"));
+            Assert.assertEquals(1, runQuery("x where i16 = 3 * 1_431_655_767"));
+            Assert.assertEquals(1, runQuery("x where i8 = 3 * 1_431_655_767"));
         });
     }
 
@@ -1606,27 +1606,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // element with a genuine-LONG element. The Java InLong path reads the INT element at
         // the narrow key's width (getInt -> wrap), so the JIT must too. But
         // markI64WidenFoldRoots used to fold ONE comparison width across the whole IN list,
-        // so a single coexisting LONG element (3000000000) promoted the list to I8 and WIDENED
+        // so a single coexisting LONG element (3_000_000_000) promoted the list to I8 and WIDENED
         // the overflowing INT element to its full-width product - the JIT then read 10^12
-        // while the Java filter wrapped to -727379968 == the stored key, so the row matched in
+        // while the Java filter wrapped to -727_379_968 == the stored key, so the row matched in
         // Java but not in the JIT. The width is now derived per element (key vs that element),
         // so the INT element wraps (matching the key) while the LONG element stays at long
         // width (and never matches the narrow key either way).
         assertMemoryLeak(() -> {
-            execute("create table x as (select cast(-727379968 as int) c)"); // -727379968 = (int)(1000000*1000000)
+            execute("create table x as (select cast(-727_379_968 as int) c)"); // -727_379_968 = (int)(1_000_000*1_000_000)
 
             // overflow-INT element coexists with a genuine-LONG element against the narrow key.
-            assertJitMatchesJava("x where c in (1000000 * 1000000, 3000000000)", true);        // RED on HEAD
-            assertJitMatchesJava("x where c in (3000000000, 1000000 * 1000000)", true);        // element order swapped
-            assertJitMatchesJava("x where c in (1, 1000000 * 1000000, 3000000000)", true);     // plus a plain element
-            assertJitMatchesJava("x where c not in (1000000 * 1000000, 3000000000)", true);    // inverse
+            assertJitMatchesJava("x where c in (1_000_000 * 1_000_000, 3_000_000_000)", true);        // RED on HEAD
+            assertJitMatchesJava("x where c in (3_000_000_000, 1_000_000 * 1_000_000)", true);        // element order swapped
+            assertJitMatchesJava("x where c in (1, 1_000_000 * 1_000_000, 3_000_000_000)", true);     // plus a plain element
+            assertJitMatchesJava("x where c not in (1_000_000 * 1_000_000, 3_000_000_000)", true);    // inverse
 
             // The Java (JIT-disabled) path is the oracle: c matches the wrapped INT element only.
-            Assert.assertEquals(1, runQuery("x where c in (1000000 * 1000000, 3000000000)"));
-            Assert.assertEquals(0, runQuery("x where c not in (1000000 * 1000000, 3000000000)"));
+            Assert.assertEquals(1, runQuery("x where c in (1_000_000 * 1_000_000, 3_000_000_000)"));
+            Assert.assertEquals(0, runQuery("x where c not in (1_000_000 * 1_000_000, 3_000_000_000)"));
 
             // control: an all-INT list against the narrow key already wrapped correctly.
-            assertJitMatchesJava("x where c in (1, 1000000 * 1000000)", true);
+            assertJitMatchesJava("x where c in (1, 1_000_000 * 1_000_000)", true);
         });
     }
 
@@ -1640,17 +1640,17 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // exact IR and exec-hint pins.
         //
         // The table has >= 64 rows so the vectorized loop is genuinely exercised (a 1-row table runs
-        // entirely in the scalar tail and hides the bug). Row 1 overflows: a*b = 1000000*1000000
-        // wraps to INT -727379968 and widens to LONG 10^12; all other rows compute 3*3 = 9.
+        // entirely in the scalar tail and hides the bug). Row 1 overflows: a*b = 1_000_000*1_000_000
+        // wraps to INT -727_379_968 and widens to LONG 10^12; all other rows compute 3*3 = 9.
         assertMemoryLeak(() -> {
             execute("create table y as (select" +
-                    " cast(case when x = 1 then 1000000 else 3 end as int) a," +
-                    " cast(case when x = 1 then 1000000 else 3 end as int) b," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " cast(case when x = 1 then 1_000_000 else 3 end as int) a," +
+                    " cast(case when x = 1 then 1_000_000 else 3 end as int) b," +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(64)) timestamp(k)");
 
             // LONG element paired with an INT constant: the key widens against 10^12 (matches row 1
-            // at long width) and wraps against -727379968 (matches row 1 at INT width).
+            // at long width) and wraps against -727_379_968 (matches row 1 at INT width).
             assertJitMatchesJava("select a from y where (a*b) in (1_000_000_000_000, -727_379_968)", true);
             assertJitMatchesJava("select a from y where (a*b) in (-727_379_968, 1_000_000_000_000)", true);
             assertJitMatchesJava("select a from y where (a*b) not in (1_000_000_000_000, -727_379_968)", true);
@@ -1661,11 +1661,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             Assert.assertEquals(1, runQuery("select a from y where (a*b) in (1_000_000_000_000)"));
 
             // control: an all-narrow list emits no SX_I64 and stays vectorized.
-            assertJitMatchesJava("select a from y where (a*b) in (5, -727379968)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (5, -727_379_968)", true);
             // control: a NULL element wraps the key, so it stays vectorized and matches no row here
             // (no product wraps onto INT_NULL in this table).
-            assertJitMatchesJava("select a from y where (a*b) in (null, -727379968)", true);
-            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (null, -727379968)"));
+            assertJitMatchesJava("select a from y where (a*b) in (null, -727_379_968)", true);
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (null, -727_379_968)"));
         });
     }
 
@@ -1675,15 +1675,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // INT-arithmetic (narrow) key. isIntWidthElement wrapped the key only for
         // INT/SHORT/BYTE-TYPED elements, so a numeric string left the key on getLong()
         // (widen). Thus (a * b) IN ('-727379968') returned 0 rows while the equivalent
-        // (a * b) IN (-727379968) and (a * b) = -727379968 both matched. The width is now
+        // (a * b) IN (-727_379_968) and (a * b) = -727_379_968 both matched. The width is now
         // derived from the parsed VALUE: an INT-range numeric string wraps the key mod 2^32
         // (matching the numeric literal and '='), a wider value widens it. String IN-lists
         // do not compile to the JIT, so this is a Java-path parity check against the
         // numeric-literal spellings.
         assertMemoryLeak(() -> {
-            // a * b wraps to INT -727379968 and widens to LONG 10^12; s/v carry the wrapped
+            // a * b wraps to INT -727_379_968 and widens to LONG 10^12; s/v carry the wrapped
             // image as a numeric string/varchar, sw the widened image.
-            execute("create table x as (select cast(1000000 as int) a, cast(1000000 as int) b, " +
+            execute("create table x as (select cast(1_000_000 as int) a, cast(1_000_000 as int) b, " +
                     "'-727379968' s, cast('-727379968' as varchar) v, '1000000000000' sw)");
 
             // The string IN-list never compiles to the JIT; enabling it falls back to Java
@@ -1692,8 +1692,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
             // INT-range numeric string wraps the key, matching IN (intLiteral) and '='.
             Assert.assertEquals(1, runQuery("x where (a * b) in ('-727379968')"));         // single const string
-            Assert.assertEquals(1, runQuery("x where (a * b) in (-727379968)"));           // control: int literal
-            Assert.assertEquals(1, runQuery("x where (a * b) = -727379968"));              // control: '='
+            Assert.assertEquals(1, runQuery("x where (a * b) in (-727_379_968)"));           // control: int literal
+            Assert.assertEquals(1, runQuery("x where (a * b) = -727_379_968"));              // control: '='
             Assert.assertEquals(1, runQuery("x where (a * b) in (7, '-727379968')"));      // two const, mixed widths
             Assert.assertEquals(1, runQuery("x where (a * b) in (7, 9, '-727379968')"));   // multi const
             Assert.assertEquals(0, runQuery("x where (a * b) not in ('-727379968')"));     // inverse
@@ -1701,7 +1701,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
             // A wider-than-INT numeric string widens the key, matching IN (longLiteral).
             Assert.assertEquals(1, runQuery("x where (a * b) in ('1000000000000')"));      // single const string
-            Assert.assertEquals(1, runQuery("x where (a * b) in (1000000000000)"));        // control: long literal
+            Assert.assertEquals(1, runQuery("x where (a * b) in (1_000_000_000_000)"));        // control: long literal
             Assert.assertEquals(0, runQuery("x where (a * b) in ('999')"));                // matches neither width
 
             // runtime-const variant: a string bind variable forces InLongRuntimeConstFunction.
@@ -1727,32 +1727,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // equality of an IN check and a LONG comparison - ((a*b) in (c)) = (nl > 0) - is a single
         // predicate, so the LONG sibling turned needsNarrowI64Widening on and the JIT computed the
         // overflowing narrow-int key at 64 bits (10^12) where the Java InLong path wraps it to the
-        // INT element's width (-727379968). Bugfix 40 fixed this shape for '=' comparisons and
+        // INT element's width (-727_379_968). Bugfix 40 fixed this shape for '=' comparisons and
         // Bugfix 38 for multi-value IN lists; the single-value IN sat between them. serializeIn now
         // drives the override for the single-value form too, from its one element.
         //
-        // Row 1 overflows: a*b wraps to INT -727379968 and widens to LONG 10^12. Row 2 wraps
-        // exactly onto INT_MIN (the INT_NULL sentinel): 65536*32768. Rows 3+ compute 3*3 = 9.
+        // Row 1 overflows: a*b wraps to INT -727_379_968 and widens to LONG 10^12. Row 2 wraps
+        // exactly onto INT_MIN (the INT_NULL sentinel): 65_536*32_768. Rows 3+ compute 3*3 = 9.
         // The table has >= 64 rows so the shapes that stay vectorized exercise AVX2.
         assertMemoryLeak(() -> {
             execute("create table y as (select" +
-                    " cast(case when x = 1 then 1000000 when x = 2 then 65536 else 3 end as int) a," +
-                    " cast(case when x = 1 then 1000000 when x = 2 then 32768 else 3 end as int) b," +
-                    " cast(case when x = 1 then 1000000000000 when x = 3 then 5 else 0 end as long) nl," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " cast(case when x = 1 then 1_000_000 when x = 2 then 65_536 else 3 end as int) a," +
+                    " cast(case when x = 1 then 1_000_000 when x = 2 then 32_768 else 3 end as int) b," +
+                    " cast(case when x = 1 then 1_000_000_000_000 when x = 3 then 5 else 0 end as long) nl," +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(64)) timestamp(k)");
 
             // RED on HEAD: Java wraps the key against the INT element (row 1 matches the IN
             // check), the JIT widened it (no row matched). not in / <> diverge the same way.
-            assertJitMatchesJava("select a from y where ((a*b) in (-727379968)) = (nl > 0)", true);
-            assertJitMatchesJava("select a from y where ((a*b) not in (-727379968)) = (nl > 0)", true);
-            assertJitMatchesJava("select a from y where ((a*b) in (-727379968)) <> (nl > 0)", true);
-            assertJitMatchesJava("select a from y where (nl > 0) = ((a*b) in (-727379968))", true);
+            assertJitMatchesJava("select a from y where ((a*b) in (-727_379_968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((a*b) not in (-727_379_968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((a*b) in (-727_379_968)) <> (nl > 0)", true);
+            assertJitMatchesJava("select a from y where (nl > 0) = ((a*b) in (-727_379_968))", true);
 
             // The Java (JIT-disabled) path is the oracle.
-            Assert.assertEquals(63, runQuery("select a from y where ((a*b) in (-727379968)) = (nl > 0)"));
-            Assert.assertEquals(1, runQuery("select a from y where ((a*b) not in (-727379968)) = (nl > 0)"));
-            Assert.assertEquals(1, runQuery("select a from y where ((a*b) in (-727379968)) <> (nl > 0)"));
+            Assert.assertEquals(63, runQuery("select a from y where ((a*b) in (-727_379_968)) = (nl > 0)"));
+            Assert.assertEquals(1, runQuery("select a from y where ((a*b) not in (-727_379_968)) = (nl > 0)"));
+            Assert.assertEquals(1, runQuery("select a from y where ((a*b) in (-727_379_968)) <> (nl > 0)"));
 
             // The override also drives the degenerate single-element NULL list: the key wraps
             // (INT width) against the NULL element on both paths, so row 2 - whose product wraps
@@ -1764,12 +1764,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // controls that already agreed: a LONG element widens the key on both paths; the
             // multi-value list drives the override per element (Bugfix 38); a constant-fold key
             // takes its width from its own comparison; separate predicates never shared the flag.
-            assertJitMatchesJava("select a from y where ((a*b) in (1000000000000)) = (nl > 0)", true);
-            assertJitMatchesJava("select a from y where ((a*b) in (5, -727379968)) = (nl > 0)", true);
-            assertJitMatchesJava("select a from y where ((1000000*1000000) in (-727379968)) = (nl > 0)", true);
-            assertJitMatchesJava("select a from y where (a*b) in (-727379968)", true);
-            assertJitMatchesJava("select a from y where (a*b) in (-727379968) and nl > 0", true);
-            assertJitMatchesJava("select a from y where (a*b) in (-727379968) or nl > 0", true);
+            assertJitMatchesJava("select a from y where ((a*b) in (1_000_000_000_000)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((a*b) in (5, -727_379_968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where ((1_000_000*1_000_000) in (-727_379_968)) = (nl > 0)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727_379_968)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727_379_968) and nl > 0", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727_379_968) or nl > 0", true);
         });
     }
 
@@ -1782,32 +1782,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // widening once for the WHOLE predicate: a single coexisting LONG element flipped
         // needsNarrowI64Widening on, so the JIT sign-extended a and b for EVERY comparison,
         // computing a * b at 64 bits (10^12) even against the INT element where Java wraps the
-        // key to -727379968. A row whose wrapped key matched the INT element matched in Java
+        // key to -727_379_968. A row whose wrapped key matched the INT element matched in Java
         // but not in the JIT (which returned empty). The key width is now driven per element
         // (widen against LONG/TIMESTAMP, wrap against INT), matching the Java path.
         //
-        // a*b = 10^12 widens to 10^12, wraps to INT -727379968. el = 0 (matches neither image);
-        // the INT element -727379968 matches only the WRAPPED key.
+        // a*b = 10^12 widens to 10^12, wraps to INT -727_379_968. el = 0 (matches neither image);
+        // the INT element -727_379_968 matches only the WRAPPED key.
         assertMemoryLeak(() -> {
             execute("create table y (a int, b int, el long, k timestamp) timestamp(k)");
-            execute("insert into y values (1000000, 1000000, 0, 1)");
+            execute("insert into y values (1_000_000, 1_000_000, 0, 1)");
 
             // A LONG COLUMN element coexists with an overflowing-INT constant element. RED on
             // HEAD: the JIT widened the key against the INT element and missed the wrapped match.
-            assertJitMatchesJava("select a from y where (a * b) in (el, -727379968)", true);    // RED on HEAD
-            assertJitMatchesJava("select a from y where (a * b) in (-727379968, el)", true);    // element order swapped
-            assertJitMatchesJava("select a from y where (a * b) in (5, el, -727379968)", true); // plus a plain element
-            assertJitMatchesJava("select a from y where (a * b) not in (el, -727379968)", true);// inverse
+            assertJitMatchesJava("select a from y where (a * b) in (el, -727_379_968)", true);    // RED on HEAD
+            assertJitMatchesJava("select a from y where (a * b) in (-727_379_968, el)", true);    // element order swapped
+            assertJitMatchesJava("select a from y where (a * b) in (5, el, -727_379_968)", true); // plus a plain element
+            assertJitMatchesJava("select a from y where (a * b) not in (el, -727_379_968)", true);// inverse
 
             // The Java (JIT-disabled) path is the oracle: the wrapped key matches the INT element.
-            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a * b) in (el, -727379968)"));
-            Assert.assertEquals("a\n", runJavaToString("select a from y where (a * b) not in (el, -727379968)"));
+            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a * b) in (el, -727_379_968)"));
+            Assert.assertEquals("a\n", runJavaToString("select a from y where (a * b) not in (el, -727_379_968)"));
 
             // controls that already agreed: an all-INT list wraps the key, a single LONG element
             // widens it, and '=' wraps - none of these mix widths across the list.
-            assertJitMatchesJava("select a from y where (a * b) = -727379968", true);           // '=' wraps
-            assertJitMatchesJava("select a from y where (a * b) in (-727379968)", true);        // single INT: wraps
-            assertJitMatchesJava("select a from y where (a * b) in (5, -727379968)", true);     // all-INT list: wraps
+            assertJitMatchesJava("select a from y where (a * b) = -727_379_968", true);           // '=' wraps
+            assertJitMatchesJava("select a from y where (a * b) in (-727_379_968)", true);        // single INT: wraps
+            assertJitMatchesJava("select a from y where (a * b) in (5, -727_379_968)", true);     // all-INT list: wraps
             assertJitMatchesJava("select a from y where (a * b) in (el)", true);                // single LONG: widens
         });
     }
@@ -1817,22 +1817,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // C1 regression: a PLAIN narrow-int COLUMN key (i32/i16/i8) IN a list whose ELEMENT is an
         // overflowing INT arithmetic (m * 3) and which also carries a coexisting genuine-LONG
         // element (nl). The Java InLong path reads the column key per element - wrapped (getInt)
-        // against the INT-arith element, so m * 3 = 4294967301 wraps to INT 5 and matches a key
+        // against the INT-arith element, so m * 3 = 4_294_967_301 wraps to INT 5 and matches a key
         // holding 5. But the JIT only drove the per-element width override for an ARITHMETIC key,
         // never a plain-column one: with a column key the override stayed unset, so the coexisting
         // LONG element flipped the predicate-global needsNarrowI64Widening on and sign-extended the
-        // element's narrow leaf (m). The JIT then computed m * 3 at 64 bits (4294967301, no wrap)
+        // element's narrow leaf (m). The JIT then computed m * 3 at 64 bits (4_294_967_301, no wrap)
         // and the row that matched in Java (and under '=') matched nothing in the JIT. The key is
         // now width-sensitive for a genuine narrow-int column too, so the arith element wraps
         // against it, matching Java. Existing IN-key column-arith tests only used arithmetic KEYS
         // with arithmetic/LONG elements, never a plain-column key with an arithmetic element.
         //
-        // m * 3 = 4294967301 wraps to INT 5 (fits SHORT and BYTE); nl = 99 matches no narrow key.
+        // m * 3 = 4_294_967_301 wraps to INT 5 (fits SHORT and BYTE); nl = 99 matches no narrow key.
         assertMemoryLeak(() -> {
             execute("create table t (id long, i32 int, i16 short, i8 byte, m int, nl long, k timestamp) timestamp(k)");
             execute("insert into t values" +
-                    " (1, 5, 5, 5, 1431655767, 99, 1)," +   // key holds the WRAPPED image 5 -> matches
-                    " (2, 42, 42, 42, 1431655767, 99, 2)"); // no narrow key equals 5 or 99 -> no match
+                    " (1, 5, 5, 5, 1_431_655_767, 99, 1)," +   // key holds the WRAPPED image 5 -> matches
+                    " (2, 42, 42, 42, 1_431_655_767, 99, 2)"); // no narrow key equals 5 or 99 -> no match
 
             // RED on HEAD: the LONG element widened the arith element against the column key, so the
             // wrapped match (5) was missed and the JIT returned empty where Java matched id 1.
@@ -1878,32 +1878,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // product at long width (no wrap), missing the wrapped match Java keeps (getInt). Existing
         // IN-key column-arith tests only used two-column keys (a*b)/(a+a), never a constant operand.
         //
-        // a*3 = 3e9 wraps to INT -1294967296, widens to 3e9; the INT element matches only the WRAP.
+        // a*3 = 3e9 wraps to INT -1_294_967_296, widens to 3e9; the INT element matches only the WRAP.
         assertMemoryLeak(() -> {
             execute("create table z (a int, n int, k timestamp) timestamp(k)");
-            execute("insert into z values (1000000000, -2000000000, 1)");
+            execute("insert into z values (1_000_000_000, -2_000_000_000, 1)");
 
             // RED on HEAD: the LONG element widened the key against the INT element, missing the wrap.
-            assertJitMatchesJava("select a from z where (a * 3) in (5000000000, -1294967296)", true);
-            assertJitMatchesJava("select a from z where (a * 3) in (-1294967296, 5000000000)", true); // order swapped
-            assertJitMatchesJava("select a from z where (a * 3) in (5, 5000000000, -1294967296)", true); // extra element
-            assertJitMatchesJava("select a from z where (a * 3) not in (5000000000, -1294967296)", true); // inverse
+            assertJitMatchesJava("select a from z where (a * 3) in (5_000_000_000, -1_294_967_296)", true);
+            assertJitMatchesJava("select a from z where (a * 3) in (-1_294_967_296, 5_000_000_000)", true); // order swapped
+            assertJitMatchesJava("select a from z where (a * 3) in (5, 5_000_000_000, -1_294_967_296)", true); // extra element
+            assertJitMatchesJava("select a from z where (a * 3) not in (5_000_000_000, -1_294_967_296)", true); // inverse
             // '+' and '-' operand forms overflow the same way; '-' underflows via the n column.
-            assertJitMatchesJava("select a from z where (a + 2000000000) in (5000000000, -1294967296)", true);
-            assertJitMatchesJava("select a from z where (n - 1000000000) in (-5000000000, 1294967296)", true);
+            assertJitMatchesJava("select a from z where (a + 2_000_000_000) in (5_000_000_000, -1_294_967_296)", true);
+            assertJitMatchesJava("select a from z where (n - 1_000_000_000) in (-5_000_000_000, 1_294_967_296)", true);
 
             // The Java (JIT-disabled) path is the oracle: the wrapped key matches the INT element.
-            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (a * 3) in (5000000000, -1294967296)"));
-            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (a + 2000000000) in (5000000000, -1294967296)"));
-            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (n - 1000000000) in (-5000000000, 1294967296)"));
-            Assert.assertEquals("a\n", runJavaToString("select a from z where (a * 3) not in (5000000000, -1294967296)"));
+            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (a * 3) in (5_000_000_000, -1_294_967_296)"));
+            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (a + 2_000_000_000) in (5_000_000_000, -1_294_967_296)"));
+            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (n - 1_000_000_000) in (-5_000_000_000, 1_294_967_296)"));
+            Assert.assertEquals("a\n", runJavaToString("select a from z where (a * 3) not in (5_000_000_000, -1_294_967_296)"));
 
             // controls that already agreed - none mix widths across the list: '=' wraps, a single
             // INT element wraps, a single LONG element widens (matches neither image, so no row).
-            assertJitMatchesJava("select a from z where (a * 3) = -1294967296", true);
-            assertJitMatchesJava("select a from z where (a * 3) in (-1294967296)", true);
-            assertJitMatchesJava("select a from z where (a * 3) in (5000000000)", true);
-            Assert.assertEquals("a\n", runJavaToString("select a from z where (a * 3) in (5000000000)"));
+            assertJitMatchesJava("select a from z where (a * 3) = -1_294_967_296", true);
+            assertJitMatchesJava("select a from z where (a * 3) in (-1_294_967_296)", true);
+            assertJitMatchesJava("select a from z where (a * 3) in (5_000_000_000)", true);
+            Assert.assertEquals("a\n", runJavaToString("select a from z where (a * 3) in (5_000_000_000)"));
         });
     }
 
@@ -1917,12 +1917,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // over-widened the INT-arith element (C1) and, with the NULL element, the key too (C2).
         // serializeIn now reads both the element and the key at the pairing width.
         //
-        // row1: a*b and c*d both wrap to -727379968 (widen to 10^12); el=999 matches neither.
+        // row1: a*b and c*d both wrap to -727_379_968 (widen to 10^12); el=999 matches neither.
         // row2: a*b = 2^31 wraps to INT_MIN (== INT_NULL), so the key IS null; c*d = 1; el=999.
         assertMemoryLeak(() -> {
             execute("create table y (a int, b int, c int, d int, el long, k timestamp) timestamp(k)");
-            execute("insert into y values (1000000, 1000000, 1000000, 1000000, 999, 1)," +
-                    " (2, 1073741824, 1, 1, 999, 2)");
+            execute("insert into y values (1_000_000, 1_000_000, 1_000_000, 1_000_000, 999, 1)," +
+                    " (2, 1_073_741_824, 1, 1, 999, 2)");
 
             // C1: the INT-arith element must wrap with the key. RED on HEAD - the key wrapped
             // but the element widened, so the (key = c*d) pairing missed the wrapped match.
@@ -1951,18 +1951,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorOverflowWidenKeyOnLongElement() throws Exception {
         // C1 regression: an overflowing INT *arithmetic* KEY on the left of IN() against a
         // LONG element. 'in (LONG)' is 'key = LONG', which promotes to long, so the key must
-        // WIDEN via getLong() (a * b = 10^12), NOT wrap via getInt() (= -727379968). The
+        // WIDEN via getLong() (a * b = 10^12), NOT wrap via getInt() (= -727_379_968). The
         // narrow-int IN fix read the key at INT width for every element, so a LONG-column
         // element wrongly matched the wrapped key - IN returned a different row than '=',
         // CAST and the JIT even with the JIT disabled. The IN path now derives the compare
         // width per element: a LONG/TIMESTAMP element widens the key, an INT element wraps it.
         //
-        // Rows: a*b widens to 10^12 (both rows); el row1 = -727379968 (the wrapped image),
-        // el row2 = 10^12 (the widened value); ei = -727379968 (the wrapped image, both rows).
+        // Rows: a*b widens to 10^12 (both rows); el row1 = -727_379_968 (the wrapped image),
+        // el row2 = 10^12 (the widened value); ei = -727_379_968 (the wrapped image, both rows).
         assertMemoryLeak(() -> {
             execute("create table x (id long, a int, b int, el long, ei int, k timestamp) timestamp(k)");
-            execute("insert into x values (1, 1000000, 1000000, -727379968, -727379968, 1)," +
-                    " (2, 1000000, 1000000, 1000000000000, -727379968, 2)");
+            execute("insert into x values (1, 1_000_000, 1_000_000, -727_379_968, -727_379_968, 1)," +
+                    " (2, 1_000_000, 1_000_000, 1_000_000_000_000, -727_379_968, 2)");
 
             // A LONG COLUMN element forces InLongVarFunction (non-constant). The key widens,
             // so it matches the widened image (id 2), NOT the wrapped image (id 1). '=', CAST
@@ -1986,17 +1986,17 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // widening (serializeConstant), so it widens the key to match Java for '=', IN
             // (single / two / multi) and relational, closing the narrow-vs-long-const asymmetry
             // that predated this PR.
-            assertJitMatchesJava("select id from x where (a * b) = 1000000000000", true);
-            assertJitMatchesJava("select id from x where (a * b) in (1000000000000)", true);        // single
-            assertJitMatchesJava("select id from x where (a * b) in (1000000000000, 5)", true);     // two
-            assertJitMatchesJava("select id from x where (a * b) in (1000000000000, 5, 6)", true);  // multi
-            assertJitMatchesJava("select id from x where (a * b) > 999999999999", true);            // relational
-            assertJitMatchesJava("select id from x where (a * b) not in (1000000000000)", true);
-            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) = 1000000000000"));
-            Assert.assertEquals("id\n", runJavaToString("select id from x where (a * b) not in (1000000000000)"));
+            assertJitMatchesJava("select id from x where (a * b) = 1_000_000_000_000", true);
+            assertJitMatchesJava("select id from x where (a * b) in (1_000_000_000_000)", true);        // single
+            assertJitMatchesJava("select id from x where (a * b) in (1_000_000_000_000, 5)", true);     // two
+            assertJitMatchesJava("select id from x where (a * b) in (1_000_000_000_000, 5, 6)", true);  // multi
+            assertJitMatchesJava("select id from x where (a * b) > 999_999_999_999", true);            // relational
+            assertJitMatchesJava("select id from x where (a * b) not in (1_000_000_000_000)", true);
+            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) = 1_000_000_000_000"));
+            Assert.assertEquals("id\n", runJavaToString("select id from x where (a * b) not in (1_000_000_000_000)"));
 
             // A runtime-constant (bind variable) LONG element forces InLongRuntimeConstFunction.
-            bindVariableService.setLong("p", 1000000000000L);
+            bindVariableService.setLong("p", 1_000_000_000_000L);
             assertJitMatchesJava("select id from x where (a * b) in (:p)", true);
             assertJitMatchesJava("select id from x where (a * b) = :p", true);
             Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (:p)"));
@@ -2007,7 +2007,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("select id from x where (a * b) in (ei)", true);
             assertJitMatchesJava("select id from x where (a * b) = ei", true);
             Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (ei)"));
-            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (1000000 * 1000000)"));
+            Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (1_000_000 * 1_000_000)"));
         });
     }
 
@@ -2017,22 +2017,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // element (a*b), inside a boolean equality with a FLOAT/DOUBLE sibling. A float suppresses
         // the predicate-global narrow-i64 widening, so markFloatI64WidenLeaves is the only pass that
         // can sign-extend the element. It returned at the IN FUNCTION node and never descended, so
-        // a*b wrapped at INT width (-727379968) while the Java InLong path reads it at long width
+        // a*b wrapped at INT width (-727_379_968) while the Java InLong path reads it at long width
         // (10^12) against the LONG key. inKeyWidthOverride cannot help - it fires only for a
         // narrow-int key. markI64Widen now descends into the IN and widens each element the key
         // reads at long width, deriving the width per element (mirroring markI64WidenFoldRoots).
         //
-        // a*b = 10^12 wraps to INT -727379968, widens to LONG 10^12; nl matches the widened image
+        // a*b = 10^12 wraps to INT -727_379_968, widens to LONG 10^12; nl matches the widened image
         // only in row 1.
         assertMemoryLeak(() -> {
-            execute("create table w as (select cast(1000000 as int) a, cast(1000000 as int) b," +
-                    " cast(case x when 1 then 1000000000000 when 2 then 2 else 0 end as long) nl," +
+            execute("create table w as (select cast(1_000_000 as int) a, cast(1_000_000 as int) b," +
+                    " cast(case x when 1 then 1_000_000_000_000 when 2 then 2 else 0 end as long) nl," +
                     " cast(1.0 as float) f32, cast(1.0 as double) f64," +
                     " x::short cs, x::byte cbyte," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(5)) timestamp(k)");
 
-            // Primary repro: the element a*b must widen to 10^12, not wrap to -727379968. Only row 1
+            // Primary repro: the element a*b must widen to 10^12, not wrap to -727_379_968. Only row 1
             // (nl = 10^12) matches; the pre-fix JIT wrapped it and returned 0 rows.
             assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = (f32 > 0)", true, "cs\n1\n");
             // Single-value IN (unrolled path), operand order, non-zero float threshold, DOUBLE
@@ -2049,16 +2049,16 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
             // Over-widening guard: the SAME a*b appears widened inside the IN (vs the LONG key) and
             // wrapped inside a sibling INT-width comparison. markI64WrapArithLeaves must keep the
-            // wrap-side product at INT width - both wrap to -727379968 there (RHS true every row),
+            // wrap-side product at INT width - both wrap to -727_379_968 there (RHS true every row),
             // so parity, not just the pin, catches an over-widened wrap side.
-            assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = ((a*b) = -727379968)", true,
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = ((a*b) = -727_379_968)", true,
                     "cs\n1\n");
 
             // Controls that must keep passing. Plain narrow COLUMN elements sign-extend value-
             // preservingly (row 2: nl = 2 matches cs = 2); a coexisting LONG-const element leaves
             // the arith element widening; AND/OR split into separate float-free predicates.
             assertJitMatchesJava("select cs from w where (nl in (cs, cbyte)) = (f32 > 0)", true, "cs\n2\n");
-            assertJitMatchesJava("select cs from w where (nl in (a*b, 999999999999)) = (f32 > 0)", true, "cs\n1\n");
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 999_999_999_999)) = (f32 > 0)", true, "cs\n1\n");
             assertJitMatchesJava("select cs from w where nl in (a*b, 7) and f32 > 0", true, "cs\n1\n");
             assertJitMatchesJava("select cs from w where nl in (a*b, 7) or f32 > 0", true,
                     "cs\n1\n2\n3\n4\n5\n");
@@ -2069,7 +2069,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorSingleValue() throws Exception {
         // Tests single-value IN() which has a special unrolled code path in CompiledFilterIRSerializer
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) i32," +
                 " rnd_long(1, 10, 0) i64," +
                 " rnd_float() f32," +
@@ -2086,7 +2086,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorSingleValueChained() throws Exception {
         // Tests multiple single-value IN() conditions chained with AND/OR
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 5, 0) a," +
                 " rnd_int(1, 5, 0) b," +
                 " rnd_int(1, 5, 0) c" +
@@ -2110,7 +2110,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorSingleValueWithBooleanOperators() throws Exception {
         // Tests single-value IN() combined with AND/OR for short-circuit evaluation
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) i32," +
                 " rnd_long(1, 10, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -2129,7 +2129,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorSingleValueWithNull() throws Exception {
         // Tests single-value IN() with null, special unrolled code path
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 5) i32," +
                 " rnd_long(1, 10, 5) i64," +
                 " rnd_float(5) f32," +
@@ -2182,7 +2182,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorTwoValues() throws Exception {
         // Tests two-value IN() which also has an unrolled code path (args.size() < 3)
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) i32," +
                 " rnd_long(1, 10, 0) i64," +
                 " rnd_float() f32," +
@@ -2199,7 +2199,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorTwoValuesWithNull() throws Exception {
         // Tests two-value IN() with null, special unrolled code path
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 5) i32," +
                 " rnd_long(1, 10, 5) i64," +
                 " rnd_float(5) f32," +
@@ -2215,7 +2215,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorWithBooleanOperators() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 20, 0) i32," +
                 " rnd_long(1, 20, 0) i64," +
                 " rnd_float() f32," +
@@ -2235,7 +2235,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testInOperatorWithBooleanOperatorsAndNull() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 20, 5) i32," +
                 " rnd_long(1, 20, 5) i64," +
                 " rnd_float(5) f32," +
@@ -2258,7 +2258,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "a in (1, 2, 3) or b in (4, 5, 6) or c > 90";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) a," +
                 " rnd_int(1, 10, 0) b," +
                 " rnd_long(0, 100, 0) c" +
@@ -2274,15 +2274,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // type observer sees only columns, so it typed the constant down to the INT
         // width, and serializeNumber emitted it as a 32-bit float on the int-parse
         // overflow; floats near 2^31 are spaced 256 apart, so distinct INT rows
-        // (2147483647 / 2147483646) collapsed onto one float and matched spuriously.
+        // (2_147_483_647 / 2_147_483_646) collapsed onto one float and matched spuriously.
         // The serializer now sign-extends the narrow leaf and emits the constant as a
         // full I8 IMM, keeping the comparison at long width so both paths agree.
         assertMemoryLeak(() -> {
             execute("create table t (i8 byte, i16 short, i32 int, i64 long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values " +
-                    "(127, 32767, 2147483647, 9223372036854775806, 0)," +
-                    "(126, 32766, 2147483646, 9223372036854775805, 1000000)," +
-                    "(null, null, null, null, 2000000)");
+                    "(127, 32_767, 2_147_483_647, 9_223_372_036_854_775_806, 0)," +
+                    "(126, 32_766, 2_147_483_646, 9_223_372_036_854_775_805, 1_000_000)," +
+                    "(null, null, null, null, 2_000_000)");
             // Absolute pins on the repro shapes. Parity alone is not an oracle here: the two INT rows
             // that the pre-fix JIT collapsed onto one float differ by 1, so a shared wrong width keeps
             // or drops both together and JIT-vs-Java parity still holds. maxRow and nextRow name them
@@ -2294,35 +2294,35 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // All-narrow path (only i32 observed): the constant would fall back to float. No INT value
             // equals 2^31, so the equality keeps nothing - that is exactly the spurious match the
             // pre-fix JIT produced.
-            assertJitMatchesJava("t where i32 = 2147483648", true, header);
-            assertJitMatchesJava("t where i32 >= 2147483648", true, header);
-            assertJitMatchesJava("t where i32 > 2147483648", true, header);
-            assertJitMatchesJava("t where i32 <= 2147483648", true, header + maxRow + nextRow);
-            assertJitMatchesJava("t where i32 < 2147483648", true, header + maxRow + nextRow);
-            assertJitMatchesJava("t where i32 <> 2147483648", true, header + maxRow + nextRow + nullRow);
-            assertJitMatchesJava("t where i32 = 5000000000", true, header);
+            assertJitMatchesJava("t where i32 = 2_147_483_648", true, header);
+            assertJitMatchesJava("t where i32 >= 2_147_483_648", true, header);
+            assertJitMatchesJava("t where i32 > 2_147_483_648", true, header);
+            assertJitMatchesJava("t where i32 <= 2_147_483_648", true, header + maxRow + nextRow);
+            assertJitMatchesJava("t where i32 < 2_147_483_648", true, header + maxRow + nextRow);
+            assertJitMatchesJava("t where i32 <> 2_147_483_648", true, header + maxRow + nextRow + nullRow);
+            assertJitMatchesJava("t where i32 = 5_000_000_000", true, header);
             // Negative out-of-range constant (unary minus of an overflowing literal).
-            assertJitMatchesJava("t where i32 = -3000000000", true, header);
-            assertJitMatchesJava("t where i32 > -3000000000", true, header + maxRow + nextRow);
+            assertJitMatchesJava("t where i32 = -3_000_000_000", true, header);
+            assertJitMatchesJava("t where i32 > -3_000_000_000", true, header + maxRow + nextRow);
             // Mixed-size path (i32 + i64 observed): the column must sign-extend too.
-            assertJitMatchesJava("t where i32 = 2147483648 and i64 > 0", true, header);
+            assertJitMatchesJava("t where i32 = 2_147_483_648 and i64 > 0", true, header);
             assertJitMatchesJava("t where i32 = 5 and i64 > 0", true, header);
             // Single- and multi-value IN, including mixed in-range / out-of-range elements.
-            assertJitMatchesJava("t where i32 in (2147483648)", true, header);
-            assertJitMatchesJava("t where i32 in (2147483648, 5)", true, header);
-            assertJitMatchesJava("t where i32 in (5, 2147483648)", true, header);
+            assertJitMatchesJava("t where i32 in (2_147_483_648)", true, header);
+            assertJitMatchesJava("t where i32 in (2_147_483_648, 5)", true, header);
+            assertJitMatchesJava("t where i32 in (5, 2_147_483_648)", true, header);
             // NULL is a comparable sentinel here, not SQL unknown, so the null row survives the
-            // negated forms - the same way it survives i32 <> 2147483648 above.
-            assertJitMatchesJava("t where i32 not in (2147483648, 5)", true, header + maxRow + nextRow + nullRow);
+            // negated forms - the same way it survives i32 <> 2_147_483_648 above.
+            assertJitMatchesJava("t where i32 not in (2_147_483_648, 5)", true, header + maxRow + nextRow + nullRow);
             // OR chain: the same column appears at two widths in one predicate. The in-range arm must
-            // still tell 2147483647 apart from 2147483646 - the float collapse matched both.
-            assertJitMatchesJava("t where i32 = 2147483648 or i32 = 2147483647", true, header + maxRow);
+            // still tell 2_147_483_647 apart from 2_147_483_646 - the float collapse matched both.
+            assertJitMatchesJava("t where i32 = 2_147_483_648 or i32 = 2_147_483_647", true, header + maxRow);
             // BYTE / SHORT column vs an out-of-INT-range constant: previously declined
             // JIT (serializeNumber threw on the int-parse overflow); now stays on JIT.
-            assertJitMatchesJava("t where i8 = 2147483648", true, header);
-            assertJitMatchesJava("t where i16 = 3000000000", true, header);
+            assertJitMatchesJava("t where i8 = 2_147_483_648", true, header);
+            assertJitMatchesJava("t where i16 = 3_000_000_000", true, header);
             // Control: a pure LONG column already computes at long width.
-            assertJitMatchesJava("t where i64 = 2147483648", true, header);
+            assertJitMatchesJava("t where i64 = 2_147_483_648", true, header);
         });
     }
 
@@ -2335,19 +2335,19 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     execute("create table wide_i (i32 int)");
                 } else {
                     execute("create table wide_i as (select cast(case x "
-                            + "when 1 then null when 2 then -2147483647 "
+                            + "when 1 then null when 2 then -2_147_483_647 "
                             + "when 3 then 7 else x end as int) i32 "
                             + "from long_sequence(" + rowCount + "))");
                 }
 
-                assertJitMatchesJava("wide_i where i32 < 5000000000", true);
-                assertJitMatchesJava("wide_i where i32 = 7 and i32 < 5000000000", true);
-                assertJitMatchesJava("wide_i where i32 < 5000000000 and i32 = 7", true);
-                assertJitMatchesJava("wide_i where i32 = 7 or i32 > 5000000000", true);
-                assertJitMatchesJava("wide_i where i32 > 5000000000 or i32 = 7", true);
-                assertJitMatchesJava("select count() from wide_i where i32 < 5000000000", true);
+                assertJitMatchesJava("wide_i where i32 < 5_000_000_000", true);
+                assertJitMatchesJava("wide_i where i32 = 7 and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("wide_i where i32 < 5_000_000_000 and i32 = 7", true);
+                assertJitMatchesJava("wide_i where i32 = 7 or i32 > 5_000_000_000", true);
+                assertJitMatchesJava("wide_i where i32 > 5_000_000_000 or i32 = 7", true);
+                assertJitMatchesJava("select count() from wide_i where i32 < 5_000_000_000", true);
                 assertJitMatchesJava("select count() from wide_i "
-                        + "where i32 = 7 or i32 > 5000000000", true);
+                        + "where i32 = 7 or i32 > 5_000_000_000", true);
             }
         });
     }
@@ -2372,9 +2372,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 assertJitMatchesJava("wide_mixed where f32 + 0 < 1.00000003", true);
                 assertJitMatchesJava("wide_mixed where f32 in (1.00000003, 2.5)", true);
                 assertJitMatchesJava("wide_mixed where i32 * i64 = 14", true);
-                assertJitMatchesJava("wide_mixed where i32 * 2 in (1, 5000000000)", true);
+                assertJitMatchesJava("wide_mixed where i32 * 2 in (1, 5_000_000_000)", true);
                 assertJitMatchesJava("select count() from wide_mixed where f32 > 0.99999998", true);
-                assertJitMatchesJava("select count() from wide_mixed where i32 * 2 in (1, 5000000000)", true);
+                assertJitMatchesJava("select count() from wide_mixed where i32 * 2 in (1, 5_000_000_000)", true);
             }
         });
     }
@@ -2382,7 +2382,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testIntColumnsCount() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x as byte) i8," +
                 " cast(x as short) i16," +
                 " cast(x as int) i32," +
@@ -2399,7 +2399,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final int boundary = 101;
         Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " cast(x as byte) i8," +
                 " cast(x as short) i16," +
                 " cast(x as int) i32," +
@@ -2434,7 +2434,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             execute("create table y as (select" +
                     " cast(case when x = 1 then 1.0 when x = 2 then 16777216.0 else 5.0 end as float) f," +
                     " cast(x as int) rn," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(64)) timestamp(k)");
 
             // (a) the bound rounds DOWN to 1.0f: row 1 satisfies 1.0 < 1.00000003 at double width.
@@ -2447,7 +2447,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("select rn from y where f = 1.00000003", true, "rn\n");
             assertJitMatchesJava("select rn from y where f <> 1.00000003 and rn <= 2", true, "rn\n1\n2\n");
 
-            // An integer literal is no safer above 2^24: (float) 16777217 is 16777216, so the
+            // An integer literal is no safer above 2^24: (float) 16_777_217 is 16_777_216, so the
             // bound lands exactly on row 2's value.
             assertJitMatchesJava("select rn from y where f < 16_777_217 and rn <= 2", true, "rn\n1\n2\n");
             assertJitMatchesJava("select rn from y where f >= 16_777_217", true, "rn\n");
@@ -2515,7 +2515,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " cast(case when x = 1 then 5e-8 else 5.0 end as float) f," +
                     " cast(case when x = 1 then 1 else 1 end as long) l," +
                     " cast(x as int) rn," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(64)) timestamp(k)");
 
             assertJitMatchesJava("select rn from y where f + l < 1.00000003", true, "rn\n");
@@ -2528,7 +2528,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testIntFloatColumnsComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_int() i32," +
@@ -2546,7 +2546,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testIntFloatColumnsComparisonFilterOutNulls() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
@@ -2563,7 +2563,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInterval() throws Exception {
         final String query = "x where k in '2021-11-29' and i32 > 0";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
+                "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500_000_000) as k," +
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -2571,7 +2571,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testNarrowIntArithUnderLongWithFloat() throws Exception {
-        // A narrow INT arithmetic subtree (c8 * -776782) that overflows int32
+        // A narrow INT arithmetic subtree (c8 * -776_782) that overflows int32
         // and feeds a LONG-width multiply diverged between the JIT and the Java
         // filter when a FLOAT comparison suppressed the narrow-to-i64 widening:
         // the JIT wrapped the inner product mod 2^32 while the Java filter read
@@ -2580,32 +2580,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // stays on and both paths agree.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c0 LONG, c2 SHORT, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), rnd_short(), " +
-                    "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
-                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
+            execute("INSERT INTO t SELECT rnd_long(-1_000_000, 1_000_000, 8), rnd_short(), " +
+                    "rnd_int(-1_000_000, 1_000_000, 8), rnd_float(8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L) " +
                     "FROM long_sequence(122)");
 
             // The rows come from rnd_*, so there is no expected-rows string to pin. Pin the Java
             // filter's row count instead: it is the independent oracle here (the fix is entirely in
             // the serializer, so the Java path never moved), and it also proves each predicate is
             // non-vacuous. Parity over an all-empty or an all-122 result would prove nothing.
-            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))"));
-            Assert.assertEquals(52, runQuery("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))"));
-            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776782))"));
-            Assert.assertEquals(60, runQuery("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2000000000))"));
-            Assert.assertEquals(66, runQuery("SELECT * FROM t WHERE c9 <= (c8 * -776782)"));
+            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776_782))"));
+            Assert.assertEquals(52, runQuery("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776_782))"));
+            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776_782))"));
+            Assert.assertEquals(60, runQuery("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2_000_000_000))"));
+            Assert.assertEquals(66, runQuery("SELECT * FROM t WHERE c9 <= (c8 * -776_782)"));
             Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= (c0 * c8)"));
-            Assert.assertEquals(67, runQuery("SELECT * FROM t WHERE (c8 * -776782) > 0"));
+            Assert.assertEquals(67, runQuery("SELECT * FROM t WHERE (c8 * -776_782) > 0"));
 
             // Previously diverging shapes: still JIT-compiled, now correct.
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))", true);
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))", true);
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776782))", true);
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2000000000))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776_782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776_782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776_782))", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2_000_000_000))", true);
             // Control shapes that were always correct under JIT.
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 * -776782)", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c8 * -776_782)", true);
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 * c8)", true);
-            assertJitMatchesJava("SELECT * FROM t WHERE (c8 * -776782) > 0", true);
+            assertJitMatchesJava("SELECT * FROM t WHERE (c8 * -776_782) > 0", true);
         });
     }
 
@@ -2616,7 +2616,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // long width (MulInt#getLong recurses through getLong, so the whole chain is
         // 64-bit). NarrowI64WidenDetector.shouldWiden() required hasI4(): a narrow-only
         // product observes only I2/I1 + I8 (no I4), so the widening never fired. A
-        // 2-factor narrow product stays inside int32 (32767^2 < 2^31), but 3+ factors
+        // 2-factor narrow product stays inside int32 (32_767^2 < 2^31), but 3+ factors
         // overflow (1500^3 = 3_375_000_000 wraps to -919_967_296). shouldWiden() now
         // also triggers on hasNarrowInt(), so the JIT widens the chain to match Java.
         assertMemoryLeak(() -> {
@@ -2626,7 +2626,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " cast(case x when 1 then 100 when 2 then 10 when 3 then 100 when 4 then 50 else 100 end as byte) cbyte," +
                     " cast(case x when 1 then 3_375_000_000 when 2 then 1_000_000_000 when 3 then 0 when 4 then 8_000_000_000 else -919_967_296 end as long) nl," +
                     " cast(case x when 1 then 10_000_000_000 when 2 then 100_000 when 3 then 0 when 4 then 312_500_000 else 1_410_065_408 end as long) nb," +
-                    " timestamp_sequence(0, 1000000) k" +
+                    " timestamp_sequence(0, 1_000_000) k" +
                     " from long_sequence(5)) timestamp(k)");
             // Primary repro (SHORT, 3-factor). nl holds the true long-width cube for rows
             // 1,2,4; row 5 holds the int32-wrapped cube (-919_967_296) the pre-fix JIT
@@ -2659,7 +2659,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testNotInOperatorFloat() throws Exception {
         // Tests NOT IN operator with floats
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_double() f64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
@@ -2673,7 +2673,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testNotInOperatorInt() throws Exception {
         // Tests NOT IN operator with integers
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 0) i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
@@ -2687,7 +2687,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testNotInOperatorWithNull() throws Exception {
         // Tests NOT IN operator with null in the list
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(1, 10, 5) i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
@@ -2700,7 +2700,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testNullComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
@@ -2720,7 +2720,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testNullValueComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
@@ -2750,7 +2750,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "i64 > 10 and i64 < 90 and i64 != 20 and i64 != 30 " +
                 "and i64 != 40 and i64 != 50 and i64 != 60 and i64 != 70";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -2763,7 +2763,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 > 95 and i64 < 100 and i32 > 0";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -2776,9 +2776,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // When EQ is followed by And_Sc, the backend emits CMP + JNE directly
         // instead of CMP + SETE + TEST + JZ (kFlagsEq optimization).
         final String query = "x " +
-                "where i64 = 95 and i32 = 13 and i16 = 12107";
+                "where i64 = 95 and i32 = 13 and i16 = 12_107";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int(0, 50, 0) i32," +
                 " rnd_short() i16" +
@@ -2794,7 +2794,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x " +
                 "where i64 != 50 and i32 != 25 and i16 != 10";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int(0, 50, 0) i32," +
                 " rnd_short() i16" +
@@ -2808,7 +2808,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x " +
                 "where i64 = 26 and i32 != 42 and i16 = 6201";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int(0, 50, 0) i32," +
                 " rnd_short() i16" +
@@ -2824,7 +2824,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 = 50 or i32 = 25 or i16 = 10";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int(0, 50, 0) i32," +
                 " rnd_short() i16" +
@@ -2840,7 +2840,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 != 50 or i32 != 25 or i16 != 10";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int(0, 50, 0) i32," +
                 " rnd_short() i16" +
@@ -2855,7 +2855,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x " +
                 "where uuid1 = 'd37facdc-c648-4f32-887c-c184027ff724' and i64 = 57";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_uuid4() uuid1," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -2868,7 +2868,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "uuid1 != '11111111-1111-1111-1111-111111111111' and i64 = 50";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_uuid4() uuid1," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -2881,7 +2881,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "(i64 > 20 and i64 < 40) or (i64 > 60 and i64 < 80)";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -2893,7 +2893,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "(a > 10 and b > 10) or (c > 10 and d > 10) or (a < 5 and c < 5)";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) a," +
                 " rnd_long(0, 100, 0) b," +
                 " rnd_long(0, 100, 0) c," +
@@ -2909,7 +2909,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "i64 = 10 or i64 = 20 or i64 = 30 or i64 = 40 " +
                 "or i64 = 50 or i64 = 60 or i64 = 70 or i64 = 80";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
@@ -2922,7 +2922,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String query = "x where " +
                 "i64 < 95 or i64 = 99 or i32 < 0";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_long(0, 100, 0) i64," +
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -2937,7 +2937,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String ddl = "create table x as " +
                 "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
                 " rnd_double() price, \n" +
-                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                " timestamp_sequence(172_800_000_000, 360_000_000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
         assertQueryNotNullNoCount(query, ddl);
     }
@@ -2946,7 +2946,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testSymbolNull() throws Exception {
         final String query = "x where sym <> null";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_symbol(10,1,3,5) sym" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNullable(query, ddl);
@@ -2956,7 +2956,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testTimestampComparison() throws Exception {
         final String query = "x where t1 != t2";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t1," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t2" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -2976,7 +2976,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testTimestampNull() throws Exception {
         final String query = "x where t <> null";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNullable(query, ddl);
@@ -2985,7 +2985,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testUuidConstantComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_uuid4() uuid1, " +
                 " rnd_uuid4() uuid2 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -3004,7 +3004,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testUuidConstantIntMixedComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_int() int, " +
                 " rnd_uuid4() uuid " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -3023,7 +3023,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testUuidNullComparison() throws Exception {
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_uuid4() uuid1, " +
                 " rnd_uuid4() uuid2 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
@@ -3045,7 +3045,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "  and uuid2 != '11111111-1111-1111-1111-111111111111'" +
                 "  and uuid3 != '11111111-1111-1111-1111-111111111111'";
         final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_uuid4() uuid1," +
                 " rnd_uuid4() uuid2," +
                 " rnd_uuid4() uuid3" +
@@ -3057,7 +3057,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testVarSizeNullComparison() throws Exception {
         final String ddl = "create table x as (select" +
                 " x," +
-                " timestamp_sequence(400000000000, 500000000) as k," +
+                " timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_str(2, 1, 5, 3) string_value," +
                 " rnd_varchar(1, 5, 3) varchar_value," +
                 " rnd_bin(1, 32, 3) binary_value" +
@@ -3077,7 +3077,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testVarcharNullComparison() throws Exception {
         final String ddl = "create table x as (select" +
                 " x," +
-                " timestamp_sequence(400000000000, 500000000) as k," +
+                " timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_varchar(1, 5, 3) varchar_value" +
                 " from long_sequence(1000)) timestamp(k)";
         final FilterGenerator gen = new FilterGenerator()
@@ -3304,7 +3304,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String ddl = "create table x as " +
                 "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
                 " rnd_double() price, \n" +
-                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                " timestamp_sequence(172_800_000_000, 360_000_000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
         assertQueryNotNullNoCount(query, ddl);
     }

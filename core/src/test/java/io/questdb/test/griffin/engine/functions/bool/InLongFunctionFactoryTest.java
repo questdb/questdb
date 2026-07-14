@@ -315,7 +315,7 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         // is NULL exactly when its getInt() carries INT_NULL, which is what '=', IS NULL and the
         // projection all report. Reading the key at long width against the NULL element instead
         // made IN (null) disagree with all three, in both directions:
-        //   - row 1 (65536*32768) and row 2 (-2^30 * 2) wrap onto INT_NULL, so they ARE null;
+        //   - row 1 (65_536*32_768) and row 2 (-2^30 * 2) wrap onto INT_NULL, so they ARE null;
         //     IN (null) missed them because their long-width products (+/-2^31) are not LONG_NULL.
         //   - row 3 (2^30 * 8 * 2^30) has value 0, but its long-width product overflows exactly
         //     onto LONG_NULL, so IN (null) matched a row whose value is not null.

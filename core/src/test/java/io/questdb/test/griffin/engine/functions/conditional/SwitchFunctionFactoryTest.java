@@ -1876,7 +1876,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testSymbolConstIntNoElseWideCastNull() throws Exception {
         // A single-WHEN inlined CASE with no ELSE yields elseValue == INT_NULL on
         // the implicit-null branch. Casting it to a wider type must read NULL, not
-        // a widened -2147483648. The wide getters serve the same two constants on
+        // a widened -2_147_483_648. The wide getters serve the same two constants on
         // every row, so the function widens them once, at construction, through the
         // same Numbers.intTo* mapping IntFunction's getters apply per row - a raw-int
         // ternary would instead corrupt them (e.g. TIMESTAMP -> 1969-12-31T23:24:12.516352Z).

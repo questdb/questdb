@@ -61,9 +61,10 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         assertReassociation("d + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8", "d + (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8)");
 
         // The NULL-sentinel guard must still fire deep in the chain, using the cached running fold:
-        // 1 + 2 + 3 + 2147483641 accumulates to 2147483647, and the next '+ 1' wraps that cached
-        // value onto INT_NULL (-2^31). Only that final pair is blocked; the safe prefix regroups.
-        assertReassociation("d + 1 + 2 + 3 + 2147483641 + 1", "d + (1 + 2 + 3 + 2147483641) + 1");
+        // 1 + 2 + 3 + 2_147_483_641 accumulates to 2_147_483_647, and the next '+ 1' wraps that
+        // cached value onto INT_NULL (-2^31). Only that final pair is blocked; the safe prefix
+        // regroups.
+        assertReassociation("d + 1 + 2 + 3 + 2_147_483_641 + 1", "d + (1 + 2 + 3 + 2_147_483_641) + 1");
     }
 
     @Test
@@ -75,10 +76,10 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // ExpressionNode#applyIntFold now models '/' and '%' too (a zero divisor folds to
         // INT_NULL, like DivInt#getInt).
 
-        // division: 2147483647 + (2 / 2) = 2147483647 + 1 wraps to -2^31 == INT_NULL
-        assertReassociationNoOp("d + 2147483647 + (2 / 2)");
-        // modulo: 2147483646 + (5 % 3) = 2147483646 + 2 wraps to -2^31 == INT_NULL
-        assertReassociationNoOp("d + 2147483646 + (5 % 3)");
+        // division: 2_147_483_647 + (2 / 2) = 2_147_483_647 + 1 wraps to -2^31 == INT_NULL
+        assertReassociationNoOp("d + 2_147_483_647 + (2 / 2)");
+        // modulo: 2_147_483_646 + (5 % 3) = 2_147_483_646 + 2 wraps to -2^31 == INT_NULL
+        assertReassociationNoOp("d + 2_147_483_646 + (5 % 3)");
 
         // control: a '/' element pair that does NOT hit the sentinel still regroups normally
         assertReassociation("d + 1000 + (6 / 2)", "d + (1000 + 6 / 2)");
@@ -160,36 +161,37 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // IntArithmeticOverflowFoldingTest.testReassociationIntPairWrappingToIntNullWrapsLikeColumnAndLiteral;
         // this pins the same guard structurally, one level closer to the rewrite.
 
-        // addition: 2147483647 + 1 wraps to -2^31 == INT_NULL - stays un-regrouped in every pattern.
+        // addition: 2_147_483_647 + 1 wraps to -2^31 == INT_NULL - stays un-regrouped in every
+        // pattern.
         // Pattern A: (A op C1) op C2
-        assertReassociation("d + 2147483647 + 1", "d + 2147483647 + 1");
+        assertReassociation("d + 2_147_483_647 + 1", "d + 2_147_483_647 + 1");
         // Pattern B: (C1 op A) op C2 (commutative) - the column is NOT moved to the front
-        assertReassociation("(2147483647 + d) + 1", "2147483647 + d + 1");
+        assertReassociation("(2_147_483_647 + d) + 1", "2_147_483_647 + d + 1");
         // Mirror A: C2 op (A op C1) (commutative)
-        assertReassociation("1 + (d + 2147483647)", "1 + (d + 2147483647)");
+        assertReassociation("1 + (d + 2_147_483_647)", "1 + (d + 2_147_483_647)");
         // Mirror B: C2 op (C1 op A)
-        assertReassociation("1 + (2147483647 + d)", "1 + (2147483647 + d)");
+        assertReassociation("1 + (2_147_483_647 + d)", "1 + (2_147_483_647 + d)");
 
-        // multiplication: 65536 * 32768 wraps to -2^31 == INT_NULL
-        assertReassociation("d * 65536 * 32768", "d * 65536 * 32768");
+        // multiplication: 65_536 * 32_768 wraps to -2^31 == INT_NULL
+        assertReassociation("d * 65_536 * 32_768", "d * 65_536 * 32_768");
 
-        // negative-constant pair: -2147483647 + -1 also folds to -2^31 == INT_NULL, but the
+        // negative-constant pair: -2_147_483_647 + -1 also folds to -2^31 == INT_NULL, but the
         // minus binds as a unary operator, so neither operand is marked constant and the pair
         // never reaches the INT_NULL guard. It stays un-regrouped for that reason instead, and
         // still avoids the poison. (See the "unary-minus escapes the guard" note: safe because
         // reassociation never fires here, not because integerPairFoldsToNull caught it.)
-        assertReassociation("d + -2147483647 + -1", "d + -(2147483647) + -(1)");
+        assertReassociation("d + -2_147_483_647 + -1", "d + -(2_147_483_647) + -(1)");
 
-        // Known limitation (NOT a correctness control): the constant pair 2147483647 + 2
-        // wraps to -2147483647, which is NOT the INT_NULL sentinel, so the guard does not
-        // fire and the pair regroups. But the left-associative intermediate d + 2147483647
+        // Known limitation (NOT a correctness control): the constant pair 2_147_483_647 + 2
+        // wraps to -2_147_483_647, which is NOT the INT_NULL sentinel, so the guard does not
+        // fire and the pair regroups. But the left-associative intermediate d + 2_147_483_647
         // DOES wrap onto INT_NULL for d == 1, so the un-regrouped and fully-literal forms
-        // return NULL while this regrouped form returns -2147483646 - the regroup silently
+        // return NULL while this regrouped form returns -2_147_483_646 - the regroup silently
         // changes the result for that column value. Detecting it needs a column value the
         // optimizer does not have (see the "Known limitation" note on reassociateConstants).
         // These assertions pin the current, pre-existing behaviour, not a correct outcome.
-        assertReassociation("d + 2147483647 + 2", "d + (2147483647 + 2)");
-        assertReassociation("(2147483647 + d) + 2", "d + (2147483647 + 2)");
+        assertReassociation("d + 2_147_483_647 + 2", "d + (2_147_483_647 + 2)");
+        assertReassociation("(2_147_483_647 + d) + 2", "d + (2_147_483_647 + 2)");
     }
 
     @Test
@@ -216,13 +218,13 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // integerPairFoldsToNull never saw a LONG pair; it now also folds at LONG width via
         // ExpressionNode#applyLongFold.
 
-        // 9223372036854775807 + 1 wraps to -2^63 == LONG_NULL
-        assertReassociationNoOp("l + 9223372036854775807 + 1");
-        // L-suffixed operands fold the same way: 9223372036854775806L + 2L -> LONG_NULL
-        assertReassociationNoOp("l + 9223372036854775806L + 2L");
+        // 9_223_372_036_854_775_807 + 1 wraps to -2^63 == LONG_NULL
+        assertReassociationNoOp("l + 9_223_372_036_854_775_807 + 1");
+        // L-suffixed operands fold the same way: 9_223_372_036_854_775_806L + 2L -> LONG_NULL
+        assertReassociationNoOp("l + 9_223_372_036_854_775_806L + 2L");
 
         // control: a LONG pair that does NOT hit the sentinel still regroups normally
-        assertReassociation("l + 9000000000000000000 + 100", "l + (9000000000000000000 + 100)");
+        assertReassociation("l + 9_000_000_000_000_000_000 + 100", "l + (9_000_000_000_000_000_000 + 100)");
     }
 
     @Test

@@ -230,12 +230,12 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             bindVariableService.setStr("b0", "-357724");
             // the intermediate DOUBLE, read straight through the widening getter
             assertSqlCursors(
-                    "SELECT (c - -357724L) e0 FROM t",
+                    "SELECT (c - -357_724L) e0 FROM t",
                     "SELECT (c - :b0::LONG) e0 FROM t"
             );
             // and narrowed to CHAR, the exact projection the fuzzer flagged
             assertSqlCursors(
-                    "SELECT (c - -357724L)::CHAR e0 FROM t",
+                    "SELECT (c - -357_724L)::CHAR e0 FROM t",
                     "SELECT (c - :b0::LONG)::CHAR e0 FROM t"
             );
         });
@@ -854,7 +854,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -864,13 +864,13 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             bindVariableService.setTimestamp(0, 6_000_000L);
 
             assertSqlCursors(
-                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6000000::timestamp) THEN amount ELSE 0 END) s FROM trades",
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6_000_000::timestamp) THEN amount ELSE 0 END) s FROM trades",
                     "SELECT sum(CASE WHEN ts >= dateadd('s', -2, $1::timestamp) THEN amount ELSE 0 END) s FROM trades"
             );
 
             // reference value: 6s threshold - 2s => 4s; rows ts >= 4s have amount 4..10 -> 49
             assertQuery(
-                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6000000::timestamp) THEN amount ELSE 0 END) s FROM trades"
+                    "SELECT sum(CASE WHEN ts >= dateadd('s', -2, 6_000_000::timestamp) THEN amount ELSE 0 END) s FROM trades"
             ).noRandomAccess().expectSize().returns("s\n49\n");
         });
     }
@@ -974,7 +974,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -994,27 +994,27 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     @Test
     public void testEndToEndParallelFilterReadsIntRuntimeConstViaGetLong() throws Exception {
         // Companion to testEndToEndParallelFilterSharesFoldedThreshold, but for the INT wrapper's
-        // widened getLong() path: an overflowing INT runtime-const product (:b0::INT * 17161::SHORT)
+        // widened getLong() path: an overflowing INT runtime-const product (:b0::INT * 17_161::SHORT)
         // read through a LONG-promoting multiply by a per-row LONG column, inside an async (parallel)
         // filter. The INT wrapper is read-only after init(), so all four workers share one instance;
         // this asserts they concurrently read the widened long correctly, matching the literal form
-        // whose constants fold at compile time. 166478 * 17161 = 2856928958 overflows INT (getInt()
-        // wraps to -1438038338, getLong() widens to +2856928958), so the product with the positive
-        // LONG column is positive on every row and the filter keeps them all.
+        // whose constants fold at compile time. 166_478 * 17_161 = 2_856_928_958 overflows INT
+        // (getInt() wraps to -1_438_038_338, getLong() widens to +2_856_928_958), so the product
+        // with the positive LONG column is positive on every row and the filter keeps them all.
         final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE t AS (" +
-                                    "  SELECT (x * 1000000)::timestamp ts, x::long bigv" +
+                                    "  SELECT (x * 1_000_000)::timestamp ts, x::long bigv" +
                                     "  FROM long_sequence(1000)" +
                                     ") TIMESTAMP(ts) PARTITION BY NONE",
                             sqlExecutionContext
                     );
 
                     // prove the async (parallel) filter path is taken for this table/config
-                    assertQuery("SELECT bigv FROM t WHERE (166478 * 17161::SHORT) * bigv > 0")
+                    assertQuery("SELECT bigv FROM t WHERE (166_478 * 17_161::SHORT) * bigv > 0")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
@@ -1027,8 +1027,8 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            "SELECT bigv FROM t WHERE (166478 * 17161::SHORT) * bigv > 0",
-                            "SELECT bigv FROM t WHERE (:b0::INT * 17161::SHORT) * bigv > 0",
+                            "SELECT bigv FROM t WHERE (166_478 * 17_161::SHORT) * bigv > 0",
+                            "SELECT bigv FROM t WHERE (:b0::INT * 17_161::SHORT) * bigv > 0",
                             LOG,
                             false
                     );
@@ -1052,14 +1052,14 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE trades AS (" +
-                                    "  SELECT (x * 1000000)::timestamp ts, (x * 1000000)::timestamp ts2, x amount" +
+                                    "  SELECT (x * 1_000_000)::timestamp ts, (x * 1_000_000)::timestamp ts2, x amount" +
                                     "  FROM long_sequence(1000)" +
                                     ") TIMESTAMP(ts) PARTITION BY NONE",
                             sqlExecutionContext
                     );
 
                     // prove the async (parallel) filter path is taken for this table/config
-                    assertQuery("SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500000000::timestamp)")
+                    assertQuery("SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500_000_000::timestamp)")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
@@ -1072,7 +1072,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500000000::timestamp)",
+                            "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 500_000_000::timestamp)",
                             "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)",
                             LOG,
                             false
@@ -1092,24 +1092,24 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // wrapper instance regardless of what the wrapper reports - a wrapper that mutated a field on the
         // first getLong() would race here. The wrapper is now read-only after init(), so sharing is safe.
         //
-        // 166478 * 17161 = 2856928958 overflows INT: getInt() wraps to -1438038338, getLong() widens to
-        // +2856928958. l is LONG, so "l > product" promotes the product to LONG and must read the widened
-        // value. Reading the wrapped int instead would compare against a negative threshold, flipping every
-        // row's boolean from false to true and every group's mode from false to true.
+        // 166_478 * 17_161 = 2_856_928_958 overflows INT: getInt() wraps to -1_438_038_338, getLong()
+        // widens to +2_856_928_958. l is LONG, so "l > product" promotes the product to LONG and must read
+        // the widened value. Reading the wrapped int instead would compare against a negative threshold,
+        // flipping every row's boolean from false to true and every group's mode from false to true.
         final WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE t AS (" +
-                                    "  SELECT (x * 1000000)::timestamp ts, (x % 4)::int k, (x * 5000000)::long l" +
+                                    "  SELECT (x * 1_000_000)::timestamp ts, (x % 4)::int k, (x * 5_000_000)::long l" +
                                     "  FROM long_sequence(1000)" +
                                     ") TIMESTAMP(ts) PARTITION BY NONE",
                             sqlExecutionContext
                     );
 
                     // prove the async (parallel) GROUP BY path is taken for this table/config
-                    assertQuery("SELECT k, mode(l > 166478 * 17161::SHORT) m FROM t ORDER BY k")
+                    assertQuery("SELECT k, mode(l > 166_478 * 17_161::SHORT) m FROM t ORDER BY k")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
@@ -1117,7 +1117,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
 
                     // l straddles the widened threshold, so the booleans genuinely vary inside every group
                     // (429 of the 1000 rows are true) and each group's mode still resolves to false.
-                    assertQuery("SELECT k, mode(l > 166478 * 17161::SHORT) m FROM t ORDER BY k")
+                    assertQuery("SELECT k, mode(l > 166_478 * 17_161::SHORT) m FROM t ORDER BY k")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
@@ -1137,8 +1137,8 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,
-                            "SELECT k, mode(l > 166478 * 17161::SHORT) m FROM t ORDER BY k",
-                            "SELECT k, mode(l > :b0::INT * 17161::SHORT) m FROM t ORDER BY k",
+                            "SELECT k, mode(l > 166_478 * 17_161::SHORT) m FROM t ORDER BY k",
+                            "SELECT k, mode(l > :b0::INT * 17_161::SHORT) m FROM t ORDER BY k",
                             LOG,
                             false
                     );
@@ -1153,7 +1153,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -1174,7 +1174,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, x amount FROM long_sequence(10)" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, x amount FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
 
@@ -1224,7 +1224,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades AS (" +
-                            "  SELECT (x * 1000000)::timestamp ts, (x * 1000000)::timestamp ts2, x amount" +
+                            "  SELECT (x * 1_000_000)::timestamp ts, (x * 1_000_000)::timestamp ts2, x amount" +
                             "  FROM long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY NONE"
             );
@@ -1237,7 +1237,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             bindVariableService.setTimestamp(0, 6_000_000L);
 
             assertSqlCursors(
-                    "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 6000000::timestamp)",
+                    "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, 6_000_000::timestamp)",
                     "SELECT ts2, amount FROM trades WHERE ts2 >= dateadd('s', -2, $1::timestamp)"
             );
 

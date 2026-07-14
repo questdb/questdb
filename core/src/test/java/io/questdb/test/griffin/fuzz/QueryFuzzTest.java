@@ -371,7 +371,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // the test pool happens to advertise. (With parallel HORIZON JOIN on, the
         // covering index supplies a page-frame cursor and the parallel path
         // accepts it; the rejection is specific to the single-threaded path.)
-        final String horizonJoin = "SELECT (h.offset / 1000000) AS e0, count(p.c5) AS a0 " +
+        final String horizonJoin = "SELECT (h.offset / 1_000_000) AS e0, count(p.c5) AS a0 " +
                 "FROM master_%s t " +
                 "HORIZON JOIN slave_%s p LIST (-3m, -2m, -1m, 0m) AS h " +
                 "WHERE t.sym IS NULL " +
