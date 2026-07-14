@@ -101,7 +101,12 @@ public class RecoveryCoordinator {
         try (Path src = new Path(); Path dst = new Path(); Path dir = new Path()) {
             for (int i = 0, n = tokens.size(); i < n; i++) {
                 final TableToken token = tokens.get(i);
-                if (!token.isWal()) {
+                // Skip regular views: a view token is isWal()==true but has no _meta/_txn/_cv/data and no
+                // durable epoch, and its ViewState is not yet hydrated at this point in completeInit()
+                // (views compile lazily, after recover()) — so resolveEffectiveCommitMode()'s metadata read
+                // would throw `view does not exist` and fail boot. Mat-views (isView()==false) keep their
+                // on-disk _meta and are still recovered.
+                if (!token.isWal() || token.isView()) {
                     continue;
                 }
                 if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {

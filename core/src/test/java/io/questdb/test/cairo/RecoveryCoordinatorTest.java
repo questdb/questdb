@@ -142,6 +142,59 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Regression: a regular VIEW token is {@code isView()==true} AND {@code isWal()==true} (see
+     * {@code CreateViewOperationImpl}), so it slips past the loop's {@code !isWal()} filter. But a view has
+     * no {@code _meta}/{@code _txn}/{@code _cv}/data/epoch, and its {@code ViewState} is NOT hydrated when
+     * {@code recover()} runs (at {@code CairoEngine.completeInit}, right after the name registry is loaded
+     * but BEFORE views are compiled). Before the fix, {@code resolveEffectiveCommitMode -> getTableMetadata
+     * -> getViewMetadata} threw {@code view does not exist} on the view token and failed boot. {@code
+     * recover()} must skip regular views (mat-views, {@code isView()==false}, are still recovered).
+     */
+    @Test
+    public void testRecoverSkipsRegularViewWithUnhydratedState() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        try {
+            execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into base values ('2024-09-01T00:00:00.000000Z', 1)");
+            execute("create view v as (select * from base)");
+            drainWalQueue();
+
+            final TableToken viewToken = engine.verifyTableName("v");
+            // The two flags that make a regular view slip into the recovery loop:
+            Assert.assertTrue("precondition: v must be a regular VIEW", viewToken.isView());
+            Assert.assertTrue("precondition: view token is WAL", viewToken.isWal());
+
+            // Reproduce the boot condition precisely. At completeInit, recover() runs against:
+            //  (1) an enumerable view token (the name registry is loaded) whose ViewState is NOT yet
+            //      hydrated — views compile lazily, after recover() — so getViewMetadata() returns null;
+            engine.getViewStateStore().removeViewState(viewToken);
+            Assert.assertNull("view state must be absent (pre-hydration boot condition)",
+                    engine.getViewStateStore().getViewState(viewToken));
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            //  (2) a fresh in-memory SeqTxnTracker whose commit mode is UNSET (trackers reset on restart),
+            //      so resolveEffectiveCommitMode() cannot early-return a cached mode and MUST read the
+            //      table metadata — which, for a view, throws. Set UNSET last so nothing re-warms it.
+            engine.getTableSequencerAPI().getTxnTracker(viewToken).setCommitMode(CommitMode.UNSET);
+            Assert.assertEquals("precondition: tracker commit mode UNSET (fresh-boot state)",
+                    CommitMode.UNSET, engine.getTableSequencerAPI().getTxnTracker(viewToken).getCommitMode());
+
+            // ACT: before the fix this threw `view does not exist [view=v]` and failed boot.
+            new RecoveryCoordinator(engine).recover();
+
+            // ASSERT: the view was skipped, never treated as a recoverable adaptive table.
+            final long incarnation = engine.getTableSequencerAPI().getTxnTracker(viewToken).getRecoveryIncarnation();
+            Assert.assertEquals("a regular view must not be recovered", 0L, incarnation);
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
     private long readTxnSeqTxn(TableToken tt) {
         try (TxReader tx = new TxReader(engine.getConfiguration().getFilesFacade());
              Path p = new Path()) {
