@@ -49,6 +49,7 @@ public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatch
             return Double.NaN;
         }
     };
+
     // Verify that computeBatch is consistent with computeNext: when the running sum
     // overflows to +Infinity, it is preserved. AvgDouble's computeNext uses addDouble
     // with no inner guard, so Infinity + finite = Infinity naturally.
