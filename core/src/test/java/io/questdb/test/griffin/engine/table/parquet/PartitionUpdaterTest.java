@@ -248,6 +248,12 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 updater.updateFileMetadata();
                 final long newHead = updater.getResultParquetMetaFileSize();
                 Assert.assertTrue("incremental update must extend the _pm", newHead > committedHead);
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                Assert.assertEquals(
+                        "metadata append must not publish the new header",
+                        committedHead,
+                        ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$())
+                );
 
                 // Publish: the REAL header patch (header -> newHead) followed by
                 // sync_data. This is the exact code path the safety claim rests

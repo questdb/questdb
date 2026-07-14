@@ -2005,7 +2005,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 for (int i = 0; i < unchangedColumnCount; i++) {
                     insert.append(", x");
                 }
-                insert.append(", timestamp_sequence('2024-01-01T00:00:00.000000Z', 1000000) FROM long_sequence(")
+                insert.append(", timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_000_000) FROM long_sequence(")
                         .append(rowCount)
                         .append(')');
                 execute(insert);

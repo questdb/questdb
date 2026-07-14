@@ -849,10 +849,10 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             execute("CREATE TABLE xq (ts TIMESTAMP, y LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO xq SELECT timestamp_sequence('2020-02-04T00', 60*1000000L), x FROM long_sequence(1320)");
+            execute("INSERT INTO xq SELECT timestamp_sequence('2020-02-04T00', 60*1_000_000L), x FROM long_sequence(1320)");
             drainWalQueue();
             // O3 write into the middle of 2020-02-04 splits it.
-            execute("INSERT INTO xq SELECT timestamp_sequence('2020-02-04T20:01', 1000000L), x FROM long_sequence(200)");
+            execute("INSERT INTO xq SELECT timestamp_sequence('2020-02-04T20:01', 1_000_000L), x FROM long_sequence(200)");
             drainWalQueue();
 
             final TableToken tt = engine.verifyTableName("xq");
@@ -901,10 +901,10 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             execute("CREATE TABLE x (ts TIMESTAMP, y LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x SELECT timestamp_sequence('2020-02-04T00', 60*1000000L), x FROM long_sequence(1320)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2020-02-04T00', 60*1_000_000L), x FROM long_sequence(1320)");
             drainWalQueue();
             // O3 write into the middle of 2020-02-04 splits it.
-            execute("INSERT INTO x SELECT timestamp_sequence('2020-02-04T20:01', 1000000L), x FROM long_sequence(200)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2020-02-04T20:01', 1_000_000L), x FROM long_sequence(200)");
             drainWalQueue();
 
             final long seqTxnAfterSplit;

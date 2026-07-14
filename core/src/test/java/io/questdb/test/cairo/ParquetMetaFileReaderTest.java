@@ -271,30 +271,21 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testCorruptedColumnCountValidatedBeforeAccess() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                // Corrupt columnCount to a huge value. Without the bounds check,
-                // accessing column descriptors would read past the mmap (SIGSEGV).
-                Unsafe.putInt(file.dataPtr + 24, 1_000_000_000);
-                // Re-checksum so the file is "consistently corrupt": the CRC
-                // matches the modified bytes and resolveFooter's up-front
-                // checksum step lets the columnCount validation fire.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then corrupt columnCount.
+                    // The second resolve reuses that cached verification and must reach the
+                    // Java bounds check before any descriptor access can run past the mmap.
+                    Unsafe.putInt(file.dataPtr + 24, 1_000_000_000);
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Either the Rust-side message ("file too small for ...
-                    // columns") at CRC-verify time or the Java-side message
-                    // ("invalid _pm columnCount") in resolveFooter — both
-                    // prove the corrupt columnCount surfaces a clean
-                    // exception instead of a SIGSEGV.
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("invalid _pm columnCount")
-                                    || e.getMessage().contains("file too small for")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "invalid _pm columnCount [count=1000000000");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -308,29 +299,21 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 int footerLength = Unsafe.getInt(file.dataPtr + file.dataLen - 4);
                 long footerAddr = file.dataPtr + file.dataLen - 4 - Integer.toUnsignedLong(footerLength);
 
-                // Corrupt rowGroupCount to a huge value. Without the validation-before-loop
-                // fix, this causes an out-of-bounds read (SIGSEGV) instead of a clean exception.
-                Unsafe.putInt(footerAddr + 12, 1_000_000_000);
-                // Re-checksum so resolveFooter's up-front checksum step
-                // lets the rowGroupCount validation fire.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then corrupt the footer.
+                    // Reusing the same reader bypasses native reparsing so the Java
+                    // length check must reject the count before the row-group loop.
+                    Unsafe.putInt(footerAddr + 12, 1_000_000_000);
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Either the Rust-side message ("footer too small for ...
-                    // row groups") at CRC-verify time or the Java-side
-                    // message ("invalid _pm footer length") in resolveFooter
-                    // — both prove the corrupt rowGroupCount surfaces a clean
-                    // exception instead of a SIGSEGV.
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("invalid _pm footer length")
-                                    || e.getMessage().contains("footer too small for")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "invalid _pm footer length [rowGroupCount=1000000000");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -1736,31 +1719,22 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testUnknownRequiredFeatureFlagRejected() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                // Set bit 32 (a required feature flag) in the header feature flags at offset 8.
-                long originalFlags = Unsafe.getLong(file.dataPtr + 8);
-                Unsafe.putLong(file.dataPtr + 8, originalFlags | (1L << 32));
-                // Re-checksum so the file is "consistently corrupt": the CRC
-                // matches the modified bytes. The Rust-side reader rejects
-                // the unknown required header flag while parsing the header
-                // (during the checksum parse's from_file_size step) before the
-                // Java-side validation in resolveFooter ever runs.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then set required bit 32.
+                    // The second resolve reuses the cached native reader and must reach
+                    // the Java required-feature guard.
+                    long originalFlags = Unsafe.getLong(file.dataPtr + 8);
+                    Unsafe.putLong(file.dataPtr + 8, originalFlags | (1L << 32));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Either the Rust-side message ("unsupported required
-                    // feature flags") at CRC-verify time or the Java-side
-                    // message ("unsupported required _pm feature flags") in
-                    // resolveFooter — both prove the bad flag is rejected.
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("unsupported required feature flags")
-                                    || e.getMessage().contains("unsupported required _pm feature flags")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm feature flags [flags=0x100000000]");
+                } finally {
+                    reader.clear();
                 }
             }
         });
@@ -1770,36 +1744,25 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testUnknownRequiredFooterFeatureFlagRejected() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                // Footer feature flags live at footerOffset + 32 (FOOTER_FEATURE_FLAGS_OFF).
-                // Derive the footer offset from the trailer, then set bit 32
-                // (a required footer feature flag) on the footer flags.
                 int footerLength = Unsafe.getInt(file.dataPtr + file.parquetMetaFileSize - 4);
                 long footerOffset = file.parquetMetaFileSize - 4 - Integer.toUnsignedLong(footerLength);
                 long footerFlagsAddr = file.dataPtr + footerOffset + 32;
-                long originalFlags = Unsafe.getLong(footerFlagsAddr);
-                Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
-                // Re-checksum so the file is "consistently corrupt": the CRC
-                // matches the modified bytes. The Rust-side reader rejects
-                // the unknown required footer flag during the checksum parse's
-                // from_file_size step, before the Java-side validation in
-                // resolveFooter runs.
-                patchCrc(file.dataPtr, file.parquetMetaFileSize);
-
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
                     reader.of(file.dataPtr, file.parquetMetaFileSize);
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Prime native verification on valid bytes, then set required bit 32.
+                    // The second resolve reuses the cached native reader and must reach
+                    // the Java required-footer-feature guard.
+                    long originalFlags = Unsafe.getLong(footerFlagsAddr);
+                    Unsafe.putLong(footerFlagsAddr, originalFlags | (1L << 32));
                     reader.resolveLastFooter();
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
-                    // Accept either the Rust-side message ("unsupported
-                    // required footer feature flags") or the Java-side
-                    // message ("unsupported required _pm footer feature
-                    // flags").
-                    Assert.assertTrue(
-                            e.getMessage(),
-                            e.getMessage().contains("unsupported required footer feature flags")
-                                    || e.getMessage().contains("unsupported required _pm footer feature flags")
-                    );
+                    TestUtils.assertContains(e.getMessage(), "unsupported required _pm footer feature flags [flags=0x100000000]");
+                } finally {
+                    reader.clear();
                 }
             }
         });

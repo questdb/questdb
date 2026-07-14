@@ -67,6 +67,18 @@ fn compute_bloom_section_size(header: &FileHeader, footer_data: &[u8]) -> Parque
         })
 }
 
+fn validate_footer_feature_flags(feature_flags: FooterFeatureFlags) -> ParquetMetaResult<()> {
+    let unknown_required = feature_flags.unknown_required(0);
+    if unknown_required != 0 {
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "unsupported required footer feature flags [flags=0x{:X}]",
+            unknown_required
+        ));
+    }
+    Ok(())
+}
+
 /// Main reader for a `_pm` metadata file.
 ///
 /// Operates directly over a `&[u8]` slice (typically from an mmap).
@@ -189,17 +201,9 @@ impl<'a> ParquetMetaReader<'a> {
         let bloom_section_size = compute_bloom_section_size(&header, footer_data)?;
         let footer = Footer::new(footer_data, footer_length, bloom_section_size)?;
 
-        // Reject footers that carry unknown required flag bits. The currently
-        // selected footer may be newer than this reader understands, in which
-        // case reading it would silently miss a required per-footer section.
-        let unknown_required = footer.feature_flags().unknown_required(0);
-        if unknown_required != 0 {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "unsupported required footer feature flags [flags=0x{:X}]",
-                unknown_required
-            ));
-        }
+        // The selected footer may be newer than this reader understands, in
+        // which case reading it would silently miss a required per-footer section.
+        validate_footer_feature_flags(footer.feature_flags())?;
 
         // Bloom section: [entries_end, entries_end + bloom_section_size).
         let bloom_filter_section = if bloom_section_size > 0 {
@@ -387,7 +391,9 @@ impl<'a> ParquetMetaReader<'a> {
     /// Parquet file size is derived from each footer as:
     /// `parquet_footer_offset + parquet_footer_length + 8`.
     ///
-    /// Returns `(footer_offset, Footer)` for the matching footer.
+    /// Returns `(footer_offset, Footer)` for the matching footer after validating
+    /// its required feature flags. Unsupported flags on nonmatching newer footers
+    /// do not prevent resolving an older compatible snapshot.
     pub fn find_footer_for_parquet_size(
         data: &'a [u8],
         parquet_meta_file_size: u64,
@@ -467,6 +473,7 @@ impl<'a> ParquetMetaReader<'a> {
             let pq_size =
                 footer.parquet_footer_offset() + footer.parquet_footer_length() as u64 + 8;
             if pq_size == target_parquet_size {
+                validate_footer_feature_flags(footer.feature_flags())?;
                 return Ok((current_offset, footer));
             }
 
@@ -572,7 +579,7 @@ mod tests {
     use crate::column_chunk::ColumnChunkRaw;
     use crate::row_group::RowGroupBlockBuilder;
     use crate::types::{encode_stat_sizes, ColumnFlags, FieldRepetition, StatFlags};
-    use crate::writer::ParquetMetaWriter;
+    use crate::writer::{ParquetMetaUpdateWriter, ParquetMetaWriter};
 
     #[test]
     fn round_trip_all_column_types() {
@@ -705,6 +712,122 @@ mod tests {
 
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.footer_feature_flags().0, optional_bit);
+    }
+
+    #[test]
+    fn find_footer_accepts_unknown_optional_flags_on_selected_footer() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let parquet_footer_offset = 4096;
+        let parquet_footer_length = 256;
+        let target_parquet_size = parquet_footer_offset + parquet_footer_length as u64 + 8;
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(parquet_footer_offset, parquet_footer_length);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let optional_bit: u64 = 1 << 5;
+        bytes[flags_off..flags_off + 8].copy_from_slice(&optional_bit.to_le_bytes());
+
+        let (found_offset, footer) = ParquetMetaReader::find_footer_for_parquet_size(
+            &bytes,
+            parquet_meta_file_size,
+            target_parquet_size,
+        )
+        .unwrap();
+        assert_eq!(found_offset, footer_offset);
+        assert_eq!(footer.feature_flags().0, optional_bit);
+    }
+
+    #[test]
+    fn find_footer_validates_required_flags_only_on_selected_footer() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let original_parquet_footer_offset = 4096;
+        let original_parquet_footer_length = 256;
+        let original_parquet_size =
+            original_parquet_footer_offset + original_parquet_footer_length as u64 + 8;
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(
+            original_parquet_footer_offset,
+            original_parquet_footer_length,
+        );
+        let (original, original_meta_size) = w.finish().unwrap();
+        let original_footer_offset = footer_offset_of(&original, original_meta_size);
+
+        let mut updater = ParquetMetaUpdateWriter::new(&original, original_meta_size).unwrap();
+        updater.parquet_footer(8192, 512);
+        let (append, updated_meta_size) = updater.finish().unwrap();
+        let mut updated = original;
+        updated.extend_from_slice(&append);
+        updated[crate::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..crate::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&updated_meta_size.to_le_bytes());
+
+        let latest_footer_offset = footer_offset_of(&updated, updated_meta_size);
+        let latest_flags_off = latest_footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let required_bit: u64 = 1 << 32;
+        updated[latest_flags_off..latest_flags_off + 8]
+            .copy_from_slice(&required_bit.to_le_bytes());
+
+        let (found_offset, footer) = ParquetMetaReader::find_footer_for_parquet_size(
+            &updated,
+            updated_meta_size,
+            original_parquet_size,
+        )
+        .unwrap();
+        assert_eq!(found_offset, original_footer_offset);
+        assert_eq!(footer.feature_flags(), FooterFeatureFlags::new());
+
+        let selected_flags_off = original_footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        updated[selected_flags_off..selected_flags_off + 8]
+            .copy_from_slice(&required_bit.to_le_bytes());
+        let err = match ParquetMetaReader::find_footer_for_parquet_size(
+            &updated,
+            updated_meta_size,
+            original_parquet_size,
+        ) {
+            Ok(_) => panic!("expected error for selected historical footer flag"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(
+            err.msg,
+            "unsupported required footer feature flags [flags=0x100000000]"
+        );
+    }
+
+    #[test]
+    fn find_footer_rejects_unknown_required_flags_on_selected_footer() {
+        use crate::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let parquet_footer_offset = 4096;
+        let parquet_footer_length = 256;
+        let target_parquet_size = parquet_footer_offset + parquet_footer_length as u64 + 8;
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(parquet_footer_offset, parquet_footer_length);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let required_bit: u64 = 1 << 32;
+        bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
+
+        let err = match ParquetMetaReader::find_footer_for_parquet_size(
+            &bytes,
+            parquet_meta_file_size,
+            target_parquet_size,
+        ) {
+            Ok(_) => panic!("expected error for selected required footer flag"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(
+            err.msg,
+            "unsupported required footer feature flags [flags=0x100000000]"
+        );
     }
 
     #[test]

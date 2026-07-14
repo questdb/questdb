@@ -174,6 +174,32 @@ pub struct ParquetUpdater {
     hybrid_encoded_column_chunks: u64,
 }
 
+fn publish_parquet_meta_with_sync<S>(
+    parquet_meta_file: &mut File,
+    new_file_size: u64,
+    sync: bool,
+    sync_data: S,
+) -> ParquetResult<()>
+where
+    S: FnOnce(&File) -> std::io::Result<()>,
+{
+    parquet_meta_file
+        .seek(SeekFrom::Start(
+            crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
+        ))
+        .map_err(ParquetError::from)?;
+    parquet_meta_file
+        .write_all(&new_file_size.to_le_bytes())
+        .map_err(ParquetError::from)
+        .context("could not patch header parquet_meta_file_size in _pm file")?;
+    if sync {
+        sync_data(parquet_meta_file)
+            .map_err(ParquetError::from)
+            .context("could not fsync _pm file")?;
+    }
+    Ok(())
+}
+
 impl ParquetUpdater {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -1549,21 +1575,12 @@ impl ParquetUpdater {
                 new_file_size > 0,
                 "commit_parquet_meta called before end() wrote the _pm"
             );
-            parquet_meta_file
-                .seek(SeekFrom::Start(
-                    crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
-                ))
-                .map_err(ParquetError::from)?;
-            parquet_meta_file
-                .write_all(&(new_file_size as u64).to_le_bytes())
-                .map_err(ParquetError::from)
-                .context("could not patch header parquet_meta_file_size in _pm file")?;
-            if sync {
-                parquet_meta_file
-                    .sync_data()
-                    .map_err(ParquetError::from)
-                    .context("could not fsync _pm file")?;
-            }
+            publish_parquet_meta_with_sync(
+                parquet_meta_file,
+                new_file_size as u64,
+                sync,
+                File::sync_data,
+            )?;
         }
         Ok(())
     }
@@ -2257,12 +2274,12 @@ mod tests {
     use parquet2::compression::CompressionOptions;
     use parquet2::write::{ParquetFile, Version};
     use qdb_parquet_meta::NoBloomFilterSource;
+    use std::cell::Cell;
     use std::collections::HashSet;
     use std::env;
     use std::error::Error;
     use std::fs::File;
-    use std::io::Cursor;
-    use std::io::Write;
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
     use std::ptr::null;
 
     use super::adjust_column_chunk_offsets;
@@ -2279,6 +2296,73 @@ mod tests {
     use parquet2::write;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use tempfile::NamedTempFile;
+
+    fn read_pm_header(file: &NamedTempFile) -> Result<u64, Box<dyn Error>> {
+        let mut bytes = [0u8; size_of::<u64>()];
+        file.reopen()?.read_exact(&mut bytes)?;
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    #[test]
+    fn commit_parquet_meta_sync_error_is_propagated_after_publication() -> Result<(), Box<dyn Error>>
+    {
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut file = pm.reopen()?;
+        let err = super::publish_parquet_meta_with_sync(&mut file, 42, true, |_| {
+            Err(std::io::Error::other("injected sync failure"))
+        })
+        .unwrap_err();
+
+        assert_eq!(read_pm_header(&pm)?, 42);
+        assert!(
+            err.to_string().contains("could not fsync _pm file"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("injected sync failure"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_sync_false_skips_sync() -> Result<(), Box<dyn Error>> {
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut file = pm.reopen()?;
+        let sync_calls = Cell::new(0);
+        super::publish_parquet_meta_with_sync(&mut file, 42, false, |_| {
+            sync_calls.set(sync_calls.get() + 1);
+            Err(std::io::Error::other("sync must be skipped"))
+        })?;
+
+        assert_eq!(sync_calls.get(), 0);
+        assert_eq!(read_pm_header(&pm)?, 42);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_sync_true_invokes_sync_after_publication() -> Result<(), Box<dyn Error>>
+    {
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut file = pm.reopen()?;
+        let sync_calls = Cell::new(0);
+        super::publish_parquet_meta_with_sync(&mut file, 42, true, |file| {
+            sync_calls.set(sync_calls.get() + 1);
+            let mut published = file.try_clone()?;
+            published.seek(SeekFrom::Start(0))?;
+            let mut bytes = [0u8; size_of::<u64>()];
+            published.read_exact(&mut bytes)?;
+            assert_eq!(u64::from_le_bytes(bytes), 42);
+            Ok(())
+        })?;
+
+        assert_eq!(sync_calls.get(), 1);
+        assert_eq!(read_pm_header(&pm)?, 42);
+        Ok(())
+    }
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {
