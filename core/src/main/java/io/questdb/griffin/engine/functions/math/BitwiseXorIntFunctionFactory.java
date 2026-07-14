@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -52,7 +52,7 @@ public class BitwiseXorIntFunctionFactory implements FunctionFactory {
         return new BitXorIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    public static final class BitXorIntFunction extends IntFunction implements ArithmeticBinaryFunction {
+    public static final class BitXorIntFunction extends LongWidthIntFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -85,11 +85,6 @@ public class BitwiseXorIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public boolean isIntWidthStable() {
-            return false;
         }
 
         @Override

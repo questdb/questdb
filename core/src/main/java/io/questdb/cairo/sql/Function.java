@@ -358,8 +358,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * which overrides this method back to false; and one that implements {@link Function} directly
      * and derives its two widths independently (json_extract), which simply inherits this default.
      * <p>
-     * Any narrow-integer function that overrides one of those getLong()s must override this method
-     * as well. {@code IntFunctionWidthContractTest} enforces that for the IntFunction hierarchy.
+     * INT functions that compute a wider intermediate result extend
+     * {@link io.questdb.griffin.engine.functions.LongWidthIntFunction}, which declares that the two
+     * widths can differ.
      *
      * @return true if getLong() and getInt() carry the same value
      */

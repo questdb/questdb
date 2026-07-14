@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -69,7 +69,7 @@ public class AddIntFunctionFactory implements FunctionFactory {
         return new AddIntFunc(left, right);
     }
 
-    private static class AddIntFunc extends IntFunction implements ArithmeticBinaryFunction {
+    private static class AddIntFunc extends LongWidthIntFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -111,11 +111,6 @@ public class AddIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public boolean isIntWidthStable() {
-            return false;
         }
 
         @Override

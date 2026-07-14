@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongWidthIntFunction;
 
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -53,7 +53,7 @@ public class NegIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends IntFunction implements ArithmeticUnaryFunction {
+    private static class Func extends LongWidthIntFunction implements ArithmeticUnaryFunction {
         final Function arg;
 
         public Func(Function arg) {
@@ -79,11 +79,6 @@ public class NegIntFunctionFactory implements FunctionFactory {
             // diverging from the JIT widening path.
             final long value = arg.getLong(rec);
             return value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL;
-        }
-
-        @Override
-        public boolean isIntWidthStable() {
-            return false;
         }
 
         @Override
