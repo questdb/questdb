@@ -72,13 +72,21 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testAllowAllFactoryCopiesTransientPrincipal() {
-        // the principal is annotated @Transient, so the factory must copy it rather than retain the source buffer
+        // The principal is @Transient, so the factory must copy it rather than retain the caller's buffer.
+        //
+        // The name has to be one no other test derives on AllowAllSecurityContext.INSTANCE. That cache is a
+        // JVM-lifetime static with no eviction and no reset hook, and surefire reuses the fork, so a name
+        // another test already seeded (HttpSecurityTest runs with http.user=foo) turns this into a cache HIT
+        // -- and the hit path does not copy. It hands back the context that other test derived, whose
+        // principal is already an immutable String, and the assertion below then holds whether or not
+        // forPrincipal copies anything at all.
         StringSink mutable = new StringSink();
-        mutable.put("foo");
+        mutable.put("allowallfactorytransientprobe");
         SecurityContext context = AllowAllSecurityContextFactory.INSTANCE.getInstance(principal(mutable), SecurityContextFactory.HTTP);
+        Assert.assertNotSame("must be a derived context, not the singleton", AllowAllSecurityContext.INSTANCE, context);
         mutable.clear();
         mutable.put("somethingelse");
-        TestUtils.assertEquals("foo", context.getPrincipal());
+        TestUtils.assertEquals("allowallfactorytransientprobe", context.getPrincipal());
     }
 
     @Test
@@ -317,6 +325,36 @@ public class SecurityContextFactoryPrincipalTest {
         }
         // it still allows everything else
         context.authorizeHttp();
+    }
+
+    @Test
+    public void testForPrincipalCapCopiesTransientPrincipal() {
+        // The over-cap leg has its own Chars.toString, and nothing pinned it: deleting the copy from the
+        // saturated branch left the whole suite green. testForPrincipalCopiesTransientPrincipal only covers
+        // the CACHED leg (fresh root, so it never saturates), and the cap tests only pass String literals,
+        // where a missing copy is a no-op.
+        //
+        // It is the leg that matters most. Once a singleton saturates, every subsequent request for an
+        // uncached principal re-derives here -- and on the HTTP path the principal is a flyweight over the
+        // reused request buffer, which is exactly why the parameter is @Transient (HttpConnectionContext
+        // re-derives the security context per request). Retaining it aliases that buffer into a long-lived
+        // SecurityContext, and current_user() / session_user() / SHOW CREATE ... OWNED BY would then read
+        // whatever the next request left in it.
+        final AllowAllSecurityContext root = freshAllowAll();
+        for (int i = 0; i < CACHE_CAP; i++) {
+            root.forPrincipal("p" + i);
+        }
+
+        final StringSink mutable = new StringSink();
+        mutable.put("overcapuser");
+        final SecurityContext context = root.forPrincipal(mutable);
+        // saturated, so this is a fresh derivation and not a cache hit
+        Assert.assertNotSame(root, context);
+        Assert.assertNotSame(context, root.forPrincipal(mutable));
+
+        mutable.clear();
+        mutable.put("someoneelse");
+        TestUtils.assertEquals("overcapuser", context.getPrincipal());
     }
 
     @Test
