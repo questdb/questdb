@@ -8427,6 +8427,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnionOfSymbolColumnsCreateTableAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            execute("INSERT INTO ta VALUES ('a', 1), ('b', 2)");
+            execute("INSERT INTO tb VALUES ('c', 3), ('a', 4)");
+
+            // CTAS derives the new table's schema from the union's result type, so a symbol-only
+            // union now materialises a SYMBOL column where it previously widened it to STRING.
+            execute("CREATE TABLE tu AS (SELECT s FROM ta UNION ALL SELECT s FROM tb)");
+
+            assertResultColumnType("SELECT s FROM tu", 0, ColumnType.SYMBOL);
+            assertQuery("SELECT s FROM tu").expectSize().returns("s\na\nb\nc\na\n");
+        });
+    }
+
     private static void assertResultColumnType(CharSequence sql, int columnIndex, int expectedType) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             Assert.assertEquals(
