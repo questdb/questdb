@@ -107,42 +107,80 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.compiledCountOnlyFilter = compiledCountOnlyFilter;
         this.filter = filter;
         this.filterExpr = filterExpr;
-        this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
-        this.bindVarMemory = Vm.getCARWInstance(
-                configuration.getSqlJitBindVarsMemoryPageSize(),
-                configuration.getSqlJitBindVarsMemoryMaxPages(),
-                MemoryTag.NATIVE_JIT
-        );
         this.bindVarFunctions = bindVarFunctions;
-        final int columnCount = base.getMetadata().getColumnCount();
-        final IntList columnTypes = new IntList(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = base.getMetadata().getColumnType(i);
-            columnTypes.add(columnType);
+        // A throw part-way through this constructor never returns the factory, so _close() never runs
+        // and everything allocated up to that point is unreachable: the bind variable memory is
+        // native, and a per-worker filter can hold native memory of its own. The caller frees what it
+        // passed in - the compiled filters, the filter, the bind variable functions and the base
+        // factory - so build the rest into locals and release them here.
+        //
+        // The per-worker filters have no owner until the atom takes them, and the atom belongs to the
+        // frame sequence from the moment the PageFrameSequence constructor is entered: that
+        // constructor closes the atom on its own failure path, and close() closes it afterwards.
+        // Nothing that can throw sits between the two calls, so isPerWorkerFiltersOwned covers the
+        // whole gap and every object below is closed exactly once on every path.
+        MemoryCARW bindVarMemory = null;
+        AsyncFilteredRecordCursor cursor = null;
+        AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = null;
+        PageFrameSequence<AsyncJitFilterAtom> frameSequence = null;
+        boolean isPerWorkerFiltersOwned = true;
+        try {
+            cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+            negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
+            bindVarMemory = Vm.getCARWInstance(
+                    configuration.getSqlJitBindVarsMemoryPageSize(),
+                    configuration.getSqlJitBindVarsMemoryMaxPages(),
+                    MemoryTag.NATIVE_JIT
+            );
+            final int columnCount = base.getMetadata().getColumnCount();
+            final IntList columnTypes = new IntList(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = base.getMetadata().getColumnType(i);
+                columnTypes.add(columnType);
+            }
+            final AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
+                    configuration,
+                    filter,
+                    filterUsedColumnIndexes,
+                    perWorkerFilters,
+                    compiledFilter,
+                    compiledCountOnlyFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    columnTypes,
+                    enablePreTouch
+            );
+            isPerWorkerFiltersOwned = false;
+            frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    atom,
+                    REDUCER,
+                    reduceTaskFactory,
+                    workerCount,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+        } catch (Throwable th) {
+            Misc.free(frameSequence);
+            if (isPerWorkerFiltersOwned) {
+                Misc.freeObjList(perWorkerFilters);
+            }
+            Misc.free(bindVarMemory);
+            // The cursors are not open yet, and close() frees their records only once they are, so
+            // release the records directly - the same call halfClose() makes on the open factory.
+            if (cursor != null) {
+                cursor.freeRecords();
+            }
+            if (negativeLimitCursor != null) {
+                negativeLimitCursor.freeRecords();
+            }
+            throw th;
         }
-        final AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
-                configuration,
-                filter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
-                compiledFilter,
-                compiledCountOnlyFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                columnTypes,
-                enablePreTouch
-        );
-        this.frameSequence = new PageFrameSequence<>(
-                engine,
-                configuration,
-                messageBus,
-                atom,
-                REDUCER,
-                reduceTaskFactory,
-                workerCount,
-                PageFrameReduceTask.TYPE_FILTER
-        );
+        this.cursor = cursor;
+        this.negativeLimitCursor = negativeLimitCursor;
+        this.bindVarMemory = bindVarMemory;
+        this.frameSequence = frameSequence;
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();

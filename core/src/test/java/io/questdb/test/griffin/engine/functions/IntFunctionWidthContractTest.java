@@ -157,23 +157,41 @@ public class IntFunctionWidthContractTest {
         }
     }
 
+    /**
+     * Loads every compiled class under the module output, so the scan sees the whole IntFunction
+     * inventory rather than a hand-kept list. A class this cannot load is reported, not skipped:
+     * swallowing the failure is what would let a broken - or simply new - IntFunction drop out of the
+     * inventory while every assertion above it still passes. The only names expected to fail are the
+     * synthetic {@code module-info} / {@code package-info}, which are not classes anyone can load and
+     * cannot be IntFunctions either.
+     */
     private static List<Class<?>> loadQuestdbClasses() throws URISyntaxException, IOException {
         final Path root = Paths.get(IntFunction.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         final List<Class<?>> classes = new ArrayList<>();
+        final List<String> unloadable = new ArrayList<>();
         try (Stream<Path> paths = Files.walk(root)) {
             for (Path path : (Iterable<Path>) paths.filter(p -> p.toString().endsWith(".class"))::iterator) {
                 final String name = root.relativize(path).toString()
                         .replace(java.io.File.separatorChar, '.')
                         .replace(".class", "");
+                if (name.equals("module-info") || name.endsWith(".package-info")) {
+                    continue;
+                }
                 try {
                     // Do not initialize: a static initializer could load a native library.
                     classes.add(Class.forName(name, false, IntFunction.class.getClassLoader()));
-                } catch (Throwable ignore) {
-                    // A class that cannot be linked here (missing optional dependency) cannot be an
-                    // IntFunction in this module either.
+                } catch (Throwable th) {
+                    unloadable.add(name + ": " + th);
                 }
             }
         }
+        Collections.sort(unloadable);
+        Assert.assertEquals(
+                "a compiled class could not be loaded, so the IntFunction inventory below is incomplete and "
+                        + "the contract it pins may be unenforced for the missing classes: " + unloadable,
+                Collections.emptyList(),
+                unloadable
+        );
         Assert.assertFalse("no compiled classes found under " + root, classes.isEmpty());
         return classes;
     }

@@ -949,21 +949,21 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testOptionsDirectIntLongComparisonUsesWideLane() throws Exception {
-        int options = serialize("anint < 5000000000", false, false, true);
+        int options = serialize("anint < 5_000_000_000", false, false, true);
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(<)(ret)");
-        assertOptionsHint("anint < 5000000000", options, OptionsHint.WIDE_LANE);
+        assertOptionsHint("anint < 5_000_000_000", options, OptionsHint.WIDE_LANE);
 
-        options = serialize("anint = 7 and anint < 5000000000", false, false, true);
+        options = serialize("anint = 7 and anint < 5_000_000_000", false, false, true);
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(<)"
                 + "(i32 7L)(i32 anint)(=)(&&)(ret)");
         assertOptionsHint("mixed AND", options, OptionsHint.WIDE_LANE);
 
-        options = serialize("anint < 5000000000 or anint = 7", false, false, true);
+        options = serialize("anint < 5_000_000_000 or anint = 7", false, false, true);
         assertIR("(i32 7L)(i32 anint)(=)"
                 + "(i64 5000000000L)(i32 anint)(sx_i64)(<)(||)(ret)");
         assertOptionsHint("mixed OR", options, OptionsHint.WIDE_LANE);
 
-        options = serialize("anint < 5000000000", true, false, true);
+        options = serialize("anint < 5_000_000_000", true, false, true);
         assertOptionsHint("forced scalar", options, OptionsHint.SCALAR);
     }
 
@@ -1039,7 +1039,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // A supported widening predicate must not pull an unsupported sibling into the
         // four-lane path. BYTE / SHORT arithmetic still relies on scalar INT promotion.
         for (String filter : new String[]{
-                "anint < 5000000000 and abyte * along = 0",
+                "anint < 5_000_000_000 and abyte * along = 0",
                 "afloat < 1.00000003 or ashort - along = 0"
         }) {
             int options = serialize(filter, false, false, false);
@@ -1055,10 +1055,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         options = serialize("afloat in (1.00000003, :d)", false, false, false);
         assertOptionsHint("FLOAT IN bind variable", options, OptionsHint.SCALAR);
 
-        // A non-integer element makes the whole integer IN shape ineligible even though
-        // another element requires INT-to-LONG widening.
-        options = serialize("anint in (1, 5000000000, 1.5)", false, false, false);
-        Assert.assertNotEquals(OptionsHint.WIDE_LANE.code, (options >> 4) & 0b11);
+        // A non-integer element makes the whole integer IN shape ineligible even though another
+        // element requires INT-to-LONG widening. The widening then emits an SX_I64 outside four-lane
+        // mode, which forces scalar - so pin SCALAR, not merely "not WIDE_LANE": SINGLE_SIZE and
+        // MIXED_SIZES are SIMD hints too and would satisfy the weaker assertion.
+        options = serialize("anint in (1, 5_000_000_000, 1.5)", false, false, false);
+        assertOptionsHint("mixed integer/float IN", options, OptionsHint.SCALAR);
     }
 
     @Test

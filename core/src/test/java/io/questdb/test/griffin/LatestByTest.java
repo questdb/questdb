@@ -725,7 +725,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByOverGenerateSeries() throws Exception {
         // A table function leaf holds the LATEST ON nodes itself and has no nested model, so
         // generateLatestBy() used to trip 'assert nested != null' (an NPE with assertions off).
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         SELECT * FROM generate_series(
                           '2021-01-01T00:00:00.000000Z'::timestamp,
@@ -738,12 +738,12 @@ public class LatestByTest extends AbstractCairoTest {
                 2021-01-01T00:00:01.000000Z
                 2021-01-01T00:00:02.000000Z
                 2021-01-01T00:00:03.000000Z
-                """));
+                """);
     }
 
     @Test
     public void testLatestByOverGenerateSeriesConstantFalseFilter() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         SELECT * FROM generate_series(
                           '2021-01-01T00:00:00.000000Z'::timestamp,
@@ -751,7 +751,7 @@ public class LatestByTest extends AbstractCairoTest {
                           1_000_000L)
                         WHERE 1 > 2
                         LATEST ON generate_series PARTITION BY generate_series"""
-        ).returns("generate_series\n"));
+        ).returns("generate_series\n");
     }
 
     @Test
@@ -762,7 +762,7 @@ public class LatestByTest extends AbstractCairoTest {
         // cannot prove that - PARTITION BY generate_series keys on the timestamp itself, so every key
         // holds exactly one row and both map builds agree - hence the plan assertion, which goes red the
         // moment the nested == null path starts claiming ascending order.
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         SELECT * FROM generate_series(
                           '2021-01-01T00:00:03.000000Z'::timestamp,
@@ -775,7 +775,7 @@ public class LatestByTest extends AbstractCairoTest {
                 2021-01-01T00:00:02.000000Z
                 2021-01-01T00:00:01.000000Z
                 2021-01-01T00:00:00.000000Z
-                """));
+                """);
     }
 
     @Test

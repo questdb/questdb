@@ -130,7 +130,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Absent-key marker for the arithmetic type caches. UNDEFINED_CODE is a cacheable answer, so it
     // cannot double as the miss value.
     private static final int NOT_CACHED = Integer.MIN_VALUE;
-    // Predicate priority for short-circuit evaluation
+    // Predicate priority for short-circuit evaluation. Every priority getPredicatePriority() returns
+    // falls in [0, PRIORITY_COUNT), which is what lets sortPredicates() order a chain by counting
+    // occurrences per priority instead of comparing.
+    private static final int PRIORITY_COUNT = 11;
     private static final int PRIORITY_I16_EQ = 0;  // highest priority
     private static final int PRIORITY_I16_NEQ = 10; // lowest priority
     private static final int PRIORITY_I4_EQ = 2;
@@ -186,13 +189,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PredicateContext predicateContext = new PredicateContext();
     // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<ExpressionNode> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
-    // Scratch priorities for the sortPredicates* insertion sorts, held in lockstep with the predicate
-    // list. getPredicatePriority() walks the predicate's subtree (findOperandColumnType), so
-    // recomputing it on every comparison costs O(k^2 * subtree); computing the k priorities once and
-    // moving each one with its node makes it O(k * subtree + k^2) and keeps the sort stable.
+    // Scratch state for sortPredicates(), reused across filters so ordering a chain allocates nothing
+    // on the compile path: the priority of each predicate (getPredicatePriority walks the subtree, so
+    // it is computed once per predicate rather than once per comparison), the per-priority bucket
+    // offsets, and the reordered chain the sort writes back.
     private final IntList predicatePriorities = new IntList();
+    private final IntList predicatePriorityOffsets = new IntList();
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink = new StringSink();
+    private final ObjList<ExpressionNode> sortedPredicates = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntStack typeStack = new IntStack();
     private ObjList<Function> bindVarFunctions;
@@ -621,14 +626,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 collectedPredicates.clear();
                 collectAndPredicates(node, collectedPredicates);
                 if (collectedPredicates.size() > 1) {
-                    sortPredicatesByPriority(collectedPredicates);
+                    sortPredicates(collectedPredicates, false);
                     return serializePredicatesAndSc(collectedPredicates, forceScalar, debug, nullChecks);
                 }
             } else if (isPureOrChain(node)) {
                 collectedPredicates.clear();
                 collectOrPredicates(node, collectedPredicates);
                 if (collectedPredicates.size() > 1) {
-                    sortPredicatesByInvertedPriority(collectedPredicates);
+                    sortPredicates(collectedPredicates, true);
                     return serializePredicatesOrSc(collectedPredicates, forceScalar, debug, nullChecks);
                 }
             }
@@ -1138,14 +1143,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Computes the priority of each predicate once, into {@link #predicatePriorities}, so that the
-     * sortPredicates* insertion sorts compare pre-computed ints instead of re-walking each
-     * predicate's subtree on every comparison.
+     * Computes the priority of each predicate once, into {@link #predicatePriorities}, so that
+     * {@link #sortPredicates(ObjList, boolean)} reads a pre-computed int per predicate instead of
+     * re-walking its subtree.
      */
     private void computePredicatePriorities(ObjList<ExpressionNode> predicates) {
         predicatePriorities.clear();
         for (int i = 0, n = predicates.size(); i < n; i++) {
-            predicatePriorities.add(getPredicatePriority(predicates.getQuick(i)));
+            final int priority = getPredicatePriority(predicates.getQuick(i));
+            // The counting sort indexes its buckets by priority, so a new PRIORITY_* constant outside
+            // the range has to raise PRIORITY_COUNT with it.
+            assert priority >= 0 && priority < PRIORITY_COUNT;
+            predicatePriorities.add(priority);
         }
     }
 
@@ -3059,43 +3068,55 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
-     * Sorts predicates by inverted priority using simple insertion sort over pre-computed priorities.
-     * Stable sort to preserve original order for equal priorities.
+     * Orders the predicates of an AND ({@code isInverted == false}) or OR ({@code isInverted == true})
+     * chain for short-circuit evaluation: the AND chain runs its cheapest, most selective predicates
+     * first (ascending priority), the OR chain the other way round (descending), so the chain exits
+     * as early as it can.
+     * <p>
+     * Every priority falls in the fixed {@code [0, PRIORITY_COUNT)} range, so the order comes out of a
+     * counting sort in theta(k) rather than the theta(k^2) of a comparison sort. Walking the input
+     * front to back and appending each predicate to its bucket keeps the sort stable, i.e. predicates
+     * of equal priority keep the order the user wrote them in - a chain reordered by anything else
+     * would change which predicate the backend short-circuits on. The scratch lists are fields, so
+     * ordering a chain allocates nothing.
      */
-    private void sortPredicatesByInvertedPriority(ObjList<ExpressionNode> predicates) {
+    private void sortPredicates(ObjList<ExpressionNode> predicates, boolean isInverted) {
+        final int n = predicates.size();
         computePredicatePriorities(predicates);
-        for (int i = 1, n = predicates.size(); i < n; i++) {
-            final ExpressionNode key = predicates.getQuick(i);
-            final int keyPriority = predicatePriorities.getQuick(i);
-            int j = i - 1;
-            while (j >= 0 && predicatePriorities.getQuick(j) < keyPriority) {
-                predicates.setQuick(j + 1, predicates.getQuick(j));
-                predicatePriorities.setQuick(j + 1, predicatePriorities.getQuick(j));
-                j--;
-            }
-            predicates.setQuick(j + 1, key);
-            predicatePriorities.setQuick(j + 1, keyPriority);
-        }
-    }
 
-    /**
-     * Sorts predicates by priority using simple insertion sort over pre-computed priorities.
-     * Stable sort to preserve original order for equal priorities.
-     */
-    private void sortPredicatesByPriority(ObjList<ExpressionNode> predicates) {
-        computePredicatePriorities(predicates);
-        for (int i = 1, n = predicates.size(); i < n; i++) {
-            final ExpressionNode key = predicates.getQuick(i);
-            final int keyPriority = predicatePriorities.getQuick(i);
-            int j = i - 1;
-            while (j >= 0 && predicatePriorities.getQuick(j) > keyPriority) {
-                predicates.setQuick(j + 1, predicates.getQuick(j));
-                predicatePriorities.setQuick(j + 1, predicatePriorities.getQuick(j));
-                j--;
-            }
-            predicates.setQuick(j + 1, key);
-            predicatePriorities.setQuick(j + 1, keyPriority);
+        // Count the predicates per priority, then turn the counts into the offset at which each
+        // bucket starts. Buckets run in ascending priority, or descending when inverted.
+        predicatePriorityOffsets.setAll(PRIORITY_COUNT, 0);
+        for (int i = 0; i < n; i++) {
+            final int priority = predicatePriorities.getQuick(i);
+            predicatePriorityOffsets.increment(priority);
         }
+        int offset = 0;
+        if (isInverted) {
+            for (int priority = PRIORITY_COUNT - 1; priority >= 0; priority--) {
+                final int count = predicatePriorityOffsets.getQuick(priority);
+                predicatePriorityOffsets.setQuick(priority, offset);
+                offset += count;
+            }
+        } else {
+            for (int priority = 0; priority < PRIORITY_COUNT; priority++) {
+                final int count = predicatePriorityOffsets.getQuick(priority);
+                predicatePriorityOffsets.setQuick(priority, offset);
+                offset += count;
+            }
+        }
+
+        sortedPredicates.setPos(n);
+        for (int i = 0; i < n; i++) {
+            final int priority = predicatePriorities.getQuick(i);
+            final int slot = predicatePriorityOffsets.getQuick(priority);
+            predicatePriorityOffsets.setQuick(priority, slot + 1);
+            sortedPredicates.setQuick(slot, predicates.getQuick(i));
+        }
+        for (int i = 0; i < n; i++) {
+            predicates.setQuick(i, sortedPredicates.getQuick(i));
+        }
+        sortedPredicates.clear();
     }
 
     /**

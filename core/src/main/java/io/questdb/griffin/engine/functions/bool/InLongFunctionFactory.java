@@ -632,24 +632,40 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * The mixed path: at least one element is neither constant nor runtime constant, so its value
-     * is only known per row. The element TYPES are known at construction, though, and so are the
-     * values of any constant elements mixed in, so the per-row loop reads a precomputed kind code
-     * ({@code elementKinds}) instead of re-dispatching on {@code getType()} and re-parsing a
-     * constant string on every row.
+     * The mixed path: at least one element is neither constant nor runtime constant, so its value is
+     * only known per row. Everything else about the list is known at construction, and the per-row
+     * loop only pays for what actually varies:
+     * <ul>
+     * <li>a constant element carries the same value on every row, so the constructor parses it once
+     * and hoists it into a width-specific hash set ({@code constIntSet} / {@code constLongSet}).
+     * getBool probes each set once per row in expected O(1) instead of walking C constants per row,
+     * which turns a list of C constants and D dynamic elements from theta(R * (C + D)) into
+     * theta(C + R * D). A set is null when no constant feeds its width, and its probe is skipped;</li>
+     * <li>a dynamic element's TYPE is known too, so the loop reads a precomputed kind code
+     * ({@code dynamicKinds}) instead of re-dispatching on {@code getType()} on every row.</li>
+     * </ul>
+     * getBool walks the dynamic elements first and probes the sets after them. Ordering an OR of
+     * equalities cannot change the answer, and going last keeps the constants from evaluating a key
+     * width that no element reaches: a dynamic element matching at one width returns before the key
+     * is read at the other.
      */
     private static class InLongVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        // Element kinds, indexed by element (args index 1..n-1 maps to 0..n-2).
-        private static final int KIND_CONST_INT_WIDTH = 0;  // pre-parsed constant, key wraps against it
-        private static final int KIND_CONST_LONG_WIDTH = 1; // pre-parsed constant, key widens against it
-        private static final int KIND_LONG = 3;             // LONG/TIMESTAMP-typed, read per row
-        private static final int KIND_NARROW_INT = 2;       // BYTE/SHORT/INT-typed, read per row
-        private static final int KIND_NONE = 6;             // no numeric value: matches a null key only
-        private static final int KIND_STR = 4;              // STRING/SYMBOL, parsed per row
-        private static final int KIND_VARCHAR = 5;          // VARCHAR, parsed per row
+        // Dynamic (per-row) element kinds, indexed by dynamicArgIndexes position.
+        private static final int KIND_LONG = 1;       // LONG/TIMESTAMP-typed, read per row
+        private static final int KIND_NARROW_INT = 0; // BYTE/SHORT/INT-typed, read per row
+        private static final int KIND_NONE = 4;       // no numeric value: matches a null key only
+        private static final int KIND_STR = 2;        // STRING/SYMBOL, parsed per row
+        private static final int KIND_VARCHAR = 3;    // VARCHAR, parsed per row
         private final ObjList<Function> args;
-        private final LongList elementConsts;
-        private final IntList elementKinds;
+        // Constant elements compared at INT width against a wrapped (getInt) narrow key; null when no
+        // constant feeds that width, which is always so for a key that is not a split one.
+        private final DirectLongHashSet constIntSet;
+        // Constant elements compared at long width against the widened (getLong) key; null when every
+        // constant is INT-width against a split narrow-integer key.
+        private final DirectLongHashSet constLongSet;
+        // Indexes into args of the elements that must be read per row, and their kinds.
+        private final IntList dynamicArgIndexes;
+        private final IntList dynamicKinds;
         private final boolean isNarrowIntKey;
         private final boolean isSplitKey;
 
@@ -658,51 +674,87 @@ public class InLongFunctionFactory implements FunctionFactory {
             this.isNarrowIntKey = isNarrowIntKey;
             this.isSplitKey = isSplitKey;
             final int n = args.size();
-            this.elementKinds = new IntList(n - 1);
-            this.elementConsts = new LongList(n - 1);
+            this.dynamicArgIndexes = new IntList(n - 1);
+            this.dynamicKinds = new IntList(n - 1);
+            // Split the list once: constants into the per-width value lists (they are folded at the
+            // width parseValue would give them - an unparseable string stays LONG_NULL, as it did per
+            // row), dynamic elements into the index/kind pair the per-row loop walks.
+            final LongList intConsts = new LongList();
+            final LongList longConsts = new LongList();
             for (int i = 1; i < n; i++) {
                 final Function func = args.getQuick(i);
                 final int tag = ColumnType.tagOf(func.getType());
                 if (func.isConstant()) {
-                    // A constant element carries the same value on every row. Fold it now, at the
-                    // width parseValue would give it, and pick the key read width once. An
-                    // unparseable string stays LONG_NULL, as it did per row.
                     final long val = constElementValue(func, tag, isNarrowIntKey);
-                    elementKinds.add(isIntWidthElement(func, val, isSplitKey) ? KIND_CONST_INT_WIDTH : KIND_CONST_LONG_WIDTH);
-                    elementConsts.add(val);
+                    if (isIntWidthElement(func, val, isSplitKey)) {
+                        intConsts.add(val);
+                    } else {
+                        longConsts.add(val);
+                    }
                     continue;
                 }
-                elementConsts.add(Numbers.LONG_NULL);
+                dynamicArgIndexes.add(i);
                 switch (tag) {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:
                     case ColumnType.INT:
-                        elementKinds.add(KIND_NARROW_INT);
+                        dynamicKinds.add(KIND_NARROW_INT);
                         break;
                     case ColumnType.LONG:
                     case ColumnType.TIMESTAMP:
-                        elementKinds.add(KIND_LONG);
+                        dynamicKinds.add(KIND_LONG);
                         break;
                     case ColumnType.VARCHAR:
-                        elementKinds.add(KIND_VARCHAR);
+                        dynamicKinds.add(KIND_VARCHAR);
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
-                        elementKinds.add(KIND_STR);
+                        dynamicKinds.add(KIND_STR);
                         break;
                     default:
                         // The remaining tags newInstance lets through (NULL, UNDEFINED) carry no
-                        // per-row numeric value: they match a null key only. A constant null takes
-                        // the KIND_CONST_* branch above, so this arm is for a non-constant one.
-                        elementKinds.add(KIND_NONE);
+                        // per-row numeric value: they match a null key only. A constant null is
+                        // hoisted into a set above, so this arm is for a non-constant one.
+                        dynamicKinds.add(KIND_NONE);
                         break;
                 }
             }
+            // Size each set from what it actually holds, and allocate nothing for an absent width.
+            // Both allocations sit inside the try so a native OOM on the second cannot leak the first.
+            DirectLongHashSet intSet = null;
+            DirectLongHashSet longSet = null;
+            try {
+                if (intConsts.size() > 0) {
+                    intSet = new DirectLongHashSet(intConsts.size(), MemoryTag.NATIVE_FUNC_RSS);
+                    for (int i = 0, m = intConsts.size(); i < m; i++) {
+                        intSet.add(intConsts.getQuick(i));
+                    }
+                }
+                if (longConsts.size() > 0) {
+                    longSet = new DirectLongHashSet(longConsts.size(), MemoryTag.NATIVE_FUNC_RSS);
+                    for (int i = 0, m = longConsts.size(); i < m; i++) {
+                        longSet.add(longConsts.getQuick(i));
+                    }
+                }
+            } catch (Throwable e) {
+                Misc.free(intSet);
+                Misc.free(longSet);
+                throw e;
+            }
+            this.constIntSet = intSet;
+            this.constLongSet = longSet;
         }
 
         @Override
         public ObjList<Function> args() {
             return args;
+        }
+
+        @Override
+        public void close() {
+            MultiArgFunction.super.close();
+            Misc.free(constIntSet);
+            Misc.free(constLongSet);
         }
 
         @Override
@@ -716,20 +768,13 @@ public class InLongFunctionFactory implements FunctionFactory {
             boolean hasKeyLong = false;
             boolean hasKeyInt = false;
 
-            for (int i = 1, n = args.size(); i < n; i++) {
-                final Function func = args.getQuick(i);
+            for (int i = 0, n = dynamicArgIndexes.size(); i < n; i++) {
+                final Function func = args.getQuick(dynamicArgIndexes.getQuick(i));
                 final long inVal;
                 // Whether this element compares against the key read at INT width (wrap) rather than
                 // long width (widen). Only a split key reads the two apart; see isSplitKey.
                 boolean isIntWidth = false;
-                switch (elementKinds.getQuick(i - 1)) {
-                    case KIND_CONST_INT_WIDTH:
-                        inVal = elementConsts.getQuick(i - 1);
-                        isIntWidth = true;
-                        break;
-                    case KIND_CONST_LONG_WIDTH:
-                        inVal = elementConsts.getQuick(i - 1);
-                        break;
+                switch (dynamicKinds.getQuick(i)) {
                     case KIND_NARROW_INT:
                         // Match '=' on a narrow-integer key: read the element at INT width
                         // (wrap) rather than widening an overflowing INT arithmetic via getLong().
@@ -778,6 +823,28 @@ public class InLongFunctionFactory implements FunctionFactory {
                     keyVal = keyLong;
                 }
                 if (inVal == keyVal) {
+                    return !negated;
+                }
+            }
+
+            // The constants are probed once each, after the per-row elements. Ordering an OR of
+            // equalities cannot change the answer, and going last keeps a key width from being
+            // evaluated for a set no element reaches: a dynamic element that matches on one width
+            // returns before the other width is read, and both probes reuse whatever read the loop
+            // above already made.
+            if (constLongSet != null) {
+                if (!hasKeyLong) {
+                    keyLong = keyFunc.getLong(rec);
+                }
+                if (constLongSet.contains(keyLong)) {
+                    return !negated;
+                }
+            }
+            if (constIntSet != null) {
+                if (!hasKeyInt) {
+                    keyInt = Numbers.intToLong(keyFunc.getInt(rec));
+                }
+                if (constIntSet.contains(keyInt)) {
                     return !negated;
                 }
             }

@@ -478,6 +478,74 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitKeyVarListPartitionsConstantsByWidth() throws Exception {
+        // The var path hoists its constant elements into width-specific sets at construction, so the
+        // per-row loop probes them once each instead of scanning every constant on every row. A split
+        // key - INT arithmetic, whose getInt() wraps mod 2^32 while getLong() widens - is the only key
+        // that can tell the two sets apart, so it is what pins the partition: (a * 5) reads 705_032_704
+        // at INT width and 5_000_000_000 at long width for the same row, and each constant must land in
+        // the set whose width '=' would compare it at.
+        assertMemoryLeak(() -> {
+            // Take the JIT out of it: this is about the interpreted InLong path.
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                execute("""
+                        CREATE TABLE z AS (SELECT
+                          cast(CASE WHEN x = 1 THEN 1_000_000_000 WHEN x = 2 THEN 2 ELSE null END AS INT) a,
+                          cast(CASE WHEN x = 1 THEN 0 WHEN x = 2 THEN 7 ELSE 3 END AS INT) el
+                        FROM long_sequence(3))""");
+
+                // The oracle: what the key expression carries at each width.
+                assertQuery("SELECT a, (a * 5) wrapped, (a * 5)::long widened FROM z")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\twrapped\twidened
+                                1000000000\t705032704\t5000000000
+                                2\t10\t10
+                                null\tnull\tnull
+                                """);
+
+                // An INT-typed constant wraps the key; a LONG-typed one widens it. Each selects the
+                // same row through a different set, and neither matches the other's value.
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 705_032_704) ORDER BY a")
+                        .noLeakCheck().returns("a\n1000000000\n");
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 5_000_000_000) ORDER BY a")
+                        .noLeakCheck().returns("a\n1000000000\n");
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 705_032_704::long) ORDER BY a")
+                        .noLeakCheck().returns("a\n");
+
+                // A numeric string carries no declared width, so it takes the one its value would have
+                // as a literal: an INT-range value wraps the key, a wider one widens it.
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, '705032704') ORDER BY a")
+                        .noLeakCheck().returns("a\n1000000000\n");
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, '5000000000') ORDER BY a")
+                        .noLeakCheck().returns("a\n1000000000\n");
+
+                // Both sets at once, next to the dynamic element: an untyped null joins the INT-width
+                // set (as '=' resolves it on a narrow key), so the null row matches through it.
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el, 705_032_704, 5_000_000_000, null) ORDER BY a")
+                        .noLeakCheck().returns("""
+                                a
+                                null
+                                1000000000
+                                """);
+
+                // The dynamic element still decides its own rows: el + 3 is the key on the a = 2 row.
+                assertQuery("SELECT a FROM z WHERE (a * 5) IN (el + 3, 5_000_000_000) ORDER BY a")
+                        .noLeakCheck().returns("""
+                                a
+                                2
+                                1000000000
+                                """);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testTwoConst() throws Exception {
         assertQuery("select * from x where x in (2,1)")
                 .ddl("create table x as (" +

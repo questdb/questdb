@@ -40,6 +40,8 @@
 #ifndef _WIN32
 #include <sys/mman.h>
 #include <unistd.h>
+#else
+#include <windows.h>
 #endif
 
 #include "cmdline.h"
@@ -2238,6 +2240,9 @@ public:
         Func func = ptr_as_func<Func>(_func);
         int32_t output[4] = {};
         const int32_t expected[4] = {-7, 0, 42, INT32_MAX};
+        // Place the four ints at the very end of a mapped page and leave the next page unmapped, so a
+        // 32-byte YMM load of a 16-byte i32 column faults instead of quietly reading whatever follows.
+        // A plain array would leave the over-read mapped and the test would pass on a broken load.
 #ifndef _WIN32
         const long page_size = sysconf(_SC_PAGESIZE);
         if (page_size <= 0)
@@ -2259,8 +2264,27 @@ public:
         func(columns, output);
         munmap(mapping, 2 * static_cast<size_t>(page_size));
 #else
-        void *columns[] = {const_cast<int32_t *>(expected)};
+        SYSTEM_INFO system_info;
+        GetSystemInfo(&system_info);
+        const size_t page_size = system_info.dwPageSize;
+        if (page_size < sizeof(expected))
+            return false;
+        void *mapping = VirtualAlloc(nullptr, 2 * page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (mapping == nullptr)
+            return false;
+        auto *input = reinterpret_cast<int32_t *>(
+                static_cast<char *>(mapping) + page_size - sizeof(expected)
+        );
+        memcpy(input, expected, sizeof(expected));
+        DWORD old_protect = 0;
+        if (VirtualProtect(static_cast<char *>(mapping) + page_size, page_size, PAGE_NOACCESS, &old_protect) == 0)
+        {
+            VirtualFree(mapping, 0, MEM_RELEASE);
+            return false;
+        }
+        void *columns[] = {input};
         func(columns, output);
+        VirtualFree(mapping, 0, MEM_RELEASE);
 #endif
         result.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", output[0], output[1], output[2], output[3]);
         expect.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", expected[0], expected[1], expected[2], expected[3]);
