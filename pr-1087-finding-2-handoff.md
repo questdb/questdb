@@ -1,8 +1,8 @@
 # PR #1087 — Finding #2 handoff: unify live-view startup and replay semantics
 
-Status: **OSS tracks 1-4, Enterprise track 5, and the OSS + ent fuzz halves of track 6 have
-landed, as has the OSS seed restart/failure matrix. Only the replica-side restart/lag/promotion
-coverage under a finite boundary remains.** The finding was deliberately left out of the
+Status: **ALL TRACKS LANDED.** OSS tracks 1-4, Enterprise track 5, and every half of track 6 —
+the OSS and ent fuzz, the OSS seed restart/failure matrix, and the replica restart/lag/promotion
+coverage under a finite boundary — are complete. The finding was deliberately left out of the
 Critical-findings fix commit (`fab9dff3a`), which addressed findings #1, #3, #4 and #5.
 
 ## Where this stands (last updated 2026-07-14)
@@ -14,7 +14,7 @@ Critical-findings fix commit (`fab9dff3a`), which addressed findings #1, #3, #4 
 | 3. Initial bounded seed | DONE — same commit |
 | 4. Forward refresh and applied-base replay audit | DONE — `c1da9477c0` ("Floor live view replays at the START FROM bound") |
 | 5. Enterprise reconstruction and replication | DONE — OSS `3f203bb2a8` + ent `ee61c1dda` ("Reconstruct replica live views from the START FROM bound") |
-| 6. Regression coverage | Fuzz DONE on both sides — OSS `d333505d85`, ent `50800a3c2` (+ OSS fix `dc9a3ba641`). OSS seed restart/failure matrix DONE — `877c9c7dc9`. The replica restart/lag/promotion tail is open — see below |
+| 6. Regression coverage | DONE. Fuzz on both sides — OSS `d333505d85`, ent `50800a3c2` (+ OSS fix `dc9a3ba641`). OSS seed restart/failure matrix — `877c9c7dc9`. Replica restart/lag/promotion + two-node explicit-boundary parity — ent `49b6eee70` |
 
 `41a7876bd9` makes event time the only membership rule on the primary: every view whose base
 has committed history CREATEs in SEEDING and seeds from its START FROM boundary, BEGINNING has
@@ -32,10 +32,13 @@ injected mid-seed failure, metadata drift, and IN MEMORY through the seed. It ch
 code: the paths were already correct, but every pre-existing seed restart test seeded from
 BEGINNING, which collapses the two coordinate spaces a finite boundary separates (details below).
 
-**Start here next:** the replica's restart / lag / promotion cases under a finite boundary, and the
-two-node explicit-timestamp parity test. Both are enterprise-side. There is no structural gap: the
-membership predicate is one expression, applied in one place per path, on both nodes. What is left
-is coverage.
+`49b6eee70` closes the last of it: the replica's restart, lag and promotion corners under a boundary
+that cuts, plus the two-node explicit-timestamp parity test. It changed no production code either —
+but its negative control reproduces the finding's original divergence exactly (below).
+
+**Nothing is left open.** The membership predicate is one expression, applied in one place per path,
+on both nodes, and every path now has coverage that demonstrably fails when the predicate is wrong.
+A future session picking this up should be reviewing/landing the PR, not writing more of it.
 
 This is not a replica-only bug. The old OSS design used commit time for initial membership
 and event time for replay membership, so the primary could change its own result after an
@@ -477,20 +480,94 @@ Validated: 811 OSS live-view tests green (plus `WalPurgeJobTest` / `CheckpointTe
 failure mode) with the re-derive firing and no invalidation; 6 × `SwitchFuzzTest` (all three modes
 drawn); 6 × both replica-lead fuzz classes; the ent deterministic LV suites.
 
-Still TODO:
+Still TODO: **nothing.**
 
 - ~~Seed checkpoint (`.scp`) restore and a restart immediately *before* the SEEDING-to-ACTIVE
   transition.~~ Landed — see the OSS seed restart/failure half below.
 - ~~Base metadata drift and an injected mid-drain failure during seeding.~~ Landed — same commit.
 - ~~IN MEMORY views through the initial seed.~~ Landed — same commit.
-- Explicit-timestamp primary/replica parity in a *two-node* test. The in-process replica fuzz now
-  drives an explicit boundary through the replica's own reconstruction, and the predicate is shared,
-  so what is left is the end-to-end pair (`LiveViewReplicationTest` covers NOW and BEGINNING).
-- Replica reconstruction after restart, lag, and promotion under a finite boundary. (O3 is
-  covered — that is what the two ent tests drive.)
+- ~~Explicit-timestamp primary/replica parity in a *two-node* test.~~ Landed — ent `49b6eee70`,
+  see below.
+- ~~Replica reconstruction after restart, lag, and promotion under a finite boundary.~~ Landed —
+  same commit. (O3 was already covered by the two ent reconstruction tests.)
 - ~~Parser/SHOW CREATE round trips and rejection of omitted `START FROM`, old `BACKFILL`,
   malformed literals, duplicates, expressions, and NULL.~~ Landed with track 1.
 - ~~Fuzz: teach the OSS generators to pick all three start modes.~~ Landed — see above.
+
+### The ent replica restart/lag/promotion half — DONE (ent `49b6eee70`)
+
+Two tests in `LiveViewReplicationTest`, both over a real two-node primary + replica, both driving a
+view whose explicit `START FROM` boundary CUTS its base. No production code changed.
+
+**Why the existing coverage did not reach these, and it is the same shape as the OSS seed-restart
+gap.** The suite's 16 tests used `START FROM NOW` and `START FROM BEGINNING` only; the explicit
+literal appeared nowhere in the deterministic ent suites (only in the in-process replica fuzz and
+`SwitchFuzzTest`). Neither shipped mode can put a base row UNDER the view's bound: BEGINNING's bound
+is LONG_NULL, and every NOW test in the class pins the clock BELOW its data, so its bound — finite,
+but under everything — still admits every row. So no test had a replicated base row that was not the
+view's, and the bound could not be observed to do anything.
+
+That is load-bearing on the replica at exactly one place, `drainAppliedBaseForLead`'s scan floor
+(`EntLiveViewRefreshJob:952`):
+
+```java
+scanLowTs = latestSeenTs == LONG_NULL ? viewLowerBoundTimestamp
+                                      : max(latestSeenTs + 1, viewLowerBoundTimestamp);
+```
+
+A *warm* replica's frontier already sits above the bound, so the `max()` is a no-op and the bound
+proves nothing. The replica's **cold start** — `latestSeenTs == LONG_NULL`, which is what a freshly
+booted or restarted replica is — is where the bound ALONE floors a re-derive of the whole applied
+history, and `reconcileLeadWithDisk` arms the seam so that re-derive drives the `row_number()`
+accumulator over the durable band without re-staging it. The accumulator is therefore precisely what
+the bound governs, and the reconstructed lead's `rn` is where a wrong bound becomes visible.
+
+- `testReplicateExplicitBoundaryLiveViewParity` — the steady state. The seed admits only the rows at
+  or above the bound (including the row sitting *exactly* on it — finite boundaries are inclusive),
+  both nodes read the same resolved boundary out of the replicated `_lv` (asserted via
+  `live_views().view_lower_bound_timestamp`, so it is the primary's resolved literal and not a
+  locally recomputed one), and the replica reconstructs the primary's un-flushed lead and numbers it
+  identically.
+- `testReplicaRestartAcrossLagAndPromotionUnderExplicitBoundary` — the three corners at once. It
+  closes the replica down while the primary lands and flushes two more batches, so the replica comes
+  back to a **backlog** rather than a live stream (**no two-node lag test existed at all** — lag was
+  covered only by the in-process simulation); the restarted replica re-registers the view from the
+  on-disk `_lv`, drains the backlog, and cold-starts its lead loop; then the ex-replica is
+  **promoted** and takes a fresh commit that pairs a sub-boundary row with an above-boundary one in a
+  single insert. The above-boundary row appearing is what proves the refresh actually processed that
+  commit, which is what makes the sub-boundary row's absence a genuine membership drop rather than an
+  un-refreshed view. (Row 90 only ever lives in the dead primary's un-flushed lead, so it never
+  replicates as LV WAL — the promoted primary re-derives it from the applied base.)
+
+**Negative control.** Dropping `viewLowerBoundTimestamp` from the replica's cold-start scan floor
+turns both tests red, and it reproduces **the original finding's divergence verbatim**: the replica
+serves rows 10 and 20 — the sub-boundary rows the primary excluded — and renumbers `rn` 1..6 against
+the primary's 1..4. Both the row set and the numbering diverge, which is exactly what the finding
+reported. Validated after the final version of the tests, not just the first draft.
+
+**A frozen-clock trap worth knowing before you add a flush-dependent test here.** `flushDue` is a
+wall-clock test (`nowUs - lastFlushTimeUs >= flushEveryMicros`), and `refreshInstance` bumps
+`lastFlushTimeUs` after the flush it *attempted* — published or not; a tier slot pinned by a
+concurrent reader stalls it (`LiveViewRefreshJob:5644-5647`). Under a frozen clock, one stalled
+attempt therefore pins `flushDue` false **for good**: the lead never reaches disk, and a plain
+`assertEventually` retry loop re-runs a decision that can no longer come out any other way. It
+surfaced as a hard 30s timeout on `last_processed_seqtxn` under full-class load, on a test that
+passed 5/5 in isolation. The new `drainUntilFlushed` helper advances the clock **only after a failed
+attempt**, which re-arms `flushDue` on the stall path while leaving the happy path's clock untouched —
+load-bearing, because the *next* batch usually has to stay in the un-flushed lead, and that only
+holds while `lastFlushTimeUs` is still level with the clock. Advancing on every attempt (the obvious
+first fix) breaks the lead phase instead, which is how the trap announces itself. Moving the clock
+cannot disturb membership: the bound is resolved once, at CREATE.
+
+The lead phases assert **rows, not `last_processed_seqtxn`**: whether a batch is still the primary's
+un-flushed lead or a stalled flush pushed it to disk is a cadence detail that cannot be pinned here
+without racing that cadence, and the membership contract these tests exist to pin holds either way —
+the negative control confirms they stay boundary-sensitive without it.
+
+Validated: 5 consecutive full-class `LiveViewReplicationTest` runs green (18 tests), plus
+`LiveViewReplicaLeadReconstructionTest`, `LiveViewSwitchInvariantsTest`, `LiveViewFlushDemoteRaceTest`
+and `EntShowCreateLiveViewTest` (57 green). The submodule pin stays at OSS `dc9a3ba641`: this half
+needed no OSS change, and the OSS commits above it (`877c9c7dc9`, `7fd224cd7b`) are tests and docs.
 
 ### The OSS seed restart/failure half — DONE (`877c9c7dc9`)
 
@@ -591,12 +668,12 @@ separate implementation tracks:
    cursor bounds, and complete the SEEDING-to-ACTIVE handoff.~~ DONE (`41a7876bd9`).
 3. ~~**OSS replay consistency:** audit every applied-base re-derive, add the primary
    O3/dedup/REPLACE_RANGE regression matrix, and remove old subscription-membership
-   assumptions.~~ DONE (`c1da9477c0`). The restart/failure half of the matrix is still open —
-   see track 6.
+   assumptions.~~ DONE (`c1da9477c0`). The restart/failure half of the matrix landed separately in
+   `877c9c7dc9` — see track 6.
 4. ~~**Enterprise reconstruction:** consume replicated start metadata and add parity,
    recreate, lag, restart, and promotion coverage.~~ DONE (`ee61c1dda`) for the metadata, the
    predicate, and the parity/recreate coverage. Lag, restart and promotion under a finite
-   boundary remain on the track 6 list.
+   boundary landed in ent `49b6eee70` (track 8).
 5. ~~**Final integration/fuzz — OSS:** update the live-view fuzz generators to choose all three
    start modes, and compare every replay/restart result with a from-scratch query using the same
    boundary.~~ DONE (`d333505d85`), and it paid for itself: it found the head-miss replay's
@@ -608,9 +685,10 @@ separate implementation tracks:
    through the seed.~~ DONE (`877c9c7dc9`). It changed no production code, but the negative control
    quantifies the gap it closed: break the seed's bounded cursor and the eight pre-existing
    BEGINNING seed restart tests all stay green while four of the five new ones fail.
-8. **Restart/failure coverage — ent (NEXT):** the replica's restart, lag and promotion cases under a
-   finite boundary, plus the two-node explicit-timestamp parity test. These are the last two entries
-   on the track 6 list.
+8. ~~**Restart/failure coverage — ent:** the replica's restart, lag and promotion cases under a
+   finite boundary, plus the two-node explicit-timestamp parity test.~~ DONE (ent `49b6eee70`). It
+   changed no production code, and its negative control reproduces the finding's original
+   primary/replica divergence exactly — the replica serving the sub-boundary rows, renumbered.
 
 The persisted-model track defined the contract both refresh implementations consume, and
 enterprise parity did not need a second encoding: it needed the primary to stop having two
@@ -641,13 +719,13 @@ The work is complete when:
   same inclusive-lower-bound cursor. Replica (`ee61c1dda`): the applied-base lead scan floors at
   the same bound, and the REPLACE_RANGE clamp is now literally the same function.
 - ~~The original future-dated-row example has identical primary and replica contents before
-  and after O3/restart.~~ Primary half asserted by
+  and after O3/restart.~~ DONE. Primary half asserted by
   `LiveViewStartFromSeedTest.testNowSeedsPreCreateFutureRowsAndO3ReplayDoesNotChangeThem`; the
   primary/replica half by
   `LiveViewReplicationTest.testReplicateLiveViewCreateDropRecreateSeedsBelowClock`. Restart on the
-  *primary* under a cutting boundary is now covered end to end by `LiveViewStartFromSeedRestartTest`
-  (`877c9c7dc9`), including the crash window just before the SEEDING-to-ACTIVE flip. Restart parity
-  on the **replica** is still open (track 6).
+  *primary* under a cutting boundary is covered end to end by `LiveViewStartFromSeedRestartTest`
+  (`877c9c7dc9`), including the crash window just before the SEEDING-to-ACTIVE flip. Restart, lag and
+  promotion parity on the **replica** under a cutting boundary is covered by ent `49b6eee70`.
 - No applied-base path needs per-row commit provenance for live-view membership. *(Holds: no
   path reads seqTxn to decide membership any more.)*
 - ~~BEGINNING truly has no timestamp floor.~~ Done.
