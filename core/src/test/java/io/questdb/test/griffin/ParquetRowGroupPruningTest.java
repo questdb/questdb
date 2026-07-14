@@ -427,6 +427,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testBloomFilterDouble() throws Exception {
+        // A DOUBLE equality no longer prunes on the bloom filter at this magnitude: the bloom filter
+        // hashes the exact bits of the bound, while the row-level filter keeps every row within
+        // DOUBLE_TOLERANCE of it, and a group holding 3.3300000000499 would report 3.33 as absent.
+        // The bound pushes as the BETWEEN spanning its tolerance band instead, which prunes on the
+        // min/max stats only (both values here fall inside them). testDoubleColumnExactEqStillPrunes-
+        // OnBloomFilter covers the magnitude at which the band holds the bound alone and the bloom
+        // filter comes back.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -438,17 +445,25 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQuery("SELECT val FROM x WHERE val = 3.33")
                     .noLeakCheck()
                     .returns("val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
 
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             assertQuery("SELECT val FROM x WHERE val = 5.55")
                     .noLeakCheck()
                     .returns("""
                             val
                             5.55
                             """);
+
+            // A bound clear of the group's min/max still prunes it, through the band.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 99.99")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -4605,6 +4620,103 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("b\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleColumnExactEqStillPrunesOnBloomFilter() throws Exception {
+        // The counterpart of testDoubleColumnToleranceEqPushdownNotFalsePruned: a bound whose
+        // neighbouring doubles fall outside the tolerance band matches the exact value and nothing
+        // else, so it keeps pushing as an equality and keeps consulting the bloom filter. The group's
+        // [min, max] spans the bound, so the bloom filter is the only thing that can prune it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1000000.5, '2024-01-01T00:00:00.000000Z'),
+                    (3000000.5, '2024-01-01T01:00:00.000000Z'),
+                    (5000000.5, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 2000000.5")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQuery("SELECT val FROM x WHERE val = 3000000.5")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            3000000.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testDoubleColumnToleranceEqPushdownNotFalsePruned() throws Exception {
+        // Row-level DOUBLE equality is tolerance-based (Numbers.DOUBLE_TOLERANCE, 1e-10), so
+        // "c6 = 1.0" keeps the row 1.00000000005. Pushing the exact bound into the row group filter
+        // is not: the value falls outside the group's [min, max] (and its bits are absent from the
+        // bloom filter), so pruning drops the group before the row filter ever sees it.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1.00000000005", "0.0");
+
+            assertNativeMatchesPartialParquet("c6 = 1.0", "c6\n1.00000000005\n");
+            assertNativeMatchesPartialParquet("c6 IN (1.0, 5.0)", "c6\n1.00000000005\n");
+
+            // The tolerance band is the only thing the bound gives up: a bound clear of the group
+            // still prunes it.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 = 99.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleColumnToleranceRangePushdownNotFalsePruned() throws Exception {
+        // The same tolerance holds for the ops that include equality: "c6 <= 1.0" keeps the row
+        // 1.00000000005 and "c6 >= 1.0" keeps 0.99999999995, while the native side prunes on
+        // "min > bound" and "max < bound" - the exact bound drops both groups.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1.00000000005", "0.0");
+            assertNativeMatchesPartialParquet("c6 <= 1.0", "c6\n1.00000000005\n0.0\n");
+
+            // The strict ops need no widening (the tolerance makes the row filter stricter than the
+            // pruner), and they still prune the group they exclude.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n0.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "0.99999999995", "2.0");
+            assertNativeMatchesPartialParquet("c6 >= 1.0", "c6\n0.99999999995\n2.0\n");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 1.0", "c6\n2.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleConstantAlmostIntegralPushdownNotFalsePruned() throws Exception {
+        // The integer stats slots widen the column to double and compare with the same tolerance, so
+        // a bound within 1e-10 of an integer keeps that integer's rows: "c6 <= 0.99999999999" keeps
+        // the row 1. Rounding the bare bound floors it to "c6 <= 0", which prunes the group holding
+        // that row; rounding the tolerance-widened bound lands on "c6 <= 1" and keeps it.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(1, -1);
+            assertNativeMatchesPartialParquet("c6 <= 0.99999999999", "c6\n1\n-1\n");
+            assertNativeMatchesPartialParquet("c6 >= 1.00000000001", "c6\n1\n");
+
+            // The same bound in the 64-bit slot.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("LONG", "1", "-1");
+            assertNativeMatchesPartialParquet("c6 <= 0.99999999999", "c6\n1\n-1\n");
         });
     }
 

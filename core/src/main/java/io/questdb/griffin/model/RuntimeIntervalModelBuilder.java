@@ -83,8 +83,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clear() {
         if (isOwnershipTransferred) {
             // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
-            // An unpaired boundary function never reached that list, so it is still ours to free -
-            // clearBetweenParsing() reads dynamicRangeList to tell the two apart, so it runs first.
+            // An unpaired boundary function never reached that list, so it is still ours to free.
             isOwnershipTransferred = false;
             clearBetweenParsing();
             staticIntervals.clear();
@@ -103,8 +102,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     public void freeAndClear() {
         isOwnershipTransferred = false;
-        // Runs before the list is emptied: clearBetweenParsing() decides whether the parked boundary
-        // function is its own to free by looking for it in dynamicRangeList.
         clearBetweenParsing();
         Misc.freeObjListAndClear(dynamicRangeList);
         staticIntervals.clear();
@@ -113,21 +110,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     /**
      * Drops the half-parsed BETWEEN boundary. A runtime-constant lo boundary parks in
-     * {@code betweenBoundaryFunc} until the hi boundary pairs with it and moves it into
-     * {@code dynamicRangeList}; until then this builder owns it. Dropping it unpaired - the hi
-     * boundary threw, or it did not translate to an interval and BETWEEN stayed a residual filter -
-     * loses the last reference to it, so close it rather than orphan its native memory.
+     * {@code betweenBoundaryFunc} until the hi boundary arrives; until then this builder owns it.
+     * Dropping it unpaired - the hi boundary threw, or it did not translate to an interval and
+     * BETWEEN stayed a residual filter - loses the last reference to it, so close it rather than
+     * orphan its native memory.
      * <p>
-     * Must run before a caller empties {@code dynamicRangeList}: a paired function lives in that
-     * list and is freed (or owned by the built model) through it, and finding it there is what stops
-     * this method from double-freeing it.
+     * Pairing the boundaries un-parks the function ({@link #setBetweenBoundary(long)} and
+     * {@link #setBetweenBoundary(Function)} hand ownership to the intersectBetween* method, which
+     * either lists it or frees it), so a parked function is never one dynamicRangeList also holds.
      */
     public void clearBetweenParsing() {
-        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
-            betweenBoundaryFunc.close();
-        }
+        betweenBoundaryFunc = Misc.free(betweenBoundaryFunc);
         betweenBoundarySet = false;
-        betweenBoundaryFunc = null;
         betweenBoundary = Numbers.LONG_NULL;
     }
 
@@ -137,6 +131,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersect(long lo, Function hi, short adjustment) {
         if (isEmptySet()) {
+            Misc.free(hi);
             return;
         }
 
@@ -147,6 +142,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersect(Function lo, long hi, short adjustment) {
         if (isEmptySet()) {
+            Misc.free(lo);
             return;
         }
 
@@ -224,6 +220,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectRuntimeIntervals(Function intervalFunction) {
         if (isEmptySet()) {
+            Misc.free(intervalFunction);
             return;
         }
 
@@ -234,6 +231,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectRuntimeTimestamp(Function function) {
         if (isEmptySet()) {
+            Misc.free(function);
             return;
         }
 
@@ -411,7 +409,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     }
                 }
             } else {
-                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);
+                // The boundaries pair up: un-park the lo function and hand its ownership to
+                // intersectBetweenSemiDynamic(), which either lists it or frees it.
+                final Function lo = betweenBoundaryFunc;
+                betweenBoundaryFunc = null;
+                intersectBetweenSemiDynamic(lo, timestamp);
             }
             betweenBoundarySet = false;
         }
@@ -425,7 +427,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             if (betweenBoundaryFunc == null) {
                 intersectBetweenSemiDynamic(timestamp, betweenBoundary);
             } else {
-                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);
+                // See setBetweenBoundary(long): the pairing un-parks the lo function.
+                final Function lo = betweenBoundaryFunc;
+                betweenBoundaryFunc = null;
+                intersectBetweenDynamic(timestamp, lo);
             }
             betweenBoundarySet = false;
         }
@@ -437,6 +442,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractEquals(Function function) {
         if (isEmptySet()) {
+            Misc.free(function);
             return;
         }
 
@@ -498,6 +504,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractRuntimeIntervals(Function intervalFunction) {
         if (isEmptySet()) {
+            Misc.free(intervalFunction);
             return;
         }
 
@@ -557,6 +564,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void unionRuntimeTimestamp(Function function) {
         if (isEmptySet()) {
+            Misc.free(function);
             return;
         }
 
@@ -618,8 +626,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
+    /**
+     * Takes ownership of both boundary functions: the empty set has nothing left to intersect, and
+     * the caller has already un-parked them, so free them here rather than orphan their native memory.
+     */
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
         if (isEmptySet()) {
+            Misc.free(funcValue1);
+            Misc.free(funcValue2);
             return;
         }
 
@@ -631,6 +645,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    /**
+     * Takes ownership of the boundary function - see {@link #intersectBetweenDynamic(Function, Function)}.
+     * A NULL constant boundary drops it too: BETWEEN NULL matches nothing and NOT BETWEEN NULL filters
+     * nothing, so neither keeps the function.
+     */
     private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
         if (constValue == Numbers.LONG_NULL) {
             if (!betweenNegated) {
@@ -641,10 +660,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // to be consistent with non-designated filtering
             // do no filtering
             // }
+            Misc.free(funcValue);
             return;
         }
 
         if (isEmptySet()) {
+            Misc.free(funcValue);
             return;
         }
 
@@ -656,6 +677,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void intersectCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
@@ -703,6 +725,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
@@ -712,6 +735,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void unionCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);

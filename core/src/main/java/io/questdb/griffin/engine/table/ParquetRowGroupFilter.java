@@ -206,9 +206,12 @@ public final class ParquetRowGroupFilter {
                 final int columnType = condition.getColumnType();
                 final long valuesOffset = filterValues.getAppendOffset();
                 boolean supported = true;
-                // The op the filter list carries. Only the INT arm rewrites it, and only for a
-                // single-value comparison whose bound no INT row can satisfy (see unsatisfiableIntOp).
+                // The op and value count the filter list carries. The INT arm rewrites the op for a
+                // single-value comparison whose bound no INT row can satisfy (see unsatisfiableIntOp),
+                // and the DOUBLE arm rewrites an equality into the BETWEEN that spans its tolerance
+                // band (see putDoubleEq), which is the one rewrite that changes the count.
                 int effectiveOp = opType;
+                int effectiveCount = valueCount;
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BYTE:
                         for (int j = 0; j < valueCount; j++) {
@@ -408,8 +411,23 @@ public final class ParquetRowGroupFilter {
                         }
                         break;
                     case ColumnType.DOUBLE:
+                        if (opType == PushdownFilterExtractor.OP_EQ) {
+                            final int rewrittenCount = putDoubleEq(filterValues, valueFunctions, valueCount);
+                            if (rewrittenCount < 0) {
+                                supported = false;
+                                break;
+                            }
+                            if (rewrittenCount != valueCount) {
+                                effectiveOp = PushdownFilterExtractor.OP_BETWEEN;
+                                effectiveCount = rewrittenCount;
+                            }
+                            break;
+                        }
                         for (int j = 0; j < valueCount; j++) {
-                            filterValues.putDouble(valueFunctions.getQuick(j).getDouble(null));
+                            if (!tryPutDoubleFromDouble(filterValues, valueFunctions.getQuick(j).getDouble(null), opType)) {
+                                supported = false;
+                                break;
+                            }
                         }
                         break;
                     case ColumnType.IPv4:
@@ -521,7 +539,7 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                filterList.add(encodeColumnCountAndOp(columnIndex, valueCount, effectiveOp));
+                filterList.add(encodeColumnCountAndOp(columnIndex, effectiveCount, effectiveOp));
                 filterList.add(valuesOffset);
                 filterList.add(columnType);
             }
@@ -592,19 +610,44 @@ public final class ParquetRowGroupFilter {
      * {@code <=} and {@code >} take the floor. An integral bound comes back unchanged under every
      * op, so an exact bound keeps pushing as it did.
      * <p>
+     * The rounding runs on the TOLERANCE-widened bound, not the bound itself, because the
+     * row-level filter compares the widened column with {@link Numbers#DOUBLE_TOLERANCE}: {@code <=}
+     * and {@code >=} keep a row up to one tolerance beyond the bound (see toleranceBound), and an
+     * integer row can sit in that band - {@code i <= 0.99999999999} keeps the row at 1. Rounding the
+     * bare bound floors that to {@code i <= 0}, which prunes the group holding it. Widening first
+     * lands on {@code i <= 1} and keeps the group. It costs nothing anywhere else: a tolerance is
+     * far too small to move the ceiling or floor of any bound that is not already within 1e-10 of
+     * an integer.
+     * <p>
      * Every other op declines a fractional bound by returning NaN. EQ (and the IN list that shares
      * its op code) has no rounding that preserves it: a fractional bound equals no integer row at
-     * all, and the pruner cannot express "no group matches". BETWEEN never reaches here with a
-     * FLOAT/DOUBLE bound - QuestDB only accepts it over a TIMESTAMP column, against TIMESTAMP
+     * all, and the pruner cannot express "no group matches". Declining is safe even for the bound
+     * within a tolerance of an integer, which the row-level filter does match - the group simply
+     * stays and the filter decides. An integral EQ bound has no such hole: the tolerance band of an
+     * integer holds no other integer, so only the exact value matches. BETWEEN never reaches here
+     * with a FLOAT/DOUBLE bound - QuestDB only accepts it over a TIMESTAMP column, against TIMESTAMP
      * bounds - and declining is the safe answer if that ever changes. A NULL (NaN) bound stays NaN
      * and declines as well.
      */
     private static double integralBound(double d, int opType) {
         return switch (opType) {
-            case PushdownFilterExtractor.OP_LT, PushdownFilterExtractor.OP_GE -> Math.ceil(d);
-            case PushdownFilterExtractor.OP_LE, PushdownFilterExtractor.OP_GT -> Math.floor(d);
+            case PushdownFilterExtractor.OP_LT, PushdownFilterExtractor.OP_GE -> Math.ceil(toleranceBound(d, opType));
+            case PushdownFilterExtractor.OP_LE, PushdownFilterExtractor.OP_GT -> Math.floor(toleranceBound(d, opType));
             default -> d == Math.floor(d) ? d : Double.NaN;
         };
+    }
+
+    // Whether the row-level filter calls NO double other than d itself equal to d: its neighbouring
+    // doubles must fall outside the DOUBLE_TOLERANCE band around it. That holds once the double
+    // spacing exceeds the tolerance (|d| above roughly 9e5). Below it the band spans many doubles,
+    // any of which a row group may hold instead of d, and neither the min/max stats (which would
+    // place d outside [min, max]) nor the bloom filter (which hashes the exact bits of d) can see
+    // it - so only a certified bound may push as an exact equality. A NULL (NaN) bound is equal to
+    // NULL rows alone, which the native side decides from the null count rather than the stats, so
+    // it certifies as exact.
+    private static boolean isExactEqDouble(double d) {
+        return Numbers.isNull(d)
+                || (!Numbers.equals(Math.nextUp(d), d) && !Numbers.equals(Math.nextDown(d), d));
     }
 
     // Whether ANY row-level filter keeps this FLOAT row, at the width and with the tolerance it
@@ -634,6 +677,93 @@ public final class ParquetRowGroupFilter {
                 return !isEqStrict && l > d;
             default: // OP_GE
                 return isEq || l > d;
+        }
+    }
+
+    /**
+     * Appends the values of a DOUBLE equality (or of the IN list that shares its op code) into the
+     * filter, and reports how many slots it wrote: {@code valueCount} to keep the equality as it
+     * stands, 2 to replace it with the BETWEEN spanning the bound's tolerance band, or -1 to decline
+     * the pushdown.
+     * <p>
+     * An exact equality is only pushable when every value certifies through {@link #isExactEqDouble}
+     * - otherwise the group may hold a row the row-level filter calls equal to the bound, and pruning
+     * (which runs first, and which no later filter can undo) would drop it. The tolerance band IS the
+     * set of matching rows, though, and for a lone bound the native side can test exactly that band:
+     * {@code d = c} becomes {@code d BETWEEN c - tolerance AND c + tolerance}, which prunes every
+     * group whose stats lie clear of the band and keeps every group that may hold a match. It gives
+     * up the bloom filter (the native side consults it for equality only, and it hashes exact bits,
+     * which is the unsound part), so a group whose [min, max] spans the band but holds no matching
+     * row now survives pruning; the row-level filter then returns no rows for it.
+     * <p>
+     * An IN list has no single band and declines instead. The rewrite also does not apply to the
+     * NULL (NaN) bound, which certifies as exact and keeps pushing as an equality: a band around NaN
+     * is empty, and NULL rows do not reach the min/max stats at all.
+     */
+    private static int putDoubleEq(MemoryCARWImpl filterValues, ObjList<Function> valueFunctions, int valueCount) {
+        boolean isExact = true;
+        for (int i = 0; i < valueCount; i++) {
+            if (!isExactEqDouble(valueFunctions.getQuick(i).getDouble(null))) {
+                isExact = false;
+                break;
+            }
+        }
+        if (isExact) {
+            for (int i = 0; i < valueCount; i++) {
+                filterValues.putDouble(valueFunctions.getQuick(i).getDouble(null));
+            }
+            return valueCount;
+        }
+        if (valueCount != 1) {
+            return -1;
+        }
+        final double d = valueFunctions.getQuick(0).getDouble(null);
+        filterValues.putDouble(Math.nextDown(d - Numbers.DOUBLE_TOLERANCE));
+        filterValues.putDouble(Math.nextUp(d + Numbers.DOUBLE_TOLERANCE));
+        return 2;
+    }
+
+    /**
+     * Widens a DOUBLE bound by the comparison tolerance in the direction that keeps pruning safe, or
+     * returns NaN to decline the pushdown.
+     * <p>
+     * A DOUBLE column needs no narrowing (unlike FLOAT, see tryPutFloatFromDouble) but compares with
+     * the same {@link Numbers#DOUBLE_TOLERANCE}: {@code d <= c} keeps every row up to {@code c + tolerance}
+     * and {@code d >= c} every row down to {@code c - tolerance}, while the native side prunes on
+     * {@code min > bound} and {@code max < bound}. The bare bound therefore prunes a group whose rows
+     * are merely tolerance-equal to it; pushing the bound one tolerance outward (and one ulp beyond
+     * that, so the rounding of the sum cannot land back inside the band) prunes only the groups that
+     * hold nothing the filter keeps.
+     * <p>
+     * The strict ops need no widening: the tolerance makes the filter STRICTER than the pruner there
+     * ({@code d < c} really keeps {@code d < c - tolerance}), so a group the exact bound prunes holds
+     * no matching row anyway. BETWEEN carries two bounds with no single direction and never reaches a
+     * DOUBLE column today (QuestDB accepts it over TIMESTAMP only); decline it. A NULL (NaN) bound
+     * stays NaN, and the native side declines to prune on it.
+     */
+    private static double toleranceBound(double d, int opType) {
+        return switch (opType) {
+            case PushdownFilterExtractor.OP_LT, PushdownFilterExtractor.OP_GT -> d;
+            case PushdownFilterExtractor.OP_LE -> Math.nextUp(d + Numbers.DOUBLE_TOLERANCE);
+            case PushdownFilterExtractor.OP_GE -> Math.nextDown(d - Numbers.DOUBLE_TOLERANCE);
+            default -> Double.NaN;
+        };
+    }
+
+    // Appends a DOUBLE bound into a DOUBLE stats slot, or reports that it cannot be pushed down.
+    // The bound absorbs the comparison tolerance (see toleranceBound); an op with no safe bound
+    // declines rather than prune wrongly. Equality does not come through here - putDoubleEq handles
+    // it, and it is the only op that can rewrite the whole condition.
+    private static boolean tryPutDoubleFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        switch (opType) {
+            case PushdownFilterExtractor.OP_LT:
+            case PushdownFilterExtractor.OP_LE:
+            case PushdownFilterExtractor.OP_GT:
+            case PushdownFilterExtractor.OP_GE:
+                filterValues.putDouble(toleranceBound(d, opType));
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -675,8 +805,8 @@ public final class ParquetRowGroupFilter {
     // the filter keeps: for "c6 = 0.0005", the floats 4.9999997E-4, 5.0E-4 and 5.000001E-4 are all
     // tolerance-equal to the bound, yet only 5.0E-4 is pushed. So certify EQ too - decline unless
     // the neighbouring floats are outside the band. (The hole predates this change: master pushes
-    // the identical (float) d. The DOUBLE arm carries the same tolerance blindness at every
-    // magnitude and is left alone here - see the PR notes.)
+    // the identical (float) d. The DOUBLE arm carries the same tolerance blindness - it needs no
+    // narrowing, only the tolerance corrections; toleranceBound and putDoubleEq apply them there.)
     //
     // BETWEEN carries two bounds with no single direction and never reaches a FLOAT column today
     // (QuestDB accepts it over TIMESTAMP only); decline it. A NULL (NaN) bound compares false
