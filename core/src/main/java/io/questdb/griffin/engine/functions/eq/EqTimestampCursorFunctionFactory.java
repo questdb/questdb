@@ -80,12 +80,16 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         }
         Function arg0 = args.getQuick(0);
         int arg0ColType = arg0.getType();
-        if (ColumnType.tagOf(arg0ColType) != ColumnType.TIMESTAMP) {
+        int metadataType = metadata.getColumnType(0);
+        final int arg0Type;
+        if (ColumnType.tagOf(arg0ColType) == ColumnType.TIMESTAMP) {
+            arg0Type = ColumnType.getTimestampType(arg0ColType);
+        } else if (ColumnType.tagOf(arg0ColType) == ColumnType.NULL && ColumnType.isTimestamp(metadataType)) {
+            arg0Type = ColumnType.getTimestampType(metadataType);
+        } else {
             throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, found: ")
                     .put(ColumnType.nameOf(args.getQuick(0).getType()));
         }
-        int arg0Type = ColumnType.getTimestampType(arg0ColType);
-        int metadataType = metadata.getColumnType(0);
         switch (ColumnType.tagOf(metadataType)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:

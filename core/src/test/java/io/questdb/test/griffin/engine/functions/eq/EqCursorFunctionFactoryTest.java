@@ -47,6 +47,64 @@ import org.junit.Test;
 public class EqCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testBareNullLeftCursorComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::int i FROM long_sequence(3))");
+
+            assertQuery("SELECT null = (SELECT max(i) FROM t) eq")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("eq\nfalse\n");
+            assertQuery("SELECT null != (SELECT max(i) FROM t) ne")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ne\ntrue\n");
+            assertQuery("SELECT null <> (SELECT max(i) FROM t) ne")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ne\ntrue\n");
+            assertQuery("SELECT (SELECT max(i) FROM t) = null eq")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("eq\nfalse\n");
+            assertQuery("SELECT (SELECT max(i) FROM t) != null ne")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ne\ntrue\n");
+            assertQuery("SELECT (SELECT max(i) FROM t) <> null ne")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ne\ntrue\n");
+
+            for (String value : new String[]{
+                    "1::byte", "1::short", "1", "1L", "1::float", "1.0", "1::timestamp", "1::timestamp_ns"
+            }) {
+                assertQuery("SELECT null = (SELECT " + value + ") eq")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("eq\nfalse\n");
+            }
+
+            assertQuery("SELECT null = (SELECT null) eq")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("eq\ntrue\n");
+            assertQuery("SELECT null != (SELECT null) ne")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ne\nfalse\n");
+            assertQuery("SELECT null = (SELECT i FROM t WHERE 1 <> 1) eq")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("eq\ntrue\n");
+            assertQuery("SELECT null != (SELECT i FROM t WHERE 1 <> 1) ne")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ne\nfalse\n");
+        });
+    }
+
+    @Test
     public void testBareNullLiteralDoesNotBindCursor() throws Exception {
         // A bare `null` literal is a scalar, never a cursor: `col = null` / `col != null` must
         // resolve to the scalar null-comparison factories (never the `=(?C)` cursor factory) and
