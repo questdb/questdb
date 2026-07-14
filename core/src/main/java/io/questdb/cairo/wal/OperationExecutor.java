@@ -230,6 +230,19 @@ public class OperationExecutor implements Closeable {
                     LOG.info().$("DELETE apply [table=").$(tableToken)
                             .$(", strategy=").$(deleteStrategy)
                             .$(", seqTxn=").$(seqTxn).I$();
+                    // Defensive: the window-tiling upper bound (maxTs+1 in windowHiExcl) and deleteWindowStep's
+                    // span (maxTs-minTs+1) both overflow when the table's maxTimestamp is exactly Long.MAX_VALUE,
+                    // which would infinite-loop the apply thread on the survivor routes and silently no-op the
+                    // time-range route (dHiExcl wraps to Long.MIN_VALUE -> dLo >= dHiExcl -> returns 0). Not
+                    // reachable via normal ingestion today -- a Long.MAX_VALUE-nanos row cannot commit (the insert
+                    // apply path runs away first, questdb/questdb#7389) and micros cap at year 10000 -- but guard it
+                    // so a future timestamp-bounds change surfaces a clean, diagnosable suspend rather than a hung
+                    // worker (which would starve the shared ApplyWal2TableJob pool) or a silent failure-to-delete.
+                    if (tableWriter.getPartitionCount() > 0 && tableWriter.getMaxTimestamp() == Long.MAX_VALUE) {
+                        throw CairoException.critical(0)
+                                .put("DELETE unsupported when the table's maxTimestamp is Long.MAX_VALUE (window bound would overflow) [table=")
+                                .put(tableToken.getTableName()).put(']');
+                    }
                     if (isDiskBounded) {
                         return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
                     }
@@ -737,7 +750,12 @@ public class OperationExecutor implements Closeable {
         // clamp to >= 1 so estimateBucketsForRows can never floor the window to 1 ts-unit and explode the window
         // count to the whole timestamp span.
         final long safeRowsPerStep = Math.max(1, rowsPerStep);
-        final long span = maxTs - minTs + 1; // caller guarantees maxTs >= minTs (non-empty populated range)
+        // maxTs - minTs is always in [0, Long.MAX_VALUE] (caller guarantees 0 <= minTs <= maxTs; designated
+        // timestamps are non-negative), but the +1 overflows to a NEGATIVE span when the populated range fills
+        // the whole positive domain (minTs==0, maxTs==Long.MAX_VALUE), which would floor the step to 1 and
+        // explode the window count. Clamp that single case to Long.MAX_VALUE (one window).
+        final long diff = maxTs - minTs;
+        final long span = (diff == Long.MAX_VALUE) ? Long.MAX_VALUE : diff + 1;
         return MatViewRefreshJob.estimateBucketsForRows(safeRowsPerStep, tableRows, 1, span, 1);
     }
 

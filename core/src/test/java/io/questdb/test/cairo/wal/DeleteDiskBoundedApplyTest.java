@@ -152,7 +152,7 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
      * {@code S} here would silently mark a PARTIALLY-applied delete complete = data loss.
      * <p>
      * The guard is TWO parts in {@code executeDelete}'s catch, BOTH required, because a WAL-tolerable error is
-     * skipped-and-finalized at TWO layers: (1) that catch's own {@code !diskBounded} branch stops IT from
+     * skipped-and-finalized at TWO layers: (1) that catch's own {@code !isDiskBounded} branch stops IT from
      * finalizing; (2) but the CALLER {@code ApplyWal2TableJob.processWalSql} has its own
      * {@code catch (CairoException)} that ALSO {@code commitSeqTxn(seqTxn)}'s any rethrown WAL-tolerable error -
      * so on the disk-bounded route the catch additionally rethrows it as a CRITICAL error, the only kind that

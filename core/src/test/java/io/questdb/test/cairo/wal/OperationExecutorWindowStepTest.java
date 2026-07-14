@@ -60,4 +60,13 @@ public class OperationExecutorWindowStepTest {
         long step = OperationExecutor.deleteWindowStep(0, (Long.MAX_VALUE >> 1), 1_000_000_000L, 1_000_000L);
         Assert.assertTrue("step positive", step > 0);
     }
+
+    @Test
+    public void testFullPositiveDomainSpanDoesNotOverflow() {
+        // minTs=0, maxTs=Long.MAX_VALUE fills the whole positive domain: `maxTs - minTs + 1` overflows to a
+        // negative span, which (before the clamp) floored the step to 1 and exploded the window count to ~2^63.
+        // The clamp must keep the step large (one/few windows), not 1.
+        long step = OperationExecutor.deleteWindowStep(0, Long.MAX_VALUE, 1_000_000_000L, 1_000_000L);
+        Assert.assertTrue("step must not be floored to 1 by span overflow, was " + step, step > 1_000_000L);
+    }
 }

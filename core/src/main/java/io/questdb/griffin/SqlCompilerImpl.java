@@ -229,7 +229,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // statement at a time and DELETE compiles never nest, so there is no re-entrancy.
     private long deleteTimeRangeHiExcl;
     private long deleteTimeRangeLo;
-    private boolean isDeleteTimeRangePure;
+    private boolean deleteTimeRangePure;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     //determines how compiler parses query text
@@ -4933,9 +4933,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Classifies the DELETE's ORIGINAL (un-negated) predicate for the Task 2.1 time-range fast path: does the
      * WHOLE predicate reduce to a SINGLE designated-timestamp interval with NO residual non-timestamp filter?
      * If so, records the deleted interval in {@link #deleteTimeRangeLo}/{@link #deleteTimeRangeHiExcl}
-     * (inclusive lo, exclusive hi, in the table's timestamp units) and sets {@link #isDeleteTimeRangePure}, so
+     * (inclusive lo, exclusive hi, in the table's timestamp units) and sets {@link #deleteTimeRangePure}, so
      * {@code OperationExecutor.executeDelete} can apply it as one empty {@code replaceRange} over the deleted
-     * interval instead of staging survivors. Otherwise leaves {@code isDeleteTimeRangePure == false} and the
+     * interval instead of staging survivors. Otherwise leaves {@code deleteTimeRangePure == false} and the
      * executor falls back to the always-correct whole-range survivor-replace.
      * <p>
      * <b>Soundness (mandatory: no false positives).</b> This mirrors the exact conditions the code generator
@@ -4948,7 +4948,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * deep clone, leaving the real predicate (which the survivor factory later compiles) untouched.
      */
     private void classifyDeleteTimeRange(IQueryModel deleteQueryModel, TableToken tableToken, SqlExecutionContext executionContext) {
-        isDeleteTimeRangePure = false;
+        deleteTimeRangePure = false;
         deleteTimeRangeLo = Long.MIN_VALUE;
         deleteTimeRangeHiExcl = Long.MAX_VALUE;
 
@@ -5009,7 +5009,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             // Interval bounds are inclusive; convert to replaceRange's exclusive hi, guarding
                             // an open upper bound (Long.MAX_VALUE) against +1 overflow.
                             deleteTimeRangeHiExcl = hiInclusive == Long.MAX_VALUE ? Long.MAX_VALUE : hiInclusive + 1;
-                            isDeleteTimeRangePure = true;
+                            deleteTimeRangePure = true;
                         }
                     }
                 }
@@ -5025,7 +5025,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (Throwable th) {
             // Classification is advisory - any failure just disables the fast path (sound: never a false
             // positive). The real predicate validation/compile happens later in generateDelete.
-            isDeleteTimeRangePure = false;
+            deleteTimeRangePure = false;
             deleteTimeRangeLo = Long.MIN_VALUE;
             deleteTimeRangeHiExcl = Long.MAX_VALUE;
         } finally {
@@ -5149,7 +5149,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     metadata.getMetadataVersion(),
                     model.getModelPosition(),
                     survivorFactory,
-                    isDeleteTimeRangePure,
+                    deleteTimeRangePure,
                     deleteTimeRangeLo,
                     deleteTimeRangeHiExcl
             );
