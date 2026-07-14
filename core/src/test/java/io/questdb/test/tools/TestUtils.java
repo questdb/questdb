@@ -892,21 +892,17 @@ public final class TestUtils {
     }
 
     /**
-     * Asserts that the first parallel factory in the tree holds no per-worker slots.
+     * Asserts that the first parallel factory in the tree holds no per-worker slots. Call it once
+     * the cursor is closed, so the frame sequence has been awaited and no worker is inside a locked
+     * section. A reducer that acquires a slot and then throws before entering the try that releases
+     * it leaves the slot held forever: {@link io.questdb.griffin.engine.PerWorkerLocks} has no reset
+     * and the atom belongs to the factory, so every later execution of the same cached factory finds
+     * one slot fewer, until the workers spin for a slot nobody will release.
      * <p>
-     * Call this once the cursor is closed, so the frame sequence has been awaited and no worker
-     * is inside a locked section. A reducer that acquires a slot and then throws before entering
-     * the try that releases it leaves the slot held forever: {@link io.questdb.griffin.engine.PerWorkerLocks}
-     * has no reset and the atom belongs to the factory, so the next execution of the same cached
-     * factory finds one slot fewer, and once all of them have leaked every worker spins in
-     * acquireSlot for a slot nobody will release.
-     * <p>
-     * The assertion is only meaningful when the atom actually guards per-worker state, so a
-     * -1 count - an atom that holds no locks at all, such as an
-     * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter - fails
-     * loudly rather than passing for the wrong reason.
+     * An atom that holds no locks at all reports -1 and fails here rather than passing for the wrong
+     * reason.
      *
-     * @param factory the compiled factory, re-executed at least once and with its cursor closed
+     * @param factory the compiled factory, executed at least once and with its cursor closed
      * @param context what is being asserted, for the failure message
      */
     public static void assertNoSlotLeak(RecordCursorFactory factory, CharSequence context) {
@@ -922,27 +918,20 @@ public final class TestUtils {
 
     /**
      * Compiles the query once and re-executes that single cached factory. Every execution must breach
-     * the per-query memory limit, and every execution must leave the atom holding no per-worker slots.
+     * the per-query memory limit and must leave the atom holding no per-worker slots.
      * <p>
-     * Re-executing the cached factory is what makes the leak observable. A single execution hides it:
-     * the first error cancels the frame sequence, and the reducers that already leaked a slot are
-     * never asked for another one. The leak also accumulates - PerWorkerLocks has no reset - so a slot
-     * lost in any iteration is still missing in every later one.
-     * <p>
-     * Iterating is also how the test earns its oracle. Zero held slots is what a clean run leaves
-     * behind, but it is equally what a run leaves behind where nobody took a slot at all: the first
-     * error cancels the sequence, so only the frames already in flight are reduced, the owner thread
-     * takes no slot (it reduces with its own state), and on a busy or small box the owner can win all
-     * of them. Frame count does not rule that out - cancellation makes it a race, not a headcount. So
-     * the loop keeps breaching until the atom reports an actual acquire, and only then trusts the zero.
+     * Zero held slots is what a clean run leaves behind, but it is equally what a run leaves behind
+     * where nobody took a slot at all: the first error cancels the frame sequence, so only the frames
+     * already in flight get reduced, and the owner thread reduces with its own state and takes no
+     * slot. So the loop keeps breaching until the atom reports an actual acquire, and only then
+     * trusts the zero.
      *
      * @param compiler        the compiler to compile the query with, once
      * @param ctx             the execution context
      * @param query           a query that breaches the per-query memory limit inside a parallel reduce
      * @param expectedFactory the parallel factory the query must reach. Pinning it keeps the test
-     *                        honest: the reducer follows from the factory the optimizer picks, so a
-     *                        query that quietly moves to a different one would still breach, still
-     *                        release its slots, and cover nothing
+     *                        honest: a query that quietly moved to a different factory would still
+     *                        breach, still release its slots, and cover nothing
      */
     public static void assertNoSlotLeakOnBreach(
             SqlCompiler compiler,

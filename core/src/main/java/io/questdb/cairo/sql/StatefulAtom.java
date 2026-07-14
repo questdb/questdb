@@ -41,19 +41,15 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
     }
 
     /**
-     * Returns the number of per-worker slots this atom currently holds, or -1 when the atom
-     * guards no per-worker state at all.
+     * Returns the number of per-worker slots this atom currently holds, or -1 when the atom guards
+     * no per-worker state at all. Every acquired slot must be released, so the count is zero once
+     * the frame sequence has been awaited; a non-zero count there means a slot leaked, and since
+     * {@link io.questdb.griffin.engine.PerWorkerLocks} has no reset and the atom belongs to the
+     * factory, the pool eventually starves.
      * <p>
-     * Every slot a reducer acquires must be released, so the count is zero once the frame
-     * sequence has been awaited and no worker sits inside a locked section. A non-zero count
-     * at that point means a slot leaked: {@link io.questdb.griffin.engine.PerWorkerLocks} has
-     * no reset and the atom belongs to the factory, so the slot is lost for as long as the
-     * factory stays in the SQL cache, and the pool eventually starves.
-     * <p>
-     * The -1 sentinel keeps a test honest. An atom may legitimately hold no locks - an
-     * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter clones
-     * no per-worker filters and so never acquires a slot. A query that lands on such an atom
-     * cannot exercise the leak, and asserting zero against it would pass for the wrong reason.
+     * The -1 sentinel keeps a test honest: an atom may hold no locks at all - an
+     * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter clones no
+     * per-worker filters - and asserting zero against it would pass for the wrong reason.
      *
      * @return the number of slots held, or -1 when this atom holds no per-worker locks
      */
@@ -65,10 +61,9 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
     /**
      * Returns how many times this atom's reducers have acquired a per-worker slot, or -1 when the
      * atom guards no per-worker state at all. The tally only grows, so unlike
-     * {@link #getAcquiredSlotCount()} it tells a query that released every slot it took from one
-     * that never took a slot - both hold zero at the end. The owner thread reduces with its own
-     * state and acquires nothing, so a run where the owner drained every frame leaves the atom at
-     * zero having exercised nothing. A leak test asserts this is non-zero to rule that out.
+     * {@link #getAcquiredSlotCount()} it tells a run that released every slot it took from a run
+     * where no worker took one - the owner thread reduces with its own state and acquires nothing,
+     * so both end at zero held slots.
      *
      * @return the number of slot acquisitions, or -1 when this atom holds no per-worker locks
      */

@@ -37,12 +37,14 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /**
  * Used to synchronize access to list-like collections used by worker threads.
+ * <p>
+ * A slot's int is a counter, not a flag: acquire increments it to an odd value, release increments
+ * it again to an even one. So the parity says whether the slot is held, and the counter says how
+ * many times it has been acquired. The counter never goes down and, short of a full 2^32 wrap, never
+ * returns to a value an acquirer has already read, so it stays ABA-free. The count comes for free:
+ * the acquire is the same single CAS it always was, and the release the same single store.
  */
 public class PerWorkerLocks {
-    // Offset of the per-slot acquire tally within the slot's padding. The tally shares the slot's
-    // cache line, which the acquiring thread has just taken exclusively with the CAS in acquireSlot,
-    // and only that thread writes it, so counting costs a store to a line it already owns.
-    private static final int ACQUIRE_COUNT_OFFSET = 1;
     // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
     private static final int INTS_PER_SLOT = 64 / Integer.BYTES;
     private final AtomicIntegerArray locks;
@@ -64,8 +66,9 @@ public class PerWorkerLocks {
         while (true) {
             for (int i = 0; i < workerCount; i++) {
                 int id = (i + workerId) % workerCount;
-                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
-                    tallyAcquire(id);
+                int idx = INTS_PER_SLOT * id;
+                int state = locks.get(idx);
+                if (isFree(state) && locks.compareAndSet(idx, state, state + 1)) {
                     return id;
                 }
             }
@@ -79,8 +82,9 @@ public class PerWorkerLocks {
         while (!circuitBreaker.checkIfTripped()) {
             for (int i = 0; i < workerCount; i++) {
                 int id = (i + carrierId) % workerCount;
-                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
-                    tallyAcquire(id);
+                int idx = INTS_PER_SLOT * id;
+                int state = locks.get(idx);
+                if (isFree(state) && locks.compareAndSet(idx, state, state + 1)) {
                     return id;
                 }
             }
@@ -91,31 +95,30 @@ public class PerWorkerLocks {
 
     /**
      * Returns how many times a slot has been acquired since this instance was created. Unlike
-     * {@link #getAcquiredSlotCount()} this tally never goes down, so it answers what a held-slot
-     * count cannot: whether a worker ever entered the locked section at all. A leak test needs
-     * that, because zero held slots is also what a run leaves behind where nobody took one - the
-     * owner thread reduced every frame itself, say.
+     * {@link #getAcquiredSlotCount()} this tally never goes down, so it tells a run where every
+     * worker released what it took from a run where no worker took a slot at all - both hold zero
+     * at the end.
      */
     @TestOnly
     public long getAcquireCount() {
         long count = 0;
         for (int i = 0; i < workerCount; i++) {
-            count += Integer.toUnsignedLong(locks.get(INTS_PER_SLOT * i + ACQUIRE_COUNT_OFFSET));
+            count += (Integer.toUnsignedLong(locks.get(INTS_PER_SLOT * i)) + 1) >>> 1;
         }
         return count;
     }
 
     /**
-     * Returns the number of slots currently held. Every acquired slot must be released, so
-     * this is zero whenever no worker is inside a locked section. A non-zero count once all
-     * workers are done means a slot leaked: there is no reset, so a leaked slot is lost for
-     * the lifetime of the owning atom, and the pool eventually starves.
+     * Returns the number of slots currently held. Every acquired slot must be released, so this is
+     * zero whenever no worker is inside a locked section. A non-zero count once all workers are done
+     * means a slot leaked: there is no reset, so a leaked slot is lost for the lifetime of the owning
+     * atom, and the pool eventually starves.
      */
     @TestOnly
     public int getAcquiredSlotCount() {
         int count = 0;
         for (int i = 0; i < workerCount; i++) {
-            if (locks.get(INTS_PER_SLOT * i) != 0) {
+            if (!isFree(locks.get(INTS_PER_SLOT * i))) {
                 count++;
             }
         }
@@ -124,17 +127,17 @@ public class PerWorkerLocks {
 
     public void releaseSlot(int slot) {
         if (slot > -1) {
-            locks.set(INTS_PER_SLOT * slot, 0);
+            final int idx = INTS_PER_SLOT * slot;
+            final int state = locks.get(idx);
+            assert !isFree(state) : "releasing a slot that is not held: " + slot;
+            // The holder is the only thread that can write a held slot - an acquirer's CAS demands
+            // the even state it read - so this needs no atomicity, and the volatile store publishes
+            // the slot's state to the next acquirer just as the plain unlock store used to.
+            locks.set(idx, state + 1);
         }
     }
 
-    /**
-     * Counts one acquisition of {@code slot}. Only the thread that just won the slot's CAS runs
-     * this, so the read-modify-write needs no atomicity; a lazy store is enough to publish it to
-     * a reader that inspects the tally once the workers are done.
-     */
-    private void tallyAcquire(int slot) {
-        final int idx = INTS_PER_SLOT * slot + ACQUIRE_COUNT_OFFSET;
-        locks.lazySet(idx, locks.get(idx) + 1);
+    private static boolean isFree(int state) {
+        return (state & 1) == 0;
     }
 }

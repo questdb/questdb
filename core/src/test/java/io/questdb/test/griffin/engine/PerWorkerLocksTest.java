@@ -64,9 +64,9 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     @Test
     public void testAcquireCountOnlyGrows() {
         // The companion oracle: unlike the held-slot count, this tally survives the release, which is
-        // what lets a leak test tell "took a slot and gave it back" apart from "never took one". A
-        // tally kept in the lock int itself, rather than in the slot's padding, would read back 0
-        // here once every slot was released.
+        // what lets a leak test tell "took a slot and gave it back" apart from "never took one". The
+        // two answers come from the same int - parity for held, value for the tally - so a release
+        // that reset the slot to 0 instead of counting it up would read back 0 here.
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
         Assert.assertEquals(0, locks.getAcquireCount());
 

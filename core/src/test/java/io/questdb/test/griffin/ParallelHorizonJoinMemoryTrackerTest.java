@@ -276,7 +276,11 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
-        // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
+        // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations. The
+        // reducer acquires a per-worker slot before it navigates to the frame, so each breached
+        // execution must also hand its slot back: PerWorkerLocks has no reset and the atom belongs
+        // to the factory, so a slot lost here is lost for as long as the factory stays in the SQL
+        // cache, and once all of them have leaked every worker spins for a slot nobody will release.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -304,6 +308,9 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                                 }
+                                // The cursor is closed by now, so the frame sequence has been awaited
+                                // and no worker sits inside a locked section.
+                                TestUtils.assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
                             }
                         }
                     },
@@ -529,7 +536,9 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedMultiHorizonJoinOpenFailureReleasesAllocations() throws Exception {
         // Multi-slave non-keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations;
-        // dropping the GROUP BY key routes to the non-keyed multi-horizon factory.
+        // dropping the GROUP BY key routes to the non-keyed multi-horizon factory. Its reducer
+        // acquires a per-worker slot before navigating to the frame, so the breached executions
+        // must hand every slot back - see testKeyedMultiHorizonJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -557,6 +566,9 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                                 }
+                                // The cursor is closed by now, so the frame sequence has been awaited
+                                // and no worker sits inside a locked section.
+                                TestUtils.assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
                             }
                         }
                     },

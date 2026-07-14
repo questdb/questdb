@@ -26,8 +26,11 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -36,6 +39,8 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFacto
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -345,6 +350,94 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                                         + "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING "
                                         + "WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
                                 AsyncWindowJoinRecordCursorFactory.class);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelQueryOverParquetRecoversAfterBreach() throws Exception {
+        // Black-box counterpart of the slot-leak tests above: it reads no atom and no lock counter,
+        // only the symptom a user would see. A query that breaches the per-query limit and is then
+        // given enough memory has to return its rows again. It cannot once the reducers have leaked
+        // their slots: the atom belongs to the factory, PerWorkerLocks has no reset, so after enough
+        // failed executions every slot is held by nobody and the workers spin in acquireSlot until
+        // the circuit breaker stops them. The query timeout below is what turns that into a failed
+        // assertion rather than a test that hangs.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getQueryTimeout() {
+                return 30_000;
+            }
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+                        engine.execute(
+                                "CREATE TABLE tab (s VARCHAR, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                                context
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT rpad(x::varchar, 256, 'a'), (x * 1_000_000L)::timestamp, x FROM long_sequence(50_000)",
+                                context
+                        );
+                        engine.execute("INSERT INTO tab VALUES ('z', '1970-01-02T00:00:00.000000Z', -1)", context);
+                        engine.execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '1970-01-01'", context);
+
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                engine,
+                                circuitBreakerConfiguration,
+                                MemoryTag.NATIVE_DEFAULT
+                        );
+                        try {
+                            context.with(
+                                    context.getSecurityContext(),
+                                    context.getBindVariableService(),
+                                    context.getRandom(),
+                                    context.getRequestFd(),
+                                    circuitBreaker
+                            );
+                            // The filtered non-keyed reducer, which acquires a slot and only then
+                            // navigates to the frame, where the wide VARCHAR decode breaches. Same
+                            // query as one of the rows in testParallelGroupByOverParquetReleasesWorkerSlotsOnBreach,
+                            // approached from the outside.
+                            final String query = "SELECT count(s) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'";
+                            try (RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory()) {
+                                // Breach more often than there are slots in the pool, so a reducer that
+                                // leaked one on every failed frame would have emptied it by the end.
+                                for (int i = 0; i < 8; i++) {
+                                    circuitBreaker.resetTimer();
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        //noinspection StatementWithEmptyBody
+                                        while (cursor.hasNext()) {
+                                            // drain until breach
+                                        }
+                                        Assert.fail("expected per-query memory breach on iteration " + i);
+                                    } catch (CairoException e) {
+                                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                    }
+                                }
+
+                                // Same cached factory, now with room to finish. Every slot the failed
+                                // executions took has to be back in the pool for this to complete.
+                                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024 * 1024L);
+                                circuitBreaker.resetTimer();
+                                try (RecordCursor cursor = factory.getCursor(context)) {
+                                    Assert.assertTrue("recovered query returned no rows", cursor.hasNext());
+                                    Assert.assertEquals(50_000, cursor.getRecord().getLong(0));
+                                    Assert.assertFalse(cursor.hasNext());
+                                }
+                            }
+                        } finally {
+                            Misc.free(circuitBreaker);
+                        }
                     },
                     configuration,
                     LOG
