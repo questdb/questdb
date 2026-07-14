@@ -3973,31 +3973,33 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .withPlan("""
-                            Union
-                                Long Top K lo: 10
-                                  keys: [timestamp asc]
-                                    GroupBy vectorized: false
-                                      keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
-                                        Async JIT Group By workers: 1
-                                          keys: [timestamp,vehicle_id,sensor_name]
-                                          values: [avg(int_value)]
-                                          filter: sensor_name in [i000]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: sensors
-                                Encode sort light lo: -10
-                                  keys: [timestamp]
-                                    GroupBy vectorized: false
-                                      keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
-                                        Async JIT Group By workers: 1
-                                          keys: [timestamp,vehicle_id,sensor_name]
-                                          values: [avg(int_value)]
-                                          filter: sensor_name in [i000]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: sensors
+                            VirtualRecord
+                              functions: [timestamp,vehicle_id::symbol,i000]
+                                Union
+                                    Long Top K lo: 10
+                                      keys: [timestamp asc]
+                                        GroupBy vectorized: false
+                                          keys: [timestamp,vehicle_id]
+                                          values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
+                                            Async JIT Group By workers: 1
+                                              keys: [timestamp,vehicle_id,sensor_name]
+                                              values: [avg(int_value)]
+                                              filter: sensor_name in [i000]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: sensors
+                                    Encode sort light lo: -10
+                                      keys: [timestamp]
+                                        GroupBy vectorized: false
+                                          keys: [timestamp,vehicle_id]
+                                          values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)]))]
+                                            Async JIT Group By workers: 1
+                                              keys: [timestamp,vehicle_id,sensor_name]
+                                              values: [avg(int_value)]
+                                              filter: sensor_name in [i000]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: sensors
                             """)
                     .returns("""
                             timestamp	vehicle_id	i000
