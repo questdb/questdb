@@ -131,202 +131,6 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
-    public void testForPrincipalConcurrentAlternatingPrincipalsNeverLeak() throws Exception {
-        // every thread alternates between two principals. Even while another thread is mid-publish swapping
-        // in a freshly grown cache, every call must return a context reporting exactly its own principal.
-        final int iterations = 50_000;
-        final AllowAllSecurityContext root = freshAllowAll();
-        TestUtils.runConcurrently(4, t -> {
-            for (int i = 0; i < iterations; i++) {
-                final String principal = (i & 1) == 0 ? "alice" : "bob";
-                TestUtils.assertEquals(principal, root.forPrincipal(principal).getPrincipal());
-            }
-        });
-    }
-
-    @Test
-    public void testForPrincipalConcurrentReportsOwnPrincipal() throws Exception {
-        // the cache is read lock-free; under contention every caller must still get a
-        // context reporting its own principal, never another thread's
-        final int iterations = 50_000;
-        final AllowAllSecurityContext root = freshAllowAll();
-        TestUtils.runConcurrently(4, t -> {
-            final String principal = "user" + t;
-            for (int i = 0; i < iterations; i++) {
-                TestUtils.assertEquals(principal, root.forPrincipal(principal).getPrincipal());
-            }
-        });
-    }
-
-    @Test
-    public void testForPrincipalConcurrentSamePrincipalReusesCachedContext() throws Exception {
-        // all threads request the same principal: once the cache is warmed the entry is never evicted,
-        // so every concurrent caller must hit the cache and get back the very same derived instance,
-        // which must always report that principal. This exercises the cache-hit path under contention,
-        // which the distinct-principal test never takes.
-        final AllowAllSecurityContext root = freshAllowAll();
-        final String principal = "shared";
-        final SecurityContext warmed = root.forPrincipal(principal);
-        Assert.assertNotSame(root, warmed);
-
-        final int iterations = 50_000;
-        TestUtils.runConcurrently(4, t -> {
-            for (int i = 0; i < iterations; i++) {
-                // the warmed entry is never evicted, so the same cached instance must come back
-                Assert.assertSame(warmed, root.forPrincipal(principal));
-            }
-        });
-    }
-
-    @Test
-    public void testForPrincipalDoesNotLeakAcrossPrincipals() {
-        // the per-principal cache must never hand one principal's context to another: every call
-        // returns a context reporting its own principal, regardless of cache state
-        AllowAllSecurityContext root = freshAllowAll();
-        SecurityContext alice = root.forPrincipal("alice");
-        SecurityContext bob = root.forPrincipal("bob");
-        SecurityContext aliceAgain = root.forPrincipal("alice");
-        TestUtils.assertEquals("alice", alice.getPrincipal());
-        TestUtils.assertEquals("bob", bob.getPrincipal());
-        TestUtils.assertEquals("alice", aliceAgain.getPrincipal());
-        Assert.assertNotSame(alice, bob);
-        // both principals stay cached (the M1 fix): "bob" does not evict "alice", so the second
-        // "alice" returns the very same cached instance rather than a fresh derivation
-        Assert.assertSame(alice, aliceAgain);
-    }
-
-    @Test
-    public void testForPrincipalEmptyStringKeepsSingleton() {
-        // an empty principal is treated as anonymous, like null: it keeps the shared singleton and the
-        // default name rather than deriving a context that reports an empty principal
-        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal("");
-        Assert.assertSame(AllowAllSecurityContext.INSTANCE, context);
-        TestUtils.assertEquals("admin", context.getPrincipal());
-    }
-
-    @Test
-    public void testForPrincipalWithNullCurrentPrincipalDoesNotThrow() {
-        // forPrincipal compares the requested principal against getPrincipal(); a context that reports a
-        // null principal must not NPE (Chars.equals is @NotNull). It derives a context for the requested
-        // principal instead of matching the root.
-        final TestAllowAllSecurityContext nullPrincipal = new TestAllowAllSecurityContext(false, null);
-        Assert.assertNull(nullPrincipal.getPrincipal());
-        SecurityContext derived = nullPrincipal.forPrincipal("foo");
-        Assert.assertNotSame(nullPrincipal, derived);
-        TestUtils.assertEquals("foo", derived.getPrincipal());
-    }
-
-    @Test
-    public void testReadOnlyFactoryReportsConfiguredPrincipal() {
-        SecurityContext context = ReadOnlySecurityContextFactory.INSTANCE.getInstance(principal("foo"), SecurityContextFactory.HTTP);
-        Assert.assertNotSame(ReadOnlySecurityContext.INSTANCE, context);
-        TestUtils.assertEquals("foo", context.getPrincipal());
-        // the derived context is still read-only: writes are denied
-        try {
-            context.authorizeInsert(null);
-            Assert.fail("expected write to be denied");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
-        }
-    }
-
-    @Test
-    public void testReadOnlyUsersAwareFactoryDefaultInterfaceReportsConfiguredPrincipal() {
-        // the default branch (e.g. ILP, interface id other than HTTP/PGWIRE) yields an allow-all context
-        // that still reports the authenticated user, and is allow-all regardless of httpReadOnly.
-        // This unit test is the deliberate coverage for the named-principal ILP path: there is no e2e test
-        // because ILP has no query path to read current_user() back, and an ACL-disabled ILP connection
-        // authenticates anonymously (null principal -> the shared singleton), so a named principal reaches
-        // this branch only through a configured ILP authenticator.
-        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, true);
-        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.ILP);
-        TestUtils.assertEquals("foo", context.getPrincipal());
-        Assert.assertTrue(context.isSystemAdmin());
-        context.authorizeInsert(null);
-        // a null principal on the default branch keeps the shared singleton
-        Assert.assertSame(AllowAllSecurityContext.INSTANCE, factory.getInstance(principal(null), SecurityContextFactory.ILP));
-    }
-
-    @Test
-    public void testReadOnlyUsersAwareFactoryReportsConfiguredPrincipal() {
-        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, false);
-
-        SecurityContext http = factory.getInstance(principal("foo"), SecurityContextFactory.HTTP);
-        TestUtils.assertEquals("foo", http.getPrincipal());
-        Assert.assertTrue(http.isSystemAdmin());
-
-        SecurityContext pgWire = factory.getInstance(principal("foo"), SecurityContextFactory.PGWIRE);
-        TestUtils.assertEquals("foo", pgWire.getPrincipal());
-
-        // anonymous/default keeps the shared singleton
-        Assert.assertSame(AllowAllSecurityContext.INSTANCE, factory.getInstance(principal(null), SecurityContextFactory.HTTP));
-    }
-
-    @Test
-    public void testReadOnlyUsersAwareFactoryReportsReadOnlyPgWireUser() {
-        // the read-only pgwire user gets a read-only context that still reports its own name
-        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, "ro_user", false);
-        SecurityContext context = factory.getInstance(principal("ro_user"), SecurityContextFactory.PGWIRE);
-        TestUtils.assertEquals("ro_user", context.getPrincipal());
-        Assert.assertFalse(context.isQueryCancellationAllowed());
-    }
-
-    @Test
-    public void testSettingsReadOnlyFactoryHttpAllowAllReportsConfiguredPrincipal() {
-        // the allow-all settings-read-only HTTP branch (httpReadOnly=false) derives from
-        // AllowAllSecurityContext.SETTINGS_READ_ONLY: it allows everything except writing settings,
-        // while reporting the configured principal
-        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, false, true);
-        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.HTTP);
-        TestUtils.assertEquals("foo", context.getPrincipal());
-        // allow-all: cancellation is allowed and it is a system admin, and writes are permitted
-        Assert.assertTrue(context.isQueryCancellationAllowed());
-        Assert.assertTrue(context.isSystemAdmin());
-        context.authorizeHttp();
-        context.authorizeInsert(null);
-        // but the settings endpoint stays read-only
-        try {
-            context.authorizeSettings();
-            Assert.fail("expected settings to be read-only");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getFlyweightMessage().toString().contains("read-only"));
-        }
-    }
-
-    @Test
-    public void testSettingsReadOnlyFactoryHttpReportsConfiguredPrincipal() {
-        // the read-only settings-read-only HTTP branch (httpReadOnly=true) derives from
-        // ReadOnlySecurityContext.SETTINGS_READ_ONLY, keeping both the read-only and settings-read-only
-        // restrictions while reporting the configured principal
-        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, true, true);
-        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.HTTP);
-        TestUtils.assertEquals("foo", context.getPrincipal());
-        Assert.assertFalse(context.isQueryCancellationAllowed());
-        try {
-            context.authorizeSettings();
-            Assert.fail("expected settings to be read-only");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getFlyweightMessage().toString().contains("read-only"));
-        }
-    }
-
-    @Test
-    public void testSettingsReadOnlyForPrincipalStaysSettingsReadOnly() {
-        // forPrincipal on the settings-read-only singleton must keep the settings restriction
-        SecurityContext context = AllowAllSecurityContext.SETTINGS_READ_ONLY.forPrincipal("foo");
-        Assert.assertNotSame(AllowAllSecurityContext.SETTINGS_READ_ONLY, context);
-        TestUtils.assertEquals("foo", context.getPrincipal());
-        try {
-            context.authorizeSettings();
-            Assert.fail("expected settings to be read-only");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getFlyweightMessage().toString().contains("read-only"));
-        }
-        // it still allows everything else
-        context.authorizeHttp();
-    }
-
-    @Test
     public void testForPrincipalCapCopiesTransientPrincipal() {
         // The over-cap leg has its own Chars.toString, and nothing pinned it: deleting the copy from the
         // saturated branch left the whole suite green. testForPrincipalCopiesTransientPrincipal only covers
@@ -376,6 +180,20 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalConcurrentAlternatingPrincipalsNeverLeak() throws Exception {
+        // every thread alternates between two principals. Even while another thread is mid-publish swapping
+        // in a freshly grown cache, every call must return a context reporting exactly its own principal.
+        final int iterations = 50_000;
+        final AllowAllSecurityContext root = freshAllowAll();
+        TestUtils.runConcurrently(4, t -> {
+            for (int i = 0; i < iterations; i++) {
+                final String principal = (i & 1) == 0 ? "alice" : "bob";
+                TestUtils.assertEquals(principal, root.forPrincipal(principal).getPrincipal());
+            }
+        });
+    }
+
+    @Test
     public void testForPrincipalConcurrentDistinctPrincipalsRetainedNoThrash() throws Exception {
         // the core M1 guarantee under contention: each thread owns a distinct principal and, after the
         // cache is warmed, every one of its repeated calls must return the *same* cached instance. The
@@ -414,6 +232,40 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalConcurrentReportsOwnPrincipal() throws Exception {
+        // the cache is read lock-free; under contention every caller must still get a
+        // context reporting its own principal, never another thread's
+        final int iterations = 50_000;
+        final AllowAllSecurityContext root = freshAllowAll();
+        TestUtils.runConcurrently(4, t -> {
+            final String principal = "user" + t;
+            for (int i = 0; i < iterations; i++) {
+                TestUtils.assertEquals(principal, root.forPrincipal(principal).getPrincipal());
+            }
+        });
+    }
+
+    @Test
+    public void testForPrincipalConcurrentSamePrincipalReusesCachedContext() throws Exception {
+        // all threads request the same principal: once the cache is warmed the entry is never evicted,
+        // so every concurrent caller must hit the cache and get back the very same derived instance,
+        // which must always report that principal. This exercises the cache-hit path under contention,
+        // which the distinct-principal test never takes.
+        final AllowAllSecurityContext root = freshAllowAll();
+        final String principal = "shared";
+        final SecurityContext warmed = root.forPrincipal(principal);
+        Assert.assertNotSame(root, warmed);
+
+        final int iterations = 50_000;
+        TestUtils.runConcurrently(4, t -> {
+            for (int i = 0; i < iterations; i++) {
+                // the warmed entry is never evicted, so the same cached instance must come back
+                Assert.assertSame(warmed, root.forPrincipal(principal));
+            }
+        });
+    }
+
+    @Test
     public void testForPrincipalCopiesTransientPrincipal() {
         // forPrincipal must copy the @Transient principal, never retain the caller's mutable buffer,
         // and a later lookup with an equal-content flyweight must still hit the cached entry
@@ -427,6 +279,32 @@ public class SecurityContextFactoryPrincipalTest {
         StringSink probe = new StringSink();
         probe.put("foo");
         Assert.assertSame(context, root.forPrincipal(probe));
+    }
+
+    @Test
+    public void testForPrincipalDoesNotLeakAcrossPrincipals() {
+        // the per-principal cache must never hand one principal's context to another: every call
+        // returns a context reporting its own principal, regardless of cache state
+        AllowAllSecurityContext root = freshAllowAll();
+        SecurityContext alice = root.forPrincipal("alice");
+        SecurityContext bob = root.forPrincipal("bob");
+        SecurityContext aliceAgain = root.forPrincipal("alice");
+        TestUtils.assertEquals("alice", alice.getPrincipal());
+        TestUtils.assertEquals("bob", bob.getPrincipal());
+        TestUtils.assertEquals("alice", aliceAgain.getPrincipal());
+        Assert.assertNotSame(alice, bob);
+        // both principals stay cached (the M1 fix): "bob" does not evict "alice", so the second
+        // "alice" returns the very same cached instance rather than a fresh derivation
+        Assert.assertSame(alice, aliceAgain);
+    }
+
+    @Test
+    public void testForPrincipalEmptyStringKeepsSingleton() {
+        // an empty principal is treated as anonymous, like null: it keeps the shared singleton and the
+        // default name rather than deriving a context that reports an empty principal
+        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal("");
+        Assert.assertSame(AllowAllSecurityContext.INSTANCE, context);
+        TestUtils.assertEquals("admin", context.getPrincipal());
     }
 
     @Test
@@ -558,6 +436,32 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalWithNullCurrentPrincipalDoesNotThrow() {
+        // forPrincipal compares the requested principal against getPrincipal(); a context that reports a
+        // null principal must not NPE (Chars.equals is @NotNull). It derives a context for the requested
+        // principal instead of matching the root.
+        final TestAllowAllSecurityContext nullPrincipal = new TestAllowAllSecurityContext(false, null);
+        Assert.assertNull(nullPrincipal.getPrincipal());
+        SecurityContext derived = nullPrincipal.forPrincipal("foo");
+        Assert.assertNotSame(nullPrincipal, derived);
+        TestUtils.assertEquals("foo", derived.getPrincipal());
+    }
+
+    @Test
+    public void testReadOnlyFactoryReportsConfiguredPrincipal() {
+        SecurityContext context = ReadOnlySecurityContextFactory.INSTANCE.getInstance(principal("foo"), SecurityContextFactory.HTTP);
+        Assert.assertNotSame(ReadOnlySecurityContext.INSTANCE, context);
+        TestUtils.assertEquals("foo", context.getPrincipal());
+        // the derived context is still read-only: writes are denied
+        try {
+            context.authorizeInsert(null);
+            Assert.fail("expected write to be denied");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
+        }
+    }
+
+    @Test
     public void testReadOnlyForPrincipalRetainsAndStaysReadOnly() {
         // ReadOnly mirrors AllowAll: distinct principals are retained, and every derived context keeps
         // the read-only restriction (writes denied) while reporting its own principal
@@ -574,6 +478,102 @@ public class SecurityContextFactoryPrincipalTest {
         } catch (CairoException e) {
             Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
         }
+    }
+
+    @Test
+    public void testReadOnlyUsersAwareFactoryDefaultInterfaceReportsConfiguredPrincipal() {
+        // the default branch (e.g. ILP, interface id other than HTTP/PGWIRE) yields an allow-all context
+        // that still reports the authenticated user, and is allow-all regardless of httpReadOnly.
+        // This unit test is the deliberate coverage for the named-principal ILP path: there is no e2e test
+        // because ILP has no query path to read current_user() back, and an ACL-disabled ILP connection
+        // authenticates anonymously (null principal -> the shared singleton), so a named principal reaches
+        // this branch only through a configured ILP authenticator.
+        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, true);
+        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.ILP);
+        TestUtils.assertEquals("foo", context.getPrincipal());
+        Assert.assertTrue(context.isSystemAdmin());
+        context.authorizeInsert(null);
+        // a null principal on the default branch keeps the shared singleton
+        Assert.assertSame(AllowAllSecurityContext.INSTANCE, factory.getInstance(principal(null), SecurityContextFactory.ILP));
+    }
+
+    @Test
+    public void testReadOnlyUsersAwareFactoryReportsConfiguredPrincipal() {
+        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, false);
+
+        SecurityContext http = factory.getInstance(principal("foo"), SecurityContextFactory.HTTP);
+        TestUtils.assertEquals("foo", http.getPrincipal());
+        Assert.assertTrue(http.isSystemAdmin());
+
+        SecurityContext pgWire = factory.getInstance(principal("foo"), SecurityContextFactory.PGWIRE);
+        TestUtils.assertEquals("foo", pgWire.getPrincipal());
+
+        // anonymous/default keeps the shared singleton
+        Assert.assertSame(AllowAllSecurityContext.INSTANCE, factory.getInstance(principal(null), SecurityContextFactory.HTTP));
+    }
+
+    @Test
+    public void testReadOnlyUsersAwareFactoryReportsReadOnlyPgWireUser() {
+        // the read-only pgwire user gets a read-only context that still reports its own name
+        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, "ro_user", false);
+        SecurityContext context = factory.getInstance(principal("ro_user"), SecurityContextFactory.PGWIRE);
+        TestUtils.assertEquals("ro_user", context.getPrincipal());
+        Assert.assertFalse(context.isQueryCancellationAllowed());
+    }
+
+    @Test
+    public void testSettingsReadOnlyFactoryHttpAllowAllReportsConfiguredPrincipal() {
+        // the allow-all settings-read-only HTTP branch (httpReadOnly=false) derives from
+        // AllowAllSecurityContext.SETTINGS_READ_ONLY: it allows everything except writing settings,
+        // while reporting the configured principal
+        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, false, true);
+        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.HTTP);
+        TestUtils.assertEquals("foo", context.getPrincipal());
+        // allow-all: cancellation is allowed and it is a system admin, and writes are permitted
+        Assert.assertTrue(context.isQueryCancellationAllowed());
+        Assert.assertTrue(context.isSystemAdmin());
+        context.authorizeHttp();
+        context.authorizeInsert(null);
+        // but the settings endpoint stays read-only
+        try {
+            context.authorizeSettings();
+            Assert.fail("expected settings to be read-only");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("read-only"));
+        }
+    }
+
+    @Test
+    public void testSettingsReadOnlyFactoryHttpReportsConfiguredPrincipal() {
+        // the read-only settings-read-only HTTP branch (httpReadOnly=true) derives from
+        // ReadOnlySecurityContext.SETTINGS_READ_ONLY, keeping both the read-only and settings-read-only
+        // restrictions while reporting the configured principal
+        ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, true, true);
+        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.HTTP);
+        TestUtils.assertEquals("foo", context.getPrincipal());
+        Assert.assertFalse(context.isQueryCancellationAllowed());
+        try {
+            context.authorizeSettings();
+            Assert.fail("expected settings to be read-only");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("read-only"));
+        }
+    }
+
+    @Test
+    public void testSettingsReadOnlyForPrincipalStaysSettingsReadOnly() {
+        // forPrincipal on the settings-read-only singleton must keep the settings restriction
+        SecurityContext context = AllowAllSecurityContext.SETTINGS_READ_ONLY.forPrincipal("foo");
+        Assert.assertNotSame(AllowAllSecurityContext.SETTINGS_READ_ONLY, context);
+        TestUtils.assertEquals("foo", context.getPrincipal());
+        try {
+            context.authorizeSettings();
+            Assert.fail("expected settings to be read-only");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("read-only"));
+        }
+        // it still allows everything else
+        context.authorizeHttp();
     }
 
     /**
