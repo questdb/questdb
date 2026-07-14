@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
-import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -88,22 +87,33 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilt
  * @see WindowJoinFastRecordCursorFactory for the single-threaded variant
  */
 public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final PageFrameReducer AGGREGATE = AsyncWindowJoinFastRecordCursorFactory::aggregate;
-    private static final PageFrameReducer AGGREGATE_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailing;
-    private static final PageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailingJoinFiltered;
-    private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinFastRecordCursorFactory::aggregateVect;
-    private static final PageFrameReducer AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::aggregateVectWithPrevailing;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregate;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailing;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVect;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing;
+    private static final NamedPageFrameReducer AGGREGATE = new NamedPageFrameReducer(
+            "AGGREGATE", AsyncWindowJoinFastRecordCursorFactory::aggregate);
+    private static final NamedPageFrameReducer AGGREGATE_PREVAILING = new NamedPageFrameReducer(
+            "AGGREGATE_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailing);
+    private static final NamedPageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
+            "AGGREGATE_PREVAILING_JOIN_FILTERED", AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailingJoinFiltered);
+    private static final NamedPageFrameReducer AGGREGATE_VECT = new NamedPageFrameReducer(
+            "AGGREGATE_VECT", AsyncWindowJoinFastRecordCursorFactory::aggregateVect);
+    private static final NamedPageFrameReducer AGGREGATE_VECT_PREVAILING = new NamedPageFrameReducer(
+            "AGGREGATE_VECT_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::aggregateVectWithPrevailing);
+    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE = new NamedPageFrameReducer(
+            "FILTER_AND_AGGREGATE", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregate);
+    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = new NamedPageFrameReducer(
+            "FILTER_AND_AGGREGATE_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailing);
+    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
+            "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered);
+    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_VECT = new NamedPageFrameReducer(
+            "FILTER_AND_AGGREGATE_VECT", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVect);
+    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = new NamedPageFrameReducer(
+            "FILTER_AND_AGGREGATE_VECT_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing);
 
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
+    private final String reducerName;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
 
@@ -188,7 +198,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 slaveTsScale,
                 workerCount
         );
-        PageFrameReducer reducer;
+        NamedPageFrameReducer reducer;
         if (includePrevailing) {
             if (masterFilter != null) {
                 reducer = atom.isVectorized()
@@ -205,12 +215,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     : (masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE);
         }
 
+        this.reducerName = reducer.getName();
         this.frameSequence = new PageFrameSequence<>(
                 engine,
                 configuration,
                 messageBus,
                 atom,
-                reducer,
+                reducer.getReducer(),
                 reduceTaskFactory,
                 workerCount,
                 PageFrameReduceTask.TYPE_WINDOW_JOIN
@@ -254,6 +265,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             cursor.close();
             throw th;
         }
+    }
+
+    /**
+     * Names the reduce phase this factory routed to. See
+     * {@link AsyncWindowJoinRecordCursorFactory#getReducerName()} - ten reducers here, each owning
+     * its own slot acquire/release pair.
+     */
+    @TestOnly
+    public String getReducerName() {
+        return reducerName;
     }
 
     @Override
@@ -341,12 +362,22 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final Function joinFilter = atom.getJoinFilter(slotId);
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
+        // clearTemporaryData() sits inside the try that releases the slot, as it does in the five
+        // filterAndAggregate* reducers below and in the sixteen of the general factory. It cannot
+        // throw today - it only shrinks the temporary allocator's chunk index back to its initial
+        // capacity, and a shrinking realloc passes a negative delta to Unsafe's alloc-limit check,
+        // which skips it - so this is structural rather than a fix for a live leak, and the next
+        // throwing call added here is safe by construction. A slot leaked here would be permanent:
+        // PerWorkerLocks has no reset and the atom belongs to the factory, so once every slot had
+        // leaked, each later execution of the cached statement would spin in acquireSlot for a slot
+        // nobody will release. (The getters between the acquire and this try are ObjList lookups and
+        // cannot throw, so they can stay above it; the finally needs none of them.)
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -491,11 +522,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -642,11 +674,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -846,12 +879,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -1029,12 +1063,13 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+
             final int masterSymbolIndex = atom.getMasterSymbolIndex();
             final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();

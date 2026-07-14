@@ -130,6 +130,13 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // tracker in of(). The build-loop growth trips the limit and surfaces with isOutOfMemory()
         // set. Without the binding the lists escape the limit and the query completes, firing
         // Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -211,6 +218,13 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // MultiHorizonJoinRecordCursorFactory, whose cursor owns the allocator, the dataMap, and the
         // per-slave ASOF maps. array_agg(p0.px0) grows the allocator past the limit and surfaces with
         // isOutOfMemory() set; without the binding it escapes and the query completes.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -324,6 +338,13 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // It carries no GROUP BY map, but its single growing list is allocated through the
         // GroupByAllocator the cursor binds to the per-query tracker in of(). The build-loop growth
         // trips the limit and surfaces with isOutOfMemory() set.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -375,6 +396,13 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testNotKeyedMultiHorizonJoinArrayAggFailsOnLargeSet() throws Exception {
         // Non-keyed multi-slave variant of testKeyedMultiHorizonJoinArrayAggFailsOnLargeSet; dropping
         // the GROUP BY key routes to MultiHorizonJoinNotKeyedRecordCursorFactory.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(

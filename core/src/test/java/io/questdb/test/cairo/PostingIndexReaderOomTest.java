@@ -62,11 +62,14 @@ public class PostingIndexReaderOomTest extends AbstractOomSweepTest {
             drain(query, expected);
 
             // Sweep the native-memory ceiling so it lands inside posting index reader
-            // construction. releaseInactive() drops the pooled reader so it rebuilds and the
-            // fault can land in the PostingGenLookup buffer allocations; it runs before the
-            // ceiling goes up, or its own allocations would compete for the fault.
-            final StringSink scratch = new StringSink();
-            assertOomSweep(48 * 1024, 64, () -> engine.releaseInactive(), () -> drain(query, scratch));
+            // construction. The reader is built lazily when a row cursor first touches the
+            // partition, so the fault is on the iteration path and the sweep has to drain -
+            // but compilation stays above the ceiling, or a compiler allocation would take the
+            // fault and the reader construction under test would never run. releaseInactive()
+            // drops the pooled reader so it rebuilds and the fault can land in the
+            // PostingGenLookup buffer allocations; it too runs before the ceiling goes up, or
+            // its own allocations would compete for the fault.
+            assertCursorDrainOomSweep(48 * 1024, 64, () -> engine.releaseInactive(), query);
 
             // Recovery: with no ceiling the query returns the same row. The
             // enclosing assertMemoryLeak is the authoritative net leak check.

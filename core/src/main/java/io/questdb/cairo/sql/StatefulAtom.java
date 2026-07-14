@@ -50,6 +50,12 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
      * The -1 sentinel keeps a test honest: an atom may hold no locks at all - an
      * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter clones no
      * per-worker filters - and asserting zero against it would pass for the wrong reason.
+     * <p>
+     * Not every {@link io.questdb.griffin.engine.PerWorkerLocks} is reachable this way.
+     * {@code griffin.engine.groupby.vect.GroupByRecordCursorFactory} holds one with no atom behind it
+     * at all - the vectorized GROUP BY does not run on a {@code PageFrameSequence} - so its reducer is
+     * invisible to a test that walks the factory tree for an atom, and its slot handling has to be
+     * covered some other way.
      *
      * @return the number of slots held, or -1 when this atom holds no per-worker locks
      */

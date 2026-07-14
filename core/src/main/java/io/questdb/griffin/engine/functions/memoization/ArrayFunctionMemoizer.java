@@ -57,12 +57,12 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
     @Override
     public ArrayView getArray(Record rec) {
         if (!validValue) {
+            // getArray() never hands back a Java null - a producer with no array returns a NULL
+            // ArrayView. Absorbing a null here would launder a broken producer past the asserts
+            // Record.getArrayDimLen()/getArrayDouble1d2d() rely on to catch exactly that.
             ArrayView view = fn.getArray(rec);
-            if (view == null) {
-                derivedArray.ofNull();
-            } else {
-                derivedArray.of(view);
-            }
+            assert view != null : "getArray() returned a Java null, expected a NULL ArrayView";
+            derivedArray.of(view);
             validValue = true;
         }
         return derivedArray;
@@ -71,6 +71,19 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
     @Override
     public String getName() {
         return "memoize";
+    }
+
+    /**
+     * Delegates rather than reporting {@link ArrayFunction}'s own {@code type} field, which nothing
+     * here ever sets and which would therefore read {@code UNDEFINED}. Dimensionality is encoded in
+     * the type, so a caller that decoded it off the wrapper - as {@code dim_length()} does - would see
+     * zero dimensions and reject every index. Delegating rather than snapshotting in the constructor
+     * also keeps the answer right for a wrapped array bind variable, whose type is weak-dimensioned
+     * until a value is bound.
+     */
+    @Override
+    public int getType() {
+        return fn.getType();
     }
 
     @Override

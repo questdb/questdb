@@ -40,9 +40,14 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * <p>
  * A slot's int is a counter, not a flag: acquire increments it to an odd value, release increments
  * it again to an even one. So the parity says whether the slot is held, and the counter says how
- * many times it has been acquired. The counter never goes down and, short of a full 2^32 wrap, never
- * returns to a value an acquirer has already read, so it stays ABA-free. The count comes for free:
- * the acquire is the same single CAS it always was, and the release the same single store.
+ * many times it has been acquired. The counter never goes down, so it stays ABA-free: an acquirer's
+ * CAS can only win against the exact even value it read. A 2^32 wrap is harmless - 0xFFFFFFFF is odd
+ * (held) and wrapping to 0 leaves it even (free), so the parity survives; only the acquire tally
+ * restarts.
+ * <p>
+ * The count is close to free: the acquire is the same single CAS it always was, over a volatile load
+ * it already did, and the release is a volatile load plus the single store it always was. Both run
+ * once per page frame, not per row.
  */
 public class PerWorkerLocks {
     // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
@@ -133,7 +138,16 @@ public class PerWorkerLocks {
             // The holder is the only thread that can write a held slot - an acquirer's CAS demands
             // the even state it read - so this needs no atomicity, and the volatile store publishes
             // the slot's state to the next acquirer just as the plain unlock store used to.
-            locks.set(idx, state + 1);
+            //
+            // Guard the store on the slot actually being held. Incrementing is not idempotent the
+            // way the old set(idx, 0) was: with assertions off, a second release would carry a free
+            // slot from even to odd and strand it as permanently held - the very starvation the
+            // parity protocol exists to prevent. No double-release path exists today (every release
+            // is the sole statement of a finally whose try is entered only after this thread's own
+            // acquire), so the assert above stays the detector and this only bounds the damage.
+            if (!isFree(state)) {
+                locks.set(idx, state + 1);
+            }
         }
     }
 

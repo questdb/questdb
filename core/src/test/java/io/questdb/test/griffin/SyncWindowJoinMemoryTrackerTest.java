@@ -94,6 +94,13 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // allocator the cursor binds to the per-query tracker in of(); the bump allocator is reset
         // only on toTop()/close(), so the build-loop growth trips the limit. Without the binding the
         // lists escape and the query completes, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -174,6 +181,13 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Every slave row in the window matches, so each master row's list grows through the same
         // allocator bound in of(). The build-loop growth trips the limit; without the binding the
         // query completes and Assert.fail fires.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: in
+        // the build loop, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(

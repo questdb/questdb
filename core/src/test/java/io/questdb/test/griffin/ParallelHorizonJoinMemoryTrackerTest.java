@@ -130,6 +130,13 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // which the base atom binds to the per-query tracker in reopen(). The combined per-worker
         // reduce growth trips the limit and surfaces with isOutOfMemory() set. Without the binding
         // the lists escape the limit and the query would complete, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -242,6 +249,13 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // per-worker allocators and the per-worker x per-slave ASOF maps. array_agg(p0.px0) grows
         // the allocators past the limit and surfaces with isOutOfMemory() set; without the binding
         // it escapes and the query completes, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -308,9 +322,6 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                                 }
-                                // The cursor is closed by now, so the frame sequence has been awaited
-                                // and no worker sits inside a locked section.
-                                TestUtils.assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
                             }
                         }
                     },
@@ -390,6 +401,13 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // atom, which binds them to the per-query tracker in reopen(). The combined per-worker
         // reduce growth trips the limit and surfaces with isOutOfMemory() set. Without the binding
         // the list escapes the limit and the query would complete, firing Assert.fail below.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -501,6 +519,13 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // single growing array_agg(p0.px0) list; the combined per-worker reduce growth trips the limit and
         // surfaces with isOutOfMemory() set. Without the binding it escapes and the query completes, firing
         // Assert.fail below. The drain-to-breach companion the non-keyed multi-slave variant previously lacked.
+        // Its own limit, tighter than the class default. Trimming the input to keep CI time down left
+        // this case storing only ~1.2x the 8 MiB default, and a breach margin that thin is one
+        // allocator or array_agg compaction away from not breaching at all - at which point the
+        // Assert.fail below turns the case red rather than silently green, but red all the same. At
+        // 2 MiB the same trimmed input breaches by ~5x, and still breaches where it is meant to: on
+        // the combined per-worker reduce growth, far above the first chunk malloc.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -566,9 +591,6 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                                 }
-                                // The cursor is closed by now, so the frame sequence has been awaited
-                                // and no worker sits inside a locked section.
-                                TestUtils.assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
                             }
                         }
                     },

@@ -108,12 +108,21 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
      * Returns the column index when the argument reads a plain array column, so the function can take
      * the dimension length straight out of the shape header: materializing the array loads its shape,
      * resets its strides and builds a flat view, and all of that is thrown away to return one int.
-     * Returns -1 for any other argument, which then takes the {@code ArrayView} route. Unwraps the
-     * memoizer the code generator adds around a column an alias references more than once.
+     * Returns -1 for any other argument, which then takes the {@code ArrayView} route.
      */
     private static int arrayColumnIndex(Function arrayArg) {
+        return arrayArg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
+    }
+
+    /**
+     * Peels the memoizer the code generator adds around a column an alias references more than once.
+     * Both the column index and the array type below have to be read off the function this returns:
+     * taking the index from the unwrapped column and the type from the wrapper would arm the fast
+     * path against a type that does not describe the column it is about to read.
+     */
+    private static Function unwrapArrayArg(Function arrayArg) {
         final ColumnFunction cf = ColumnFunction.unwrap(arrayArg);
-        return cf != null ? cf.getColumnIndex() : -1;
+        return cf != null ? cf : arrayArg;
     }
 
     private static class ConstFunc extends IntFunction implements UnaryFunction {
@@ -125,8 +134,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
         public ConstFunc(Function arrayArg, int dim, int dimArgPos) {
             this.arrayArg = arrayArg;
-            this.arrayColumnIndex = arrayColumnIndex(arrayArg);
-            this.arrayColumnType = arrayArg.getType();
+            final Function unwrapped = unwrapArrayArg(arrayArg);
+            this.arrayColumnIndex = arrayColumnIndex(unwrapped);
+            this.arrayColumnType = unwrapped.getType();
             this.dim = dim;
             this.dimArgPos = dimArgPos;
         }
@@ -181,8 +191,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
         public Func(Function arrayArg, Function dimArg, int dimArgPos) {
             this.arrayArg = arrayArg;
-            this.arrayColumnIndex = arrayColumnIndex(arrayArg);
-            this.arrayColumnType = arrayArg.getType();
+            final Function unwrapped = unwrapArrayArg(arrayArg);
+            this.arrayColumnIndex = arrayColumnIndex(unwrapped);
+            this.arrayColumnType = unwrapped.getType();
             this.dimArg = dimArg;
             this.dimArgPos = dimArgPos;
         }
@@ -227,6 +238,12 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
+            // Read the type live, after super.init(). An arg's type is not final at construction: an
+            // array bind variable is typed with weak dims at parse time - a pg array OID carries no
+            // dimensionality - and only learns its real shape when the value is bound, which is what
+            // init() is for. Decoding a compile-time snapshot here would read -1 dimensions and reject
+            // every index. arrayColumnType above stays a snapshot because it is only read on the
+            // arrayColumnIndex >= 0 fast path, where the arg is a plain column whose type is final.
             this.dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
         }
 

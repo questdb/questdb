@@ -37,6 +37,8 @@ import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -340,6 +342,36 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                                 "SELECT array_agg(p.price), count(t.s) FROM tab t HORIZON JOIN px p "
                                         + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
                                 AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                        // A second HORIZON JOIN routes to the multi-slave factories, whose reducers
+                        // take the slot before navigating to the frame just as the single-slave ones
+                        // do. They are correct on master, but nothing asserted it: the only rows that
+                        // reached them ran a 100-row master as a single page frame, so the owner
+                        // reduced it alone, no worker ever acquired, and a zero held-slot count there
+                        // held for the wrong reason. Here the master is the 50k-row parquet partition
+                        // the rest of this test uses, so the frames fan out and a worker does acquire.
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT t.s, array_agg(p.price), count(p2.price) FROM tab t "
+                                        + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
+                                        + horizon + " WHERE t.ts < '1970-01-02'",
+                                AsyncMultiHorizonJoinRecordCursorFactory.class);
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT array_agg(p.price), count(p2.price), count(t.s) FROM tab t "
+                                        + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
+                                        + horizon + " WHERE t.ts < '1970-01-02'",
+                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                        // And their filtered reducers: t.s != 'zzz' is a real master filter, unlike the
+                        // interval-extracted ts predicate above.
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT t.s, array_agg(p.price), count(p2.price) FROM tab t "
+                                        + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
+                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
+                                AsyncMultiHorizonJoinRecordCursorFactory.class);
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT array_agg(p.price), count(p2.price), count(t.s) FROM tab t "
+                                        + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
+                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
+                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+
                         // Window join: only the filtered reducers populate the frame while holding the
                         // slot, so only they can leak on the decode. The unfiltered ones populate
                         // before the acquire and leak on the temporary lists instead. Both families,

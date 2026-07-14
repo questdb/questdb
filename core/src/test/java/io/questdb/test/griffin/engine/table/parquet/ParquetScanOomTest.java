@@ -62,8 +62,11 @@ public class ParquetScanOomTest extends AbstractOomSweepTest {
             drain(query);
 
             // Fine sweep so the ceiling lands inside the buffer reopen, where the
-            // page-address lists allocate one by one.
-            assertOomSweep(24 * 1024, 64, null, () -> drain(query));
+            // page-address lists allocate one by one. The buffer reopen is on the
+            // iteration path, so the sweep has to drain - but it must not compile
+            // under the ceiling, or a compiler allocation would take the fault and
+            // the scan would never run.
+            assertCursorDrainOomSweep(24 * 1024, 64, null, query);
 
             // Recovery: with the ceiling removed the same query runs cleanly. The
             // enclosing assertMemoryLeak is the authoritative net leak check.

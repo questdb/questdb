@@ -26,9 +26,16 @@ package io.questdb.test.griffin.engine;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Positive control for the slot-leak oracle.
@@ -36,30 +43,13 @@ import org.junit.Test;
  * Every other user of {@link PerWorkerLocks#getAcquiredSlotCount()} asserts that it is zero, so a
  * {@code getAcquiredSlotCount()} that always answered zero would disable the single detector the
  * reducers' slot-leak coverage rests on, and the whole suite would stay green. These tests are the
- * only ones that require a non-zero answer, and they pin the {@code INTS_PER_SLOT} stride: a count
- * that read consecutive ints instead of one per cache-line-padded slot would report 1 for the two
- * slots held below.
+ * only ones that require a non-zero answer, and they pin the count to the same {@code INTS_PER_SLOT}
+ * stride the acquire walks: a count that read consecutive ints instead of one per cache-line-padded
+ * slot would report 1 for the two slots held below.
  * <p>
  * Narrow unit test: PerWorkerLocks allocates no native memory, so it needs no assertMemoryLeak.
  */
 public class PerWorkerLocksTest extends AbstractCairoTest {
-
-    @Test
-    public void testAcquireReleaseRoundTrip() {
-        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
-        Assert.assertEquals(0, locks.getAcquiredSlotCount());
-
-        final int first = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        Assert.assertEquals(1, locks.getAcquiredSlotCount());
-        final int second = locks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        Assert.assertNotEquals(first, second);
-        Assert.assertEquals(2, locks.getAcquiredSlotCount());
-
-        locks.releaseSlot(first);
-        Assert.assertEquals(1, locks.getAcquiredSlotCount());
-        locks.releaseSlot(second);
-        Assert.assertEquals(0, locks.getAcquiredSlotCount());
-    }
 
     @Test
     public void testAcquireCountOnlyGrows() {
@@ -87,6 +77,23 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAcquireReleaseRoundTrip() {
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+
+        final int first = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertEquals(1, locks.getAcquiredSlotCount());
+        final int second = locks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertNotEquals(first, second);
+        Assert.assertEquals(2, locks.getAcquiredSlotCount());
+
+        locks.releaseSlot(first);
+        Assert.assertEquals(1, locks.getAcquiredSlotCount());
+        locks.releaseSlot(second);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testAcquiresEverySlot() {
         final int workerCount = 4;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
@@ -100,6 +107,82 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
             locks.releaseSlot(i);
         }
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
+    public void testConcurrentAcquireReleaseHoldsMutualExclusion() throws Exception {
+        // The one property the tests above cannot reach. They run on the JUnit thread, so the CAS in
+        // acquireSlot never actually loses a race, and the parity protocol - the whole point of the
+        // counter encoding - is never exercised against a competing acquirer. The safety argument
+        // ("the holder is the only thread that can write a held slot") is asserted in a comment; this
+        // is what exercises it.
+        //
+        // More threads than slots, so the acquire loop genuinely runs out and spins. workerId = -1
+        // makes each thread start its probe at a random slot, which is the work-stealing path.
+        final int threads = 8;
+        final int slots = 3;
+        final int rounds = 2_000;
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots);
+        // Plain ints: a slot is only ever written by the thread holding it, so if mutual exclusion
+        // holds these need no synchronization - and if it does not, the race is exactly what fails.
+        final int[] owners = new int[slots];
+        final AtomicInteger exclusionBreaches = new AtomicInteger();
+        final CyclicBarrier start = new CyclicBarrier(threads);
+        final CountDownLatch done = new CountDownLatch(threads);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+
+        for (int t = 0; t < threads; t++) {
+            final int threadId = t + 1; // 0 means "free", so ids start at 1
+            final Thread thread = new Thread(() -> {
+                try {
+                    start.await();
+                    for (int i = 0; i < rounds; i++) {
+                        final int slot = locks.acquireSlot(-1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        if (slot < 0 || slot >= slots) {
+                            errors.add(new AssertionError("slot out of range: " + slot));
+                            return;
+                        }
+                        // Inside the critical section. Anyone else here at the same time is a
+                        // mutual-exclusion failure, and this is how a reducer's per-worker state
+                        // would get corrupted. The slot is held across a spin rather than a couple of
+                        // instructions so that two holders actually overlap in time: a critical
+                        // section only nanoseconds long lets a broken lock go undetected simply
+                        // because the two threads rarely land inside it together.
+                        if (owners[slot] != 0) {
+                            exclusionBreaches.incrementAndGet();
+                        }
+                        owners[slot] = threadId;
+                        for (int spin = 0; spin < 64; spin++) {
+                            Os.pause();
+                        }
+                        if (owners[slot] != threadId) {
+                            exclusionBreaches.incrementAndGet();
+                        }
+                        owners[slot] = 0;
+                        locks.releaseSlot(slot);
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    done.countDown();
+                }
+            });
+            // Daemon: on the failure path the latch times out while survivors are still spinning in
+            // acquireSlot against NOOP_CIRCUIT_BREAKER, which never trips. Non-daemon they would burn
+            // a core for the rest of the surefire fork.
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        Assert.assertTrue("threads did not finish", done.await(60, TimeUnit.SECONDS));
+        if (!errors.isEmpty()) {
+            throw new AssertionError("thread failed", errors.peek());
+        }
+        Assert.assertEquals("two threads held the same slot", 0, exclusionBreaches.get());
+        // Every acquire was released, and every one of them was counted: a lost CAS or a
+        // double-counted acquire would show up here.
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+        Assert.assertEquals((long) threads * rounds, locks.getAcquireCount());
     }
 
     @Test

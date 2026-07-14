@@ -56,6 +56,58 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
     protected static final int CURSOR_OPEN_SLACK_STEP = 8;
 
     /**
+     * Sweeps the RSS ceiling across {@code query}'s cursor open and row iteration, but not its
+     * compilation - for an operation whose allocation points are on the iteration path, which
+     * {@link #assertCursorOpenOomSweep} never reaches because it opens the cursor without draining it.
+     * <p>
+     * Compilation runs at each point with the ceiling down, for the reason spelled out there: under
+     * the ceiling a compiler allocation satisfies the fault instead, and the code under test never
+     * runs, with neither {@code hasSeenOom} nor {@code hasRunUnderLimit} able to tell the difference.
+     * Each point compiles its own factory, so a later successful drain cannot free what an earlier
+     * faulted one stranded.
+     * <p>
+     * {@code beforeArm}, when given, also runs with the ceiling down; a sweep whose setup allocates
+     * (dropping a pooled reader, say) needs it, or the setup competes with the code under test for
+     * the fault.
+     */
+    protected static void assertCursorDrainOomSweep(int slackMax, int slackStep, @Nullable OomSweepStep beforeArm, String query) throws Exception {
+        boolean hasSeenOom = false;
+        boolean hasRunUnderLimit = false;
+        for (int slack = 0; slack <= slackMax; slack += slackStep) {
+            if (beforeArm != null) {
+                beforeArm.run();
+            }
+            try (RecordCursorFactory factory = select(query)) {
+                RecordCursor cursor = null;
+                // Arm immediately before the operation under test.
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                try {
+                    cursor = factory.getCursor(sqlExecutionContext);
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // Pull every row; the fault is on this path.
+                    }
+                    hasRunUnderLimit = true;
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                    hasSeenOom = true;
+                } finally {
+                    // Disarm before the cursor and the factory close, so neither trips the ceiling.
+                    // The cursor cannot be a try-with-resources here, for the reason
+                    // assertCursorOpenOomSweep gives.
+                    Unsafe.setRssMemLimit(0);
+                    Misc.free(cursor);
+                }
+            }
+        }
+        Assert.assertTrue("the swept operation made no tracked native allocation, so the sweep never "
+                + "faulted the code under test", hasSeenOom);
+        Assert.assertTrue("the sweep never completed the operation under an armed ceiling, so it stopped "
+                + "short of the transition the leak hides in; widen slackMax", hasRunUnderLimit);
+        Unsafe.setRssMemLimit(0);
+    }
+
+    /**
      * Sweeps the RSS ceiling across the allocation points of {@code query}'s cursor open, and nothing
      * else, so only the code under test can trip the fault. Compiles above the ceiling and opens the
      * cursor without draining it: the leak happens while the cursor opens, and compilation and row

@@ -3065,6 +3065,78 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLengthOverLateMaterializedParquetFrame() throws Exception {
+        // PageFrameFilteredMemoryRecord is the record an async GROUP BY reducer puts in front of a
+        // parquet frame when it late-materializes: it decodes the filter columns, runs the filter, and
+        // only then reads the rest, mapping each surviving row back to its physical index. Its direct
+        // array accessors have to apply that mapping - one that forwarded the filtered index straight
+        // to the shape header would read a different row's array, and one that fell through to
+        // Record's ArrayView default would silently lose the O(1) shape read.
+        //
+        // Reaching it needs all three: a parquet frame (AsyncFilterContext.shouldUseLateMaterialization
+        // returns false for native ones), an aggregate (the plain filter path uses the unfiltered
+        // record), and a filter over a column the projection does not otherwise read. A WHERE over a
+        // native table meets none of them.
+        //
+        // The two halves carry different shapes, and arr[1, 1] carries the row's own x, so a wrong row
+        // mapping shows up as the wrong dimension length or the wrong sum rather than as no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, tag SYMBOL, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango SELECT (x * 1_000_000)::timestamp, " +
+                    "CASE WHEN x % 1000 = 0 THEN 'keep' ELSE 'drop' END, " +
+                    "ARRAY[[x::double, 2.0]] FROM long_sequence(5_000)");
+            execute("INSERT INTO tango SELECT ((5_000 + x) * 1_000_000)::timestamp, " +
+                    "CASE WHEN x % 1000 = 0 THEN 'keep' ELSE 'drop' END, " +
+                    "ARRAY[[x::double], [2.0], [3.0]] FROM long_sequence(5_000)");
+            // A row in a later partition seals the first one, which is what CONVERT needs.
+            execute("INSERT INTO tango VALUES ('1970-01-02T00:00:00.000000Z', 'drop', ARRAY[[1.0]])");
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            // Five rows survive the filter in each half: x = 1000..5000 step 1000.
+            assertQuery("SELECT dim_length(arr, 1) d1, count(*) c, sum(arr[1, 1]) total " +
+                    "FROM tango WHERE tag = 'keep' GROUP BY d1 ORDER BY d1")
+                    .noLeakCheck()
+                    .expectSize()
+                    // The async reducer is the only thing that installs the filtered record. Pinned by
+                    // the substring the JIT and non-JIT plans share, since jit mode varies by build.
+                    .withPlanContaining("Group By workers:", "filter: tag='keep'")
+                    .returns("""
+                            d1\tc\ttotal
+                            1\t5\t15000.0
+                            3\t5\t15000.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLengthOverParquet() throws Exception {
+        // The parquet scan rebuilds the aux vector in the same layout the native one uses, so the
+        // shape-header fast path is meant to read it identically. Nothing pinned that: every other
+        // dim_length() test runs over a native frame, so a parquet aux layout change would go
+        // unnoticed until it returned wrong lengths. The last row stays native, which puts both frame
+        // types in one scan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', ARRAY[[1.0, 2, 3], [4.0, 5, 6]]), " +
+                    "('1970-01-01T00:00:01.000000Z', ARRAY[[1.0, 2]]), " +
+                    "('1970-01-01T00:00:02.000000Z', NULL), " +
+                    "('1970-01-02T00:00:00.000000Z', ARRAY[[1.0], [2.0], [3.0]])"
+            );
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            assertQuery("SELECT dim_length(arr, 1) d1, dim_length(arr, 2) d2, arr[1, 1] first FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d1\td2\tfirst
+                            2\t3\t1.0
+                            1\t2\t1.0
+                            null\tnull\tnull
+                            3\t1\t1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testLengthReadsShapeWithoutMaterializingArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");

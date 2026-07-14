@@ -26,6 +26,7 @@ package io.questdb.test.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
@@ -55,6 +56,15 @@ public class ArrayAccessorForwardingTest {
     private static final int COL_TYPE = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
     private static final int DIM_LEN_ANSWER = 7;
     private static final double DOUBLE_ANSWER = 1.5;
+
+    @Test
+    public void testDelegatingRecordForwards() {
+        // A pass-through wrapper: it remaps nothing, so the only thing to pin is that it forwards the
+        // direct accessors at all rather than falling through to Record's ArrayView default.
+        final DelegatingRecord record = new DelegatingRecord();
+        record.of(new DirectOnlyArrayRecord(0));
+        assertForwards(record);
+    }
 
     @Test
     public void testHorizonJoinRecordForwards() {
