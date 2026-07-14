@@ -348,46 +348,83 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges intervals from another RuntimeIntervalModel into this builder.
-     * Currently only support static intervals.
+     * Narrows a WINDOW JOIN slave scan to the union of the master's intervals expanded by the
+     * window bounds. This method is best-effort: mixed timestamp precision and unsupported dynamic
+     * combinations leave the slave scan less constrained rather than risk omitting rows.
      *
-     * @param model the RuntimeIntervalModel to merge from
+     * @param model    the master interval model
+     * @param loOffset the window lower offset, subtracted from each master lower bound;
+     *                 {@link Numbers#LONG_NULL} opens the lower side
+     * @param hiOffset the window upper offset, added to each master upper bound;
+     *                 {@link Long#MAX_VALUE} opens the upper side
      */
     public void merge(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         if (model == null || isEmptySet()) {
             return;
         }
-        ObjList<Function> dynamicRangeList = model.getDynamicRangeList();
-        LongList modelIntervals = model.getStaticIntervals();
-        if (modelIntervals != null && modelIntervals.size() > 0) {
-            int dynamicStart = modelIntervals.size() - (dynamicRangeList != null ? dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL : 0);
-            TimestampDriver driver = model.getTimestampDriver();
 
-            for (int i = 0; i < dynamicStart; i += 2) {
-                long lo = modelIntervals.getQuick(i);
-                if (loOffset == Numbers.LONG_NULL || loOffset == Long.MAX_VALUE) {
-                    lo = loOffset;
-                } else if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
-                    lo = timestampDriver.from(lo, driver.getTimestampType());
-                    lo -= loOffset;
-                }
-                long hi = modelIntervals.getQuick(i + 1);
-                if (hiOffset == Numbers.LONG_NULL || hiOffset == Long.MAX_VALUE) {
-                    hi = hiOffset;
-                } else if (hi != Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
-                    hi = timestampDriver.from(hi, driver.getTimestampType());
-                    hi += hiOffset;
-                }
+        final LongList modelIntervals = model.getStaticIntervals();
+        if (modelIntervals == null || modelIntervals.size() == 0) {
+            return;
+        }
+        final ObjList<Function> modelDynamicRangeList = model.getDynamicRangeList();
+        if (modelDynamicRangeList != null && modelDynamicRangeList.size() > 0) {
+            return;
+        }
+
+        final TimestampDriver modelTimestampDriver = model.getTimestampDriver();
+        if (timestampDriver.getTimestampType() != modelTimestampDriver.getTimestampType()) {
+            return;
+        }
+        try {
+            parsedIntervals.clear();
+            for (int i = 0, n = modelIntervals.size(); i < n; i += 2) {
+                final long lo = offsetIntervalLo(modelIntervals.getQuick(i), loOffset, modelTimestampDriver);
+                final long hi = offsetIntervalHi(modelIntervals.getQuick(i + 1), hiOffset, modelTimestampDriver);
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
+                    // One expanded master interval covers the full domain, so its union adds no
+                    // useful constraint to the slave scan.
                     return;
+                }
+                if (lo > hi) {
+                    continue;
+                }
+
+                // Master intervals are sorted. Applying the same monotonic, saturating shifts to
+                // every pair preserves that order; coalesce overlaps the expansion introduces.
+                if (parsedIntervals.size() > 0 && lo <= parsedIntervals.getLast()) {
+                    if (hi > parsedIntervals.getLast()) {
+                        parsedIntervals.setQuick(parsedIntervals.size() - 1, hi);
+                    }
                 } else {
-                    intersect(lo, hi);
+                    parsedIntervals.add(lo, hi);
                 }
             }
 
-            // TODO: Add support for dynamic intervals in merge() method
-            // When merging RuntimeIntervalModel with dynamic intervals, need to:
-            // Extend STATIC_LONGS_PER_DYNAMIC_INTERVAL to include offset metadata
+            if (parsedIntervals.size() == 0) {
+                intersectEmpty();
+                return;
+            }
+
+            if (dynamicRangeList.size() > 0) {
+                // The encoded dynamic suffix can intersect one static interval atomically, but it
+                // cannot express an atomic intersection with a static union. Keep the existing
+                // (wider) slave scan for a multi-range union.
+                if (parsedIntervals.size() == 2) {
+                    intersect(parsedIntervals.getQuick(0), parsedIntervals.getQuick(1));
+                }
+                return;
+            }
+
+            final int divider = staticIntervals.size();
+            staticIntervals.add(parsedIntervals);
+            if (intervalApplied) {
+                IntervalUtils.intersectInPlace(staticIntervals, divider);
+            } else {
+                intervalApplied = true;
+            }
+        } finally {
+            parsedIntervals.clear();
         }
     }
 
@@ -721,6 +758,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         cursorFunctionPositions.checkCapacity(cursorFunctionPositions.size() + cursorFunctionCount);
     }
 
+    private static long addSaturating(long value, long offset) {
+        final long result = value + offset;
+        if (((value ^ result) & (offset ^ result)) < 0) {
+            return value < 0 ? Numbers.LONG_NULL : Long.MAX_VALUE;
+        }
+        return result;
+    }
+
     /**
      * Applies the add method with overflow checking.
      * Throws SqlException if the addition would cause timestamp overflow.
@@ -750,6 +795,23 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
+    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static long subtractSaturating(long value, long offset) {
+        final long result = value - offset;
+        if (((value ^ offset) & (value ^ result)) < 0) {
+            return value < 0 ? Numbers.LONG_NULL : Long.MAX_VALUE;
+        }
+        return result;
+    }
+
     private void addDynamicFunction(Function function, int functionPosition, boolean isCursor) {
         // Callers reserve all applicable lists and snapshot cursor classification before model
         // mutation, so commit performs no user callbacks or capacity growth.
@@ -766,15 +828,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         for (int i = 0; i < intervalCount; i++) {
             addDynamicFunction(null, 0, false);
         }
-    }
-
-    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private Throwable freeAndClearBestEffort() {
@@ -837,6 +890,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         } catch (Throwable th) {
             CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
         }
+    }
+
+    private long offsetIntervalHi(long hi, long hiOffset, TimestampDriver modelTimestampDriver) {
+        if (hi == Long.MAX_VALUE || hiOffset == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        if (hi != Numbers.LONG_NULL) {
+            hi = timestampDriver.from(hi, modelTimestampDriver.getTimestampType());
+        }
+        return addSaturating(hi, hiOffset);
+    }
+
+    private long offsetIntervalLo(long lo, long loOffset, TimestampDriver modelTimestampDriver) {
+        if (lo == Numbers.LONG_NULL || loOffset == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        lo = timestampDriver.from(lo, modelTimestampDriver.getTimestampType());
+        return subtractSaturating(lo, loOffset);
     }
 
     private void resetBetweenParsingState() {

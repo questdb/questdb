@@ -102,6 +102,9 @@ public final class WhereClauseParser implements Mutable {
     // marks must be reverted so collapseIntrinsicNodes does not later
     // shred a still-needed branch and leave a half-collapsed OR node.
     private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+    // FunctionParser compiles scalar subqueries through the owning SqlCodeGenerator, which can re-enter extract().
+    // Each recursion level borrows one snapshot so the nested traversal cannot overwrite its suspended parent.
+    private final ObjList<SavedState> savedStates = new ObjList<>();
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final LongList tempInIntervals = new LongList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
@@ -127,6 +130,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
+    private int reentryDepth;
     private long resolvedBoundConst;
     private Function resolvedBoundFunc;
     private CharSequence timestamp;
@@ -134,6 +138,15 @@ public final class WhereClauseParser implements Mutable {
     @Override
     public void clear() {
         models.clear();
+        csPool.clear();
+        clearTransientState();
+        reentryDepth = 0;
+        for (int i = 0, n = savedStates.size(); i < n; i++) {
+            savedStates.getQuick(i).clear();
+        }
+    }
+
+    private void clearTransientState() {
         stack.clear();
         keyNodes.clear();
         keyExclNodes.clear();
@@ -150,14 +163,73 @@ public final class WhereClauseParser implements Mutable {
         tmpFunctions.clear();
         clearKeys();
         clearExcludedKeys();
-        csPool.clear();
         timestamp = null;
         preferredKeyColumn = null;
+        resolvedBoundFunc = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
     }
 
     public IntrinsicModel extract(
+            @NotNull AliasTranslator translator,
+            ExpressionNode node,
+            @NotNull RecordMetadata m,
+            CharSequence preferredKeyColumn,
+            int timestampIndex,
+            @NotNull FunctionParser functionParser,
+            @NotNull RecordMetadata metadata,
+            @NotNull SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            @NotNull TableReader reader,
+            boolean noIndex
+    ) throws SqlException {
+        final int depth = reentryDepth++;
+        SavedState saved = null;
+        Throwable failure = null;
+        try {
+            if (depth > 0) {
+                while (savedStates.size() < depth) {
+                    savedStates.add(new SavedState());
+                }
+                final SavedState candidate = savedStates.getQuick(depth - 1);
+                saveStateInto(candidate);
+                saved = candidate;
+                clearTransientState();
+            }
+            return extract0(
+                    translator,
+                    node,
+                    m,
+                    preferredKeyColumn,
+                    timestampIndex,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    latestByMultiColumn,
+                    reader,
+                    noIndex
+            );
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
+        } finally {
+            try {
+                if (saved != null) {
+                    restoreStateFrom(saved);
+                }
+            } catch (RuntimeException | Error restoreFailure) {
+                if (failure != null) {
+                    failure.addSuppressed(restoreFailure);
+                } else {
+                    throw restoreFailure;
+                }
+            } finally {
+                reentryDepth--;
+            }
+        }
+    }
+
+    private IntrinsicModel extract0(
             @NotNull AliasTranslator translator,
             ExpressionNode node,
             @NotNull RecordMetadata m,
@@ -2236,6 +2308,109 @@ public final class WhereClauseParser implements Mutable {
         allKeyValuesAreKnown = true;
     }
 
+    private void restoreStateFrom(SavedState state) {
+        timestamp = state.timestamp;
+        preferredKeyColumn = state.preferredKeyColumn;
+        noIndex = state.noIndex;
+        isConstFunction = state.isConstFunction;
+        resolvedBoundConst = state.resolvedBoundConst;
+        resolvedBoundFunc = state.resolvedBoundFunc;
+        allKeyValuesAreKnown = state.allKeyValuesAreKnown;
+        allKeyExcludedValuesAreKnown = state.allKeyExcludedValuesAreKnown;
+        stack.clear();
+        stack.addAll(state.stack);
+        keyNodes.clear();
+        keyNodes.addAll(state.keyNodes);
+        keyExclNodes.clear();
+        keyExclNodes.addAll(state.keyExclNodes);
+        orIntrinsicNodes.clear();
+        orIntrinsicNodes.addAll(state.orIntrinsicNodes);
+        tempNodes.clear();
+        tempNodes.addAll(state.tempNodes);
+        tempMonotonicChain.clear();
+        tempMonotonicChain.addAll(state.tempMonotonicChain);
+        tmpFunctions.clear();
+        tmpFunctions.addAll(state.tmpFunctions);
+        tempInIntervals.clear();
+        tempInIntervals.addAll(state.tempInIntervals);
+        tempKeys.clear();
+        tempKeys.addAll(state.tempKeys);
+        tempK.clear();
+        tempK.addAll(state.tempK);
+        tempKeyValues.clear();
+        tempKeyValues.addAll(state.tempKeyValues);
+        tempKeyExcludedValues.clear();
+        tempKeyExcludedValues.addAll(state.tempKeyExcludedValues);
+        tempPos.clear();
+        tempPos.addAll(state.tempPos);
+        tempType.clear();
+        tempType.addAll(state.tempType);
+        tempP.clear();
+        tempP.addAll(state.tempP);
+        tempT.clear();
+        tempT.addAll(state.tempT);
+        tempKeyValuePos.clear();
+        tempKeyValuePos.addAll(state.tempKeyValuePos);
+        tempKeyValueType.clear();
+        tempKeyValueType.addAll(state.tempKeyValueType);
+        tempKeyExcludedValuePos.clear();
+        tempKeyExcludedValuePos.addAll(state.tempKeyExcludedValuePos);
+        tempKeyExcludedValueType.clear();
+        tempKeyExcludedValueType.addAll(state.tempKeyExcludedValueType);
+        state.clear();
+    }
+
+    private void saveStateInto(SavedState state) {
+        state.timestamp = timestamp;
+        state.preferredKeyColumn = preferredKeyColumn;
+        state.noIndex = noIndex;
+        state.isConstFunction = isConstFunction;
+        state.resolvedBoundConst = resolvedBoundConst;
+        state.resolvedBoundFunc = resolvedBoundFunc;
+        state.allKeyValuesAreKnown = allKeyValuesAreKnown;
+        state.allKeyExcludedValuesAreKnown = allKeyExcludedValuesAreKnown;
+        state.stack.clear();
+        state.stack.addAll(stack);
+        state.keyNodes.clear();
+        state.keyNodes.addAll(keyNodes);
+        state.keyExclNodes.clear();
+        state.keyExclNodes.addAll(keyExclNodes);
+        state.orIntrinsicNodes.clear();
+        state.orIntrinsicNodes.addAll(orIntrinsicNodes);
+        state.tempNodes.clear();
+        state.tempNodes.addAll(tempNodes);
+        state.tempMonotonicChain.clear();
+        state.tempMonotonicChain.addAll(tempMonotonicChain);
+        state.tmpFunctions.clear();
+        state.tmpFunctions.addAll(tmpFunctions);
+        state.tempInIntervals.clear();
+        state.tempInIntervals.addAll(tempInIntervals);
+        state.tempKeys.clear();
+        state.tempKeys.addAll(tempKeys);
+        state.tempK.clear();
+        state.tempK.addAll(tempK);
+        state.tempKeyValues.clear();
+        state.tempKeyValues.addAll(tempKeyValues);
+        state.tempKeyExcludedValues.clear();
+        state.tempKeyExcludedValues.addAll(tempKeyExcludedValues);
+        state.tempPos.clear();
+        state.tempPos.addAll(tempPos);
+        state.tempType.clear();
+        state.tempType.addAll(tempType);
+        state.tempP.clear();
+        state.tempP.addAll(tempP);
+        state.tempT.clear();
+        state.tempT.addAll(tempT);
+        state.tempKeyValuePos.clear();
+        state.tempKeyValuePos.addAll(tempKeyValuePos);
+        state.tempKeyValueType.clear();
+        state.tempKeyValueType.addAll(tempKeyValueType);
+        state.tempKeyExcludedValuePos.clear();
+        state.tempKeyExcludedValuePos.addAll(tempKeyExcludedValuePos);
+        state.tempKeyExcludedValueType.clear();
+        state.tempKeyExcludedValueType.addAll(tempKeyExcludedValueType);
+    }
+
     // removes nodes extracted into special symbol/key or timestamp filters from given node
     private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
@@ -3239,6 +3414,63 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return collapseWithinNodes(root);
+    }
+
+    private static final class SavedState {
+        private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
+        private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+        private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+        private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+        private final LongList tempInIntervals = new LongList();
+        private final CharSequenceHashSet tempK = new CharSequenceHashSet();
+        private final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
+        private final IntList tempKeyExcludedValuePos = new IntList();
+        private final IntList tempKeyExcludedValueType = new IntList();
+        private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+        private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
+        private final IntList tempKeyValuePos = new IntList();
+        private final IntList tempKeyValueType = new IntList();
+        private final ObjList<MonotonicTimestampFunction> tempMonotonicChain = new ObjList<>();
+        private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
+        private final IntList tempP = new IntList();
+        private final IntList tempPos = new IntList();
+        private final IntList tempT = new IntList();
+        private final IntList tempType = new IntList();
+        private final ObjList<Function> tmpFunctions = new ObjList<>();
+        private boolean allKeyExcludedValuesAreKnown;
+        private boolean allKeyValuesAreKnown;
+        private boolean isConstFunction;
+        private boolean noIndex;
+        private CharSequence preferredKeyColumn;
+        private long resolvedBoundConst;
+        private Function resolvedBoundFunc;
+        private CharSequence timestamp;
+
+        private void clear() {
+            keyExclNodes.clear();
+            keyNodes.clear();
+            orIntrinsicNodes.clear();
+            stack.clear();
+            tempInIntervals.clear();
+            tempK.clear();
+            tempKeyExcludedValues.clear();
+            tempKeyExcludedValuePos.clear();
+            tempKeyExcludedValueType.clear();
+            tempKeys.clear();
+            tempKeyValues.clear();
+            tempKeyValuePos.clear();
+            tempKeyValueType.clear();
+            tempMonotonicChain.clear();
+            tempNodes.clear();
+            tempP.clear();
+            tempPos.clear();
+            tempT.clear();
+            tempType.clear();
+            tmpFunctions.clear();
+            preferredKeyColumn = null;
+            resolvedBoundFunc = null;
+            timestamp = null;
+        }
     }
 
     static {

@@ -10630,21 +10630,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // TODO: In theory, we can apply similar optimizations for ASOF, SPLICE and LT joins
             if (model.getJoinType() == IQueryModel.JOIN_WINDOW && pushedIntervalModel != null) {
                 WindowJoinContext windowJoinContext = model.getWindowJoinContext();
-                TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
-                long hi = windowJoinContext.getHi();
-                if (windowJoinContext.getHiExprTimeUnit() != 0) {
-                    hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
-                }
-                long lo;
-                if (windowJoinContext.isIncludePrevailing()) {
-                    lo = Numbers.LONG_NULL;
-                } else {
-                    lo = windowJoinContext.getLo();
-                    if (windowJoinContext.getLoExprTimeUnit() != 0) {
-                        lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                // Dynamic per-row bounds have no compile-time maximum, so they cannot safely narrow
+                // the slave scan derived from the master's static intervals.
+                if (!windowJoinContext.isDynamicLo() && !windowJoinContext.isDynamicHi()) {
+                    TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+                    long hi = windowJoinContext.getHi();
+                    if (windowJoinContext.getHiExprTimeUnit() != 0) {
+                        hi = driver.from(hi, windowJoinContext.getHiExprTimeUnit());
                     }
+                    long lo;
+                    if (windowJoinContext.isIncludePrevailing()) {
+                        lo = Numbers.LONG_NULL;
+                    } else {
+                        lo = windowJoinContext.getLo();
+                        if (windowJoinContext.getLoExprTimeUnit() != 0) {
+                            lo = driver.from(lo, windowJoinContext.getLoExprTimeUnit());
+                        }
+                    }
+                    intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);
                 }
-                intrinsicModel.mergeIntervalModel((RuntimeIntervalModel) pushedIntervalModel, lo, hi);
             }
 
             // intrinsic parser can collapse where clause when removing parts it can replace

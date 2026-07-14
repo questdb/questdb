@@ -34,6 +34,8 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
@@ -835,6 +837,99 @@ public class RuntimeIntervalModelBuilderTest {
         builder.setBetweenBoundary(1_000_000L);
         builder.freeAndClear();
         Assert.assertEquals(1, lo.closeCount);
+    }
+
+    @Test
+    public void testWindowJoinMergeIgnoresDynamicMasterIntervals() throws Exception {
+        final IntrinsicModel master = new IntrinsicModel();
+        master.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
+        master.intersectIntervals(10, 20);
+        final CloseCountingFunction dynamicUnion = new CloseCountingFunction();
+        master.unionRuntimeTimestamp(dynamicUnion, 0);
+        try (RuntimeIntrinsicIntervalModel masterModel = master.buildIntervalModel()) {
+            final RuntimeIntervalModelBuilder slaveBuilder = newBuilder();
+            slaveBuilder.intersect(0, 100);
+            slaveBuilder.merge((RuntimeIntervalModel) masterModel, 0, 0);
+            try (RuntimeIntrinsicIntervalModel slaveModel = slaveBuilder.build()) {
+                final LongList intervals = ((RuntimeIntervalModel) slaveModel).getStaticIntervals();
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(0, intervals.getQuick(0));
+                Assert.assertEquals(100, intervals.getQuick(1));
+            }
+            slaveBuilder.clear();
+        }
+        master.clear();
+        Assert.assertEquals(1, dynamicUnion.closeCount);
+    }
+
+    @Test
+    public void testWindowJoinMergeIgnoresMixedTimestampPrecision() throws Exception {
+        final LongList masterIntervals = new LongList();
+        masterIntervals.add(150_000L, 160_000L);
+        try (RuntimeIntervalModel masterModel = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO),
+                PartitionBy.DAY,
+                masterIntervals
+        )) {
+            final RuntimeIntervalModelBuilder slaveBuilder = newBuilder();
+            slaveBuilder.intersect(100, 200);
+            slaveBuilder.merge(masterModel, 10, 20);
+            try (RuntimeIntrinsicIntervalModel slaveModel = slaveBuilder.build()) {
+                final LongList intervals = ((RuntimeIntervalModel) slaveModel).getStaticIntervals();
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(100, intervals.getQuick(0));
+                Assert.assertEquals(200, intervals.getQuick(1));
+            }
+            slaveBuilder.clear();
+        }
+    }
+
+    @Test
+    public void testWindowJoinMergeIntersectsShiftedUnionOnce() throws Exception {
+        final LongList masterIntervals = new LongList();
+        masterIntervals.add(10L, 20L);
+        masterIntervals.add(40L, 50L);
+        try (RuntimeIntervalModel masterModel = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                PartitionBy.DAY,
+                masterIntervals
+        )) {
+            final RuntimeIntervalModelBuilder slaveBuilder = newBuilder();
+            slaveBuilder.intersect(0, 45);
+            slaveBuilder.merge(masterModel, 5, 5);
+            try (RuntimeIntrinsicIntervalModel slaveModel = slaveBuilder.build()) {
+                final LongList intervals = ((RuntimeIntervalModel) slaveModel).getStaticIntervals();
+                Assert.assertEquals(4, intervals.size());
+                Assert.assertEquals(5, intervals.getQuick(0));
+                Assert.assertEquals(25, intervals.getQuick(1));
+                Assert.assertEquals(35, intervals.getQuick(2));
+                Assert.assertEquals(45, intervals.getQuick(3));
+            }
+            slaveBuilder.clear();
+        }
+    }
+
+    @Test
+    public void testWindowJoinMergeSaturatesUpperOffset() throws Exception {
+        final LongList masterIntervals = new LongList();
+        masterIntervals.add(Numbers.LONG_NULL, Long.MAX_VALUE - 5);
+        try (RuntimeIntervalModel masterModel = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO),
+                PartitionBy.DAY,
+                masterIntervals
+        )) {
+            final RuntimeIntervalModelBuilder slaveBuilder = new RuntimeIntervalModelBuilder();
+            slaveBuilder.of(ColumnType.TIMESTAMP_NANO, PartitionBy.DAY, null);
+            slaveBuilder.intersect(100, 100);
+            slaveBuilder.merge(masterModel, 0, 10);
+            try (RuntimeIntrinsicIntervalModel slaveModel = slaveBuilder.build()) {
+                final LongList intervals = ((RuntimeIntervalModel) slaveModel).getStaticIntervals();
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(100, intervals.getQuick(0));
+                Assert.assertEquals(100, intervals.getQuick(1));
+            }
+            slaveBuilder.clear();
+        }
     }
 
     private static void assertBuildFailure(BuildFailingBuilder builder, BuildFailureStage stage) {
