@@ -387,10 +387,13 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     slotId
             );
         } finally {
-            if (frameMemoryPool != null) {
-                frameMemoryPool.releaseParquetBuffers();
+            try {
+                if (frameMemoryPool != null) {
+                    frameMemoryPool.releaseParquetBuffers();
+                }
+            } finally {
+                atom.release(slotId);
             }
-            atom.release(slotId);
         }
     }
 
@@ -556,10 +559,13 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     slotId
             );
         } finally {
-            if (frameMemoryPool != null) {
-                frameMemoryPool.releaseParquetBuffers();
+            try {
+                if (frameMemoryPool != null) {
+                    frameMemoryPool.releaseParquetBuffers();
+                }
+            } finally {
+                atom.release(slotId);
             }
-            atom.release(slotId);
         }
     }
 

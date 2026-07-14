@@ -55,6 +55,16 @@ public class ExtraNullColumnRecord implements Record {
         return ArrayConstant.NULL;
     }
 
+    @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        return col < columnSplit ? base.getArrayDimLen(col, columnType, dim) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return col < columnSplit ? base.getArrayDouble1d2d(col, columnType, idx0, idx1) : Double.NaN;
+    }
+
     public Record getBaseRecord() {
         return base;
     }

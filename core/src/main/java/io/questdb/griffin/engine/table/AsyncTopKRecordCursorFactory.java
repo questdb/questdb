@@ -283,9 +283,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } finally {
-            recordB.clear();
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                recordB.clear();
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -330,9 +333,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } finally {
-            recordB.clear();
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                recordB.clear();
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 

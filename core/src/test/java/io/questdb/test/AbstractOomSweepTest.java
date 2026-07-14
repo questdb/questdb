@@ -71,8 +71,8 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
      * the fault.
      */
     protected static void assertCursorDrainOomSweep(int slackMax, int slackStep, @Nullable OomSweepStep beforeArm, String query) throws Exception {
-        boolean hasSeenOom = false;
         boolean hasRunUnderLimit = false;
+        int maxOomSlack = -1;
         for (int slack = 0; slack <= slackMax; slack += slackStep) {
             if (beforeArm != null) {
                 beforeArm.run();
@@ -90,7 +90,7 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
                     hasRunUnderLimit = true;
                 } catch (CairoException e) {
                     Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    hasSeenOom = true;
+                    maxOomSlack = slack;
                 } finally {
                     // Disarm before the cursor and the factory close, so neither trips the ceiling.
                     // The cursor cannot be a try-with-resources here, for the reason
@@ -100,8 +100,7 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
                 }
             }
         }
-        Assert.assertTrue("the swept operation made no tracked native allocation, so the sweep never "
-                + "faulted the code under test", hasSeenOom);
+        Assert.assertTrue("the swept operation only failed at the zero-slack endpoint", maxOomSlack > 0);
         Assert.assertTrue("the sweep never completed the operation under an armed ceiling, so it stopped "
                 + "short of the transition the leak hides in; widen slackMax", hasRunUnderLimit);
         Unsafe.setRssMemLimit(0);
@@ -118,8 +117,8 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
         // open rather than in first-touch table open.
         drain(query);
 
-        boolean hasSeenOom = false;
         boolean hasOpenedUnderLimit = false;
+        int maxOomSlack = -1;
         for (int slack = 0; slack <= CURSOR_OPEN_SLACK_MAX; slack += CURSOR_OPEN_SLACK_STEP) {
             // Compile outside the ceiling. Under it, a compiler allocation satisfies the fault
             // instead, and cursor open - the code under test - never runs. Each point compiles its
@@ -134,7 +133,7 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
                     hasOpenedUnderLimit = true;
                 } catch (CairoException e) {
                     Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    hasSeenOom = true;
+                    maxOomSlack = slack;
                 } finally {
                     // Disarm before the cursor and the factory close, so neither trips the ceiling. The
                     // cursor cannot be a try-with-resources here: an extended try-with-resources closes
@@ -150,8 +149,7 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
         // current usage, so the first tracked allocation of the open fails; an OOM alone therefore
         // only shows the open allocates at all. Pairing it with an open that survived its ceiling is
         // what shows the sweep crossed the transition the leak hides in.
-        Assert.assertTrue("cursor open made no tracked native allocation, so the sweep never faulted "
-                + "the code under test", hasSeenOom);
+        Assert.assertTrue("cursor open only failed at the zero-slack endpoint", maxOomSlack > 0);
         Assert.assertTrue("sweep never opened the cursor under an armed ceiling, so it stopped short of "
                 + "the transition the leak hides in; widen CURSOR_OPEN_SLACK_MAX", hasOpenedUnderLimit);
 
@@ -172,8 +170,8 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
      * vacuously.
      */
     protected static void assertOomSweep(int slackMax, int slackStep, @Nullable OomSweepStep beforeArm, OomSweepStep armed) throws Exception {
-        boolean hasSeenOom = false;
         boolean hasRunUnderLimit = false;
+        int maxOomSlack = -1;
         for (int slack = 0; slack <= slackMax; slack += slackStep) {
             if (beforeArm != null) {
                 beforeArm.run();
@@ -184,13 +182,12 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
                 hasRunUnderLimit = true;
             } catch (CairoException e) {
                 Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                hasSeenOom = true;
+                maxOomSlack = slack;
             } finally {
                 Unsafe.setRssMemLimit(0);
             }
         }
-        Assert.assertTrue("the swept operation made no tracked native allocation, so the sweep never "
-                + "faulted the code under test", hasSeenOom);
+        Assert.assertTrue("the swept operation only failed at the zero-slack endpoint", maxOomSlack > 0);
         Assert.assertTrue("the sweep never completed the operation under an armed ceiling, so it stopped "
                 + "short of the transition the leak hides in; widen slackMax", hasRunUnderLimit);
         Unsafe.setRssMemLimit(0);

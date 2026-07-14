@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -109,6 +110,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public int getArrayDimLen(int columnIndex, int columnType, int dim) {
+        assert dim >= 1 && dim <= ColumnType.decodeArrayDimensionality(columnType);
         return getArrayDimLen0(columnIndex, dim, getRowIndex(columnIndex));
     }
 

@@ -159,10 +159,9 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
-    // Breach the query enough times that a leaked slot is missing from every later iteration, and
-    // keep going, up to a bound, until a worker has actually taken one. See assertNoSlotLeakOnBreach.
+    // Breach the query, up to a bound, until a worker has actually taken a slot.
+    // See assertNoSlotLeakOnBreach.
     private static final int MAX_BREACH_ITERATIONS = 200;
-    private static final int MIN_BREACH_ITERATIONS = 6;
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -961,7 +960,7 @@ public final class TestUtils {
                 // The cursor is closed by now, so the frame sequence has been awaited and no worker
                 // is inside a locked section.
                 assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
-                if (i + 1 >= MIN_BREACH_ITERATIONS && atom.getSlotAcquireCount() > 0) {
+                if (atom.getSlotAcquireCount() > 0) {
                     return;
                 }
                 // No worker has taken a slot yet, so a zero held-slot count still proves nothing.

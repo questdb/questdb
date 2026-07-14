@@ -70,7 +70,10 @@ public class PerWorkerLocks {
         workerId = workerId == -1 ? rnd.nextInt(workerCount) : workerId;
         while (true) {
             for (int i = 0; i < workerCount; i++) {
-                int id = (i + workerId) % workerCount;
+                int id = i + workerId;
+                if (id >= workerCount) {
+                    id -= workerCount;
+                }
                 int idx = INTS_PER_SLOT * id;
                 int state = locks.get(idx);
                 if (isFree(state) && locks.compareAndSet(idx, state, state + 1)) {
@@ -86,7 +89,10 @@ public class PerWorkerLocks {
         carrierId = carrierId == -1 ? rnd.nextInt(workerCount) : carrierId;
         while (!circuitBreaker.checkIfTripped()) {
             for (int i = 0; i < workerCount; i++) {
-                int id = (i + carrierId) % workerCount;
+                int id = i + carrierId;
+                if (id >= workerCount) {
+                    id -= workerCount;
+                }
                 int idx = INTS_PER_SLOT * id;
                 int state = locks.get(idx);
                 if (isFree(state) && locks.compareAndSet(idx, state, state + 1)) {
@@ -142,9 +148,10 @@ public class PerWorkerLocks {
             // Guard the store on the slot actually being held. Incrementing is not idempotent the
             // way the old set(idx, 0) was: with assertions off, a second release would carry a free
             // slot from even to odd and strand it as permanently held - the very starvation the
-            // parity protocol exists to prevent. No double-release path exists today (every release
-            // is the sole statement of a finally whose try is entered only after this thread's own
-            // acquire), so the assert above stays the detector and this only bounds the damage.
+            // parity protocol exists to prevent. No double-release path exists today. Every release
+            // runs in a finally, either directly or in a nested finally that protects it from
+            // preceding cleanup calls. The try starts only after this thread acquires the slot, so
+            // the assert above stays the detector and this guard only bounds the damage.
             if (!isFree(state)) {
                 locks.set(idx, state + 1);
             }

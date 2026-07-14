@@ -248,6 +248,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getArrayDimLen(int columnIndex, int columnType, int dim) {
+        assert dim >= 1 && dim <= ColumnType.decodeArrayDimensionality(columnType);
         return getArrayDimLen0(columnIndex, dim, rowIndex);
     }
 

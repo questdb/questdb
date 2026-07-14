@@ -54,7 +54,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
-    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
+    private final SelectivityStats ownerSelectivityStats = new SynchronizedSelectivityStats();
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
@@ -319,6 +319,23 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         sink.val(filter);
         if (preTouchEnabled) {
             sink.val(" [pre-touch]");
+        }
+    }
+
+    private static class SynchronizedSelectivityStats extends SelectivityStats {
+        @Override
+        public synchronized void clear() {
+            super.clear();
+        }
+
+        @Override
+        public synchronized boolean shouldUseLateMaterialization() {
+            return super.shouldUseLateMaterialization();
+        }
+
+        @Override
+        public synchronized void update(long filteredRowCount, long totalRowCount) {
+            super.update(filteredRowCount, totalRowCount);
         }
     }
 }

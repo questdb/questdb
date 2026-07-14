@@ -4328,7 +4328,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT key, " +
                         " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
                         " first(ashort) ashort, first(ageoshort) ageoshort, first(achar) achar, " +
-                        " first(anint) anint, first(anipv4) anipv4, first(ageoint) ageoint, first(afloat) afloat, " +
+                        " first(anint) anint, first(anipv4) anipv4, first_not_null(anipv4) anipv4_nn, first(ageoint) ageoint, first(afloat) afloat, " +
                         " first(along) along, first(adouble) adouble, first(adate) adate, first(ts) ts, first(ageolong) ageolong, " +
                         " first(asymbol) asymbol, first(astring) astring, " +
                         " first(auuid) auuid " +
@@ -4433,7 +4433,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT key, " +
                         " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
                         " last(ashort) ashort, last(ageoshort) ageoshort, last(achar) achar, " +
-                        " last(anint) anint, last(anipv4) anipv4, last(ageoint) ageoint, last(afloat) afloat, " +
+                        " last(anint) anint, last(anipv4) anipv4, last_not_null(anipv4) anipv4_nn, last(ageoint) ageoint, last(afloat) afloat, " +
                         " last(along) along, last(adouble) adouble, last(adate) adate, last(ts) ts, last(ageolong) ageolong, " +
                         " last(asymbol) asymbol, last(astring) astring, " +
                         " last(auuid) auuid " +
@@ -4891,7 +4891,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_geohash(12) ageoshort," +
                                         " rnd_char() achar," +
                                         " rnd_int(0,1000,3) anint," +
-                                        " rnd_ipv4() anipv4," +
+                                        " CASE WHEN x % 7 = 0 THEN NULL ELSE rnd_ipv4() END anipv4," +
                                         " rnd_geohash(16) ageoint," +
                                         " rnd_symbol(4,4,4,2) asymbol," +
                                         " rnd_float(3) afloat," +

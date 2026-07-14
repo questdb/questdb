@@ -301,8 +301,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -414,8 +417,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -510,8 +516,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             long baseRowId = Rows.toRowID(frameIndex, 0);
             aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 

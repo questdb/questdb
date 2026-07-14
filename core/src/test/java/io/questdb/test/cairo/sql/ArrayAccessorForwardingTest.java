@@ -72,12 +72,13 @@ public class ArrayAccessorForwardingTest {
         // Column 0 reads the master's column 2, so a forwarding override that dropped the column
         // mapping would read the wrong column. Column 1 has no source record at all.
         record.init(
-                new int[]{HorizonJoinRecord.SOURCE_MASTER, HorizonJoinRecord.SOURCE_SEQUENCE},
-                new int[]{2, 0}
+                new int[]{HorizonJoinRecord.SOURCE_MASTER, HorizonJoinRecord.SOURCE_SLAVE, HorizonJoinRecord.SOURCE_SEQUENCE},
+                new int[]{2, 3, 0}
         );
-        record.of(new DirectOnlyArrayRecord(2), 0, 0, null);
+        record.of(new DirectOnlyArrayRecord(2), 0, 0, new DirectOnlyArrayRecord(3));
         assertForwards(record);
-        assertNullSource(record);
+        assertForwards(record, 1);
+        assertNullSource(record, 2);
     }
 
     @Test
@@ -94,14 +95,15 @@ public class ArrayAccessorForwardingTest {
     public void testMultiHorizonJoinRecordForwards() {
         final MultiHorizonJoinRecord record = new MultiHorizonJoinRecord(1);
         record.init(
-                new int[]{MultiHorizonJoinRecord.SOURCE_MASTER, MultiHorizonJoinRecord.SOURCE_SEQUENCE},
-                new int[]{2, 0}
+                new int[]{MultiHorizonJoinRecord.SOURCE_MASTER, MultiHorizonJoinRecord.SOURCE_SLAVE_BASE, MultiHorizonJoinRecord.SOURCE_SEQUENCE},
+                new int[]{2, 3, 0}
         );
         final ObjList<Record> slaves = new ObjList<>();
-        slaves.add(new DirectOnlyArrayRecord(2));
+        slaves.add(new DirectOnlyArrayRecord(3));
         record.of(new DirectOnlyArrayRecord(2), 0, 0, slaves);
         assertForwards(record);
-        assertNullSource(record);
+        assertForwards(record, 1);
+        assertNullSource(record, 2);
     }
 
     @Test
@@ -120,13 +122,18 @@ public class ArrayAccessorForwardingTest {
         Assert.assertEquals(DOUBLE_ANSWER, record.getArrayDouble1d2d(0, COL_TYPE, 0, 0), 0.0);
     }
 
+    private static void assertForwards(Record record, int col) {
+        Assert.assertEquals(DIM_LEN_ANSWER, record.getArrayDimLen(col, COL_TYPE, 1));
+        Assert.assertEquals(DOUBLE_ANSWER, record.getArrayDouble1d2d(col, COL_TYPE, 0, 0), 0.0);
+    }
+
     /**
-     * Column 1 of the horizon records has no source record behind it, which the direct accessors
+     * Column 2 of the horizon records has no source record behind it, which the direct accessors
      * must report as a NULL array, exactly as their getArray() reports a NULL ArrayView.
      */
-    private static void assertNullSource(Record record) {
-        Assert.assertEquals(Numbers.INT_NULL, record.getArrayDimLen(1, COL_TYPE, 1));
-        Assert.assertTrue(Numbers.isNull(record.getArrayDouble1d2d(1, COL_TYPE, 0, 0)));
+    private static void assertNullSource(Record record, int col) {
+        Assert.assertEquals(Numbers.INT_NULL, record.getArrayDimLen(col, COL_TYPE, 1));
+        Assert.assertTrue(Numbers.isNull(record.getArrayDouble1d2d(col, COL_TYPE, 0, 0)));
     }
 
     /**

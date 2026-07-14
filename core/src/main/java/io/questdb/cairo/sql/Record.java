@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
@@ -82,6 +83,7 @@ public interface Record {
      *                   dimensionality
      */
     default int getArrayDimLen(int col, int columnType, int dim) {
+        assert dim >= 1 && dim <= ColumnType.decodeArrayDimensionality(columnType);
         ArrayView array = getArray(col, columnType);
         // A record with no array to hand out returns a NULL ArrayView, never a Java null. Keeping
         // that contract is the producer's job, not this method's: getArray() has callers that

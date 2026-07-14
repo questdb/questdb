@@ -82,6 +82,7 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         // WorkerPool engine reads.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         // The join reducers navigate to the master frame while holding a slot, so they leak the
         // same way; over a parquet master that navigation is what breaches the limit.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
