@@ -41,6 +41,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -2578,8 +2579,13 @@ public class WalWriterTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
-        final long postingKeyFileReserved = 8192L; // PostingIndexUtils.KEY_FILE_RESERVED
         final AtomicBoolean sabotageKeyFileLength = new AtomicBoolean(false);
+        // Counts how many times the sabotage actually clamped a real (>8192) length down to
+        // the reserved window. The predicate below is naming-dependent (partition-dir and .pk
+        // conventions); if either ever changes, the clamp silently stops firing and the test
+        // would pass on both buggy and fixed code. Asserting this counter is > 0 after the
+        // drain keeps the regression guard honest instead of going vacuous.
+        final AtomicInteger sabotageClampCount = new AtomicInteger(0);
         ff = new TestFilesFacadeImpl() {
             @Override
             public long length(LPSZ name) {
@@ -2590,7 +2596,11 @@ public class WalWriterTest extends AbstractCairoTest {
                         && Utf8s.containsAscii(name, "2022-02-24")
                         && !Utf8s.containsAscii(name, "2022-02-24T")) {
                     final long real = super.length(name);
-                    return real > postingKeyFileReserved ? postingKeyFileReserved : real;
+                    if (real > PostingIndexUtils.KEY_FILE_RESERVED) {
+                        sabotageClampCount.incrementAndGet();
+                        return PostingIndexUtils.KEY_FILE_RESERVED;
+                    }
+                    return real;
                 }
                 return super.length(name);
             }
@@ -2604,7 +2614,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // In-order fill across the whole 2022-02-24 day (max ts ~23:55).
             execute("INSERT INTO pidx SELECT x, " +
-                    "  ('2022-02-24'::timestamp + x*123000000L)::timestamp, x " +
+                    "  ('2022-02-24'::timestamp + x*123_000_000L)::timestamp, x " +
                     "FROM long_sequence(700)");
             drainWalQueue();
 
@@ -2623,12 +2633,16 @@ public class WalWriterTest extends AbstractCairoTest {
             // back into the head, whose reseal opens the short new_col.pk on the main partition.
             execute("INSERT INTO pidx (c1, ts, v, new_col) SELECT " +
                     "  1000 + x, " +
-                    "  ('2022-02-24T23:49:38.712565Z'::timestamp + x*12000000L)::timestamp, " +
+                    "  ('2022-02-24T23:49:38.712565Z'::timestamp + x*12_000_000L)::timestamp, " +
                     "  1000 + x, " +
                     "  rnd_symbol('K1','K2','K3') " +
                     "FROM long_sequence(68)");
             drainWalQueue();
 
+            Assert.assertTrue(
+                    "sabotage never clamped a real key-file length -- partition/.pk naming changed, the test is vacuous",
+                    sabotageClampCount.get() > 0
+            );
             Assert.assertFalse(
                     "posting-index reseal after split/squash must not suspend the table",
                     engine.getTableSequencerAPI().isSuspended(token)

@@ -1093,21 +1093,26 @@ public class PostingIndexWriter implements IndexWriter {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 
-                // Do NOT size the mapping from ff.length(keyFile): during parallel WAL
-                // apply the file-length can lag the writer that extended this .pk, and a
-                // short length would leave the head entry outside the mapping (the reopen
-                // then reads past it). Instead map the fixed header window, read the
-                // header's regionLimit -- the live-region high-water, self-consistent with
-                // the head entry it references -- and extend the mapping to cover it. The
-                // header pages plus the whole entry region are then always visible to the
-                // chain helper's openExisting.
+                // ff.length(keyFile) is safe as a MAP SIZE (it never exceeds the file's
+                // backed extent) but must NOT be trusted as the live-data high-water: during
+                // parallel WAL apply the reported length can lag the writer that extended this
+                // .pk, which would leave the head entry past a length-sized mapping (the reopen
+                // then reads past it). So seed the mapping from the length, then read the
+                // header's regionLimit -- the live-region high-water, self-consistent with the
+                // head entry it references -- and extend the mapping to it only when the
+                // reported length genuinely lags. On the dominant path (regionLimit <=
+                // keyFileSize) this leaves the whole entry region already visible to
+                // openExisting without an extra mremap/fstat/madvise on every reopen.
                 final long appendPageSize = configuration.getDataIndexKeyAppendPageSize();
-                // (long) cast: KEY_FILE_RESERVED is an int, and without it the call binds to
-                // the of(ff, name, extendSize, memoryTag, opts) overload instead of the
-                // (..., long size, int memoryTag) one.
-                keyMem.of(ff, keyFile, appendPageSize, (long) KEY_FILE_RESERVED, MemoryTag.MMAP_INDEX_WRITER);
+                final long keyFileSize = ff.length(keyFile);
+                if (keyFileSize < KEY_FILE_RESERVED) {
+                    throw CairoException.critical(0)
+                            .put("Index file too short [expected>=").put(KEY_FILE_RESERVED)
+                            .put(", actual=").put(keyFileSize).put(']');
+                }
+                keyMem.of(ff, keyFile, appendPageSize, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
                 final long regionLimit = chain.peekRegionLimit(keyMem);
-                if (regionLimit > KEY_FILE_RESERVED) {
+                if (regionLimit > keyFileSize) {
                     keyMem.jumpTo(regionLimit);
                 }
             }
