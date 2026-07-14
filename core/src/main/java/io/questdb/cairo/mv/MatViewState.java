@@ -387,12 +387,12 @@ public class MatViewState implements QuietCloseable {
             }
             final Object replacement = pending.reason != null
                     ? new PendingInvalidation(
-                            pending.reason,
-                            pending.invalidationBaseTableToken,
-                            pending.invalidationBaseTxn,
-                            pending.isInvalidationForced,
-                            null
-                    )
+                    pending.reason,
+                    pending.invalidationBaseTableToken,
+                    pending.invalidationBaseTxn,
+                    pending.isInvalidationForced,
+                    null
+            )
                     : null;
             if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
                 return true;
@@ -727,12 +727,12 @@ public class MatViewState implements QuietCloseable {
             final PendingInvalidation pending = marker instanceof PendingInvalidation p ? p : null;
             final Object replacement = pending != null
                     ? new PendingInvalidation(
-                            pending.reason,
-                            pending.invalidationBaseTableToken,
-                            pending.invalidationBaseTxn,
-                            pending.isInvalidationForced,
-                            fullRefreshOwner
-                    )
+                    pending.reason,
+                    pending.invalidationBaseTableToken,
+                    pending.invalidationBaseTxn,
+                    pending.isInvalidationForced,
+                    fullRefreshOwner
+            )
                     : new PendingInvalidation(null, null, Numbers.LONG_NULL, false, fullRefreshOwner);
             if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
                 return fullRefreshOwner;
