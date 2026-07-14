@@ -632,6 +632,31 @@ public class QwpEgressBindRoundTripTest extends AbstractReusedServerQwpEgressTes
     }
 
     @Test
+    public void testBindVarcharEmptyHashJoinKey() throws Exception {
+        // An empty varchar bind used as a hash-join key must not crash. The egress decoder used to
+        // build the bind view with the 2-arg DirectUtf8String.of(), which hardcodes ascii=false, so
+        // an empty bind became an empty non-ASCII varchar. Feeding that into UnorderedVarcharMap
+        // (the varchar hash-join key map) tripped an assertion, because the map's packed key
+        // representation for a zero-hash, zero-size, non-ASCII key is 0 -- indistinguishable from an
+        // empty slot. Equivalent to the crash a customer hit joining on a VARCHAR key.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                runFilterMatch(
+                        serverMain,
+                        "CREATE TABLE t(c VARCHAR, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL",
+                        "INSERT INTO t VALUES ('x', 1::TIMESTAMP), ('', 2::TIMESTAMP)",
+                        "SELECT count() cnt FROM t JOIN (SELECT $1::varchar AS k FROM long_sequence(1)) b ON t.c = b.k",
+                        binds -> binds.setVarchar(0, ""),
+                        batch -> {
+                            Assert.assertEquals(1, batch.getRowCount());
+                            Assert.assertEquals(1L, batch.getLongValue(0, 0));
+                        }
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBindVarcharUnicodeFilter() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
