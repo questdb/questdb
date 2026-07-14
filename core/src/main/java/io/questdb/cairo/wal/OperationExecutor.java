@@ -750,10 +750,14 @@ public class OperationExecutor implements Closeable {
         // clamp to >= 1 so estimateBucketsForRows can never floor the window to 1 ts-unit and explode the window
         // count to the whole timestamp span.
         final long safeRowsPerStep = Math.max(1, rowsPerStep);
-        // maxTs - minTs is always in [0, Long.MAX_VALUE] (caller guarantees 0 <= minTs <= maxTs; designated
-        // timestamps are non-negative), but the +1 overflows to a NEGATIVE span when the populated range fills
+        // maxTs - minTs cannot overflow: designated timestamps below 1970-01-01 are rejected at insert
+        // (TableWriter's "timestamp before 1970-01-01"), so 0 <= minTs <= maxTs and the difference stays in
+        // [0, Long.MAX_VALUE]. Only the +1 can overflow -- to a NEGATIVE span -- when the populated range fills
         // the whole positive domain (minTs==0, maxTs==Long.MAX_VALUE), which would floor the step to 1 and
-        // explode the window count. Clamp that single case to Long.MAX_VALUE (one window).
+        // explode the window count. Clamp that single case to Long.MAX_VALUE so the step stays large and finite
+        // (memory-bounded window count), never floored to 1. (executeDelete guards maxTs==Long.MAX_VALUE before
+        // reaching here, so in production this branch is belt-and-braces; it keeps this public helper correct
+        // when called in isolation.)
         final long diff = maxTs - minTs;
         final long span = (diff == Long.MAX_VALUE) ? Long.MAX_VALUE : diff + 1;
         return MatViewRefreshJob.estimateBucketsForRows(safeRowsPerStep, tableRows, 1, span, 1);
