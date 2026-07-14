@@ -89,7 +89,7 @@ public enum LiveViewLifecycleState {
      * @param registryVisible {@code true} iff the live view has a committed
      *                        registry entry not marked for drop
      * @param invalid         {@code _lv.s.invalid}
-     * @param seeding     {@code _lv.s.seedState == SEEDING}
+     * @param seeding         {@code _lv.s.seedState == SEEDING}
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,

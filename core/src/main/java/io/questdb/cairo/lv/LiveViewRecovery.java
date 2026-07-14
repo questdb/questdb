@@ -202,12 +202,12 @@ public final class LiveViewRecovery {
      * from a crash before the post-completion unlink) and return
      * {@link Numbers#LONG_NULL}.
      *
-     * @param ff            files-facade
-     * @param sweepPath     reusable {@link Path}, re-based on entry
-     * @param liveViewDir   absolute path to the LV directory (no
-     *                      {@code _checkpoints/} suffix)
-     * @param isSeeding whether the view loaded in SEEDING state
-     * @param nameSink      reusable sink for filename decoding; cleared on entry
+     * @param ff          files-facade
+     * @param sweepPath   reusable {@link Path}, re-based on entry
+     * @param liveViewDir absolute path to the LV directory (no
+     *                    {@code _checkpoints/} suffix)
+     * @param isSeeding   whether the view loaded in SEEDING state
+     * @param nameSink    reusable sink for filename decoding; cleared on entry
      * @return the highest surviving {@code .scp} key when seeding, else
      * {@link Numbers#LONG_NULL}
      */

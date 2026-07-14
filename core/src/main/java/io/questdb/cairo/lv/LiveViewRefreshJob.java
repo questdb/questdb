@@ -1348,8 +1348,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long scanLowTs = latestSeenTs == Numbers.LONG_NULL
                     ? viewLowerBoundTimestamp
                     : emptyForwardRange
-                            ? Long.MAX_VALUE
-                            : Math.max(latestSeenTs + 1, viewLowerBoundTimestamp);
+                      ? Long.MAX_VALUE
+                      : Math.max(latestSeenTs + 1, viewLowerBoundTimestamp);
 
             final LiveViewSymbolCache symbolCache = populateTier ? instance.getInMemoryTier().getSymbolCache() : null;
             final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
