@@ -86,6 +86,17 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // Arms the fallback that re-derives this view from the applied base table when the base WAL its
+    // drain wants is gone (a backup captures the base TABLE, not its WAL segments). Armed on the
+    // first refresh cycle after a restart and disarmed by the first successful base-WAL read: a view
+    // that has read its WAL proves the WAL is there, so a live primary disarms it immediately and a
+    // segment that goes missing later still invalidates. The arm is what the restore needs and the
+    // disarm is what keeps it honest - neither "no head .cp" nor "the first cycle" is the right
+    // condition, because a restored .cp is not evidence the base WAL came back with it, and the cycle
+    // that first NEEDS the fallback is not necessarily the first one (a seed sweep, or a tick that
+    // finds the base not yet ahead, returns before the drain). Mutated under the refresh latch;
+    // volatile for the catalogue thread.
+    private volatile boolean appliedBaseRederiveArmed;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -894,6 +905,14 @@ public class LiveViewInstance implements QuietCloseable {
         return hasWarnedBelowLowerBoundDrop;
     }
 
+    /**
+     * @return true while this view may still re-derive itself from the applied base table because
+     * the base WAL its drain wants is gone. See {@link #appliedBaseRederiveArmed}.
+     */
+    public boolean isAppliedBaseRederiveArmed() {
+        return appliedBaseRederiveArmed;
+    }
+
     public boolean isDropped() {
         return dropped;
     }
@@ -1124,6 +1143,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setAppliedWatermark(long appliedWatermark) {
         stateReader.setAppliedWatermark(appliedWatermark);
+    }
+
+    public void setAppliedBaseRederiveArmed(boolean armed) {
+        this.appliedBaseRederiveArmed = armed;
     }
 
     public void setApplyLagDeferTargetSeqTxn(long applyLagDeferTargetSeqTxn) {

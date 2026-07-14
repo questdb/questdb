@@ -5463,15 +5463,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
             boolean attempted = false;
-            // First cycle after restart with no head .cp to restore from. A normal
-            // restart that had a lead always left a .cp, and a checkpoint restore
-            // brings the snapshot's .cp back with it (TableSnapshotRestore), so the
-            // .cp is missing only on a fresh view (never flushed) or after a backup
-            // that omits the checkpoint artifacts. This is the
-            // necessary half of the guard on the applied-base lead re-derive below;
-            // the sufficient half is the drain actually failing to read the base
-            // WAL (a live primary's WAL is present, so it never falls back).
-            boolean firstCycleWithoutCheckpoint = false;
             // Labels the refresh body so a compromised head-checkpoint restore
             // can break straight to the out-of-latch invalidation below, skipping
             // the refresh + flush that would otherwise materialise the
@@ -5483,6 +5474,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // true whether the restore succeeded, missed, or failed.
                 if (!instance.isCheckpointRestoreAttempted()) {
                     instance.setCheckpointRestoreAttempted();
+                    // This view has read no base WAL since it booted, so it may still be one whose
+                    // base WAL did not survive with it (a backup captures the base TABLE, not its
+                    // segments). Arm the applied-base re-derive; the first successful drain disarms
+                    // it, so a live primary - whose WAL is always there - never keeps it.
+                    instance.setAppliedBaseRederiveArmed(true);
                     // Reconcile a durable floor left behind by a crash between the
                     // inline apply and the trailing _lv.s persist, before the head
                     // .cp restore reads appliedWatermark as disk truth.
@@ -5504,8 +5500,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // advance ever reaching disk.
                             break refreshBody;
                         }
-                    } else {
-                        firstCycleWithoutCheckpoint = true;
                     }
                 }
                 // Seed phase: every view CREATEs in SEEDING state and stays there until the
@@ -5601,11 +5595,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         attempted = true;
                         try {
                             incrementalRefresh(instance, refreshFrom, seqTxn, true);
+                            // The base WAL is present, so this view can no longer be one that
+                            // outlived its WAL: disarm the applied-base re-derive.
+                            instance.setAppliedBaseRederiveArmed(false);
                         } catch (CairoException e) {
                             // Primary-only recovery: o3HeadMissReplay opens a WalWriter, which a
                             // read-only replica refuses -- and a replica reads the applied base
                             // table anyway (drainAppliedBaseForLead), so it never raises this error.
-                            final boolean rederiveFromAppliedBase = firstCycleWithoutCheckpoint
+                            final boolean rederiveFromAppliedBase = instance.isAppliedBaseRederiveArmed()
                                     && !leadReconstruction
                                     && isBaseWalSegmentFileMissing(e);
                             if (!rederiveFromAppliedBase) {
@@ -5623,9 +5620,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // watermarks -- self-contained on the backed-up base, needing
                             // neither the base WAL nor the .cp. This is the primary-side
                             // analog of the replica's applied-base lead reconstruction and
-                            // costs no more than the dedup restart path's replay. Only the
-                            // first cycle after a checkpoint-less restore reaches here (a
-                            // live primary's base WAL is present, so the drain never throws).
+                            // costs no more than the dedup restart path's replay. Only a view
+                            // that has not read base WAL since a checkpoint-less restore
+                            // reaches here (a live primary's WAL is present, so its first
+                            // drain disarms this).
                             LOG.info().$("live view lead re-derive fell back to applied base after restore [view=")
                                     .$(instance.getDefinition().getViewName())
                                     .$(", head=").$(seqTxn)
@@ -5642,6 +5640,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // Keep refreshedUpTo == lastProcessed so the flush block below is
                             // skipped and a later ALTER cannot see a phantom lead.
                             instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+                            // The view now sits at the base head, so the next drain reads WAL
+                            // written after the restore: one re-derive per restore is the contract.
+                            instance.setAppliedBaseRederiveArmed(false);
                         }
                     }
                     // Flush the accumulated lead on the FLUSH EVERY cadence -- primary only. A
@@ -5705,6 +5706,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         } else {
                             incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
                         }
+                        // A coupled cycle that read base WAL proves the WAL is there. (The coupled
+                        // path has no applied-base fallback of its own -- it never reads the flag --
+                        // but a later ALTER DEDUP DISABLE flips this view onto the lead path, which
+                        // does, and it must not inherit a stale arm.)
+                        instance.setAppliedBaseRederiveArmed(false);
                         instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     }
                 }

@@ -2328,6 +2328,85 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestoredViewRederivesFromAppliedBaseWhenBaseWalIsGone() throws Exception {
+        // Regression: a live view restored from a backup must not go permanently INVALID just
+        // because it lagged its base when the backup ran.
+        //
+        // A backup captures the applied base TABLE, not its WAL segments, so a restored view that
+        // still owes itself base commits cannot drain the WAL they live in. refreshInstance recovers
+        // by re-deriving the view from the applied base (o3HeadMissReplay) - but it used to arm that
+        // fallback only for a view that came back with NO head .cp. A restored .cp is not evidence
+        // that the base WAL came back too: the .cp rides in the view's own directory, so a backup
+        // that captured one restores a view that skips the arm and invalidates on the first drain.
+        // The arm now keys on what actually matters - the view has not read base WAL since it booted
+        // - and the first successful drain disarms it, so a live primary never keeps it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 10), " +
+                    "('2026-04-01T00:00:01.000000Z', 20)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // Seed + flush: the first flush writes the head .cp the backup would capture.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+            LiveViewInstance seeded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(seeded);
+            Assert.assertNotEquals(
+                    "the view must hold a head .cp for this to be the restored-checkpoint case",
+                    Numbers.LONG_NULL,
+                    seeded.getHeadCheckpointLvSeqTxn()
+            );
+
+            // A base commit the view never sees: it lands in the base TABLE, and the view still owes
+            // itself the WAL it arrived in. This is the lag a backup can capture.
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:04.000000Z', 50), " +
+                    "('2026-04-01T00:00:05.000000Z', 60)");
+            drainWalQueue();
+
+            // The restore gap itself: the applied base table survives, its WAL segments do not.
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(baseToken).concat(WalUtils.WAL_NAME_BASE + "1");
+                Assert.assertTrue(
+                        "could not remove the base WAL",
+                        engine.getConfiguration().getFilesFacade().rmdir(p)
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            Assert.assertFalse(
+                    "a restored view whose base WAL did not survive must re-derive from the applied base",
+                    restored.isInvalid()
+            );
+            // Every base row, the two it had derived and the two it re-derived, with one gapless
+            // row_number().
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t10\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t20\t2\n" +
+                    "2026-04-01T00:00:04.000000Z\t50\t3\n" +
+                    "2026-04-01T00:00:05.000000Z\t60\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSeedFilteredViewResumesAcrossRestart() throws Exception {
         // A WHERE filter drops base rows, so the sweep's data-cursor offset
         // outruns the output-row count. The restart must resume at the correct
