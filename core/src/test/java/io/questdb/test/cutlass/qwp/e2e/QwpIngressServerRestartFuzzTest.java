@@ -297,14 +297,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 //   - a dictionary shifted by even one id reads back the WRONG tag.
                 // Both land here as a non-zero count. Nothing else in this suite can see
                 // that: the row-count check above passes fine with an all-NULL tag column.
-                assertQuery(
-                        "SELECT count() FROM " + TABLE_NAME
-                                + " WHERE tag IS NULL OR tag != concat('tag-', (id % "
-                                + TAG_CARDINALITY + ")::string)")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("count\n0\n");
+                assertTagsIntact();
             }
         });
     }
@@ -404,6 +397,14 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 // Dedup collapses any replays so each unique (ts, id) maps
                 // to exactly one row.
                 assertRowCount(2L * rowsPerEpoch);
+                // Epoch 1's leftovers are DELTA frames whose ids live only in
+                // <sfDir>/default/.symbol-dict. Epoch 2's sender is a fresh object with an
+                // empty in-memory dictionary, so it can replay them only by rebuilding that
+                // side-file (or, failing that, the ids the frames themselves carry) and
+                // re-registering them on the new server first. This is the disk-recovery path
+                // the seed rewrite changes, and nothing else exercises it against a real
+                // server.
+                assertTagsIntact();
             }
         });
     }
@@ -425,6 +426,19 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     writeRows(sender, /*idBase*/ 0L, rowsPerPhase, 1_700_000_000_000_000_000L);
                     sender.flush();
 
+                    // Wait for phase 1 to land AND be acked, so the SF cursor TRIMS those
+                    // frames before the bounce. Without this the catch-up is not load-bearing
+                    // here at all: an unacked phase-1 frame is REPLAYED on reconnect, and it
+                    // carries the dictionary from id 0 -- so it re-registers the symbols by
+                    // itself and masks a broken catch-up completely. Trimmed, nothing replays,
+                    // and phase 2's bare ids have nowhere else to come from.
+                    TestUtils.assertEventually(() -> {
+                        drainWalQueue();
+                        engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
+                        assertRowCount(rowsPerPhase);
+                    });
+                    Os.sleep(500); // let the acks reach the client so the cursor trims
+
                     // Bounce the server. Same port. The sender keeps the same
                     // sfDir and CursorSendEngine; the wire path needs to reconnect.
                     server.stop();
@@ -439,6 +453,11 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
                 assertRowCount(2L * rowsPerPhase);
+                // Phase 1 registered every tag, so phase 2's frames carry an EMPTY delta
+                // section and reference those ids bare. The bounced server came up with an
+                // empty dictionary, so phase 2's rows resolve ONLY if the reconnect shipped a
+                // catch-up frame that re-registered them.
+                assertTagsIntact();
             }
         });
     }
@@ -516,6 +535,22 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 );
     }
 
+    /**
+     * Every row's tag must still be the one its id implies -- none NULL, none swapped for
+     * a neighbour's. See the call site in testSenderPushesContinuouslyWhileServerBounces
+     * for why the row-count oracles cannot see this.
+     */
+    private void assertTagsIntact() throws Exception {
+        assertQuery(
+                "SELECT count() FROM " + TABLE_NAME
+                        + " WHERE tag IS NULL OR tag != concat('tag-', (id % "
+                        + TAG_CARDINALITY + ")::string)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n0\n");
+    }
+
     private void createTargetTable() {
         try {
             // `tag` is not decoration: it is what makes the QWP delta symbol
@@ -567,6 +602,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             long id = idBase + i;
             long ts = tsBaseNanos + (long) i * 1000L; // 1us steps; well under DAY partition
             sender.table(TABLE_NAME)
+                    .symbol("tag", "tag-" + (id % TAG_CARDINALITY))
                     .longColumn("id", id)
                     .doubleColumn("val", id * 1.5)
                     .at(ts, ChronoUnit.NANOS);
