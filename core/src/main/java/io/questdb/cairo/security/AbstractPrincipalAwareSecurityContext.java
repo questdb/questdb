@@ -45,7 +45,7 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
     // without bound. Not an LRU -- saturation degrades the uncached tail, it does not reshuffle who is cached.
     // The bound is soft: concurrent first-derivations can each see room and overshoot by however many of them
     // race. Bounding retention is the point, not hitting the number exactly.
-    private static final int MAX_CACHED_PRINCIPALS = 256;
+    public static final int MAX_CACHED_PRINCIPALS = 256;
     // A constant, so it captures nothing and the JVM hands back the same instance every time. A method
     // reference to an instance method would allocate a capturing lambda on each miss; computeIfAbsent's token
     // overload exists precisely to take `this` as a parameter instead.

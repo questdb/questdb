@@ -149,6 +149,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.test.AbstractTest.CLOSEABLE;
@@ -2084,6 +2086,52 @@ public final class TestUtils {
 
     // Useful for debugging
     @SuppressWarnings("unused")
+    /**
+     * Rethrows the first worker failure collected by {@link #runConcurrently}, preserving its message and
+     * stack trace.
+     * <p>
+     * Exposed for the shape {@code runConcurrently} cannot express: readers that spin until told to stop while
+     * the calling thread drives a disturbance. Collect into an {@link AtomicReference} with
+     * {@code compareAndSet(null, th)}, join the workers, then call this.
+     */
+    public static void rethrowFirst(AtomicReference<Throwable> firstError) {
+        final Throwable error = firstError.get();
+        if (error != null) {
+            throw new AssertionError("a worker thread failed: " + error, error);
+        }
+    }
+
+    /**
+     * Runs {@code worker} on {@code threadCount} threads released together by a barrier, joins them, and
+     * rethrows the first failure any of them hit. Workers use ordinary JUnit assertions.
+     * <p>
+     * The rethrow is the point. An AssertionError thrown on a spawned thread is otherwise swallowed, and
+     * counting failures instead reports them as "expected:&lt;0&gt; but was:&lt;3&gt;" -- no message, no stack
+     * trace, no failing value.
+     */
+    public static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicReference<Throwable> firstError = new AtomicReference<>();
+        final ObjList<Thread> threads = new ObjList<>();
+        for (int t = 0; t < threadCount; t++) {
+            final int index = t;
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    worker.accept(index);
+                } catch (Throwable th) {
+                    firstError.compareAndSet(null, th);
+                }
+            });
+            threads.add(thread);
+            thread.start();
+        }
+        for (int t = 0; t < threadCount; t++) {
+            threads.getQuick(t).join();
+        }
+        rethrowFirst(firstError);
+    }
+
     public static String reverseBeHex(String hex) {
         var sb = new char[hex.length()];
         for (int i = 0; i < hex.length(); i += 2) {
