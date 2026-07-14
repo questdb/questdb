@@ -164,8 +164,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
 
-            final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-            if (dim > dims) {
+            final int dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
+            if (dims > 0 && dim > dims) {
                 throw SqlException.position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
                         .put(dim)
@@ -206,7 +206,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             if (dim == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
-            if (dim < 1 || dim > dims) {
+            if (dim < 1 || (dims > 0 && dim > dims)) {
                 throw CairoException.nonCritical()
                         .position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
@@ -244,7 +244,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             // init() is for. Decoding a compile-time snapshot here would read -1 dimensions and reject
             // every index. arrayColumnType above stays a snapshot because it is only read on the
             // arrayColumnIndex >= 0 fast path, where the arg is a plain column whose type is final.
-            this.dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+            this.dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
         }
 
         @Override

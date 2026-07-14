@@ -130,12 +130,12 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                     final boolean isNew = Map.isNewBatchEntry(encoded);
                     final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                     final long rowId = baseRowId + rowIndex;
+                    record.setRowIndex(rowIndex);
+                    final int value = arg.getIPv4(record);
                     final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
                     if (!isNew && existingValue != Numbers.IPv4_NULL && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
                         continue;
                     }
-                    record.setRowIndex(rowIndex);
-                    final int value = arg.getIPv4(record);
                     // Mirror computeFirst semantics on new entries (write through even for
                     // null values) so the state matches what the per-row path produces.
                     if (value != Numbers.IPv4_NULL || isNew) {

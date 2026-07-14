@@ -90,6 +90,42 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBatchedPathEvaluatesLosingRows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (ignore, compiler, ctx) -> {
+                    execute(compiler, "CREATE TABLE tab (k SYMBOL, a DOUBLE[][], d INT)", ctx);
+                    execute(
+                            compiler,
+                            """
+                                    INSERT INTO tab VALUES
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 1),
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 5),
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 2)
+                                    """,
+                            ctx
+                    );
+
+                    final String firstQuery = "SELECT k, first_not_null(dim_length(a, d)) FROM tab";
+                    final String lastQuery = "SELECT k, last_not_null(dim_length(a, d)) FROM tab";
+                    assertQuery(firstQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining("Async Group By");
+                    assertQuery(lastQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining("Async Group By");
+                    assertExceptionNoLeakCheck(firstQuery, -1, "array dimension out of bounds [dim=5, dims=2]", ctx);
+                    assertExceptionNoLeakCheck(lastQuery, -1, "array dimension out of bounds [dim=5, dims=2]", ctx);
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
     public void testNotNullKeyedBatchKeepsNonNull() throws Exception {
         final String createSql = "CREATE TABLE tab AS (" +
                 "  SELECT (x % " + KEY_COUNT + ")::int AS g," +

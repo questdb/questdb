@@ -157,6 +157,34 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindDimLengthWithNullArray() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE dims (n INT)");
+            execute("INSERT INTO dims VALUES (1), (2)");
+
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT dim_length(?, 1) len")) {
+                stmt.setArray(1, null);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("len[INTEGER]\nnull\n", sink, rs);
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("SELECT n, dim_length(?, n) len FROM dims ORDER BY n")) {
+                stmt.setArray(1, null);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("""
+                            n[INTEGER],len[INTEGER]
+                            1,null
+                            2,null
+                            """, sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayBindVarEdgeCases() throws Exception {
         // we want bind vars, hence extended mode
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {

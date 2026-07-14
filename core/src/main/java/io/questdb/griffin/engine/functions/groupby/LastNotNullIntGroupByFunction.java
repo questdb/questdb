@@ -106,12 +106,12 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 final boolean isNew = Map.isNewBatchEntry(encoded);
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 final long rowId = baseRowId + rowIndex;
+                record.setRowIndex(rowIndex);
+                final int value = arg.getInt(record);
                 final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
                 if (!isNew && existingValue != Numbers.INT_NULL && rowId <= Unsafe.getLong(entryBase + rowIdOffset)) {
                     continue;
                 }
-                record.setRowIndex(rowIndex);
-                final int value = arg.getInt(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (value != Numbers.INT_NULL || isNew) {

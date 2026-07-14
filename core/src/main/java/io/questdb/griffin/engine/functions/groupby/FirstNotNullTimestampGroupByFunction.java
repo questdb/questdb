@@ -100,12 +100,12 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
                 final boolean isNew = Map.isNewBatchEntry(encoded);
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 final long rowId = baseRowId + rowIndex;
+                record.setRowIndex(rowIndex);
+                final long value = arg.getTimestamp(record);
                 final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
                 if (!isNew && existingValue != Numbers.LONG_NULL && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
                     continue;
                 }
-                record.setRowIndex(rowIndex);
-                final long value = arg.getTimestamp(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (value != Numbers.LONG_NULL || isNew) {

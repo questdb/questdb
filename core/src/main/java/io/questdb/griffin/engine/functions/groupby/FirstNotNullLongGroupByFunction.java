@@ -101,12 +101,12 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
                 final boolean isNew = Map.isNewBatchEntry(encoded);
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 final long rowId = baseRowId + rowIndex;
+                record.setRowIndex(rowIndex);
+                final long value = arg.getLong(record);
                 final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
                 if (!isNew && existingValue != Numbers.LONG_NULL && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
                     continue;
                 }
-                record.setRowIndex(rowIndex);
-                final long value = arg.getLong(record);
                 if (value != Numbers.LONG_NULL || isNew) {
                     if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);

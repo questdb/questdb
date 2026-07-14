@@ -107,12 +107,12 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
                 final boolean isNew = Map.isNewBatchEntry(encoded);
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 final long rowId = baseRowId + rowIndex;
+                record.setRowIndex(rowIndex);
+                final double value = arg.getDouble(record);
                 final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
                 if (!isNew && !Numbers.isNull(existingValue) && rowId <= Unsafe.getLong(entryBase + rowIdOffset)) {
                     continue;
                 }
-                record.setRowIndex(rowIndex);
-                final double value = arg.getDouble(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (!Numbers.isNull(value) || isNew) {

@@ -107,12 +107,12 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
                 final boolean isNew = Map.isNewBatchEntry(encoded);
                 final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 final long rowId = baseRowId + rowIndex;
+                record.setRowIndex(rowIndex);
+                final float value = arg.getFloat(record);
                 final float existingValue = Unsafe.getFloat(entryBase + valueColumnOffset);
                 if (!isNew && !Numbers.isNull(existingValue) && rowId <= Unsafe.getLong(entryBase + rowIdOffset)) {
                     continue;
                 }
-                record.setRowIndex(rowIndex);
-                final float value = arg.getFloat(record);
                 // Mirror computeFirst semantics on new entries (write through even for
                 // null values) so the state matches what the per-row path produces.
                 if (!Numbers.isNull(value) || isNew) {
