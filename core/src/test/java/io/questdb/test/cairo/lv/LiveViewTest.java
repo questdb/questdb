@@ -70,7 +70,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewTest extends AbstractLiveViewTest {
 
-    // Pin the test clock below all test data before each test. A non-BACKFILL
+    // Pin the test clock below all test data before each test. A non-SEED
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
     // refresh path drops rows below it. The test data is timestamped in the past,
     // so without a pinned clock the floor would land at real "now", above the
@@ -167,9 +167,15 @@ public class LiveViewTest extends AbstractLiveViewTest {
             // rn advances only for survivors, so a leaked or dropped row perturbs it too. A filter
             // matching on a stale key would either drop the post-CREATE 'bbb' rows or admit the 'ccc'
             // / 'ddd' rows that collide with them in the segment's key space.
+            //
+            // val=2 is a pre-CREATE row, and it is in the view: the clock is pinned below the test
+            // data, so START FROM NOW resolves to a boundary all these 2026 rows sit above, and the
+            // initial seed feeds them through the same filter. Membership follows the row's
+            // timestamp, not the commit that carried it.
             assertQuery("SELECT sym, val, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
-                    "bbb\t4\t1\n" +
-                    "bbb\t6\t2\n");
+                    "bbb\t2\t1\n" +
+                    "bbb\t4\t2\n" +
+                    "bbb\t6\t3\n");
             assertQuery("SELECT count() FROM lv WHERE sym <> 'bbb'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
             assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
 

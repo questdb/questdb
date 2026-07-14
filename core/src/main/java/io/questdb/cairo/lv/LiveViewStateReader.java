@@ -45,8 +45,12 @@ import org.jetbrains.annotations.Nullable;
  * <ul>
  *     <li>{@code invalid} / {@code invalidationReason} / {@code invalidationTimestampUs} —
  *     unified invalidation path</li>
- *     <li>{@code subscribeFromSeqTxn} — set at CREATE; the refresh worker starts at this
- *     base seqTxn</li>
+ *     <li>{@code subscribeFromSeqTxn} — set at CREATE to the base sequencer head + 1: the
+ *     first base commit the view did not already fold into its seed. It is a <em>progress</em>
+ *     coordinate, not a membership filter - which rows belong to the view is decided by the
+ *     START FROM boundary against each row's designated timestamp, and the seed sweep applies
+ *     that same boundary to the pre-CREATE history. The startup path uses this seqTxn to hold
+ *     the WAL purge floor below the range a replay may still have to read</li>
  *     <li>{@code lastProcessedSeqTxn} — highest base seqTxn the refresh worker has
  *     consumed (may be ahead of {@code lvConsumedSeqTxn} when output rows are buffered
  *     in-memory but not yet flushed)</li>
@@ -68,14 +72,6 @@ public class LiveViewStateReader implements Mutable {
     // worker code paths; written by the refresh worker. Volatile so lock-free readers see
     // a published value rather than a torn long.
     private volatile long appliedWatermark = -1L;
-    // Defaults to BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL; a BACKFILL view sets
-    // BACKFILL_STATE_BACKFILLING and the target seqTxn while its sweep runs. Both
-    // fields are preallocated in CORE_STATE so BACKFILL needed no _lv.s schema bump.
-    // Volatile: the catalogue cursor derives the lifecycle state (getLifecycleState ->
-    // BACKFILLING) and reads backfill_target_seqtxn lock-free while the refresh worker
-    // advances them under synchronized(instance).
-    private volatile byte backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
-    private volatile long backfillTargetSeqTxn = Numbers.LONG_NULL;
     // invalid + invalidationReason + invalidationTimestampUs form the invalidation triple.
     // The invalidation writer mutates them under synchronized(instance); the catalogue
     // cursor reads invalid (via getLifecycleState) and invalidationReason lock-free.
@@ -92,6 +88,15 @@ public class LiveViewStateReader implements Mutable {
     // Read lock-free by WalPurgeJob; writes are guarded by synchronized (LiveViewInstance)
     // in advanceLiveViewConsumedSeqTxn. Volatile so the lock-free read sees a published value.
     private volatile long lvConsumedSeqTxn = -1L;
+    // Every view CREATEs in SEED_STATE_SEEDING with the base sequencer head as its
+    // seedTargetSeqTxn; the sweep flips it to SEED_STATE_ACTIVE / Numbers.LONG_NULL when it
+    // completes, which is also what a torn _lv.s defaults to (a view that cannot prove it
+    // was mid-seed must not re-seed).
+    // Volatile: the catalogue cursor derives the lifecycle state (getLifecycleState ->
+    // SEEDING) and reads seed_target_seqtxn lock-free while the refresh worker
+    // advances them under synchronized(instance).
+    private volatile byte seedState = LiveViewState.SEED_STATE_ACTIVE;
+    private volatile long seedTargetSeqTxn = Numbers.LONG_NULL;
     private long subscribeFromSeqTxn = -1L;
 
     @Override
@@ -103,20 +108,12 @@ public class LiveViewStateReader implements Mutable {
         lastProcessedSeqTxn = -1L;
         appliedWatermark = -1L;
         lvConsumedSeqTxn = -1L;
-        backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
-        backfillTargetSeqTxn = Numbers.LONG_NULL;
+        seedState = LiveViewState.SEED_STATE_ACTIVE;
+        seedTargetSeqTxn = Numbers.LONG_NULL;
     }
 
     public long getAppliedWatermark() {
         return appliedWatermark;
-    }
-
-    public byte getBackfillState() {
-        return backfillState;
-    }
-
-    public long getBackfillTargetSeqTxn() {
-        return backfillTargetSeqTxn;
     }
 
     @Nullable
@@ -136,6 +133,14 @@ public class LiveViewStateReader implements Mutable {
 
     public long getLvConsumedSeqTxn() {
         return lvConsumedSeqTxn;
+    }
+
+    public byte getSeedState() {
+        return seedState;
+    }
+
+    public long getSeedTargetSeqTxn() {
+        return seedTargetSeqTxn;
     }
 
     public long getSubscribeFromSeqTxn() {
@@ -186,9 +191,9 @@ public class LiveViewStateReader implements Mutable {
                 offset += Long.BYTES;
                 lvConsumedSeqTxn = block.getLong(offset);
                 offset += Long.BYTES;
-                backfillState = block.getByte(offset);
+                seedState = block.getByte(offset);
                 offset += Byte.BYTES;
-                backfillTargetSeqTxn = block.getLong(offset);
+                seedTargetSeqTxn = block.getLong(offset);
                 return this;
             }
         }
@@ -202,16 +207,6 @@ public class LiveViewStateReader implements Mutable {
 
     public LiveViewStateReader setAppliedWatermark(long appliedWatermark) {
         this.appliedWatermark = appliedWatermark;
-        return this;
-    }
-
-    public LiveViewStateReader setBackfillState(byte backfillState) {
-        this.backfillState = backfillState;
-        return this;
-    }
-
-    public LiveViewStateReader setBackfillTargetSeqTxn(long backfillTargetSeqTxn) {
-        this.backfillTargetSeqTxn = backfillTargetSeqTxn;
         return this;
     }
 
@@ -239,6 +234,16 @@ public class LiveViewStateReader implements Mutable {
 
     public LiveViewStateReader setLvConsumedSeqTxn(long lvConsumedSeqTxn) {
         this.lvConsumedSeqTxn = lvConsumedSeqTxn;
+        return this;
+    }
+
+    public LiveViewStateReader setSeedState(byte seedState) {
+        this.seedState = seedState;
+        return this;
+    }
+
+    public LiveViewStateReader setSeedTargetSeqTxn(long seedTargetSeqTxn) {
+        this.seedTargetSeqTxn = seedTargetSeqTxn;
         return this;
     }
 

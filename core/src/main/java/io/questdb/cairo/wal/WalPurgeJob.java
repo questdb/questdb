@@ -542,7 +542,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
         // the floor pinned would clamp safeToPurgeTxn to that frozen value and
         // block base WAL purging indefinitely while the base keeps ingesting.
-        // Re-CREATE requires a DROP first and backfills through an MVCC snapshot
+        // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
         // reader, not the raw base WAL, so the retained WAL is never load-bearing.
         // Skip the LV arm when the feature is off: ServerMain then starts no LiveViewRefreshJob, so
         // nothing advances lvConsumedSeqTxn / headCheckpointBaseSeqTxn and clamping to those frozen

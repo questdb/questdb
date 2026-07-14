@@ -74,7 +74,7 @@ import org.junit.Test;
  */
 public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
-    // A non-BACKFILL view drops rows below its CREATE wall-clock floor; pin the
+    // A non-SEED view drops rows below its CREATE wall-clock floor; pin the
     // clock below the (2026) test data so every row stays in-frame.
     @Before
     public void pinClockBelowTestData() {
@@ -691,7 +691,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     public void testModeBSymbolSurvivesO3Rebuild() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, keep INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // Pin the CREATE clock below the data so the non-seed floor admits
             // the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
@@ -1295,7 +1295,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     public void testO3ReplayRebuildOracleSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // Pin the CREATE clock below the data so the non-seed floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
@@ -1367,7 +1367,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     public void testO3ReplayRebuildBoundsToInMemoryWindow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // Pin the CREATE clock below the data so the non-seed floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
             // A tight 2s IN MEMORY window: after O3 the rewritten LV table spans
@@ -1447,7 +1447,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     public void testO3ReplayRebuildRegainsModeB() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Pin the CREATE clock below the data so the non-backfill floor admits
+            // Pin the CREATE clock below the data so the non-seed floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
@@ -1515,7 +1515,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // column types cannot drift from the values the INSERT below generates.
             execute("CREATE TABLE base AS (" + everyTierTypeSelect(0, 0) + ") " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Pin the CREATE clock below the data so the non-backfill floor admits every row,
+            // Pin the CREATE clock below the data so the non-seed floor admits every row,
             // including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +

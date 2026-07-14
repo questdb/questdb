@@ -36,10 +36,12 @@ import org.jetbrains.annotations.Nullable;
  * Mirrors {@link io.questdb.cairo.mv.MatViewState}'s file shape: BlockFile with
  * typed blocks, rewritten on every state change, durable across restarts.
  * <p>
- * The state file holds CORE_STATE. {@code backfillState} / {@code backfillTargetSeqTxn}
- * default to {@code ACTIVE} / {@code Numbers.LONG_NULL}; a BACKFILL view sets
- * {@code BACKFILLING} and the target seqTxn during its sweep. Both were
- * preallocated in CORE_STATE so BACKFILL needed no {@code _lv.s} schema bump.
+ * The state file holds CORE_STATE. Every view CREATEs in {@code SEEDING} with the
+ * base sequencer head as {@code seedTargetSeqTxn}: the seed sweep is what materialises
+ * the rows already in the base that satisfy the view's START FROM boundary, whichever
+ * boundary that is. The sweep flips {@code seedState} to {@code ACTIVE} and wipes
+ * {@code seedTargetSeqTxn} back to {@code Numbers.LONG_NULL} on completion, so those
+ * two values are also the resting state of a view that has finished seeding.
  */
 public class LiveViewState {
     public static final String LIVE_VIEW_STATE_FILE_NAME = "_lv.s";
@@ -49,8 +51,8 @@ public class LiveViewState {
     // version_unsupported. Bump when the CORE_STATE layout changes incompatibly.
     public static final int LIVE_VIEW_STATE_FORMAT_VERSION = 1;
 
-    public static final byte BACKFILL_STATE_ACTIVE = 0;
-    public static final byte BACKFILL_STATE_BACKFILLING = 1;
+    public static final byte SEED_STATE_ACTIVE = 0;
+    public static final byte SEED_STATE_SEEDING = 1;
 
     /**
      * Writes the CORE_STATE block from a {@link LiveViewStateReader} snapshot, or
@@ -66,8 +68,8 @@ public class LiveViewState {
                     reader.getLastProcessedSeqTxn(),
                     reader.getAppliedWatermark(),
                     reader.getLvConsumedSeqTxn(),
-                    reader.getBackfillState(),
-                    reader.getBackfillTargetSeqTxn(),
+                    reader.getSeedState(),
+                    reader.getSeedTargetSeqTxn(),
                     writer
             );
         } else {
@@ -79,7 +81,7 @@ public class LiveViewState {
                     -1L,
                     -1L,
                     -1L,
-                    BACKFILL_STATE_ACTIVE,
+                    SEED_STATE_ACTIVE,
                     Numbers.LONG_NULL,
                     writer
             );
@@ -94,8 +96,8 @@ public class LiveViewState {
             long lastProcessedSeqTxn,
             long appliedWatermark,
             long lvConsumedSeqTxn,
-            byte backfillState,
-            long backfillTargetSeqTxn,
+            byte seedState,
+            long seedTargetSeqTxn,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -107,8 +109,8 @@ public class LiveViewState {
         block.putLong(lastProcessedSeqTxn);
         block.putLong(appliedWatermark);
         block.putLong(lvConsumedSeqTxn);
-        block.putByte(backfillState);
-        block.putLong(backfillTargetSeqTxn);
+        block.putByte(seedState);
+        block.putLong(seedTargetSeqTxn);
         block.commit(LIVE_VIEW_STATE_CORE_MSG_TYPE);
         writer.commit();
     }

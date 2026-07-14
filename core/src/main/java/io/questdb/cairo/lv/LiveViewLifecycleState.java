@@ -29,7 +29,7 @@ package io.questdb.cairo.lv;
  * <p>
  * Derived state, not a persisted field. The combination of registry visibility
  * (locked / committed / marked-dropped), {@code _lv.s.invalid}, and
- * {@code _lv.s.backfillState} uniquely determines the state.
+ * {@code _lv.s.seedState} uniquely determines the state.
  */
 public enum LiveViewLifecycleState {
     /**
@@ -41,12 +41,12 @@ public enum LiveViewLifecycleState {
      */
     ACTIVE,
     /**
-     * Registry committed, {@code _lv.s.backfillState=BACKFILLING}; the backfill
+     * Registry committed, {@code _lv.s.seedState=SEEDING}; the seed
      * sweep is in progress. The view is queryable (rows materialise incrementally
      * through the sweep) but incremental drain is parked until the sweep
      * completes and flips to ACTIVE.
      */
-    BACKFILLING,
+    SEEDING,
     /**
      * Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable.
      */
@@ -89,12 +89,12 @@ public enum LiveViewLifecycleState {
      * @param registryVisible {@code true} iff the live view has a committed
      *                        registry entry not marked for drop
      * @param invalid         {@code _lv.s.invalid}
-     * @param backfilling     {@code _lv.s.backfillState == BACKFILLING}
+     * @param seeding     {@code _lv.s.seedState == SEEDING}
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
             boolean invalid,
-            boolean backfilling
+            boolean seeding
     ) {
         if (!registryVisible) {
             return DROPPING;
@@ -102,7 +102,7 @@ public enum LiveViewLifecycleState {
         if (invalid) {
             return INVALID;
         }
-        return backfilling ? BACKFILLING : ACTIVE;
+        return seeding ? SEEDING : ACTIVE;
     }
 
     /**
@@ -112,7 +112,7 @@ public enum LiveViewLifecycleState {
         return switch (this) {
             case CREATING -> "creating";
             case ACTIVE -> "active";
-            case BACKFILLING -> "backfilling";
+            case SEEDING -> "seeding";
             case INVALID -> "invalid";
             case DROPPING -> "dropping";
             case VERSION_UNSUPPORTED -> "version_unsupported";

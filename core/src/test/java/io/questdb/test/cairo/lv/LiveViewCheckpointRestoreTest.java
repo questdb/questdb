@@ -141,7 +141,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         checkpointPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
         checkpointRootLen = checkpointPath.size();
         triggerFilePath.of(configuration.getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
-        // Pin the clock below all (future-dated) test data: a non-BACKFILL view's lower bound is
+        // Pin the clock below all (future-dated) test data: a non-SEED view's lower bound is
         // the CREATE wall-clock moment and the refresh path drops rows below it.
         setCurrentMicros(0L);
         // Stable snapshot instance id so CHECKPOINT CREATE records it and restore reads the same value.
@@ -340,19 +340,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCheckpointMidBackfillReSweepsAfterRestore() throws Exception {
-        // A checkpoint taken mid-BACKFILL, then a restore, must not trust a rolling .bcp that got
+    public void testCheckpointMidSeedReSweepsAfterRestore() throws Exception {
+        // A checkpoint taken mid-SEED, then a restore, must not trust a rolling .scp that got
         // AHEAD of the checkpoint. After CHECKPOINT CREATE returns, the (unfrozen) sweep keeps
-        // advancing: its LV table and its rolling <off>.bcp both move past the checkpoint. Restore
+        // advancing: its LV table and its rolling <off>.scp both move past the checkpoint. Restore
         // rolls the LV's _txn / partitions / _lv.s back to the checkpoint (R_cp rows on disk) but never
-        // restores _checkpoints/, so the live-ahead .bcp (lvRowsTotal = R_bcp > R_cp) survives and
-        // sweepBackfillCheckpoints re-selects it as the resume source. Resuming from it would jump the
+        // restores _checkpoints/, so the live-ahead .scp (lvRowsTotal = R_bcp > R_cp) survives and
+        // sweepSeedCheckpoints re-selects it as the resume source. Resuming from it would jump the
         // data cursor past the base rows that produced R_cp..R_bcp while lvRowsTotal starts at R_bcp - a
-        // permanent silent gap over [R_cp, R_bcp). The resume must instead reject the ahead .bcp and
+        // permanent silent gap over [R_cp, R_bcp). The resume must instead reject the ahead .scp and
         // re-sweep from 0, converging to the recompute over the restored base. CHECKPOINT_ROWS=1 forces
-        // a .bcp every swept row so the ahead window is hit deterministically after a single turn.
+        // a .scp every swept row so the ahead window is hit deterministically after a single turn.
         //
-        // Pre-fix the resume trusts the ahead .bcp and the view converges to fewer than 6 rows with the
+        // Pre-fix the resume trusts the ahead .scp and the view converges to fewer than 6 rows with the
         // window state gapped; the recompute oracle and the row-count assertion both fail. Post-fix it
         // converges to the full 6 rows.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -372,26 +372,26 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
             final long bcpKeyAtCheckpoint;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // One backfill turn: exactly one row lands on disk (R_cp = 1) and a rolling .bcp is
-                // written. The view stays BACKFILLING.
+                // One seed turn: exactly one row lands on disk (R_cp = 1) and a rolling .scp is
+                // written. The view stays SEEDING.
                 job.run();
                 drainWalQueue();
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
                 Assert.assertEquals(
-                        "view must still be BACKFILLING at checkpoint time",
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        instance.getStateReader().getBackfillState()
+                        "view must still be SEEDING at checkpoint time",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
                 );
-                bcpKeyAtCheckpoint = instance.getHeadBackfillCpKey();
-                Assert.assertNotEquals("a .bcp must have been written before the checkpoint",
+                bcpKeyAtCheckpoint = instance.getHeadSeedCpKey();
+                Assert.assertNotEquals("a .scp must have been written before the checkpoint",
                         Numbers.LONG_NULL, bcpKeyAtCheckpoint);
 
                 execute("CHECKPOINT CREATE");
 
                 // The view is unfrozen now: advance the sweep past the checkpoint so the LV table and
-                // the rolling .bcp both move ahead (R_bcp > R_cp), while staying BACKFILLING (not every
-                // base row is swept yet, so completion does not retire the .bcp).
+                // the rolling .scp both move ahead (R_bcp > R_cp), while staying SEEDING (not every
+                // base row is swept yet, so completion does not retire the .scp).
                 for (int i = 0; i < 3; i++) {
                     job.run();
                     drainWalQueue();
@@ -399,27 +399,27 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
                 Assert.assertEquals(
-                        "the sweep must still be BACKFILLING (the ahead .bcp must not be retired by completion)",
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        instance.getStateReader().getBackfillState()
+                        "the sweep must still be SEEDING (the ahead .scp must not be retired by completion)",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
                 );
                 Assert.assertTrue(
-                        "the rolling .bcp must have advanced past the checkpoint",
-                        instance.getHeadBackfillCpKey() > bcpKeyAtCheckpoint
+                        "the rolling .scp must have advanced past the checkpoint",
+                        instance.getHeadSeedCpKey() > bcpKeyAtCheckpoint
                 );
             }
 
             restoreFromCheckpoint();
             drainWalQueue();
 
-            // Resume the sweep: the ahead .bcp is rejected, the sweep re-runs from offset 0, and the
+            // Resume the sweep: the ahead .scp is rejected, the sweep re-runs from offset 0, and the
             // view converges to the full recompute over the restored base.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
             );
             assertLiveViewRowCount(6);
             assertViewMatchesRecompute(viewSql);
@@ -1108,7 +1108,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     // The live view's single steady head .cp, or null when it has none. Steady state keeps exactly
     // one - each head write unlinks its predecessor - so the filename identifies the head, and
     // comparing it across a checkpoint/restore says whether the restored head is the checkpoint's
-    // or the live-ahead one. Ignores .bcp (rolling backfill) and .tmp (interrupted write) entries.
+    // or the live-ahead one. Ignores .scp (rolling seed) and .tmp (interrupted write) entries.
     private String headCheckpointFile(String viewName) {
         final TableToken token = engine.verifyTableName(viewName);
         final ObjList<String> heads = new ObjList<>();
@@ -1223,7 +1223,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         Files.touch(triggerFilePath.$());
     }
 
-    // Drives the named view's backfill sweep to completion across however many turns the configured
+    // Drives the named view's seed sweep to completion across however many turns the configured
     // budget needs, re-fetching the instance each pass so it survives the registry rebuild a restore
     // performs, and applying the LV WAL at the end. Mirrors the helper in LiveViewSmokeTest.
 

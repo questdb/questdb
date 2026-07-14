@@ -1424,15 +1424,15 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     /**
      * Restores a live view's {@code _checkpoints/} dir - the window-function head snapshots
-     * ({@code .cp}) and the rolling backfill snapshots ({@code .bcp}) that
+     * ({@code .cp}) and the rolling seed snapshots ({@code .scp}) that
      * {@code DatabaseCheckpointAgent.copyLiveViewCheckpointDir} put in the checkpoint.
      * <p>
      * The live dir is wiped before the snapshot's entries land, because recovery runs in place
      * over a database that kept ingesting after CHECKPOINT CREATE: the refresh worker will have
      * written a newer head and unlinked the checkpoint's, so the live dir holds heads that sit
      * <em>above</em> the {@code _txn} / {@code _lv.s} the restore rolls back to. The startup
-     * sweep unlinks a {@code .cp} above the applied watermark, but the {@code .bcp} sweep has no
-     * such gate, so leaving the live dir in place would resume a backfill from a head describing
+     * sweep unlinks a {@code .cp} above the applied watermark, but the {@code .scp} sweep has no
+     * such gate, so leaving the live dir in place would resume a seed from a head describing
      * rows the restore just rolled away.
      * <p>
      * Without this, a restored view has no head at all: it drains forward from the restored

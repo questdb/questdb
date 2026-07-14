@@ -31,10 +31,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * A BACKFILL live view reads base partitions through a page-frame cursor. When
+ * A SEED live view reads base partitions through a page-frame cursor. When
  * those partitions are parquet and the view carries a WHERE clause, the filter is
  * pushed down to the parquet row-group level, so a fully non-matching row group is
- * pruned before the scan yields any of its rows. The backfill sweep resumes across
+ * pruned before the scan yields any of its rows. The seed sweep resumes across
  * turns with {@code skipRows()}; that skip must land on the same row the pruned scan
  * next yields, or the sweep re-reads already-consumed rows (double-counted output).
  * This suite pins that equivalence.
@@ -47,7 +47,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillOverMixedParquetNativeBaseMatchesRecompute() throws Exception {
+    public void testSeedOverMixedParquetNativeBaseMatchesRecompute() throws Exception {
         // A base with a leading run of parquet partitions (some fully pruned by the
         // WHERE) followed by native partitions. Exercises the skip walk crossing the
         // parquet/native boundary mid-sweep.
@@ -80,7 +80,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
                     "FROM base WHERE i > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
             drainWalQueue();
 
@@ -99,8 +99,8 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillOverParquetBaseMatchesRecompute() throws Exception {
-        // A small per-turn budget forces the backfill to resume with skipRows()
+    public void testSeedOverParquetBaseMatchesRecompute() throws Exception {
+        // A small per-turn budget forces the seed to resume with skipRows()
         // many times over a base whose leading partitions are fully pruned by the
         // WHERE. Before the fix the pruned rows were counted by the skip, landing it
         // short and duplicating rows in the view.
@@ -133,7 +133,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
                     "FROM base WHERE i > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
             drainWalQueue();
 

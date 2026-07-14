@@ -47,9 +47,9 @@ import io.questdb.griffin.SqlExecutionContext;
 final class FilteringRecordCursor implements RecordCursor {
     private RecordCursor base;
     // Count of base rows pulled (passing or filtered out) since the last of()
-    // or toTop(). The backfill sweep reads this as the skipRows() resume offset:
+    // or toTop(). The seed sweep reads this as the skipRows() resume offset:
     // the filter drops rows, so the output-row count understates how far the
-    // base cursor advanced. Only the backfill path consults it.
+    // base cursor advanced. Only the seed path consults it.
     private long baseRowsConsumed;
     private Function filter;
     private Record record;

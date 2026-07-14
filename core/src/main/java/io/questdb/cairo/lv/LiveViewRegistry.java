@@ -71,15 +71,15 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     /**
-     * Releases any base-table reader pinned by an in-flight backfill sweep across
+     * Releases any base-table reader pinned by an in-flight seed sweep across
      * every registered view. Called during engine teardown before the reader pool
      * is freed, so a sweep that yielded mid-run does not leave its borrowed base
      * reader behind when the pool closes. Must run after the refresh workers have
      * stopped (no concurrent sweep turn).
      */
-    public void freeBackfillBaseReaders() {
+    public void freeSeedBaseReaders() {
         for (LiveViewInstance instance : viewsByName.values()) {
-            instance.freeBackfillBaseReader();
+            instance.freeSeedBaseReader();
         }
     }
 

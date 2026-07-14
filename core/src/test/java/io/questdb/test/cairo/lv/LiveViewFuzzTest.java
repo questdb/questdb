@@ -59,6 +59,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -73,7 +74,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * The premise of an incremental-maintenance engine is that the incrementally
  * materialized state equals a from-scratch recompute over the base table. This
  * test verifies exactly that invariant: it drives randomized inserts (in-order
- * and out-of-order), simulated restarts, and optional backfill at the base
+ * and out-of-order), simulated restarts, and optional seed at the base
  * table, then cross-checks the live view's contents against the same window
  * query recomputed directly over the base table.
  * <p>
@@ -102,6 +103,18 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
+    @Before
+    public void pinClockBelowFuzzData() {
+        // Pin the clock a day below the generated data (which starts at 2026-01-01) before
+        // every test. currentMicros is a static that survives across test classes, and the
+        // per-helper pins below only fire when it is still unset - so a class that ran earlier
+        // in the same JVM and left a clock ABOVE the data would silently push every
+        // START FROM NOW boundary above it, emptying views the recompute oracle expects to be
+        // full. Pinning here unconditionally is what makes this suite independent of the class
+        // that happens to precede it.
+        setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+    }
+
     // Variants 0..4 and 6 are ORDER BY ts bounded-frame aggregates over
     // LONG/DOUBLE columns (sum/max/first_value/count/avg/min); the decimal variant
     // (DECIMAL_VARIANT) is the same bounded-frame shape over a DECIMAL column (a
@@ -114,7 +127,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // lower bound, head-hit replay continuing from the checkpoint's ts-ordered
     // count - so the numbering matches a batch recompute (which also scans the
     // designated timestamp ascending). All variants are fuzzed under O3, restart,
-    // and BACKFILL in any combination.
+    // and SEED in any combination.
     // FLUSH EVERY rate-limits LV commits by wall clock: a refresh within
     // flushEveryMicros of the previous commit is deferred. Tests drive a
     // controllable clock (currentMicros) and advance it past this interval
@@ -234,7 +247,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // so "reset on change" is identical to "partition by the bucket value" -
         // the oracle is therefore the equivalent (sym, bucket)-partitioned regular
         // window recomputed over the base. Driven under O3 plus optional restart
-        // and optional backfill, so the anchor map rebuild on head-miss / head-hit
+        // and optional seed, so the anchor map rebuild on head-miss / head-hit
         // replay and across a restart is cross-checked against the recompute. The
         // final two variants are the F11 ranking shapes rank() and dense_rank():
         // they need the unbounded ordered frame a ranking function implies, so
@@ -249,9 +262,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFuzzBackfill() throws Exception {
-        // BACKFILL + O3: the head-miss REPLACE_RANGE [replayMinTs, +inf) re-merges into the
-        // multi-partition backfilled data. This used to corrupt the view through a storage-engine
+    public void testFuzzSeed() throws Exception {
+        // SEED + O3: the head-miss REPLACE_RANGE [replayMinTs, +inf) re-merges into the
+        // multi-partition seeded data. This used to corrupt the view through a storage-engine
         // replace-mode bug (a replace appending partitions above the last partition left the
         // writer's active columns stale, and the next replace reused them); fixed in TableWriter,
         // regression: WalWriterReplaceRangeTest.testReplaceRangeAddsPartitionsAboveLastThenRebuilds.
@@ -292,7 +305,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // only), and the run-end recompute oracle must hold - the per-cycle
         // column-mapping re-resolution keeps reading (ts, sym, i, x) correctly
         // as unreferenced columns come, go, get renamed, and change type
-        // around them. Runs under O3 with optional restart / BACKFILL /
+        // around them. Runs under O3 with optional restart / SEED /
         // IN MEMORY, so the DDL churn also interleaves with head replays and
         // registry rebuilds.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -342,8 +355,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // concurrent refresh driver; the others randomize it. The recompute oracle
         // stays exact because the disjoint slices reassemble to the same unique-ts
         // base no matter how the writers interleave, so the quiesced view must equal
-        // the from-scratch recompute. Optional BACKFILL captures pre-CREATE history
-        // (single-writer, so the backfill floor pins the global-min ts) before the
+        // the from-scratch recompute. Optional SEED captures pre-CREATE history
+        // (single-writer, so the seed floor pins the global-min ts) before the
         // concurrent suffix.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
@@ -370,7 +383,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // oracle stays sound because (ts, sym) is the dedup key: after apply every
         // (ts, sym) is unique, so within each sym partition ts is a total order and a
         // partitioned window is a deterministic function of the final deduped base.
-        // Each variant runs under O3 with random restart and backfill; DROP PARTITION
+        // Each variant runs under O3 with random restart and seed; DROP PARTITION
         // of an unprocessed future band (removals=true) exercises the divergence gate
         // - a removed row the LV never emitted must not leak onto the raw-WAL path.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -387,7 +400,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     public void testFuzzInMemReadBack() throws Exception {
         // Mode B read-back: a row_number() view (so SELECT * FROM lv routes through
         // the in-mem tier), with or without a SYMBOL passthrough (chosen per run),
-        // fuzzed under O3 + optional restart + optional backfill. After quiescence
+        // fuzzed under O3 + optional restart + optional seed. After quiescence
         // the read-back is cross-checked three ways: it equals the from-scratch
         // recompute (the standard oracle), Mode B is confirmed actually engaged,
         // and the Mode B result is byte-identical to the forced disk-only path. The
@@ -397,8 +410,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
             final boolean restart = rnd.nextBoolean();
-            final boolean backfill = rnd.nextBoolean();
-            runFuzz(rnd, 0, 120 + rnd.nextInt(280), true, restart, backfill, true, true);
+            final boolean seed = rnd.nextBoolean();
+            runFuzz(rnd, 0, 120 + rnd.nextInt(280), true, restart, seed, true, true);
         });
     }
 
@@ -418,7 +431,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // lag() and lag(, k) are ZERO_PASS partitioned windows. The recompute
         // oracle holds because lag over a unique-ts total order is a deterministic
         // function of the row set. Fuzzed under O3 plus optional restart and
-        // optional backfill, so the per-partition lookback state survives the
+        // optional seed, so the per-partition lookback state survives the
         // head replay and checkpoint restore paths.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
@@ -431,7 +444,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     @Test
     public void testFuzzLeadReadBack() throws Exception {
-        // Mode A read-back: after the randomized O3 + optional backfill churn the
+        // Mode A read-back: after the randomized O3 + optional seed churn the
         // harness builds a deterministic un-flushed lead on top of the applied
         // state (a forward batch refreshed into the in-mem tier but held below the
         // FLUSH EVERY cadence, so it never reaches disk). The final read then
@@ -443,8 +456,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
-            final boolean backfill = rnd.nextBoolean();
-            runFuzz(rnd, 0, 120 + rnd.nextInt(280), true, false, backfill, true, false, true);
+            final boolean seed = rnd.nextBoolean();
+            runFuzz(rnd, 0, 120 + rnd.nextInt(280), true, false, seed, true, false, true);
         });
     }
 
@@ -460,8 +473,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            final boolean backfill = rnd.nextBoolean();
-            runFuzz(rnd, 0, 120 + rnd.nextInt(220), true, true, backfill, true, false, true);
+            final boolean seed = rnd.nextBoolean();
+            runFuzz(rnd, 0, 120 + rnd.nextInt(220), true, true, seed, true, false, true);
         });
     }
 
@@ -495,7 +508,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // partition arithmetic, IN MEMORY micros-to-ns scaling), and the
         // recompute oracle holds identically to the micros arms: a unit-agnostic
         // window shape over a unique-ts total order is a deterministic function
-        // of the row set. Fuzzed under O3 plus optional restart / BACKFILL /
+        // of the row set. Fuzzed under O3 plus optional restart / SEED /
         // IN MEMORY.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
@@ -541,7 +554,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // convert mid-stream and keep refreshing over the partially-parquet base,
         // and every run converts once more at the end. The recompute oracle is
         // unchanged - the from-scratch recompute reads the same parquet/native
-        // base. BACKFILL over a parquet base has its own arm (testFuzzBackfillParquetBase),
+        // base. SEED over a parquet base has its own arm (testFuzzSeedParquetBase),
         // since it reads base partitions rather than the WAL stream.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
@@ -554,9 +567,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFuzzBackfillParquetBase() throws Exception {
-        // Differential fuzz over a BACKFILL view whose pre-CREATE history lives in
-        // parquet partitions. The backfill sweep reads base partitions through a
+    public void testFuzzSeedParquetBase() throws Exception {
+        // Differential fuzz over a SEED view whose pre-CREATE history lives in
+        // parquet partitions. The seed sweep reads base partitions through a
         // page-frame cursor and resumes across turns with skipRows(); when the view
         // carries a WHERE, the filter is pushed down to the parquet row-group level,
         // so a fully non-matching partition is pruned before the scan yields its
@@ -566,7 +579,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
             for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
-                runBackfillParquetFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                runSeedParquetFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
                         rnd.nextBoolean());
             }
         });
@@ -580,11 +593,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(8));
         assertMemoryLeak(() -> {
             final boolean o3 = rnd.nextBoolean();
-            // BACKFILL now combines with O3 (the merge bug forcing them apart is fixed).
-            final boolean backfill = rnd.nextBoolean();
+            // SEED now combines with O3 (the merge bug forcing them apart is fixed).
+            final boolean seed = rnd.nextBoolean();
             final int variant = rnd.nextInt(variantCount());
             final boolean restart = o3 && rnd.nextBoolean();
-            runFuzz(rnd, variant, 80 + rnd.nextInt(520), o3, restart, backfill, rnd.nextBoolean());
+            runFuzz(rnd, variant, 80 + rnd.nextInt(520), o3, restart, seed, rnd.nextBoolean());
         });
     }
 
@@ -594,7 +607,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // distinct from the ROWS ring buffer the other aggregate variants use. The
         // recompute oracle holds identically: a bounded RANGE frame over a
         // unique-ts total order is a deterministic function of the row set. Fuzzed
-        // under O3 plus optional restart and optional backfill.
+        // under O3 plus optional restart and optional seed.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
@@ -638,7 +651,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // in the base. The run-end oracle therefore recomputes over a shadow
         // table holding the LOGICAL dataset (every row ever inserted). Each
         // variant randomizes TRUNCATE vs DROP PARTITION (bottom / middle / top
-        // days of the emitted range), restart, BACKFILL, and IN MEMORY.
+        // days of the emitted range), restart, SEED, and IN MEMORY.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
@@ -659,7 +672,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // replace commit is visible to the refresh drain only through the
         // commit's range metadata (its inserted rows may all sit above the
         // frontier, or be absent), so this arm exercises the range-aware O3
-        // trigger end to end, under optional restart / BACKFILL / IN MEMORY:
+        // trigger end to end, under optional restart / SEED / IN MEMORY:
         // any ghost row a converging replay failed to erase diverges from the
         // recompute oracle at quiescence.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -683,7 +696,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // WalWriter.rollback(). A leaked phantom would both survive the optional WHERE
         // i>0 and, being below the frontier, trip an O3 replay - a visible divergence
         // from the recompute over the committed base at quiescence. Every fixed-width
-        // variant runs under in-order / O3 and optional BACKFILL.
+        // variant runs under in-order / O3 and optional SEED.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
@@ -704,7 +717,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // (size / txn count) cap how much buffers before a base-table commit, and
         // the O3 partition-split knobs reshape the physical partition layout the
         // refresh reads back. A single random config is pinned per run and every
-        // fixed-width variant is driven under O3 with optional restart / backfill /
+        // fixed-width variant is driven under O3 with optional restart / seed /
         // IN MEMORY; the quiescent view must still equal the from-scratch recompute
         // regardless of how the base commits were batched underneath it.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -733,7 +746,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // that the sum / avg / min / max arms never touch. Every shape is a
         // deterministic function of the unique-ts row set, so the standard
         // recompute oracle (the identical window SQL over the base) holds; each
-        // variant runs under O3 with optional restart / backfill / IN MEMORY. The
+        // variant runs under O3 with optional restart / seed / IN MEMORY. The
         // ranking peers rank() and dense_rank() need an unbounded ordered frame and
         // are covered by the anchored arm instead (see testFuzzAnchored).
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -752,7 +765,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // BINARY / DOUBLE[] columns straight through alongside row_number() OVER (),
         // so SELECT * FROM lv routes through the in-mem tier (Mode B) and the tier
         // must store and read back every var-length value. Three configs per run -
-        // in-order, O3, and O3 + restart - each with random backfill and a fresh
+        // in-order, O3, and O3 + restart - each with random seed and a fresh
         // random dataset, so the var-length (data, aux) write/read paths, the flush
         // flyweight, and the O3 disk-stager rebuild are all exercised. After
         // quiescence each run cross-checks three ways: the read-back equals the
@@ -761,16 +774,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
-            final boolean backfill = rnd.nextBoolean();
-            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), false, false, backfill);
-            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), true, false, backfill);
-            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), true, true, backfill);
+            final boolean seed = rnd.nextBoolean();
+            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), false, false, seed);
+            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), true, false, seed);
+            runVarSizeFuzz(rnd, 120 + rnd.nextInt(160), true, true, seed);
         });
     }
 
     @Test
     public void testFuzzWidened() throws Exception {
-        // Concentrated heavy corner: larger datasets with O3 + restart + backfill +
+        // Concentrated heavy corner: larger datasets with O3 + restart + seed +
         // in-mem all on together, across every variant. Per-run symbol cardinality
         // and partition spread (chosen inside runFuzz) still vary, so a batch of
         // runs samples the high-cardinality / many-partition corners the pinned
@@ -1209,7 +1222,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // stays sound. Rows are appended in random order half the time, so a
     // replace commit can also be intra-commit out-of-order. The band's low
     // bound stays strictly above the global-min ts (tsv[0]), keeping every
-    // replace row above a backfill run's floor.
+    // replace row above a seed run's floor.
     private void commitReplaceRange(Rnd rnd, TableToken baseToken, long[] tsv, LongHashSet usedTs, int symCount) {
         final int rowCount = tsv.length;
         final int a = 1 + rnd.nextInt(rowCount - 1);
@@ -1282,7 +1295,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
-    // Drives the named view's backfill sweep to completion on the caller's job,
+    // Drives the named view's seed sweep to completion on the caller's job,
     // re-fetching the instance each pass so it survives a restart, then applies
     // the LV WAL. Mirrors the smoke test helper.
 
@@ -1653,7 +1666,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     // Differential fuzz for an anchored window variant. Mirrors runFuzz's
-    // ingestion shape (pre-CREATE backfill history, then per-commit O3 refresh
+    // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh
     // with optional quiescent restarts) but cross-checks against a DISTINCT oracle
     // SQL: the anchored live view vs. the equivalent (sym, bucket)-partitioned
     // regular window over the base. O3 is always on (segmentOrder shuffles), so
@@ -1664,9 +1677,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int variant,
             int rowCount,
             boolean restart,
-            boolean backfill
+            boolean seed
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+        // Pin the clock a day below the data, like runFuzz: a non-seed view's
         // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
         // rows at or above it, so the clock must sit below every data timestamp.
         if (currentMicros < 0) {
@@ -1688,7 +1701,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")";
         final String oracleSql = "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -1697,7 +1710,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV anchored fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", restart=").$(restart).$(", seed=").$(seed)
                 .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
@@ -1723,10 +1736,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Backfill captures pre-CREATE history: put the earliest rows before CREATE
-        // so the backfill floor sits at the global-min ts and no post-CREATE O3 row
-        // falls below it. Non-backfill: everything lands post-CREATE.
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        // Seed captures pre-CREATE history: put the earliest rows before CREATE
+        // so the seed floor sits at the global-min ts and no post-CREATE O3 row
+        // falls below it. Non-seed: everything lands post-CREATE.
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -1743,8 +1756,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -1758,7 +1771,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -1790,7 +1803,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     // Transparent-DDL fuzz (see testFuzzBaseDdlTransparent). Mirrors runFuzz's
-    // ingestion shape (pre-CREATE backfill history, per-commit O3 refresh,
+    // ingestion shape (pre-CREATE seed history, per-commit O3 refresh,
     // optional quiescent restarts), but between post-CREATE commits the base
     // receives random ADD / DROP / RENAME / retype DDL on columns the view
     // never references. Each DDL is followed by a stays-ACTIVE assertion and a
@@ -1800,10 +1813,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int variant,
             int rowCount,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+        // Pin the clock a day below the data, like runFuzz: a non-seed view's
         // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
         // rows at or above it, so the clock must sit below every data timestamp.
         if (currentMicros < 0) {
@@ -1820,7 +1833,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -1829,7 +1842,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV base-DDL fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", restart=").$(restart).$(", backfill=").$(backfill).$(", inMem=").$(inMemory)
+                .$(", restart=").$(restart).$(", seed=").$(seed).$(", inMem=").$(inMemory)
                 .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
@@ -1855,10 +1868,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Backfill captures pre-CREATE history: the earliest rows go before CREATE
-        // so the backfill floor sits at the global-min ts and no post-CREATE O3 row
-        // falls below it. Non-backfill: everything lands post-CREATE.
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        // Seed captures pre-CREATE history: the earliest rows go before CREATE
+        // so the seed floor sits at the global-min ts and no post-CREATE O3 row
+        // falls below it. Non-seed: everything lands post-CREATE.
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
 
         // Live unreferenced extras: names, their current type (0=INT, 1=LONG),
         // and a monotonic name counter surviving drops.
@@ -1881,8 +1894,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -1905,7 +1918,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -2176,7 +2189,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 if (restart && rnd.nextInt(3) == 0) {
                     LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                     if (inst != null
-                            && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                         job = Misc.free(job);
                         engine.getLiveViewRegistry().clear();
                         engine.buildViewGraphs();
@@ -2242,7 +2255,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 if (restart && rnd.nextInt(3) == 0) {
                     LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                     if (inst != null
-                            && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                         job = Misc.free(job);
                         engine.getLiveViewRegistry().clear();
                         engine.buildViewGraphs();
@@ -2276,7 +2289,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Differential fuzz where the base is ingested by several concurrent WalWriters
     // (see testFuzzConcurrentWriters). Mirrors runFuzz's dataset shape - unique,
-    // strictly-increasing timestamps; optional pre-CREATE BACKFILL history - but the
+    // strictly-increasing timestamps; optional pre-CREATE SEED history - but the
     // post-CREATE suffix is split into disjoint round-robin slices, one per writer
     // thread, that commit in parallel so the sequencer interleaves their
     // transactions. With concurrentRefresh a single refresh driver runs alongside
@@ -2290,12 +2303,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             int numWriters,
             boolean concurrentRefresh,
-            boolean backfill
+            boolean seed
     ) throws Exception {
         // A concurrent refresh driver advances the flush clock in an unbounded loop
         // while ingestion is in flight, so - unlike the single-threaded fuzz arms,
         // which sit a day below the data - the clock is pinned a full YEAR below the
-        // data start. That keeps it under a non-backfill view's CREATE-moment lower
+        // data start. That keeps it under a non-seed view's CREATE-moment lower
         // bound for the whole run (a 250ms/advance loop never climbs a year), so
         // head-miss replay never drops a row the recompute keeps.
         setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
@@ -2310,7 +2323,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2320,7 +2333,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         LOG.info().$("LV concurrent-writer fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", writers=").$(numWriters).$(", symCount=").$(symCount)
                 .$(", stepMode=").$(stepMode).$(", concurrentRefresh=").$(concurrentRefresh)
-                .$(", backfill=").$(backfill).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", seed=").$(seed).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // random symbols and values with occasional NULLs.
@@ -2343,17 +2356,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Backfill captures pre-CREATE history: the earliest rows [0, preCount) go
-        // before CREATE so the backfill floor sits at the global-min ts and no
-        // concurrent post-CREATE row falls below it. Non-backfill: everything lands
+        // Seed captures pre-CREATE history: the earliest rows [0, preCount) go
+        // before CREATE so the seed floor sits at the global-min ts and no
+        // concurrent post-CREATE row falls below it. Non-seed: everything lands
         // post-CREATE via the concurrent writers.
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         LiveViewRefreshJob job = null;
         try {
-            // Pre-CREATE history (single-writer, in ts order): keeps the backfill
+            // Pre-CREATE history (single-writer, in ts order): keeps the seed
             // floor at the global-min ts.
             if (preCount > 0) {
                 try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
@@ -2368,8 +2381,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             // Concurrent suffix [preCount, rowCount): numWriters threads each own a
@@ -2449,7 +2462,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
-    // ingestion shape (pre-CREATE backfill history, then per-commit O3 refresh with
+    // ingestion shape (pre-CREATE seed history, then per-commit O3 refresh with
     // optional quiescent restarts and removal events), but with a data model built
     // for dedup: timestamps are drawn from a pool small enough to force same-ts /
     // same-(ts, sym) collisions, and a fifth of the emissions re-point onto an
@@ -2463,10 +2476,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             boolean o3,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean removals
     ) throws Exception {
-        // Pin the clock a day below the data (see runFuzz): a non-backfill view's
+        // Pin the clock a day below the data (see runFuzz): a non-seed view's
         // lower bound is the CREATE moment and forward-append drops rows below it.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
@@ -2482,7 +2495,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String projection = projection(variant, n);
         final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2492,7 +2505,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", seed=").$(seed)
                 .$(", removals=").$(removals).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Distinct, strictly-increasing timestamp pool - fewer distinct values than
@@ -2529,7 +2542,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
         }
-        // Backfill floor guard: the backfill lower bound is the base min ts at CREATE.
+        // Seed floor guard: the seed lower bound is the base min ts at CREATE.
         // ts is not monotonic in the emission index here, so pin emission 0 to the
         // global-min ts (pool[0]) and force it pre-CREATE (preCount >= 1) - then no
         // post-CREATE row falls below the floor and gets dropped, diverging the oracle.
@@ -2544,9 +2557,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             symIdx[dst] = symIdx[src];
         }
 
-        // Backfill captures pre-CREATE history: preCount >= 1 keeps the global-min ts
-        // (emission 0) before CREATE. Non-backfill: everything lands post-CREATE.
-        final int preCount = backfill ? 1 + rnd.nextInt(rowCount) : 0;
+        // Seed captures pre-CREATE history: preCount >= 1 keeps the global-min ts
+        // (emission 0) before CREATE. Non-seed: everything lands post-CREATE.
+        final int preCount = seed ? 1 + rnd.nextInt(rowCount) : 0;
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -2563,8 +2576,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -2583,7 +2596,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -2620,10 +2633,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             boolean o3,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory
     ) throws Exception {
-        runFuzz(rnd, variant, rowCount, o3, restart, backfill, inMemory, false, false);
+        runFuzz(rnd, variant, rowCount, o3, restart, seed, inMemory, false, false);
     }
 
     private void runFuzz(
@@ -2632,11 +2645,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             boolean o3,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory,
             boolean inMemReadBack
     ) throws Exception {
-        runFuzz(rnd, variant, rowCount, o3, restart, backfill, inMemory, inMemReadBack, false);
+        runFuzz(rnd, variant, rowCount, o3, restart, seed, inMemory, inMemReadBack, false);
     }
 
     private void runFuzz(
@@ -2645,13 +2658,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             boolean o3,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory,
             boolean inMemReadBack,
             boolean leadReadBack
     ) throws Exception {
         // Drive a controllable clock so FLUSH EVERY flush gating is deterministic.
-        // Pin "now" a day BEFORE the data start (2026-01-01). A non-backfill
+        // Pin "now" a day BEFORE the data start (2026-01-01). A non-seed
         // view's lower bound is the wall-clock CREATE moment, and O3 head-miss
         // replay only re-emits base rows at or above that floor - so the clock
         // must sit below every data timestamp or the replay would drop rows the
@@ -2679,7 +2692,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // through the in-mem tier (Mode B). Half the read-back runs add a SYMBOL
         // passthrough: the refresh worker stores LV-table-space symbol ids, so
         // the random per-commit symbol churn (segment-local ids diverge from
-        // LV-space ids) is exercised through Mode B under O3 / restart / backfill.
+        // LV-space ids) is exercised through Mode B under O3 / restart / seed.
         // The decimal family always carries a SYMBOL passthrough, so it never
         // combines with the read-back path.
         final boolean symbolReadBack = (inMemReadBack || leadReadBack) && rnd.nextBoolean();
@@ -2712,7 +2725,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMem ? "IN MEMORY 60s " : "")
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2724,7 +2737,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", o3=").$(o3).$(", restart=").$(restart)
-                .$(", backfill=").$(backfill).$(", inMem=").$(inMem)
+                .$(", seed=").$(seed).$(", inMem=").$(inMem)
                 .$(", inMemReadBack=").$(inMemReadBack).$(", leadReadBack=").$(leadReadBack)
                 .$(", symbolReadBack=").$(symbolReadBack)
                 .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
@@ -2757,11 +2770,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
         }
 
-        // Backfill captures pre-CREATE history. Put the EARLIEST rows (by ts)
-        // before CREATE so the backfill floor sits at the global min ts and no
+        // Seed captures pre-CREATE history. Put the EARLIEST rows (by ts)
+        // before CREATE so the seed floor sits at the global min ts and no
         // post-CREATE O3 row falls below it - such a row would be rejected and
-        // diverge from the recompute. Non-backfill: everything lands post-CREATE.
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        // diverge from the recompute. Non-seed: everything lands post-CREATE.
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -2780,8 +2793,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             // Post-CREATE: segment [preCount, rowCount), refreshed per commit so a
@@ -2798,7 +2811,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -2870,7 +2883,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // Mode B read-back cross-checks, single-threaded now that the worker
                 // is freed and the view is quiesced: the tier actually serves the
                 // read, and the Mode B result is byte-identical to the forced
-                // disk-only path under whatever O3 / restart / backfill pattern this
+                // disk-only path under whatever O3 / restart / seed pattern this
                 // run produced.
                 assertModeBEngaged();
                 assertModeBMatchesDiskOnly("SELECT * FROM lv");
@@ -3030,7 +3043,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             boolean o3,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory
     ) throws Exception {
         // Pin the wall clock (micros) a day below the ns data start. The view's
@@ -3053,7 +3066,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3062,7 +3075,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV nanos-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", seed=").$(seed)
                 .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing nanosecond timestamps.
@@ -3087,7 +3100,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -3104,8 +3117,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -3119,7 +3132,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -3152,7 +3165,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Differential fuzz over a base whose settled partitions are converted to
     // PARQUET while a live view maintains itself off it (see testFuzzParquetBase).
-    // The live view is incremental (NOT backfill): its refresh consumes the base
+    // The live view is incremental (NOT seed): its refresh consumes the base
     // WAL stream, not base partitions, so converting an already-consumed partition
     // to parquet is physically transparent. Under in-order ingestion the run also
     // converts settled partitions MID-STREAM (strictly below the current commit's
@@ -3162,8 +3175,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // recompute reads the same base, parquet partitions and all.
     //
     // NOTE: this arm stays on the incremental (WAL-consuming) path, which is
-    // transparent to parquet conversion. BACKFILL over a parquet base is covered
-    // separately by runBackfillParquetFuzz: it reads base partitions, so it
+    // transparent to parquet conversion. SEED over a parquet base is covered
+    // separately by runSeedParquetFuzz: it reads base partitions, so it
     // exercises the parquet page-frame skip path the incremental path does not.
     private void runParquetBaseFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean inMemory) throws Exception {
         if (currentMicros < 0) {
@@ -3261,15 +3274,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
-    // Backfill-over-parquet fuzz (see testFuzzBackfillParquetBase). The whole
+    // Seed-over-parquet fuzz (see testFuzzSeedParquetBase). The whole
     // dataset is committed and (a random prefix of its settled partitions)
-    // converted to parquet BEFORE the view is created with BACKFILL, so the sweep
+    // converted to parquet BEFORE the view is created with SEED, so the sweep
     // reads parquet base partitions. A WHERE clause (present most runs) pushes the
     // filter down to the parquet row-group level; with a tiny per-turn budget the
     // sweep resumes with skipRows() many times, each of which must land past the
     // pruned row groups. The oracle is the from-scratch recompute over the
     // (parquet/native) base.
-    private void runBackfillParquetFuzz(Rnd rnd, int variant, int rowCount, boolean inMemory) throws Exception {
+    private void runSeedParquetFuzz(Rnd rnd, int variant, int rowCount, boolean inMemory) throws Exception {
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -3289,7 +3302,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-        LOG.info().$("LV backfill-parquet fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+        LOG.info().$("LV seed-parquet fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", inMem=").$(inMemory)
                 .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
@@ -3316,7 +3329,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
         try {
-            // Commit the whole dataset in order (the backfill captures pre-CREATE
+            // Commit the whole dataset in order (the seed captures pre-CREATE
             // history), then convert a random prefix of settled partitions to
             // parquet before the view exists.
             final int[] order = segmentOrder(rnd, 0, rowCount, false);
@@ -3328,7 +3341,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             final long firstDay = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
             final long maxDay = tsv[rowCount - 1] - tsv[rowCount - 1] % 86_400_000_000L;
             // Convert [firstDay, cutoff) to parquet; cutoff lands on a random day
-            // boundary so the base is a parquet/native mix at backfill time.
+            // boundary so the base is a parquet/native mix at seed time.
             long cutoff = firstDay + (1 + rnd.nextInt(8)) * 86_400_000_000L;
             if (cutoff > maxDay) {
                 cutoff = maxDay;
@@ -3337,7 +3350,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
-            driveBackfillToCompletion(job, "lv");
+            driveSeedToCompletion(job, "lv");
             driveRefreshToQuiescence(job);
         } finally {
             Misc.free(job);
@@ -3369,7 +3382,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private void runReaderVsRefreshFuzz(Rnd rnd, int rowCount, boolean o3, boolean inMemory) throws Exception {
         // The refresh driver advances the flush clock in an unbounded loop, so -
         // like the concurrent-writer arm - the clock is pinned a full YEAR below
-        // the data start, keeping it under the non-backfill view's CREATE-moment
+        // the data start, keeping it under the non-seed view's CREATE-moment
         // lower bound for the whole run.
         setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
         final long dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
@@ -3505,7 +3518,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Freeze-and-continue fuzz for TRUNCATE / DROP PARTITION of already-emitted
     // base rows (see testFuzzRemovalFreezeAndContinue). Phase 1 mirrors runFuzz
-    // (optional pre-CREATE backfill history, per-commit O3 refresh, optional
+    // (optional pre-CREATE seed history, per-commit O3 refresh, optional
     // quiescent restarts) over the first split of the dataset, quiesces, and
     // cross-checks the standard recompute oracle while the base is still
     // intact. The removal event then TRUNCATEs the base or drops one or two
@@ -3528,10 +3541,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int rowCount,
             boolean truncate,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+        // Pin the clock a day below the data, like runFuzz: a non-seed view's
         // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
         // rows at or above it, so the clock must sit below every data timestamp.
         if (currentMicros < 0) {
@@ -3550,7 +3563,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection + " FROM base" + where;
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3561,7 +3574,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         LOG.info().$("LV removal fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", truncate=").$(truncate).$(", restart=").$(restart)
-                .$(", backfill=").$(backfill).$(", inMem=").$(inMemory)
+                .$(", seed=").$(seed).$(", inMem=").$(inMemory)
                 .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
@@ -3592,7 +3605,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // it. Both phases are non-empty so the removal always targets emitted
         // rows and the continuation is always exercised.
         final int splitPoint = rowCount / 3 + rnd.nextInt(rowCount / 3);
-        final int preCount = backfill ? 1 + rnd.nextInt(splitPoint) : 0;
+        final int preCount = seed ? 1 + rnd.nextInt(splitPoint) : 0;
 
         final StringSink sink = new StringSink();
         final StringSink preRemoval = new StringSink();
@@ -3610,8 +3623,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             // Phase 1: O3 churn over an intact base, per-commit refresh.
@@ -3626,7 +3639,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -3694,7 +3707,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 if (restart && rnd.nextInt(3) == 0) {
                     LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                     if (inst != null
-                            && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                            && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                         job = Misc.free(job);
                         engine.getLiveViewRegistry().clear();
                         engine.buildViewGraphs();
@@ -3735,7 +3748,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // onto the applied (post-replace) base: the drain sees the deletion only
     // through the commit's range metadata and routes any band reaching at or
     // below the frontier to the O3 replay, even when every inserted row sits
-    // above the frontier. Ingestion mirrors runFuzz (pre-CREATE backfill
+    // above the frontier. Ingestion mirrors runFuzz (pre-CREATE seed
     // history, per-commit O3 refresh, optional quiescent restarts); replace
     // events fire between insert commits and once more after the last insert,
     // so at least one band lands over fully-settled data every run.
@@ -3744,10 +3757,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int variant,
             int rowCount,
             boolean restart,
-            boolean backfill,
+            boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+        // Pin the clock a day below the data, like runFuzz: a non-seed view's
         // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
         // rows at or above it, so the clock must sit below every data timestamp.
         if (currentMicros < 0) {
@@ -3764,7 +3777,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3773,7 +3786,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV replace-range fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", restart=").$(restart).$(", backfill=").$(backfill).$(", inMem=").$(inMemory)
+                .$(", restart=").$(restart).$(", seed=").$(seed).$(", inMem=").$(inMemory)
                 .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
@@ -3803,11 +3816,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Backfill captures pre-CREATE history. preCount >= 1 keeps the global-min
-        // ts (and thus the backfill floor) pre-CREATE, so no replace row - all
+        // Seed captures pre-CREATE history. preCount >= 1 keeps the global-min
+        // ts (and thus the seed floor) pre-CREATE, so no replace row - all
         // anchored strictly above tsv[0] - can land below the floor and get
-        // dropped, diverging the oracle. Non-backfill: everything lands post-CREATE.
-        final int preCount = backfill ? 1 + rnd.nextInt(rowCount) : 0;
+        // dropped, diverging the oracle. Non-seed: everything lands post-CREATE.
+        final int preCount = seed ? 1 + rnd.nextInt(rowCount) : 0;
 
         final TableToken baseToken = engine.verifyTableName("base");
         final StringSink sink = new StringSink();
@@ -3825,8 +3838,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -3849,7 +3862,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -3889,14 +3902,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Differential fuzz proving rolled-back base transactions never reach the view
     // (see testFuzzRolledBackCommits). Committed rows follow runFuzz's shape - unique,
-    // strictly-increasing timestamps, optional pre-CREATE BACKFILL history - but every
+    // strictly-increasing timestamps, optional pre-CREATE SEED history - but every
     // commit is written through a direct WalWriter, so between real batches a doomed
     // transaction can append phantom rows and then rollback() without ever advancing the
     // sequencer. Phantoms carry i = PHANTOM_SENTINEL and a timestamp just below a
     // committed row, so a leak is loud: it survives WHERE i>0 and lands below the
     // frontier. The recompute over the committed base is the oracle - it can never
     // contain a phantom, so equality at quiescence proves none leaked.
-    private void runRolledBackFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean backfill) throws Exception {
+    private void runRolledBackFuzz(Rnd rnd, int variant, int rowCount, boolean o3, boolean seed) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
@@ -3908,7 +3921,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3917,7 +3930,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         LOG.info().$("LV rolled-back fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", backfill=").$(backfill).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", o3=").$(o3).$(", seed=").$(seed).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final long[] tsv = new long[rowCount];
         final int[] symIdx = new int[rowCount];
@@ -3938,11 +3951,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final TableToken baseToken = engine.verifyTableName("base");
         LiveViewRefreshJob job = null;
         try {
-            // Pre-CREATE backfill history (single committed transaction, in ts order).
+            // Pre-CREATE seed history (single committed transaction, in ts order).
             if (preCount > 0) {
                 try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
                     for (int k = 0; k < preCount; k++) {
@@ -3955,8 +3968,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -4022,13 +4035,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // DOUBLE[]) straight through, plus row_number() OVER () so SELECT * FROM lv
     // routes through the in-mem tier (Mode B) - the var-length passthroughs are
     // the subject under test, the window fn only makes the query a valid LV.
-    // Ingestion mirrors runFuzz (pre-CREATE backfill history, then per-commit O3
+    // Ingestion mirrors runFuzz (pre-CREATE seed history, then per-commit O3
     // refresh with optional quiescent restarts); after quiescence a top-up
     // forward row guarantees the tier is populated, then the read-back is
     // cross-checked against the recompute, Mode B is confirmed engaged, and the
     // Mode B result is compared byte-for-byte against the forced disk-only path.
-    private void runVarSizeFuzz(Rnd rnd, int rowCount, boolean o3, boolean restart, boolean backfill) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-backfill view's
+    private void runVarSizeFuzz(Rnd rnd, int rowCount, boolean o3, boolean restart, boolean seed) throws Exception {
+        // Pin the clock a day below the data, like runFuzz: a non-seed view's
         // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
         // rows at or above it, so the clock must sit below every data timestamp.
         if (currentMicros < 0) {
@@ -4041,7 +4054,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String viewSql = "SELECT ts, vs, vv, vb, va, row_number() OVER () AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s "
-                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
+                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -4050,7 +4063,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + "TIMESTAMP(ts) PARTITION BY DAY WAL");
 
         LOG.info().$("LV var-size fuzz: rows=").$(rowCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart).$(", backfill=").$(backfill)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", seed=").$(seed)
                 .$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
@@ -4070,10 +4083,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             tuple[k] = varSizeTuple(rnd);
         }
 
-        // Backfill captures pre-CREATE history: the earliest rows go before CREATE
-        // so the backfill floor sits at the global-min ts and no post-CREATE O3 row
-        // falls below it. Non-backfill: everything lands post-CREATE.
-        final int preCount = backfill ? rnd.nextInt(rowCount + 1) : 0;
+        // Seed captures pre-CREATE history: the earliest rows go before CREATE
+        // so the seed floor sits at the global-min ts and no post-CREATE O3 row
+        // falls below it. Non-seed: everything lands post-CREATE.
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -4090,8 +4103,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             execute(createSql);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (backfill) {
-                driveBackfillToCompletion(job, "lv");
+            if (seed) {
+                driveSeedToCompletion(job, "lv");
             }
 
             if (preCount < rowCount) {
@@ -4105,7 +4118,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (restart && rnd.nextInt(3) == 0) {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
-                                && inst.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_ACTIVE) {
+                                && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();

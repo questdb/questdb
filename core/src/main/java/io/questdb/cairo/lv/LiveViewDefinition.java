@@ -121,11 +121,17 @@ public class LiveViewDefinition {
     private final byte startFromKind;
     private final String viewName;
     private final String viewSql;
-    // The resolved START FROM boundary, in base-table timestamp units. NOW resolves the
-    // engine clock once at CREATE; an explicit timestamp parses the literal against the
-    // base's driver. Rows at or above it belong to the view, rows below it do not, so O3
-    // rejects rows below this bound. BEGINNING has no meaningful floor of its own; it
-    // currently seeds from the earliest base row and records that row's timestamp here.
+    // The resolved START FROM boundary, in base-table timestamp units. This is the live
+    // view's membership rule and its only one: a base row belongs to the view iff its
+    // designated timestamp is at or above this bound. The initial seed, the forward-append
+    // refresh, and every applied-base replay apply the identical predicate, so a row never
+    // appears or disappears merely because a replay ran.
+    //
+    // NOW resolves the engine clock once at CREATE; an explicit timestamp parses the literal
+    // against the base's driver. BEGINNING has no lower bound at all and persists
+    // Numbers.LONG_NULL, which is Long.MIN_VALUE - so `ts >= viewLowerBoundTimestamp` holds
+    // for every row and needs no separate mode branch on the refresh hot paths. A designated
+    // timestamp is never NULL, so no real row can sit at that sentinel.
     private final long viewLowerBoundTimestamp;
 
     public LiveViewDefinition(

@@ -40,13 +40,13 @@ import org.jetbrains.annotations.NotNull;
  *     <li>{@link #getLvRowPosition() lvRowPosition} - total live-view rows
  *     produced through this seqTxn.</li>
  *     <li>{@link #getBaseSeqTxn() baseSeqTxn} - for {@link #KIND_STEADY},
- *     the last fully-processed base seqTxn; for {@link #KIND_BACKFILL}, the
- *     backfillTargetSeqTxn (mirrors {@code _lv.s.backfillTargetSeqTxn}).</li>
+ *     the last fully-processed base seqTxn; for {@link #KIND_SEED}, the
+ *     seedTargetSeqTxn (mirrors {@code _lv.s.seedTargetSeqTxn}).</li>
  *     <li>{@link #getMaxTimestamp() maxTimestamp} - max ts of rows reflected
  *     in state, in base-table timestamp units. Lookup key for the
  *     {@code head.maxTimestamp <= late_row.ts} O3 routing rule.</li>
  *     <li>{@link #getKind() kind} - {@link #KIND_STEADY} for steady-state
- *     and O3 replay; {@link #KIND_BACKFILL} for in-progress backfill.</li>
+ *     and O3 replay; {@link #KIND_SEED} for in-progress seed.</li>
  *     <li>{@link #getWindowNames() windowNames} - the names of every named
  *     WINDOW the live view's compiled SELECT defines (anchored and
  *     non-anchored). The window names are persisted so a future revision
@@ -55,7 +55,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class LiveViewCheckpointManifest implements Mutable {
 
-    public static final byte KIND_BACKFILL = 1;
+    public static final byte KIND_SEED = 1;
     public static final byte KIND_STEADY = 0;
 
     private final ObjList<String> windowNames = new ObjList<>();
@@ -110,7 +110,7 @@ public class LiveViewCheckpointManifest implements Mutable {
     }
 
     public LiveViewCheckpointManifest setKind(byte kind) {
-        if (kind != KIND_STEADY && kind != KIND_BACKFILL) {
+        if (kind != KIND_STEADY && kind != KIND_SEED) {
             throw new IllegalArgumentException("unknown manifest kind: " + kind);
         }
         this.kind = kind;

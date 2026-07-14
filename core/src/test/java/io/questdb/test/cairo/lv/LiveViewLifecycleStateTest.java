@@ -63,17 +63,17 @@ public class LiveViewLifecycleStateTest {
         // transient/internal states that no SQL query can observe.
         Assert.assertEquals("creating", LiveViewLifecycleState.CREATING.catalogueName());
         Assert.assertEquals("active", LiveViewLifecycleState.ACTIVE.catalogueName());
-        Assert.assertEquals("backfilling", LiveViewLifecycleState.BACKFILLING.catalogueName());
+        Assert.assertEquals("seeding", LiveViewLifecycleState.SEEDING.catalogueName());
         Assert.assertEquals("invalid", LiveViewLifecycleState.INVALID.catalogueName());
         Assert.assertEquals("dropping", LiveViewLifecycleState.DROPPING.catalogueName());
         Assert.assertEquals("version_unsupported", LiveViewLifecycleState.VERSION_UNSUPPORTED.catalogueName());
     }
 
     @Test
-    public void testDeriveActiveAndBackfilling() {
-        // Registry-visible, valid: the backfill signal alone chooses BACKFILLING vs ACTIVE.
+    public void testDeriveActiveAndSeeding() {
+        // Registry-visible, valid: the seed signal alone chooses SEEDING vs ACTIVE.
         Assert.assertEquals(LiveViewLifecycleState.ACTIVE, LiveViewLifecycleState.derive(true, false, false));
-        Assert.assertEquals(LiveViewLifecycleState.BACKFILLING, LiveViewLifecycleState.derive(true, false, true));
+        Assert.assertEquals(LiveViewLifecycleState.SEEDING, LiveViewLifecycleState.derive(true, false, true));
     }
 
     @Test
@@ -87,8 +87,8 @@ public class LiveViewLifecycleStateTest {
     }
 
     @Test
-    public void testDeriveInvalidTakesPrecedenceOverBackfilling() {
-        // A registry-visible, invalid instance is INVALID even if the backfill signal is still set.
+    public void testDeriveInvalidTakesPrecedenceOverSeeding() {
+        // A registry-visible, invalid instance is INVALID even if the seed signal is still set.
         Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false));
         Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, true));
     }

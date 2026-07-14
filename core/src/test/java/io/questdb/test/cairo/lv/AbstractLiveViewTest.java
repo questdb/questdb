@@ -35,25 +35,26 @@ import org.junit.Assert;
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
  * hand-driving a {@link LiveViewRefreshJob} rather than running a worker pool, so each of them needs
- * the same three loops. They used to be copy-pasted into ten test classes, where the backfill bound
+ * the same three loops. They used to be copy-pasted into ten test classes, where the seed bound
  * had drifted to three different values (500 / 1000 / 2000).
  * <p>
  * The important part is not the dedup: it is that {@link #driveRefreshToQuiescence} and
- * {@link #driveBackfillToCompletion} now <b>fail</b> when they exhaust their pass budget. The
+ * {@link #driveSeedToCompletion} now <b>fail</b> when they exhaust their pass budget. The
  * copy-pasted versions fell out of the loop silently and let the test carry on against a view that
  * had never converged, so a refresh that stalled surfaced hundreds of lines later as an unexplained
  * row-content mismatch - or, if the stalled view happened to hold the right rows already, as a pass.
  */
 public abstract class AbstractLiveViewTest extends AbstractCairoTest {
 
-    // Enough passes for the slowest backfill in the suite (the parquet base test, which used 2000
-    // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
-    // BACKFILLING state, so a generous bound costs nothing on the tests that converge quickly.
-    protected static final int BACKFILL_COMPLETION_PASSES = 2000;
     // Longer than the 100ms FLUSH EVERY the tests declare, so one pass always crosses a flush
     // deadline rather than leaving the view waiting on the clock.
     protected static final long CLOCK_ADVANCE_MICROS = 250_000;
     protected static final int REFRESH_QUIESCENCE_PASSES = 512;
+    // Enough passes for the slowest seed in the suite (the parquet base test, which used 2000
+    // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
+    // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
+    protected static final int SEED_COMPLETION_PASSES = 2000;
+
 
     /**
      * Runs the job until it reports no more work, up to a bounded burst. Unlike the two drive*
@@ -113,29 +114,6 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
-     * Drives the refresh job until the named view leaves the BACKFILLING state, then drains the WAL
-     * queue so the backfilled rows are visible to a reader. Fails if the view is still backfilling
-     * after {@link #BACKFILL_COMPLETION_PASSES} passes.
-     */
-    protected void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
-        boolean completed = false;
-        for (int i = 0; i < BACKFILL_COMPLETION_PASSES; i++) {
-            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
-            if (inst == null
-                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
-                completed = true;
-                break;
-            }
-            drainJob(job);
-        }
-        drainWalQueue();
-        if (!completed) {
-            Assert.fail("backfill of live view '" + viewName + "' did not complete within "
-                    + BACKFILL_COMPLETION_PASSES + " passes; the view is still BACKFILLING");
-        }
-    }
-
-    /**
      * Advances the clock and drives the refresh job until it makes no further progress. Fails if the
      * job is still finding work after {@link #REFRESH_QUIESCENCE_PASSES} passes, which means the view
      * never converged and any assertion the caller makes next would be reading a half-refreshed view.
@@ -152,5 +130,28 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         }
         Assert.fail("live view refresh did not quiesce within " + REFRESH_QUIESCENCE_PASSES
                 + " passes; the refresh job is still finding work");
+    }
+
+    /**
+     * Drives the refresh job until the named view leaves the SEEDING state, then drains the WAL
+     * queue so the seeded rows are visible to a reader. Fails if the view is still seeding
+     * after {@link #SEED_COMPLETION_PASSES} passes.
+     */
+    protected void driveSeedToCompletion(LiveViewRefreshJob job, String viewName) {
+        boolean completed = false;
+        for (int i = 0; i < SEED_COMPLETION_PASSES; i++) {
+            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
+            if (inst == null
+                    || inst.getStateReader().getSeedState() != LiveViewState.SEED_STATE_SEEDING) {
+                completed = true;
+                break;
+            }
+            drainJob(job);
+        }
+        drainWalQueue();
+        if (!completed) {
+            Assert.fail("seed of live view '" + viewName + "' did not complete within "
+                    + SEED_COMPLETION_PASSES + " passes; the view is still SEEDING");
+        }
     }
 }

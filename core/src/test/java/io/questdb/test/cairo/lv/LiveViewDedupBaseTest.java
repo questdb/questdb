@@ -46,7 +46,7 @@ import org.junit.Test;
  */
 public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
 
-    // Pin the test clock below all test data before each test. A non-BACKFILL view's
+    // Pin the test clock below all test data before each test. A non-SEED view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
     // drops rows below it. The test data is timestamped in the past, so without a
     // pinned clock every row would be dropped as pre-CREATE.

@@ -102,43 +102,6 @@ public class LiveViewInstance implements QuietCloseable {
     // LONG_NULL or a near-future floor, so a stale read costs at most one extra re-drain or a
     // one-tick defer, never a permanently wrong skip.
     private volatile long applyLagDeferUntilUs = Numbers.LONG_NULL;
-    // Base-table reader pinned across the whole multi-turn backfill sweep so every
-    // turn reads one stable MVCC snapshot. Without it, re-opening the base at the
-    // latest applied seqTxn each turn makes the positional skipRows() resume
-    // unsound: an out-of-order base commit landing below the swept prefix between
-    // turns shifts physical row positions, so the next turn's skipRows() lands on a
-    // different set - silently dropping the back-dated row and re-feeding the old
-    // boundary row (double-advancing the accumulators). Borrowed (not detached) so
-    // any thread can release it via close(); held from the first sweep turn until
-    // the sweep completes or the view is dropped/invalidated/closed. Null when no
-    // sweep is in flight. Accessed under the refresh latch (and the latch-guarded
-    // free hooks / shutdown).
-    private TableReader backfillBaseReader;
-    // In-memory count of base data-cursor rows the backfill sweep has consumed
-    // so far - the skipRows() resume position for the next turn. Persists in
-    // memory across in-process turns (window state persists with it), and is
-    // re-seeded from the surviving .bcp on the first turn after a restart.
-    // Numbers.LONG_NULL until the first backfill turn initialises it; 0 means
-    // "swept nothing yet". Mutated under the refresh latch only.
-    private long backfillDataOffset = Numbers.LONG_NULL;
-    // Single-shot flag: the first backfill turn of the process restores window
-    // state + data offset from the surviving .bcp (if any), then later turns
-    // continue from the in-memory state. Mirrors checkpointRestoreAttempted for
-    // the backfill path. Mutated under the refresh latch only.
-    private boolean backfillResumeAttempted;
-    // Skip-write floor for the backfill sweep: the LV table's on-disk row count
-    // captured on the first turn of the process. Output rows whose position is
-    // below it are already durable (deterministic recompute), so the sweep
-    // recomputes them to advance window state but skips the WAL append. Spans
-    // however many turns the catch-up needs; persists across turns (the per-turn
-    // budget can split the catch-up). Mutated under the refresh latch only.
-    private long backfillSkipWriteFloor;
-    // The pinned snapshot's seqTxn, fixed for the whole sweep (see backfillBaseReader).
-    // The BACKFILLING -> ACTIVE handoff advances the watermarks to exactly this value
-    // so the ACTIVE phase's incremental drain (with O3 detection) covers everything
-    // committed after the snapshot from backfillSweepSeqTxn + 1. LONG_NULL until the
-    // sweep's first turn pins it; reset to LONG_NULL when the reader is released.
-    private long backfillSweepSeqTxn = Numbers.LONG_NULL;
     // Cumulative count of in-order (forward-append) base rows dropped because their
     // timestamp fell below viewLowerBoundTimestamp. Surfaced via
     // live_views().below_lower_bound_count. Complements o3RejectedCount, which
@@ -147,7 +110,7 @@ public class LiveViewInstance implements QuietCloseable {
     // worker at the in-order drain; volatile so the catalogue query thread reads a
     // current value. In-memory only - resets to 0 on restart (an observability
     // signal, not durable state). Non-zero means back-dated / pre-CREATE data is
-    // being silently excluded by the floor; BACKFILL or real-time ingestion avoids it.
+    // being silently excluded by the boundary; an earlier START FROM avoids it.
     private volatile long belowLowerBoundCount;
     private RecordCursorFactory compiledFactory;
     // Cumulative count of coupled dedup-base refresh cycles that proved the base range
@@ -202,13 +165,13 @@ public class LiveViewInstance implements QuietCloseable {
     // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES /
     // _BASE_SEQ_TXN.
     private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
-    // Key (data-cursor row offset) of the current rolling backfill checkpoint
-    // _checkpoints/<key>.bcp, or Numbers.LONG_NULL when none exists. Stamped by
-    // the startup recovery sweep for a view loaded in BACKFILLING state, updated
-    // each backfill turn after a fresh .bcp is written, and cleared when the
+    // Key (data-cursor row offset) of the current rolling seed checkpoint
+    // _checkpoints/<key>.scp, or Numbers.LONG_NULL when none exists. Stamped by
+    // the startup recovery sweep for a view loaded in SEEDING state, updated
+    // each seed turn after a fresh .scp is written, and cleared when the
     // sweep completes. Volatile so the catalogue thread can read it; mutated
     // under the refresh latch.
-    private volatile long headBackfillCpKey = Numbers.LONG_NULL;
+    private volatile long headSeedCpKey = Numbers.LONG_NULL;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
     // Per-view tracker for the persistent per-partition state: the anchor map (owned by
@@ -371,6 +334,43 @@ public class LiveViewInstance implements QuietCloseable {
     // only on the refresh-worker thread under the refresh latch; not volatile
     // because no other thread reads it.
     private long rowsSinceLastCheckpointWritten;
+    // Base-table reader pinned across the whole multi-turn seed sweep so every
+    // turn reads one stable MVCC snapshot. Without it, re-opening the base at the
+    // latest applied seqTxn each turn makes the positional skipRows() resume
+    // unsound: an out-of-order base commit landing below the swept prefix between
+    // turns shifts physical row positions, so the next turn's skipRows() lands on a
+    // different set - silently dropping the back-dated row and re-feeding the old
+    // boundary row (double-advancing the accumulators). Borrowed (not detached) so
+    // any thread can release it via close(); held from the first sweep turn until
+    // the sweep completes or the view is dropped/invalidated/closed. Null when no
+    // sweep is in flight. Accessed under the refresh latch (and the latch-guarded
+    // free hooks / shutdown).
+    private TableReader seedBaseReader;
+    // In-memory count of base data-cursor rows the seed sweep has consumed
+    // so far - the skipRows() resume position for the next turn. Persists in
+    // memory across in-process turns (window state persists with it), and is
+    // re-seeded from the surviving .scp on the first turn after a restart.
+    // Numbers.LONG_NULL until the first seed turn initialises it; 0 means
+    // "swept nothing yet". Mutated under the refresh latch only.
+    private long seedDataOffset = Numbers.LONG_NULL;
+    // Single-shot flag: the first seed turn of the process restores window
+    // state + data offset from the surviving .scp (if any), then later turns
+    // continue from the in-memory state. Mirrors checkpointRestoreAttempted for
+    // the seed path. Mutated under the refresh latch only.
+    private boolean seedResumeAttempted;
+    // Skip-write floor for the seed sweep: the LV table's on-disk row count
+    // captured on the first turn of the process. Output rows whose position is
+    // below it are already durable (deterministic recompute), so the sweep
+    // recomputes them to advance window state but skips the WAL append. Spans
+    // however many turns the catch-up needs; persists across turns (the per-turn
+    // budget can split the catch-up). Mutated under the refresh latch only.
+    private long seedSkipWriteFloor;
+    // The pinned snapshot's seqTxn, fixed for the whole sweep (see seedBaseReader).
+    // The SEEDING -> ACTIVE handoff advances the watermarks to exactly this value
+    // so the ACTIVE phase's incremental drain (with O3 detection) covers everything
+    // committed after the snapshot from seedSweepSeqTxn + 1. LONG_NULL until the
+    // sweep's first turn pins it; reset to LONG_NULL when the reader is released.
+    private long seedSweepSeqTxn = Numbers.LONG_NULL;
     // AND of every compiled window function's WindowFunction.supportsSnapshot().
     // Computed once on the first refresh cycle after the LV's compiled factory
     // is ready, then cached. False means the flush cycle emits no checkpoints
@@ -474,7 +474,7 @@ public class LiveViewInstance implements QuietCloseable {
         dropped = true;
         if (!isClosed) {
             isClosed = true;
-            freeBackfillBaseReader();
+            freeSeedBaseReader();
             freeCachedRefreshState();
             inMemoryTier = Misc.free(inMemoryTier);
         }
@@ -520,8 +520,8 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Releases the base-table snapshot pinned across the backfill sweep (see
-     * {@link #getBackfillBaseReader()}). The reader is borrowed, not detached, so
+     * Releases the base-table snapshot pinned across the seed sweep (see
+     * {@link #getSeedBaseReader()}). The reader is borrowed, not detached, so
      * {@code close()} returns it to the pool from any thread. Idempotent (null-safe).
      * <p>
      * Callers must guarantee no concurrent sweep turn is reading from it: the sweep
@@ -529,9 +529,9 @@ public class LiveViewInstance implements QuietCloseable {
      * free hooks CAS the latch, and the engine-shutdown call site runs after the
      * refresh workers have stopped.
      */
-    public void freeBackfillBaseReader() {
-        backfillBaseReader = Misc.free(backfillBaseReader);
-        backfillSweepSeqTxn = Numbers.LONG_NULL;
+    public void freeSeedBaseReader() {
+        seedBaseReader = Misc.free(seedBaseReader);
+        seedSweepSeqTxn = Numbers.LONG_NULL;
     }
 
     public Function getAnchorFunction() {
@@ -548,22 +548,6 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getApplyLagDeferUntilUs() {
         return applyLagDeferUntilUs;
-    }
-
-    public TableReader getBackfillBaseReader() {
-        return backfillBaseReader;
-    }
-
-    public long getBackfillDataOffset() {
-        return backfillDataOffset;
-    }
-
-    public long getBackfillSkipWriteFloor() {
-        return backfillSkipWriteFloor;
-    }
-
-    public long getBackfillSweepSeqTxn() {
-        return backfillSweepSeqTxn;
     }
 
     public long getBelowLowerBoundCount() {
@@ -669,10 +653,6 @@ public class LiveViewInstance implements QuietCloseable {
         return freezeFrozenAppliedWatermark;
     }
 
-    public long getHeadBackfillCpKey() {
-        return headBackfillCpKey;
-    }
-
     public long getHeadCheckpointBaseSeqTxn() {
         return headCheckpoint[HEAD_CHECKPOINT_BASE_SEQ_TXN];
     }
@@ -698,6 +678,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getHeadCheckpointStateBytes() {
         return headCheckpoint[HEAD_CHECKPOINT_STATE_BYTES];
+    }
+
+    public long getHeadSeedCpKey() {
+        return headSeedCpKey;
     }
 
     public LiveViewInMemoryTier getInMemoryTier() {
@@ -791,7 +775,7 @@ public class LiveViewInstance implements QuietCloseable {
         return LiveViewLifecycleState.derive(
                 !dropped && !isClosed,
                 stateReader.isInvalid(),
-                stateReader.getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING
+                stateReader.getSeedState() == LiveViewState.SEED_STATE_SEEDING
         );
     }
 
@@ -853,6 +837,22 @@ public class LiveViewInstance implements QuietCloseable {
         return rowsSinceLastCheckpointWritten;
     }
 
+    public TableReader getSeedBaseReader() {
+        return seedBaseReader;
+    }
+
+    public long getSeedDataOffset() {
+        return seedDataOffset;
+    }
+
+    public long getSeedSkipWriteFloor() {
+        return seedSkipWriteFloor;
+    }
+
+    public long getSeedSweepSeqTxn() {
+        return seedSweepSeqTxn;
+    }
+
     public LiveViewStateReader getStateReader() {
         return stateReader;
     }
@@ -873,8 +873,8 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setLastProcessedSeqTxn(source.getLastProcessedSeqTxn());
         stateReader.setAppliedWatermark(source.getAppliedWatermark());
         stateReader.setLvConsumedSeqTxn(source.getLvConsumedSeqTxn());
-        stateReader.setBackfillState(source.getBackfillState());
-        stateReader.setBackfillTargetSeqTxn(source.getBackfillTargetSeqTxn());
+        stateReader.setSeedState(source.getSeedState());
+        stateReader.setSeedTargetSeqTxn(source.getSeedTargetSeqTxn());
     }
 
     /**
@@ -906,16 +906,6 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean isFreezeInProgress() {
         return freezeInProgress;
-    }
-
-    /**
-     * @return {@code true} once the refresh worker has attempted to resume the
-     * backfill sweep from the surviving {@code .bcp} on the first turn of this
-     * process (whether a checkpoint was found or not). Single-shot per process;
-     * later turns continue from the in-memory window state + data offset.
-     */
-    public boolean isBackfillResumeAttempted() {
-        return backfillResumeAttempted;
     }
 
     /**
@@ -958,6 +948,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean isLeadEligibilityComputed() {
         return leadEligibilityComputed;
+    }
+
+    /**
+     * @return {@code true} once the refresh worker has attempted to resume the
+     * seed sweep from the surviving {@code .scp} on the first turn of this
+     * process (whether a checkpoint was found or not). Single-shot per process;
+     * later turns continue from the in-memory window state + data offset.
+     */
+    public boolean isSeedResumeAttempted() {
+        return seedResumeAttempted;
     }
 
     /**
@@ -1022,7 +1022,7 @@ public class LiveViewInstance implements QuietCloseable {
      * compiled-SQL artifacts so the next factory use ({@code ensureCompiledFactory})
      * recompiles them against the base table's current metadata. Window state
      * accumulated in the old factory's functions is lost with it; the caller
-     * must rebuild it (head-miss replay, backfill resume, or restart-restore)
+     * must rebuild it (head-miss replay, seed resume, or restart-restore)
      * before resuming incremental processing. The in-memory tier is deliberately
      * kept: the view's own projection is unchanged and reads keep serving
      * through it.
@@ -1037,18 +1037,6 @@ public class LiveViewInstance implements QuietCloseable {
         // through the old factory's column layout.
         recordToRowCopier = null;
         recordRowCopierMetadataVersion = -1;
-    }
-
-    /**
-     * Records a written rolling backfill checkpoint: stamps the {@code .bcp}
-     * key and the checkpoint write time. The backfill cadence keys off the
-     * {@code .bcp} data offset delta (not {@link #rowsSinceLastCheckpointWritten},
-     * which the steady head owns), so this does not touch the steady head
-     * metadata or the steady cadence counter.
-     */
-    public void recordBackfillCheckpointWritten(long key, long writtenUs) {
-        this.headBackfillCpKey = key;
-        this.lastCheckpointWrittenUs = writtenUs;
     }
 
     /**
@@ -1097,15 +1085,27 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Re-arms the backfill sweep's single-shot resume setup (see
-     * {@link #isBackfillResumeAttempted()}). Called by the refresh worker after
-     * {@link #prepareForBaseSchemaRecompile()} on a BACKFILLING view so the next
+     * Records a written rolling seed checkpoint: stamps the {@code .scp}
+     * key and the checkpoint write time. The seed cadence keys off the
+     * {@code .scp} data offset delta (not {@link #rowsSinceLastCheckpointWritten},
+     * which the steady head owns), so this does not touch the steady head
+     * metadata or the steady cadence counter.
+     */
+    public void recordSeedCheckpointWritten(long key, long writtenUs) {
+        this.headSeedCpKey = key;
+        this.lastCheckpointWrittenUs = writtenUs;
+    }
+
+    /**
+     * Re-arms the seed sweep's single-shot resume setup (see
+     * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
+     * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
      * sweep turn restores window state and the data offset from the surviving
-     * {@code .bcp} against the recompiled factory, or re-sweeps from offset 0
+     * {@code .scp} against the recompiled factory, or re-sweeps from offset 0
      * behind the skip-write floor. Mutated under the refresh latch only.
      */
-    public void resetBackfillResumeAttempted() {
-        backfillResumeAttempted = false;
+    public void resetSeedResumeAttempted() {
+        seedResumeAttempted = false;
     }
 
     public void setAnchorFunction(Function function) {
@@ -1134,39 +1134,6 @@ public class LiveViewInstance implements QuietCloseable {
         this.applyLagDeferUntilUs = applyLagDeferUntilUs;
     }
 
-    public void setBackfillBaseReader(TableReader backfillBaseReader) {
-        this.backfillBaseReader = backfillBaseReader;
-    }
-
-    public void setBackfillDataOffset(long backfillDataOffset) {
-        this.backfillDataOffset = backfillDataOffset;
-    }
-
-    public void setBackfillSkipWriteFloor(long backfillSkipWriteFloor) {
-        this.backfillSkipWriteFloor = backfillSkipWriteFloor;
-    }
-
-    public void setBackfillSweepSeqTxn(long backfillSweepSeqTxn) {
-        this.backfillSweepSeqTxn = backfillSweepSeqTxn;
-    }
-
-    /**
-     * Single-shot setter for {@link #isBackfillResumeAttempted()}. The refresh
-     * worker calls this on the first backfill turn of the process, regardless
-     * of whether a {@code .bcp} was found to resume from.
-     */
-    public void setBackfillResumeAttempted() {
-        this.backfillResumeAttempted = true;
-    }
-
-    public void setBackfillState(byte backfillState) {
-        stateReader.setBackfillState(backfillState);
-    }
-
-    public void setBackfillTargetSeqTxn(long backfillTargetSeqTxn) {
-        stateReader.setBackfillTargetSeqTxn(backfillTargetSeqTxn);
-    }
-
     /**
      * Single-shot setter for {@link #isCheckpointRestoreAttempted()}.
      * The refresh worker calls this on the first cycle after the LV's
@@ -1193,10 +1160,6 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
-    public void setHeadBackfillCpKey(long key) {
-        this.headBackfillCpKey = key;
-    }
-
     /**
      * Records a committed head checkpoint in one atomic store. Mirrors the
      * head metadata into the {@code live_views()} catalogue, resets the
@@ -1218,6 +1181,10 @@ public class LiveViewInstance implements QuietCloseable {
         this.headCheckpoint = new long[]{lvSeqTxn, maxTs, stateBytes, baseSeqTxn};
         this.rowsSinceLastCheckpointWritten = 0;
         this.lastCheckpointWrittenUs = writtenUs;
+    }
+
+    public void setHeadSeedCpKey(long key) {
+        this.headSeedCpKey = key;
     }
 
     /**
@@ -1351,6 +1318,39 @@ public class LiveViewInstance implements QuietCloseable {
         this.refreshedUpToSeqTxn = refreshedUpToSeqTxn;
     }
 
+    public void setSeedBaseReader(TableReader seedBaseReader) {
+        this.seedBaseReader = seedBaseReader;
+    }
+
+    public void setSeedDataOffset(long seedDataOffset) {
+        this.seedDataOffset = seedDataOffset;
+    }
+
+    /**
+     * Single-shot setter for {@link #isSeedResumeAttempted()}. The refresh
+     * worker calls this on the first seed turn of the process, regardless
+     * of whether a {@code .scp} was found to resume from.
+     */
+    public void setSeedResumeAttempted() {
+        this.seedResumeAttempted = true;
+    }
+
+    public void setSeedSkipWriteFloor(long seedSkipWriteFloor) {
+        this.seedSkipWriteFloor = seedSkipWriteFloor;
+    }
+
+    public void setSeedState(byte seedState) {
+        stateReader.setSeedState(seedState);
+    }
+
+    public void setSeedSweepSeqTxn(long seedSweepSeqTxn) {
+        this.seedSweepSeqTxn = seedSweepSeqTxn;
+    }
+
+    public void setSeedTargetSeqTxn(long seedTargetSeqTxn) {
+        stateReader.setSeedTargetSeqTxn(seedTargetSeqTxn);
+    }
+
     /**
      * Caches the AND of every compiled window function's
      * {@code supportsSnapshot()}, evaluated once after the LV's compiled
@@ -1434,7 +1434,7 @@ public class LiveViewInstance implements QuietCloseable {
         try {
             if (!isClosed) {
                 isClosed = true;
-                freeBackfillBaseReader();
+                freeSeedBaseReader();
                 freeCachedRefreshState();
                 inMemoryTier = Misc.free(inMemoryTier);
             }
@@ -1473,7 +1473,7 @@ public class LiveViewInstance implements QuietCloseable {
             return;
         }
         try {
-            freeBackfillBaseReader();
+            freeSeedBaseReader();
             freeCachedRefreshState();
             inMemoryTier = Misc.free(inMemoryTier);
         } finally {

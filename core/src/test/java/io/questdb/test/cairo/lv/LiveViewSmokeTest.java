@@ -141,7 +141,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             "  w1 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), " +
             "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)";
 
-    // Pin the test clock below all test data before each test. A non-BACKFILL
+    // Pin the test clock below all test data before each test. A non-SEED
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
     // refresh path drops rows below it (matching the O3 replay). The test data
     // is timestamped in the past (2024-2026), so without a pinned clock the
@@ -251,21 +251,21 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         return String.format("2026-01-%02dT00:00:00.000000Z", day);
     }
 
-    // Drives the named view's backfill sweep to completion across however many
+    // Drives the named view's seed sweep to completion across however many
     // turns the configured budget needs (each drainJob burst is capped at 64
     // turns), reusing the caller's refresh job. Re-fetches the instance each
     // pass so it survives a simulated restart that rebuilds the registry, and
     // applies the LV WAL at the end. The caller owns the job's lifecycle: a
-    // backfill test must drive the whole sweep through a single
+    // seed test must drive the whole sweep through a single
     // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
     // fresh one is not a path production takes (the pool keeps jobs alive).
 
-    // Removes the view's rolling backfill checkpoint file, simulating a crash
-    // before the .bcp the latest committed turn would have written (or a view
+    // Removes the view's rolling seed checkpoint file, simulating a crash
+    // before the .scp the latest committed turn would have written (or a view
     // whose functions cannot snapshot). Recovery then has no resume source and
     // re-sweeps from offset 0, skip-writing the on-disk prefix.
-    private void unlinkBackfillCheckpointFile(LiveViewInstance instance) {
-        long key = instance.getHeadBackfillCpKey();
+    private void unlinkSeedCheckpointFile(LiveViewInstance instance) {
+        long key = instance.getHeadSeedCpKey();
         if (key == Numbers.LONG_NULL) {
             return;
         }
@@ -274,7 +274,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                     .slash();
-            LiveViewCheckpointWriter.appendBcpFileName(p, key);
+            LiveViewCheckpointWriter.appendScpFileName(p, key);
             engine.getConfiguration().getFilesFacade().removeQuiet(p.$());
         }
     }
@@ -1503,7 +1503,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     private void assertVarLengthOutputRoundTrip(String colTypeDdl, String vExpr, boolean tierSupported) throws Exception {
         assertMemoryLeak(() -> {
             // Pin the clock below the data before CREATE so viewLowerBoundTimestamp
-            // (the non-backfill floor) sits under every row; otherwise the O3
+            // (the non-seed floor) sits under every row; otherwise the O3
             // replay would drop sub-floor rows the recompute keeps (Finding 3).
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, v " + colTypeDdl + ") " +
@@ -1878,10 +1878,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillSweepEmitsHistoricalRows() throws Exception {
-        // CREATE LIVE VIEW ... BACKFILL captures the base table's pre-CREATE
-        // history. Without BACKFILL the LV is empty until new commits arrive;
-        // with BACKFILL the sweep covers everything <= backfillTargetSeqTxn
+    public void testSeedSweepEmitsHistoricalRows() throws Exception {
+        // CREATE LIVE VIEW ... SEED captures the base table's pre-CREATE
+        // history. Without SEED the LV is empty until new commits arrive;
+        // with SEED the sweep covers everything <= seedTargetSeqTxn
         // and the lifecycle flips to ACTIVE on completion.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1896,9 +1896,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertEquals(
-                    "view must start in BACKFILLING",
-                    LiveViewState.BACKFILL_STATE_BACKFILLING,
-                    instance.getStateReader().getBackfillState()
+                    "view must start in SEEDING",
+                    LiveViewState.SEED_STATE_SEEDING,
+                    instance.getStateReader().getSeedState()
             );
 
             // Drive the sweep through the refresh worker.
@@ -1908,14 +1908,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             Assert.assertEquals(
-                    "sweep must flip backfillState to ACTIVE",
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    "sweep must flip seedState to ACTIVE",
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "ACTIVE flip must clear backfillTargetSeqTxn",
+                    "ACTIVE flip must clear seedTargetSeqTxn",
                     Numbers.LONG_NULL,
-                    instance.getStateReader().getBackfillTargetSeqTxn()
+                    instance.getStateReader().getSeedTargetSeqTxn()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
 
@@ -1924,10 +1924,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillSweepOnEmptyBaseFlipsToActive() throws Exception {
-        // CREATE LIVE VIEW ... BACKFILL on an empty base must still flip to
-        // ACTIVE on the first refresh tick; the sweep walks zero rows and
-        // the lifecycle advances immediately.
+    public void testEmptyBaseCreateStartsActiveWithoutSeeding() throws Exception {
+        // A base with no committed transaction has no pre-CREATE history, so there is
+        // nothing for a seed to cover and the view starts ACTIVE. This is load-bearing, not
+        // an optimisation: the sweep cannot pin a reader at an exact past seqTxn, so it
+        // scans whatever the base has applied by the time its first turn runs. Over an empty
+        // base that snapshot would already hold any commit that landed between CREATE and
+        // that turn, and the seed would swallow rows the incremental drain owns.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
@@ -1936,8 +1939,48 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_BACKFILLING,
-                    instance.getStateReader().getBackfillState()
+                    "an empty base has no history to seed",
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
+            );
+            Assert.assertEquals(
+                    "a view that never seeds carries no seed target",
+                    Numbers.LONG_NULL,
+                    instance.getStateReader().getSeedTargetSeqTxn()
+            );
+
+            // Rows committed after CREATE reach the view through the incremental drain.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSeedWithNoQualifyingRowFlipsToActive() throws Exception {
+        // The seed runs over a base that has history but holds no row above the boundary.
+        // The sweep walks the snapshot, qualifies nothing, and flips to ACTIVE in its first
+        // turn without committing anything.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_800_000_000_000_000L); // 2027-01-15, above every base row
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1)," +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    LiveViewState.SEED_STATE_SEEDING,
+                    instance.getStateReader().getSeedState()
             );
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1945,9 +1988,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             Assert.assertEquals(
-                    "empty-base sweep must still flip to ACTIVE",
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    "a seed that qualifies no row must still flip to ACTIVE",
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
 
@@ -2032,10 +2075,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillCoexistsWithFollowOnInserts() throws Exception {
-        // After BACKFILL completes, subsequent inserts go through the normal
+    public void testSeedCoexistsWithFollowOnInserts() throws Exception {
+        // After SEED completes, subsequent inserts go through the normal
         // incremental refresh path. End-to-end row count must include both
-        // the backfilled history and the post-CREATE inserts.
+        // the seeded history and the post-CREATE inserts.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -2048,14 +2091,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
-            // Drive the backfill sweep.
+            // Drive the seed sweep.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
             drainWalQueue();
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 
@@ -2075,7 +2118,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillAnchoredViewResumesAcrossRestart() throws Exception {
+    public void testSeedAnchoredViewResumesAcrossRestart() throws Exception {
         // An anchored window's per-partition state (lastAnchorValue) must
         // survive a restart mid-sweep: the day-2 'a' row resets row_number to 1
         // only if the restored anchor state knows the day-1 anchor was crossed.
@@ -2098,19 +2141,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 job.run();
                 drainWalQueue();
                 Assert.assertEquals(
-                        "partial sweep must still be BACKFILLING",
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                        "partial sweep must still be SEEDING",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
                 );
 
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
 
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
             );
             assertQuery("SELECT ts, sym, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tx\trn\n" +
                     "2026-04-01T00:00:00.000000Z\ta\t1\t1\n" +
@@ -2123,8 +2166,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillCompletionRetiresCheckpointFiles() throws Exception {
-        // On completion the rolling .bcp is unlinked and a steady head .cp is
+    public void testSeedCompletionRetiresCheckpointFiles() throws Exception {
+        // On completion the rolling .scp is unlinked and a steady head .cp is
         // materialised, so the ACTIVE phase has a restart/O3 anchor.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
@@ -2135,40 +2178,40 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
-            // Capture the rolling .bcp key from a partial sweep before finishing.
-            final long bcpKey;
+            // Capture the rolling .scp key from a partial sweep before finishing.
+            final long scpKey;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 job.run();
                 drainWalQueue();
-                bcpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadBackfillCpKey();
-                Assert.assertNotEquals("a .bcp must have been written mid-sweep", Numbers.LONG_NULL, bcpKey);
-                driveBackfillToCompletion(job, "lv");
+                scpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadSeedCpKey();
+                Assert.assertNotEquals("a .scp must have been written mid-sweep", Numbers.LONG_NULL, scpKey);
+                driveSeedToCompletion(job, "lv");
             }
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "completion must clear the in-memory .bcp key",
+                    "completion must clear the in-memory .scp key",
                     Numbers.LONG_NULL,
-                    instance.getHeadBackfillCpKey()
+                    instance.getHeadSeedCpKey()
             );
             Assert.assertNotEquals(
                     "completion must leave a steady head .cp",
                     Numbers.LONG_NULL,
                     instance.getHeadCheckpointLvSeqTxn()
             );
-            // The mid-sweep .bcp file must be gone after completion.
+            // The mid-sweep .scp file must be gone after completion.
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
             try (Path p = new Path()) {
                 p.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                         .slash();
-                LiveViewCheckpointWriter.appendBcpFileName(p, bcpKey);
-                Assert.assertFalse("no .bcp must survive completion", ff.exists(p.$()));
+                LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
+                Assert.assertFalse("no .scp must survive completion", ff.exists(p.$()));
             }
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
             execute("DROP LIVE VIEW lv");
@@ -2176,14 +2219,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillCrashBetweenActiveFlipAndCheckpointRetireRecoversActive() throws Exception {
-        // Crash-window atomicity at the BACKFILLING -> ACTIVE boundary. The
-        // completion path (LiveViewRefreshJob.runBackfillSweep) persists
-        // backfillState=ACTIVE durably via advanceLiveViewConsumedSeqTxn BEFORE
-        // it unlinks the rolling .bcp, so a crash in that tiny window leaves an
-        // orphan .bcp on disk next to an already-ACTIVE _lv.s. On restart the
-        // loader must read the durable ACTIVE state, retire the orphan .bcp
-        // (sweepBackfillCheckpoints with isBackfilling=false), and NOT stamp it
+    public void testSeedCrashBetweenActiveFlipAndCheckpointRetireRecoversActive() throws Exception {
+        // Crash-window atomicity at the SEEDING -> ACTIVE boundary. The
+        // completion path (LiveViewRefreshJob.runSeedSweep) persists
+        // seedState=ACTIVE durably via advanceLiveViewConsumedSeqTxn BEFORE
+        // it unlinks the rolling .scp, so a crash in that tiny window leaves an
+        // orphan .scp on disk next to an already-ACTIVE _lv.s. On restart the
+        // loader must read the durable ACTIVE state, retire the orphan .scp
+        // (sweepSeedCheckpoints with isSeeding=false), and NOT stamp it
         // as a resume source - the sweep is done, so there must be no re-sweep,
         // no lost or duplicated rows, and the incremental drain takes over.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -2198,30 +2241,30 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
-            // Capture a rolling .bcp key from a partial sweep, then finish cleanly.
-            final long bcpKey;
+            // Capture a rolling .scp key from a partial sweep, then finish cleanly.
+            final long scpKey;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 job.run();
                 drainWalQueue();
-                bcpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadBackfillCpKey();
-                Assert.assertNotEquals("a .bcp must have been written mid-sweep", Numbers.LONG_NULL, bcpKey);
-                driveBackfillToCompletion(job, "lv");
+                scpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadSeedCpKey();
+                Assert.assertNotEquals("a .scp must have been written mid-sweep", Numbers.LONG_NULL, scpKey);
+                driveSeedToCompletion(job, "lv");
             }
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "completion clears the in-memory .bcp key",
+                    "completion clears the in-memory .scp key",
                     Numbers.LONG_NULL,
-                    instance.getHeadBackfillCpKey()
+                    instance.getHeadSeedCpKey()
             );
 
-            // Simulate the crash residue: the post-completion .bcp unlink never
-            // ran, so a .bcp lingers in _checkpoints/ even though _lv.s already
-            // reads ACTIVE. Recovery retires .bcp leftovers by name, so an empty
+            // Simulate the crash residue: the post-completion .scp unlink never
+            // ran, so a .scp lingers in _checkpoints/ even though _lv.s already
+            // reads ACTIVE. Recovery retires .scp leftovers by name, so an empty
             // touch reaches the same sweep branch a real leftover would.
             final FilesFacade ff = engine.getConfiguration().getFilesFacade();
             try (Path p = new Path()) {
@@ -2229,9 +2272,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                         .slash();
-                LiveViewCheckpointWriter.appendBcpFileName(p, bcpKey);
-                Assert.assertTrue("recreating the orphan .bcp must succeed", ff.touch(p.$()));
-                Assert.assertTrue("orphan .bcp must exist before restart", ff.exists(p.$()));
+                LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
+                Assert.assertTrue("recreating the orphan .scp must succeed", ff.touch(p.$()));
+                Assert.assertTrue("orphan .scp must exist before restart", ff.exists(p.$()));
             }
 
             // Restart: the loader reads ACTIVE from _lv.s and sweeps the orphan.
@@ -2241,27 +2284,27 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertEquals(
                     "the durable ACTIVE flip must survive the crash",
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    reloaded.getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    reloaded.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "an ACTIVE view must not stamp the orphan .bcp as a resume source",
+                    "an ACTIVE view must not stamp the orphan .scp as a resume source",
                     Numbers.LONG_NULL,
-                    reloaded.getHeadBackfillCpKey()
+                    reloaded.getHeadSeedCpKey()
             );
             try (Path p = new Path()) {
                 p.of(engine.getConfiguration().getDbRoot())
                         .concat(reloaded.getLiveViewToken())
                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                         .slash();
-                LiveViewCheckpointWriter.appendBcpFileName(p, bcpKey);
-                Assert.assertFalse("recovery must retire the orphan .bcp", ff.exists(p.$()));
+                LiveViewCheckpointWriter.appendScpFileName(p, scpKey);
+                Assert.assertFalse("recovery must retire the orphan .scp", ff.exists(p.$()));
             }
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // A refresh tick would re-sweep here if recovery had wrongly
-                // treated the ACTIVE view as backfilling; the row count must
-                // stay at the four backfilled rows (no re-emission).
+                // treated the ACTIVE view as seeding; the row count must
+                // stay at the four seeded rows (no re-emission).
                 drainJob(job);
                 drainWalQueue();
                 assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
@@ -2285,7 +2328,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillFilteredViewResumesAcrossRestart() throws Exception {
+    public void testSeedFilteredViewResumesAcrossRestart() throws Exception {
         // A WHERE filter drops base rows, so the sweep's data-cursor offset
         // outruns the output-row count. The restart must resume at the correct
         // data offset (via FilteringRecordCursor's base-rows-consumed counter)
@@ -2310,13 +2353,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 job.run();
                 drainWalQueue();
                 Assert.assertEquals(
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                        LiveViewState.SEED_STATE_SEEDING,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
                 );
 
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
 
             // Only x >= 5 survive the filter; rn is the filtered sweep order.
@@ -2330,8 +2373,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillRestartRestoresO3DetectionWatermark() throws Exception {
-        // Finding 2b regression: row_number() OVER () under BACKFILL + O3 + restart.
+    public void testSeedRestartRestoresO3DetectionWatermark() throws Exception {
+        // Finding 2b regression: row_number() OVER () under SEED + O3 + restart.
         // A restart resets the in-memory O3 detection watermark (latestSeenTs) to
         // null, so tryRestoreFromHead must re-seed it from the head .cp's
         // maxTimestamp. Without that, the first post-restart commit - here a
@@ -2352,7 +2395,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // The job re-fetches the instance from the registry each tick, so a
             // single job survives the registry rebuild that simulates a restart.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
 
                 // In-order forward-append row; the head .cp records maxTs=00:00:10.
                 setCurrentMicros(currentMicros + 250_000L);
@@ -2367,7 +2410,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 engine.buildViewGraphs();
 
                 // First post-restart commit is a back-dated (O3) row sitting
-                // between the backfilled data and the forward-appended row. It
+                // between the seeded data and the forward-appended row. It
                 // must trigger a re-sequencing replay, not a forward append.
                 setCurrentMicros(currentMicros + 250_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:05.000000Z', 4)");
@@ -2387,8 +2430,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillRestartResumesFromCheckpoint() throws Exception {
-        // A restart mid-sweep finds the surviving .bcp, stamps its key, resumes
+    public void testSeedRestartResumesFromCheckpoint() throws Exception {
+        // A restart mid-sweep finds the surviving .scp, stamps its key, resumes
         // from the recorded data offset, and produces the full, gap-free output.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
         assertMemoryLeak(() -> {
@@ -2404,13 +2447,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        instance.getStateReader().getBackfillState()
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
                 );
                 Assert.assertNotEquals(
-                        "a .bcp must exist before restart",
+                        "a .scp must exist before restart",
                         Numbers.LONG_NULL,
-                        instance.getHeadBackfillCpKey()
+                        instance.getHeadSeedCpKey()
                 );
 
                 engine.getLiveViewRegistry().clear();
@@ -2418,17 +2461,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotEquals(
-                        "recovery must stamp the surviving .bcp key so the sweep resumes",
+                        "recovery must stamp the surviving .scp key so the sweep resumes",
                         Numbers.LONG_NULL,
-                        reloaded.getHeadBackfillCpKey()
+                        reloaded.getHeadSeedCpKey()
                 );
 
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
 
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n40\n");
             execute("DROP LIVE VIEW lv");
@@ -2436,8 +2479,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillRestartWithoutCheckpointReSweeps() throws Exception {
-        // If no .bcp survives (crash before the first cadence write, or a
+    public void testSeedRestartWithoutCheckpointReSweeps() throws Exception {
+        // If no .scp survives (crash before the first cadence write, or a
         // non-snapshot-capable view), recovery re-sweeps from offset 0 and
         // skip-writes the on-disk prefix - the result is still complete and
         // gap-free with no duplicates.
@@ -2455,28 +2498,28 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        instance.getStateReader().getBackfillState()
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
                 );
-                // Drop the .bcp so recovery has no resume source.
-                unlinkBackfillCheckpointFile(instance);
+                // Drop the .scp so recovery has no resume source.
+                unlinkSeedCheckpointFile(instance);
 
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
 
                 LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
-                        "no .bcp survives, so no resume key is stamped",
+                        "no .scp survives, so no resume key is stamped",
                         Numbers.LONG_NULL,
-                        reloaded.getHeadBackfillCpKey()
+                        reloaded.getHeadSeedCpKey()
                 );
 
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
 
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n40\n");
             execute("DROP LIVE VIEW lv");
@@ -2484,7 +2527,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillRestartWithUnappliedBlockDoesNotDuplicate() throws Exception {
+    public void testSeedRestartWithUnappliedBlockDoesNotDuplicate() throws Exception {
         // A sweep turn commits its LV WAL block and inline-applies it as two separate
         // steps, so a crash in between leaves the block committed-but-unapplied - and
         // nothing else lands it: ApplyWal2TableJob skips live-view tokens, and the
@@ -2494,7 +2537,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // The resumed sweep derives its skip-write floor from the LV table's row
         // count, which excludes the unapplied block, so before the fix it re-emitted
         // that block's rows and the pending block then applied on top of them -
-        // duplicating the sweep's first 10 rows (the backfill append carries no dedup
+        // duplicating the sweep's first 10 rows (the seed append carries no dedup
         // to collapse them). The resume must apply the pending block first.
         //
         // The restart is driven through a base-commit notification, not the registry
@@ -2521,8 +2564,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertEquals(
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        instance.getStateReader().getBackfillState()
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
                 );
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
                 Assert.assertTrue(
@@ -2542,14 +2585,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:40.000000Z', 41)");
                 drainWalQueue();
 
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
                 drainJob(job);
             }
             drainWalQueue();
 
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n41\n");
             TestUtils.assertSqlCursors(
@@ -2566,7 +2609,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillResumedSweepThenIncrementalDrain() throws Exception {
+    public void testSeedResumedSweepThenIncrementalDrain() throws Exception {
         // After a restart-resumed sweep flips to ACTIVE, post-CREATE inserts
         // drain incrementally and continue the row_number sequence.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
@@ -2583,11 +2626,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n40\n");
 
-            // Post-backfill inserts go through the incremental drain.
+            // Post-seed inserts go through the incremental drain.
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-04-01T00:01:00.000000Z', 41), " +
                     "('2026-04-01T00:01:01.000000Z', 42)");
@@ -2602,10 +2645,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillYieldsAcrossTurns() throws Exception {
+    public void testSeedYieldsAcrossTurns() throws Exception {
         // checkpoint.rows=10 caps each turn at 10 rows, so a 40-row sweep
         // yields across several turns instead of monopolising the worker: one
-        // turn leaves the view BACKFILLING with a partial result, and draining
+        // turn leaves the view SEEDING with a partial result, and draining
         // the rest completes it in order.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
         assertMemoryLeak(() -> {
@@ -2622,16 +2665,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 Assert.assertEquals(
                         "one turn must not complete a 40-row sweep",
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        instance.getStateReader().getBackfillState()
+                        LiveViewState.SEED_STATE_SEEDING,
+                        instance.getStateReader().getSeedState()
                 );
                 assertQuery("SELECT count() > 0 AND count() < 40 AS c FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("c\ntrue\n");
-                driveBackfillToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv");
             }
 
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             // count() catches any over- or under-emission across the turn yields.
             // The exact row_number values are verified at small scale by the
@@ -2642,9 +2685,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillStatusVisibleInCatalogue() throws Exception {
-        // live_views().view_status reads "backfilling" while the sweep is in
-        // progress; backfill_target_seqtxn surfaces the captured target.
+    public void testSeedStatusVisibleInCatalogue() throws Exception {
+        // live_views().view_status reads "seeding" while the sweep is in
+        // progress; seed_target_seqtxn surfaces the captured target.
         // After the sweep, the status flips to "active" and the target column
         // returns to LONG_NULL.
         assertMemoryLeak(() -> {
@@ -2656,10 +2699,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nbackfilling\n");
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\nseeding\n");
             Assert.assertTrue(
-                    "backfill_target_seqtxn must be non-NULL while BACKFILLING",
-                    instance.getStateReader().getBackfillTargetSeqTxn() >= 0
+                    "seed_target_seqtxn must be non-NULL while SEEDING",
+                    instance.getStateReader().getSeedTargetSeqTxn() >= 0
             );
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2667,7 +2710,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
             drainWalQueue();
 
-            assertQuery("SELECT view_status, backfill_target_seqtxn FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\tbackfill_target_seqtxn\n" +
+            assertQuery("SELECT view_status, seed_target_seqtxn FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("view_status\tseed_target_seqtxn\n" +
                     "active\tnull\n");
 
             execute("DROP LIVE VIEW lv");
@@ -2675,8 +2718,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testShowCreateEmitsBackfillClause() throws Exception {
-        // SHOW CREATE LIVE VIEW round-trips the BACKFILL clause so the emitted
+    public void testShowCreateEmitsSeedClause() throws Exception {
+        // SHOW CREATE LIVE VIEW round-trips the SEED clause so the emitted
         // DDL re-creates an equivalent view.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2692,10 +2735,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillAcceptedAtCreate() throws Exception {
-        // BACKFILL parses, the CORE_DEFINITION block stores
-        // backfillRequested=true, and the CORE_STATE block stores
-        // BACKFILL_STATE_BACKFILLING plus the captured target seqTxn.
+    public void testSeedAcceptedAtCreate() throws Exception {
+        // SEED parses, the CORE_DEFINITION block stores
+        // seedRequested=true, and the CORE_STATE block stores
+        // SEED_STATE_SEEDING plus the captured target seqTxn.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -2713,16 +2756,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     instance.getDefinition().getStartFromKind()
             );
             Assert.assertEquals(
-                    "START FROM BEGINNING CREATE must persist BACKFILLING state",
-                    LiveViewState.BACKFILL_STATE_BACKFILLING,
-                    instance.getStateReader().getBackfillState()
+                    "START FROM BEGINNING CREATE must persist SEEDING state",
+                    LiveViewState.SEED_STATE_SEEDING,
+                    instance.getStateReader().getSeedState()
             );
-            // backfillTargetSeqTxn captures base.head at CREATE; with the two
+            // seedTargetSeqTxn captures base.head at CREATE; with the two
             // inserts above (one commit), head must be >= 0 and equal to the
             // sequencer's writer txn.
             Assert.assertTrue(
-                    "backfillTargetSeqTxn must be set",
-                    instance.getStateReader().getBackfillTargetSeqTxn() >= 0
+                    "seedTargetSeqTxn must be set",
+                    instance.getStateReader().getSeedTargetSeqTxn() >= 0
             );
 
             execute("DROP LIVE VIEW lv");
@@ -2730,12 +2773,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillInitialLvConsumedSeqTxnIsTargetMinusOne() throws Exception {
-        // A BACKFILLING view publishes backfillTargetSeqTxn - 1 as its initial WAL
+    public void testSeedInitialLvConsumedSeqTxnIsTargetMinusOne() throws Exception {
+        // A SEEDING view publishes seedTargetSeqTxn - 1 as its initial WAL
         // purge floor (WAL retention coupling): the snapshot reader MVCC-pins
         // everything <= the target, while one extra base segment stays retained for
         // the deferred ring drain after the sweep. That is one lower than the
-        // subscribeFromSeqTxn - 1 floor a non-BACKFILL view starts at.
+        // subscribeFromSeqTxn - 1 floor a non-SEED view starts at.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -2747,10 +2790,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            long target = instance.getStateReader().getBackfillTargetSeqTxn();
-            Assert.assertTrue("backfillTargetSeqTxn must be captured", target >= 0);
+            long target = instance.getStateReader().getSeedTargetSeqTxn();
+            Assert.assertTrue("seedTargetSeqTxn must be captured", target >= 0);
             Assert.assertEquals(
-                    "BACKFILLING initial lvConsumedSeqTxn must be backfillTargetSeqTxn - 1",
+                    "SEEDING initial lvConsumedSeqTxn must be seedTargetSeqTxn - 1",
                     target - 1,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
@@ -2760,30 +2803,28 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillEmptyBasePinsPurgeFloorAtZero() throws Exception {
-        // Regression: a BACKFILL view created over an EMPTY base captures
-        // backfillTargetSeqTxn = 0, so a raw backfillTargetSeqTxn - 1 floor is -1 -
-        // the exact value WalPurgeJob treats as "no floor" (it pins the base WAL
-        // only when lvConsumed > -1). That let the base WAL be purged out from
-        // under the view's first drain, invalidating it and losing every row the
-        // drain had not yet consumed. The floor is now clamped at 0, matching the
-        // floor a non-BACKFILL view starts at over an empty base.
+    public void testEmptyBasePinsPurgeFloorAtZero() throws Exception {
+        // Regression: a view created over an EMPTY base sits at baseHeadSeqTxn = 0, so a raw
+        // baseHeadSeqTxn - 1 floor is -1 - the exact value WalPurgeJob treats as "no floor"
+        // (it pins the base WAL only when lvConsumed > -1). That let the base WAL be purged
+        // out from under the view's first drain, invalidating it and losing every row the
+        // drain had not yet consumed. The floor is clamped at 0.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Create the view while the base is still empty: baseHeadSeqTxn is 0,
-            // so backfillTargetSeqTxn is 0 and the raw floor would be -1.
+            // Create the view while the base is still empty: baseHeadSeqTxn is 0, so the raw
+            // floor would be -1.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertEquals(
-                    "empty-base BACKFILL target must be 0",
-                    0,
-                    instance.getStateReader().getBackfillTargetSeqTxn()
+                    "an empty base has no history to seed",
+                    Numbers.LONG_NULL,
+                    instance.getStateReader().getSeedTargetSeqTxn()
             );
             Assert.assertEquals(
-                    "empty-base BACKFILL floor must clamp to 0, not the -1 no-floor sentinel",
+                    "empty-base floor must clamp to 0, not the -1 no-floor sentinel",
                     0,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
@@ -2817,8 +2858,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     instance.isInvalid()
             );
             Assert.assertEquals(
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
             execute("DROP LIVE VIEW lv");
@@ -2831,25 +2872,25 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // writerTxn is UNINITIALIZED (-1) until CheckWalTransactionsJob first sees the
         // table - and notifyWalTxnRepublisher resets it back to -1 on every WAL
         // notification-queue overflow. A CREATE landing in either window read -1 as
-        // the head, which (a) subscribed the view from seqTxn 0, re-consuming the
-        // base's entire pre-CREATE history rather than starting empty, and (b)
+        // the head, which (a) made the view treat the base as having no history at all,
+        // so it never seeded and never subscribed from a real coordinate, and (b)
         // published a -1 purge floor - the exact value WalPurgeJob treats as "no
         // floor", so the base WAL the first drain still needs could be purged out from
         // under it. The head now falls back to the base table's own applied seqTxn.
         assertMemoryLeak(() -> {
-            // Pin the CREATE wall clock below the (2026) rows: without it the view's
-            // lower bound would drop the pre-CREATE rows anyway and mask the subscribe
-            // point.
+            // Pin the CREATE wall clock below the (2026) rows so START FROM NOW admits them
+            // and the seed has something to do.
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO base (ts, x) VALUES " +
-                    "('2026-04-01T00:00:00.000000Z', 1), " +
-                    "('2026-04-01T00:00:01.000000Z', 2)");
+            // Two separate commits, so the applied seqTxn is 2 and the expected floor
+            // (seedTarget - 1 = 1) is distinguishable from the 0 a -1 head would yield.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
             drainWalQueue();
 
             final TableToken baseToken = engine.verifyTableName("base");
             final long appliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
-            Assert.assertTrue("the base must carry applied commits", appliedSeqTxn > 0);
+            Assert.assertEquals("the base must carry both applied commits", 2, appliedSeqTxn);
 
             // Uninitialise the tracker exactly as a notification-queue overflow does.
             engine.notifyWalTxnRepublisher(baseToken);
@@ -2864,19 +2905,23 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertEquals(
-                    "the initial purge floor must be the base's applied seqTxn, not the -1 no-floor sentinel",
+                    "the seed target must be the base's applied seqTxn, not the -1 no-history sentinel",
                     appliedSeqTxn,
+                    instance.getStateReader().getSeedTargetSeqTxn()
+            );
+            Assert.assertEquals(
+                    "the initial purge floor must sit one below the seed target, not at the -1 no-floor sentinel",
+                    appliedSeqTxn - 1,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
 
-            // A non-BACKFILL view starts empty and materialises only what the base
-            // commits after CREATE. Subscribing from 0 would replay the two pre-CREATE
-            // rows into it as well.
+            // The two pre-CREATE rows sit above the boundary, so the seed materialises them;
+            // the third arrives through the incremental drain. A -1 head would have skipped
+            // the seed entirely and left the view holding only the third row.
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-                drainWalQueue();
+                driveRefreshToQuiescence(job);
             }
 
             Assert.assertFalse(instance.isInvalid());
@@ -2885,7 +2930,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     .timestamp("ts")
                     .expectSize()
                     .returns("ts\tx\trn\n" +
-                            "2026-04-01T00:00:02.000000Z\t3\t1\n");
+                            "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                            "2026-04-01T00:00:02.000000Z\t3\t3\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -3072,7 +3119,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // would otherwise freeze forever - clamping safeToPurgeTxn to that frozen
         // value and blocking base WAL purging indefinitely while the base keeps
         // ingesting (unbounded WAL growth). Re-CREATE requires a DROP first and
-        // backfills through an MVCC snapshot reader of the applied base table,
+        // seeds through an MVCC snapshot reader of the applied base table,
         // not the raw base WAL, so the retained WAL is never load-bearing.
         assertMemoryLeak(() -> {
             // Pin the clock past epoch + one purge interval so drainPurgeJob's
@@ -3085,7 +3132,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            // Initial published floor for a non-BACKFILL view is subscribeFromSeqTxn
+            // Initial published floor for a non-SEED view is subscribeFromSeqTxn
             // - 1. The view never refreshes, so the floor stays at this value.
             long floorBefore = instance.getStateReader().getLvConsumedSeqTxn();
             Assert.assertTrue("LV must publish an initial floor", floorBefore > -1);
@@ -4634,7 +4681,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             // Pin the clock well past the epoch: the WAL purge sweep's interval
             // gate (30s) skips every sweep while the clock sits near epoch. Data
-            // timestamps sit above this so the non-BACKFILL view keeps every row.
+            // timestamps sit above this so the non-SEED view keeps every row.
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4780,7 +4827,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         assertMemoryLeak(() -> {
             // Pin the clock past the epoch so the WAL purge interval gate never
-            // skips a sweep; data timestamps sit above it so the non-BACKFILL view
+            // skips a sweep; data timestamps sit above it so the non-SEED view
             // keeps every row.
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
@@ -4925,7 +4972,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         assertMemoryLeak(() -> {
             // Pin the clock near the epoch so the WAL purge interval gate never
-            // fires; data timestamps sit well above it (a non-BACKFILL view keeps
+            // fires; data timestamps sit well above it (a non-SEED view keeps
             // every row).
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
@@ -5188,7 +5235,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // WAL stream incrementally, not base partitions, so physical partition
         // eviction never reaches the LV's read path.
         assertMemoryLeak(() -> {
-            // Pin the clock just below the 2020 data at CREATE so the non-BACKFILL
+            // Pin the clock just below the 2020 data at CREATE so the non-SEED
             // view's lower bound sits under the rows (the forward-append path drops
             // rows below it). The clock is advanced past the data max before the
             // TTL-triggering insert below so TTL's wall-clock protection (it evicts
@@ -5773,8 +5820,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillFieldsRoundTripAsActiveDefault() throws Exception {
-        // Without the BACKFILL clause the CORE_DEFINITION / CORE_STATE blocks
+    public void testSeedFieldsRoundTripAsActiveDefault() throws Exception {
+        // Without the SEED clause the CORE_DEFINITION / CORE_STATE blocks
         // persist the ACTIVE / LONG_NULL defaults. Round-trips across a
         // simulated restart so a regression that drops these fields breaks
         // visibly.
@@ -5791,14 +5838,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     instance.getDefinition().getStartFromKind()
             );
             Assert.assertEquals(
-                    "backfillState is ACTIVE for a view that does not sweep",
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    instance.getStateReader().getBackfillState()
+                    "seedState is ACTIVE for a view that does not sweep",
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    instance.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "backfillTargetSeqTxn is LONG_NULL for a view that does not sweep",
+                    "seedTargetSeqTxn is LONG_NULL for a view that does not sweep",
                     Numbers.LONG_NULL,
-                    instance.getStateReader().getBackfillTargetSeqTxn()
+                    instance.getStateReader().getSeedTargetSeqTxn()
             );
 
             // Round-trip across a simulated restart.
@@ -5813,14 +5860,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     reloaded.getDefinition().getStartFromKind()
             );
             Assert.assertEquals(
-                    "backfillState must round-trip via _lv.s",
-                    LiveViewState.BACKFILL_STATE_ACTIVE,
-                    reloaded.getStateReader().getBackfillState()
+                    "seedState must round-trip via _lv.s",
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    reloaded.getStateReader().getSeedState()
             );
             Assert.assertEquals(
-                    "backfillTargetSeqTxn must round-trip via _lv.s",
+                    "seedTargetSeqTxn must round-trip via _lv.s",
                     Numbers.LONG_NULL,
-                    reloaded.getStateReader().getBackfillTargetSeqTxn()
+                    reloaded.getStateReader().getSeedTargetSeqTxn()
             );
 
             execute("DROP LIVE VIEW lv");
@@ -13259,7 +13306,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\tin_mem_rows\t"
                         + "o3_rejected_count\tbelow_lower_bound_count\tlag_seqtxn\tlag_micros\t"
                         + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
-                        + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"
+                        + "view_lower_bound_timestamp\twriter_stall_micros\tseed_target_seqtxn\t"
                         + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
@@ -13373,13 +13420,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testBackfillCapturesEarliestBaseRowAsLowerBound() throws Exception {
-        // For a BACKFILL view, viewLowerBoundTimestamp is the earliest visible
-        // base-table row at CREATE, not the wall-clock CREATE moment. Operators
-        // inspecting view_lower_bound_timestamp then see the real retention floor.
+    public void testBeginningHasNoLowerBound() throws Exception {
+        // START FROM BEGINNING has no lower bound at all: it persists LONG_NULL, which the
+        // catalogue surfaces as NULL. It used to anchor the bound to the earliest base row
+        // visible at CREATE, which read like a retention floor but behaved as a trap - a row
+        // back-dated below that earliest row and ingested later was silently rejected, even
+        // though the user asked for the base's whole history.
         assertMemoryLeak(() -> {
-            // Pin the clock well after the data so a CREATE-moment floor would read
-            // visibly different from the earliest base row.
+            // Pin the clock well after the data: a CREATE-moment bound would be visible here.
             setCurrentMicros(1_800_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -13391,17 +13439,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
-                    "lv\t2023-01-01T00:00:00.000000Z\n");
+                    "lv\t\n");
 
             execute("DROP LIVE VIEW lv");
         });
     }
 
     @Test
-    public void testBackfillOnEmptyBaseUsesCreateMomentLowerBound() throws Exception {
-        // BACKFILL on an empty base has no earliest row to anchor to, so
-        // viewLowerBoundTimestamp falls back to the wall-clock CREATE moment,
-        // matching the non-BACKFILL default.
+    public void testBeginningOnEmptyBaseHasNoLowerBound() throws Exception {
+        // BEGINNING is the same unbounded mode whether or not the base holds history at
+        // CREATE; the empty base does not fall back to the CREATE moment.
         assertMemoryLeak(() -> {
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -13409,7 +13456,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
-                    "lv\t2023-11-14T22:13:20.000000Z\n");
+                    "lv\t\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -13421,7 +13468,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // rejected: it never reaches the on-disk tier, and the rejection is
         // recorded in live_views().o3_rejected_count.
         assertMemoryLeak(() -> {
-            // Pin the clock so the non-BACKFILL view's lower bound is a known
+            // Pin the clock so the non-SEED view's lower bound is a known
             // wall-clock moment (2023-11-14T22:13:20Z).
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -13467,8 +13514,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testNonBackfillForwardAndO3ReplayAgreeOnSubFloorRows() throws Exception {
-        // A non-BACKFILL view's lower bound is the CREATE wall-clock moment. The
+    public void testNonSeedForwardAndO3ReplayAgreeOnSubFloorRows() throws Exception {
+        // A non-SEED view's lower bound is the CREATE wall-clock moment. The
         // O3 head-miss replay seeds its scan at that floor and drops every row
         // below it; the forward-append path must drop sub-floor rows as well.
         // Otherwise a back-dated row would be kept when it arrives in order
@@ -13485,7 +13532,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base_fwd (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE base_o3 (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            // Pin the clock at the floor so each non-BACKFILL view's lower bound
+            // Pin the clock at the floor so each non-SEED view's lower bound
             // is 2026-04-01T00:00:05.
             setCurrentMicros(floorMicros);
             execute("CREATE LIVE VIEW lv_fwd FLUSH EVERY 100ms START FROM NOW AS " +
@@ -13564,7 +13611,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testInOrderRowsBelowLowerBoundAreCounted() throws Exception {
-        // A fresh non-BACKFILL view whose entire first commit is back-dated below
+        // A fresh non-SEED view whose entire first commit is back-dated below
         // the CREATE wall-clock floor drops every row on the in-order forward-
         // append path. That drop used to be invisible - active view, lag 0,
         // o3_rejected_count 0, no log - so a 100%-loss of back-dated ingestion
@@ -15343,7 +15390,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // The view is built to make that the ONLY possible source of the breach: two symbols, so
         // the anchor and partition maps hold two keys, and a 5-row frame, so the ring buffers are
         // a handful of slots. What does not fit the 1 MiB limit is the 100k-row row group the
-        // backfill sweep decodes. The native control below is the other half of the proof.
+        // seed sweep decodes. The native control below is the other half of the proof.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         // Shrink the window store page from its 1 MiB default. The ring buffers are charged to the
@@ -15369,8 +15416,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS v " +
                     "FROM base");
-            // Not driveBackfillToCompletion: the breach invalidates the view mid-sweep, so it never
-            // leaves BACKFILLING. Drive the job directly and let the invalidation assertion below
+            // Not driveSeedToCompletion: the breach invalidates the view mid-sweep, so it never
+            // leaves SEEDING. Drive the job directly and let the invalidation assertion below
             // be the outcome under test.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);

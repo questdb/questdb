@@ -555,8 +555,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         reader.getLastProcessedSeqTxn(),
                         reader.getAppliedWatermark(),
                         maxBaseSeqTxn,
-                        reader.getBackfillState(),
-                        reader.getBackfillTargetSeqTxn(),
+                        reader.getSeedState(),
+                        reader.getSeedTargetSeqTxn(),
                         blockFileWriter
                 );
             } catch (Throwable t) {
@@ -651,8 +651,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         maxBaseSeqTxn, // lastProcessedSeqTxn
                         maxBaseSeqTxn, // appliedWatermark
                         maxBaseSeqTxn, // lvConsumedSeqTxn
-                        reader.getBackfillState(),
-                        reader.getBackfillTargetSeqTxn(),
+                        reader.getSeedState(),
+                        reader.getSeedTargetSeqTxn(),
                         blockFileWriter
                 );
             } catch (Throwable t) {
@@ -930,12 +930,12 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .$(", errno=").$(stateErrno)
                                         .$(", msg=").$safe(stateMsg)
                                         .I$();
-                                // clear() defaults backfillState to ACTIVE. A view torn
-                                // mid-backfill therefore recovers as ACTIVE and resumes the
+                                // clear() defaults seedState to ACTIVE. A view torn
+                                // mid-seed therefore recovers as ACTIVE and resumes the
                                 // forward (incremental) drain from the applied floor with
-                                // correct results; an unfinished backfill sweep does not
+                                // correct results; an unfinished seed sweep does not
                                 // resume, so historical rows it had not yet swept can be
-                                // missing. That is a narrow corruption-during-backfill case
+                                // missing. That is a narrow corruption-during-seed case
                                 // and still strictly better than an undroppable zombie.
                                 stateReader.clear();
                                 stateReader.setSubscribeFromSeqTxn(appliedFloor)
@@ -1016,23 +1016,23 @@ public class CairoEngine implements Closeable, WriterSource {
                                         Numbers.LONG_NULL
                                 );
                             }
-                            // Backfill checkpoints live in a disjoint .bcp
+                            // Seed checkpoints live in a disjoint .scp
                             // namespace. For a view loaded mid-sweep, retain the
-                            // highest .bcp and stamp its key so the first
-                            // backfill turn resumes from it; otherwise retire
-                            // any .bcp leftovers from a pre-completion crash.
+                            // highest .scp and stamp its key so the first
+                            // seed turn resumes from it; otherwise retire
+                            // any .scp leftovers from a pre-completion crash.
                             liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
-                            final boolean isBackfilling = stateReader.getBackfillState()
-                                    == LiveViewState.BACKFILL_STATE_BACKFILLING;
-                            final long headBackfillKey = LiveViewRecovery.sweepBackfillCheckpoints(
+                            final boolean isSeeding = stateReader.getSeedState()
+                                    == LiveViewState.SEED_STATE_SEEDING;
+                            final long headSeedKey = LiveViewRecovery.sweepSeedCheckpoints(
                                     configuration.getFilesFacade(),
                                     sweepPath,
                                     liveViewDirPath,
-                                    isBackfilling,
+                                    isSeeding,
                                     sweepNameSink
                             );
-                            if (headBackfillKey != Numbers.LONG_NULL) {
-                                instance.setHeadBackfillCpKey(headBackfillKey);
+                            if (headSeedKey != Numbers.LONG_NULL) {
+                                instance.setHeadSeedCpKey(headSeedKey);
                             }
                         }
                     } catch (CairoException ce) {
@@ -1181,11 +1181,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
-        // Return any base-table readers pinned by an in-flight backfill sweep to the
+        // Return any base-table readers pinned by an in-flight seed sweep to the
         // reader pool before it is freed below, so the pool teardown does not report
         // a still-borrowed reader as left behind. Safe here: close() runs after the
         // refresh workers have stopped, so no sweep turn is reading from them.
-        liveViewRegistry.freeBackfillBaseReaders();
+        liveViewRegistry.freeSeedBaseReaders();
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);
@@ -1259,29 +1259,28 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
         }
-        // viewLowerBoundTimestamp is the resolved START FROM boundary: the floor for O3
-        // reachability, compared against late_row.ts in base-table units. Each start mode
-        // resolves it once, here, and the view persists the resolved value:
+        // viewLowerBoundTimestamp is the resolved START FROM boundary, and it is the view's
+        // whole membership rule: a base row belongs to the view iff its designated timestamp
+        // sits at or above the bound. The initial seed, the forward-append path and every
+        // applied-base replay all apply it, so they agree on the row set by construction.
+        // Each start mode resolves the bound once, here, and the view persists it:
         //
         // - NOW takes the wall-clock CREATE moment, scaled into base units via the base's
         //   driver so MICRO and NANO bases both produce a comparable value. The catalogue
         //   converts back to TIMESTAMP_MICRO at display time.
         // - An explicit timestamp parses the user's literal against the base's driver, so it
         //   keeps the base's precision.
-        // - BEGINNING seeds from the earliest visible base row, so the floor sits at that
-        //   row's timestamp (already in base units): every historical row from there is
-        //   admissible during the sweep, and any later O3 row below it is rejected. An empty
-        //   base falls back to the CREATE moment.
+        // - BEGINNING has no lower bound: it persists Numbers.LONG_NULL, which is
+        //   Long.MIN_VALUE, so `ts >= bound` admits every row without a mode branch on the
+        //   refresh hot paths. Deriving a floor from the base's minimum timestamp instead -
+        //   as this used to - would wrongly reject a later O3 row back-dated below whatever
+        //   the minimum happened to be at CREATE.
         final int startFromKind = op.getStartFromKind();
         final long createMomentLowerBound = ColumnType.getTimestampDriver(baseTimestampType)
                 .fromMicros(configuration.getMicrosecondClock().getTicks());
         switch (startFromKind) {
             case LiveViewDefinition.START_FROM_BEGINNING:
-                try (TableReader baseReader = getReader(baseTableToken)) {
-                    viewLowerBoundTimestamp = baseReader.size() == 0
-                            ? createMomentLowerBound
-                            : baseReader.getMinTimestamp();
-                }
+                viewLowerBoundTimestamp = Numbers.LONG_NULL;
                 break;
             case LiveViewDefinition.START_FROM_TIMESTAMP:
                 viewLowerBoundTimestamp = LiveViewDefinition.parseStartFromTimestamp(
@@ -1417,13 +1416,12 @@ public class CairoEngine implements Closeable, WriterSource {
         // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
         final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
 
-        // Capture base sequencer head. START FROM NOW and START FROM '<timestamp>' views
-        // start empty and consume commits with seqTxn >= subscribeFromSeqTxn. START FROM
-        // BEGINNING views capture the same head as backfillTargetSeqTxn (the upper bound
-        // the sweep covers) and start incremental consumption at head + 1 once the sweep
-        // completes. The initial seed that START FROM '<timestamp>' and NOW also need over
-        // pre-CREATE rows lands with the generalized seeding work; today they are still
-        // forward-only, so a pre-CREATE row at or above the boundary is not seeded.
+        // Capture base sequencer head. It is the upper bound of the initial seed
+        // (seedTargetSeqTxn) and, one past it, the first base commit the incremental drain
+        // is responsible for (subscribeFromSeqTxn). Whichever start mode the view uses, the
+        // seed sweep reads the base snapshot and feeds the rows that satisfy the START FROM
+        // boundary, so a pre-CREATE row above the boundary is in the view from the moment the
+        // seed completes rather than appearing later when a replay happens to run.
         //
         // The tracker's writerTxn is UNINITIALIZED (-1) until CheckWalTransactionsJob
         // first sees the base table, and notifyWalTxnRepublisher resets it back to -1
@@ -1441,28 +1439,35 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
         final long subscribeFromSeqTxn = baseHeadSeqTxn + 1;
-        // START FROM BEGINNING is the mode that sweeps the base's history at startup, so it
-        // is the mode that drives the backfill state machine.
-        final boolean seedsFromBeginning = startFromKind == LiveViewDefinition.START_FROM_BEGINNING;
-        final byte backfillState = seedsFromBeginning
-                ? LiveViewState.BACKFILL_STATE_BACKFILLING
-                : LiveViewState.BACKFILL_STATE_ACTIVE;
-        final long backfillTargetSeqTxn = seedsFromBeginning
+        // The seed exists to cover the base's pre-CREATE history, and a base with no
+        // committed transaction has none: seqTxn 0 means no commit has ever landed, so the
+        // snapshot the seed would scan is empty by construction and the view can start
+        // ACTIVE. This is not an optimisation - it is what keeps the seed from reaching
+        // forward. The sweep cannot pin a reader at an exact past seqTxn, so it scans
+        // whatever the base has applied by the time its first turn runs; over an empty base
+        // that snapshot would already hold the rows of any commit that landed between CREATE
+        // and that turn, and the seed would swallow commits the incremental drain owns -
+        // bypassing the FLUSH EVERY cadence and the in-memory tier for them. Membership is
+        // unaffected either way (both paths apply the same boundary), but the drain is the
+        // path that is meant to carry post-CREATE rows.
+        final boolean hasBaseHistory = baseHeadSeqTxn > 0;
+        final byte seedState = hasBaseHistory
+                ? LiveViewState.SEED_STATE_SEEDING
+                : LiveViewState.SEED_STATE_ACTIVE;
+        final long seedTargetSeqTxn = hasBaseHistory
                 ? baseHeadSeqTxn
                 : Numbers.LONG_NULL;
-        // Initial WAL purge floor this view publishes. BACKFILLING sits at
-        // backfillTargetSeqTxn - 1: the snapshot reader MVCC-pins everything
-        // <= the target, so base WAL up to the target is not load-bearing, while
-        // one extra segment stays retained for the deferred ring drain after the
-        // sweep. A view that does not sweep starts at subscribeFromSeqTxn - 1 -
-        // everything from subscribeFromSeqTxn forward is the view's responsibility.
-        // Clamp the floor at 0: an empty base has backfillTargetSeqTxn=0, and a raw
-        // -1 collides with the "no floor" sentinel WalPurgeJob tests (lvConsumed >
-        // -1), which would let purge delete base WAL 1..K before the first drain
-        // reads it. 0 pins the floor without retaining anything, matching the
-        // no-sweep empty-base case (subscribeFromSeqTxn - 1 == 0).
-        final long initialLvConsumedSeqTxn = Math.max(0, seedsFromBeginning
-                ? backfillTargetSeqTxn - 1
+        // Initial WAL purge floor this view publishes. A SEEDING view sits at
+        // seedTargetSeqTxn - 1: the snapshot reader MVCC-pins everything <= the target, so
+        // base WAL up to the target is not load-bearing, while one extra segment stays
+        // retained for the deferred ring drain the sweep hands over to. A view that starts
+        // ACTIVE owns everything from subscribeFromSeqTxn forward, so it floors at
+        // subscribeFromSeqTxn - 1 (which is 0 for the empty base that put it there).
+        // Clamp at 0 regardless: a raw -1 collides with the "no floor" sentinel WalPurgeJob
+        // tests (lvConsumed > -1), which would let purge delete base WAL 1..K before the
+        // first drain reads it. 0 pins the floor without retaining anything.
+        final long initialLvConsumedSeqTxn = Math.max(0, hasBaseHistory
+                ? seedTargetSeqTxn - 1
                 : subscribeFromSeqTxn - 1);
 
         // Build the definition up front so it can ride into the sequencer
@@ -1549,9 +1554,9 @@ public class CairoEngine implements Closeable, WriterSource {
                             .put(path).put(']');
                 }
 
-                // write _lv.s state file with subscribeFromSeqTxn captured above.
-                // BACKFILL views land BACKFILL_STATE_BACKFILLING plus the target
-                // seqTxn the sweep must cover.
+                // write _lv.s state file with the seqTxns captured above. A view over a base
+                // with history lands SEED_STATE_SEEDING plus the target seqTxn its sweep must
+                // cover; over an empty base it lands ACTIVE with no target.
                 path.of(configuration.getDbRoot()).concat(liveViewToken);
                 blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
                 LiveViewState.append(
@@ -1562,8 +1567,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         subscribeFromSeqTxn - 1,
                         -1L,
                         initialLvConsumedSeqTxn,
-                        backfillState,
-                        backfillTargetSeqTxn,
+                        seedState,
+                        seedTargetSeqTxn,
                         blockFileWriter
                 );
 
@@ -1573,8 +1578,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);
                 instance.setLvConsumedSeqTxn(initialLvConsumedSeqTxn);
-                instance.setBackfillState(backfillState);
-                instance.setBackfillTargetSeqTxn(backfillTargetSeqTxn);
+                instance.setSeedState(seedState);
+                instance.setSeedTargetSeqTxn(seedTargetSeqTxn);
                 liveViewRegistry.registerView(instance);
                 dependentViewGraph.addLiveView(liveViewToken, definition.getBaseTableName());
                 liveViewStateStore.registerBaseTable(definition.getBaseTableName());
@@ -2588,8 +2593,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         reader.getLastProcessedSeqTxn(),
                         reader.getAppliedWatermark(),
                         reader.getLvConsumedSeqTxn(),
-                        reader.getBackfillState(),
-                        reader.getBackfillTargetSeqTxn(),
+                        reader.getSeedState(),
+                        reader.getSeedTargetSeqTxn(),
                         blockFileWriter
                 );
             } catch (Throwable t) {
@@ -2694,8 +2699,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                 reader.getLastProcessedSeqTxn(),
                                 reader.getAppliedWatermark(),
                                 reader.getLvConsumedSeqTxn(),
-                                reader.getBackfillState(),
-                                reader.getBackfillTargetSeqTxn(),
+                                reader.getSeedState(),
+                                reader.getSeedTargetSeqTxn(),
                                 blockFileWriter
                         );
                     } catch (Throwable t) {

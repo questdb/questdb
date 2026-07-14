@@ -89,9 +89,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   asserts the drop tears the view down cleanly - registry empty, base table intact,
  *   no leak, no crash - whatever the interleaving.</li>
  *   <li><b>Concurrent CREATE during ingestion.</b> A {@code CREATE LIVE VIEW ...
- *   BACKFILL} races concurrent base writes. The earliest rows are committed before
- *   CREATE so the backfill floor sits at the global-min timestamp and no concurrently
- *   ingested row falls below it; the backfill sweep and forward refresh between them
+ *   SEED} races concurrent base writes. The earliest rows are committed before
+ *   CREATE so the seed floor sits at the global-min timestamp and no concurrently
+ *   ingested row falls below it; the seed sweep and forward refresh between them
  *   cover every row exactly once, so the final state still equals a from-scratch
  *   recompute.</li>
  *   <li><b>Reader-churn soak.</b> Many reader threads repeatedly open and drain a
@@ -126,7 +126,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the incremental and the batch path agree on. Out-of-order ingestion comes purely
  * from the cross-writer commit interleaving, never from colliding timestamps.
  * <p>
- * The test clock is pinned a full year below the data: a non-backfill view's lower
+ * The test clock is pinned a full year below the data: a non-seed view's lower
  * bound is the wall-clock CREATE moment and O3 head-miss replay only re-emits base
  * rows at or above that floor, so the data must sit above the clock. The refresh
  * driver advances the clock to clear FLUSH EVERY gating, but never by enough to cross
@@ -202,21 +202,21 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
     @Test
     public void testConcurrentCreateDuringIngestion() throws Exception {
-        // CREATE LIVE VIEW ... BACKFILL races concurrent base ingestion.
+        // CREATE LIVE VIEW ... SEED races concurrent base ingestion.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runCreateDuringIngestion(rnd, 4, 700));
     }
 
     @Test
-    public void testConcurrentDropDuringBackfill() throws Exception {
-        // DROP LIVE VIEW races a refresh driver that is still driving the BACKFILL
-        // sweep while writers ingest the suffix. This tears down the backfill state
-        // (sweep cursor, rolling .bcp checkpoints, in-mem tier) mid-sweep, a path
-        // the non-backfill DROP-during-refresh test never reaches. Whatever the
+    public void testConcurrentDropDuringSeed() throws Exception {
+        // DROP LIVE VIEW races a refresh driver that is still driving the SEED
+        // sweep while writers ingest the suffix. This tears down the seed state
+        // (sweep cursor, rolling .scp checkpoints, in-mem tier) mid-sweep, a path
+        // the non-seed DROP-during-refresh test never reaches. Whatever the
         // interleaving, the drop must leave the registry empty and the base table
         // intact, with no leak or crash.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runDropDuringBackfill(rnd, 4, 700));
+        assertMemoryLeak(() -> runDropDuringSeed(rnd, 4, 700));
     }
 
     @Test
@@ -577,7 +577,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // (so OVER (ORDER BY ts) and the natural ts scan order used by OVER () are total
     // orders both the incremental and the batch path agree on), random symbols and
     // values with occasional NULLs. The data starts a year above the test clock so
-    // every row sits above a non-backfill view's CREATE-moment lower bound.
+    // every row sits above a non-seed view's CREATE-moment lower bound.
     private static void generateDataset(Rnd rnd, int rowCount, long[] tsv, int[] symIdx, long[] iv, double[] xv) {
         long ts = MicrosTimestampDriver.floor(DATA_START);
         for (int k = 0; k < rowCount; k++) {
@@ -605,7 +605,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         };
     }
 
-    // Drives the named view's backfill sweep to completion, re-fetching the instance
+    // Drives the named view's seed sweep to completion, re-fetching the instance
     // each pass, then applies the LV WAL. Mirrors the fuzz harness.
 
     // Pumps the refresh job until no further LV WAL work is produced, advancing the
@@ -1137,7 +1137,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
-    // CREATE LIVE VIEW ... BACKFILL races concurrent base ingestion: the writers and
+    // CREATE LIVE VIEW ... SEED races concurrent base ingestion: the writers and
     // the CREATE start together off the barrier, so the view comes into being while
     // the suffix is still being written.
     private void runCreateDuringIngestion(Rnd rnd, int numWriters, int rowCount) throws Exception {
@@ -1158,9 +1158,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
 
         // Pre-commit the earliest rows [0, preCount) single-threaded, BEFORE CREATE, so
-        // the BACKFILL floor sits at the global-min timestamp (tsv[0]). Every row the
+        // the SEED floor sits at the global-min timestamp (tsv[0]). Every row the
         // writers ingest concurrently with CREATE is then above the floor, so even an O3
-        // commit is never rejected as sub-floor (Finding 3) - the backfill sweep and
+        // commit is never rejected as sub-floor (Finding 3) - the seed sweep and
         // forward refresh between them cover the full row set exactly once, so the view
         // still equals the recompute. The suffix [preCount, rowCount) races CREATE.
         final int preCount = 1 + rnd.nextInt(8);
@@ -1201,10 +1201,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 throw new RuntimeException("worker thread failed", errors.peek());
             }
 
-            // Quiesce single-threaded: finish the backfill sweep, then drain forward.
+            // Quiesce single-threaded: finish the seed sweep, then drain forward.
             job = new LiveViewRefreshJob(0, engine, 1);
             drainWalQueue();
-            driveBackfillToCompletion(job, "lv");
+            driveSeedToCompletion(job, "lv");
             driveRefreshToQuiescence(job);
         } finally {
             Misc.free(job);
@@ -1325,12 +1325,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
-    // DROP LIVE VIEW races a refresh driver that is still driving the BACKFILL
+    // DROP LIVE VIEW races a refresh driver that is still driving the SEED
     // sweep while writers ingest the suffix. The earliest rows are pre-committed so
     // the sweep has real history to chew through when the drop lands mid-sweep. The
-    // contract is a clean teardown of the backfill state (sweep cursor, rolling
-    // .bcp checkpoints, in-mem tier): registry empty, base intact, no leak.
-    private void runDropDuringBackfill(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // contract is a clean teardown of the seed state (sweep cursor, rolling
+    // .scp checkpoints, in-mem tier): registry empty, base intact, no leak.
+    private void runDropDuringSeed(Rnd rnd, int numWriters, int rowCount) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -1347,7 +1347,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final double[] xv = new double[rowCount];
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
 
-        // Pre-commit the earliest half so BACKFILL captures a non-trivial history
+        // Pre-commit the earliest half so SEED captures a non-trivial history
         // (the sweep is still running when the DROP lands). The remaining suffix is
         // ingested concurrently with the drop.
         final int preCount = Math.max(1, rowCount / 2);
@@ -1362,7 +1362,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         execute(createSql);
 
-        LOG.info().$("LV concurrency DROP-during-backfill: writers=").$(numWriters)
+        LOG.info().$("LV concurrency DROP-during-seed: writers=").$(numWriters)
                 .$(", rows=").$(rowCount).$(", n=").$(n).$(", preCount=").$(preCount)
                 .$(", sql=").$(viewSql).$();
 
@@ -1372,7 +1372,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         try {
             // numWriters writers + the refresh driver + this (main) thread, released
             // together, so by the time the main thread fires the DROP the writers
-            // are ingesting and the driver is driving the backfill sweep.
+            // are ingesting and the driver is driving the seed sweep.
             final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
@@ -1385,7 +1385,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     while (refreshing.get()) {
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
-                        drainJob(job); // drives both the backfill sweep and forward refresh
+                        drainJob(job); // drives both the seed sweep and forward refresh
                     }
                 } catch (Throwable th) {
                     errors.add(th);
@@ -1399,7 +1399,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
             driver.start();
             barrier.await();
-            execute("DROP LIVE VIEW lv"); // races the in-flight backfill + ingestion
+            execute("DROP LIVE VIEW lv"); // races the in-flight seed + ingestion
 
             for (Thread t : writers) {
                 t.join();

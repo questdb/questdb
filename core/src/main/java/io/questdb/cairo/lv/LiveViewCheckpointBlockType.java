@@ -44,15 +44,15 @@ public final class LiveViewCheckpointBlockType {
     public static final int BLOCK_WINDOW_ANCHOR = 2;
 
     /**
-     * Present iff the checkpoint covers an in-progress backfill sweep
-     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}, written to
-     * the {@code .bcp} namespace). Payload is two LONGs: the sweep's
+     * Present iff the checkpoint covers an in-progress seed sweep
+     * ({@link LiveViewCheckpointManifest#getKind() kind == KIND_SEED}, written to
+     * the {@code .scp} namespace). Payload is two LONGs: the sweep's
      * data-cursor row offset (the {@code skipRows} resume position) and the
      * live-view row count at the checkpoint (the skip-write reconciliation
-     * floor). The refresh worker writes one per backfill turn so a restart
+     * floor). The refresh worker writes one per seed turn so a restart
      * mid-sweep resumes from the latest turn rather than re-sweeping.
      */
-    public static final int BLOCK_BACKFILL_CURSOR = 1;
+    public static final int BLOCK_SEED_CURSOR = 1;
 
     /**
      * One per window function in the live view's compiled SELECT. Payload
@@ -74,7 +74,7 @@ public final class LiveViewCheckpointBlockType {
 
     public static boolean isKnown(int blockType) {
         return blockType == BLOCK_MANIFEST
-                || blockType == BLOCK_BACKFILL_CURSOR
+                || blockType == BLOCK_SEED_CURSOR
                 || blockType == BLOCK_WINDOW_ANCHOR
                 || blockType == BLOCK_FUNCTION_SNAPSHOT;
     }
@@ -83,8 +83,8 @@ public final class LiveViewCheckpointBlockType {
         switch (blockType) {
             case BLOCK_MANIFEST:
                 return "MANIFEST";
-            case BLOCK_BACKFILL_CURSOR:
-                return "BACKFILL_CURSOR";
+            case BLOCK_SEED_CURSOR:
+                return "SEED_CURSOR";
             case BLOCK_WINDOW_ANCHOR:
                 return "WINDOW_ANCHOR";
             case BLOCK_FUNCTION_SNAPSHOT:

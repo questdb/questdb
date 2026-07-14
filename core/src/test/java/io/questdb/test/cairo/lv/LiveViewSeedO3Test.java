@@ -35,7 +35,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * The BACKFILL sweep is multi-turn: it yields on a per-turn row/duration budget and
+ * The SEED sweep is multi-turn: it yields on a per-turn row/duration budget and
  * resumes positionally with {@code skipRows(dataOffset)}. A base page-frame cursor
  * yields rows in physical ts-sorted order, and an out-of-order base apply merge-
  * rewrites the partition to preserve that order. If the sweep re-opened the base at
@@ -51,17 +51,17 @@ import org.junit.Test;
  * back-dated commit between two sweep turns and asserts the view still equals a
  * from-scratch recompute over the final base.
  */
-public class LiveViewBackfillO3Test extends AbstractLiveViewTest {
+public class LiveViewSeedO3Test extends AbstractLiveViewTest {
 
     @Before
     public void pinClockBelowTestData() {
         // Pin the test clock below all test data so the ACTIVE phase's lower-bound floor
-        // (the BACKFILL global-min timestamp) accepts the back-dated row injected mid-sweep.
+        // (the SEED global-min timestamp) accepts the back-dated row injected mid-sweep.
         setCurrentMicros(0L);
     }
 
     @Test
-    public void testBackfillO3BelowSweptPrefixMatchesRecompute() throws Exception {
+    public void testSeedO3BelowSweptPrefixMatchesRecompute() throws Exception {
         // One row per turn: the sweep yields after every base row, so we can stop it
         // mid-sweep and inject a back-dated commit before the remaining turns run.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -88,22 +88,22 @@ public class LiveViewBackfillO3Test extends AbstractLiveViewTest {
                 Assert.assertNotNull(inst);
 
                 // Drive exactly three sweep turns (ts 10, 20, 30 swept; dataOffset == 3),
-                // stopping while the view is still BACKFILLING.
-                for (int i = 0; i < 100 && inst.getBackfillDataOffset() < 3; i++) {
-                    if (inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
+                // stopping while the view is still SEEDING.
+                for (int i = 0; i < 100 && inst.getSeedDataOffset() < 3; i++) {
+                    if (inst.getStateReader().getSeedState() != LiveViewState.SEED_STATE_SEEDING) {
                         break;
                     }
                     job.run();
                 }
                 Assert.assertEquals(
-                        "the sweep must still be BACKFILLING when the back-dated row is injected",
-                        LiveViewState.BACKFILL_STATE_BACKFILLING,
-                        inst.getStateReader().getBackfillState()
+                        "the sweep must still be SEEDING when the back-dated row is injected",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        inst.getStateReader().getSeedState()
                 );
                 Assert.assertEquals(
                         "exactly the leading prefix must be swept before injection",
                         3,
-                        inst.getBackfillDataOffset()
+                        inst.getSeedDataOffset()
                 );
 
                 // Inject a back-dated row BELOW the swept prefix (ts 15 < swept max ts 30, above
@@ -116,7 +116,7 @@ public class LiveViewBackfillO3Test extends AbstractLiveViewTest {
                 // Finish the sweep off the pinned snapshot, then let the ACTIVE phase drain and
                 // materialise the back-dated row via its O3 detection.
                 for (int i = 0; i < 2000; i++) {
-                    if (inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
+                    if (inst.getStateReader().getSeedState() != LiveViewState.SEED_STATE_SEEDING) {
                         break;
                     }
                     job.run();

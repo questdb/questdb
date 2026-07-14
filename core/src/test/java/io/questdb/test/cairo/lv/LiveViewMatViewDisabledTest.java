@@ -68,19 +68,19 @@ public class LiveViewMatViewDisabledTest extends AbstractBootstrapTest {
                         "(1, '2024-01-01T00:00:00.000000Z')," +
                         "(2, '2024-01-01T00:00:01.000000Z')," +
                         "(3, '2024-01-01T00:00:02.000000Z')");
-                // Wait for the base rows to apply before creating the BACKFILL view, so
+                // Wait for the base rows to apply before creating the SEED view, so
                 // the sweep pins a snapshot that already holds all three rows.
                 TestUtils.assertEventually(
                         () -> serverMain.assertSql("SELECT count(*) FROM base", "count\n3\n"),
                         30
                 );
 
-                // BACKFILL admits the pre-existing (historical-timestamp) rows regardless
+                // SEED admits the pre-existing (historical-timestamp) rows regardless
                 // of the view's real-time lower bound, so the assertion is deterministic.
                 serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                         "SELECT val, ts, row_number() OVER () AS rn FROM base");
 
-                // With the refresh job wired, the backfill sweep materialises all three
+                // With the refresh job wired, the seed sweep materialises all three
                 // base rows. Pre-fix (live-view refresh gated on the mat-view flag)
                 // nothing drives the sweep and this poll never converges.
                 TestUtils.assertEventually(

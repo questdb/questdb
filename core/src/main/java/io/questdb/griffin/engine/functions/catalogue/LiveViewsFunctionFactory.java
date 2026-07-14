@@ -56,7 +56,7 @@ import io.questdb.std.ObjList;
  * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}.
  * <p>
  * {@code o3_rejected_count}, {@code below_lower_bound_count},
- * {@code backfill_target_seqtxn}, {@code writer_stall_micros}, and
+ * {@code seed_target_seqtxn}, {@code writer_stall_micros}, and
  * {@code in_mem_bytes} are wired to live values. {@code o3_rejected_count} and
  * {@code below_lower_bound_count} split the rows a view drops for sitting below
  * its lower bound by arrival path - O3 replay vs in-order forward-append - so
@@ -107,7 +107,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
-        private static final int COLUMN_BACKFILL_TARGET_SEQTXN = 21;
+        private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 6;
@@ -290,13 +290,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                             .toMicros(raw);
                         }
                         case COLUMN_HEAD_CHECKPOINT_STATE_BYTES -> instance.getHeadCheckpointStateBytes();
-                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
+                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> {
                             // Persisted in base-table units; convert back to
                             // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
                             // MICRO bases; rounds NS bases down to the MICRO grid.
-                                ColumnType
-                                        .getTimestampDriver(definition.getBaseTimestampType())
-                                        .toMicros(definition.getViewLowerBoundTimestamp());
+                            // START FROM BEGINNING has no lower bound and persists LONG_NULL, which
+                            // passes through as NULL rather than through the driver, whose rescale
+                            // would turn the sentinel into an arbitrary timestamp.
+                            long raw = definition.getViewLowerBoundTimestamp();
+                            yield raw == Numbers.LONG_NULL ? Numbers.LONG_NULL :
+                                    ColumnType
+                                            .getTimestampDriver(definition.getBaseTimestampType())
+                                            .toMicros(raw);
+                        }
                         case COLUMN_WRITER_STALL_MICROS -> {
                             // Current uninterrupted stall duration.
                             // writerStallStartUs is set when the in-mem tier's slow-path
@@ -311,8 +317,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         }
                         // Real target while the sweep is in progress; LONG_NULL
                         // once the sweep completes and the state flips to ACTIVE
-                        // (the field is wiped on the BACKFILLING -> ACTIVE flip).
-                        case COLUMN_BACKFILL_TARGET_SEQTXN -> instance.getStateReader().getBackfillTargetSeqTxn();
+                        // (the field is wiped on the SEEDING -> ACTIVE flip).
+                        case COLUMN_SEED_TARGET_SEQTXN -> instance.getStateReader().getSeedTargetSeqTxn();
                         // Count of late O3 rows rejected for falling below
                         // viewLowerBoundTimestamp. In-memory counter, resets on
                         // restart.
@@ -393,7 +399,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 18
             metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 19
             metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 20
-            metadata.add(new TableColumnMetadata("backfill_target_seqtxn", ColumnType.LONG));               // 21
+            metadata.add(new TableColumnMetadata("seed_target_seqtxn", ColumnType.LONG));               // 21
             metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 22
             metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 23
             metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 24

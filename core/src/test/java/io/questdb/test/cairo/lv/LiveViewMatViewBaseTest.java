@@ -61,7 +61,7 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
             final String viewSql = "SELECT ts, k, avg(av) OVER (" +
                     "PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS a FROM mvbase";
             // Create over the still-empty mat view so the live view consumes its commits
-            // incrementally rather than backfilling.
+            // incrementally rather than seeding.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 

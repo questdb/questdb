@@ -192,13 +192,13 @@ public final class LiveViewRecovery {
 
     /**
      * Sweeps a live view's {@code _checkpoints/} directory at startup for
-     * rolling backfill checkpoints ({@code <key>.bcp}), a namespace disjoint
+     * rolling seed checkpoints ({@code <key>.scp}), a namespace disjoint
      * from the steady {@code .cp} files {@link #sweepCheckpoints} handles.
      * <p>
-     * Always unlinks {@code *.bcp.tmp} orphans. When {@code isBackfilling} the
-     * view is mid-sweep: retain the highest {@code .bcp} (the resume source),
-     * retire older ones, and return its key. When not backfilling the view has
-     * either completed or never backfilled: retire every {@code .bcp} (leftovers
+     * Always unlinks {@code *.scp.tmp} orphans. When {@code isSeeding} the
+     * view is mid-sweep: retain the highest {@code .scp} (the resume source),
+     * retire older ones, and return its key. When not seeding the view has
+     * either completed or never seeded: retire every {@code .scp} (leftovers
      * from a crash before the post-completion unlink) and return
      * {@link Numbers#LONG_NULL}.
      *
@@ -206,16 +206,16 @@ public final class LiveViewRecovery {
      * @param sweepPath     reusable {@link Path}, re-based on entry
      * @param liveViewDir   absolute path to the LV directory (no
      *                      {@code _checkpoints/} suffix)
-     * @param isBackfilling whether the view loaded in BACKFILLING state
+     * @param isSeeding whether the view loaded in SEEDING state
      * @param nameSink      reusable sink for filename decoding; cleared on entry
-     * @return the highest surviving {@code .bcp} key when backfilling, else
+     * @return the highest surviving {@code .scp} key when seeding, else
      * {@link Numbers#LONG_NULL}
      */
-    public static long sweepBackfillCheckpoints(
+    public static long sweepSeedCheckpoints(
             @NotNull FilesFacade ff,
             @NotNull Path sweepPath,
             @NotNull Path liveViewDir,
-            boolean isBackfilling,
+            boolean isSeeding,
             @NotNull StringSink nameSink
     ) {
         sweepPath.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
@@ -240,20 +240,20 @@ public final class LiveViewRecovery {
                 if (Chars.equals(nameSink, ".") || Chars.equals(nameSink, "..")) {
                     continue;
                 }
-                if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_TMP_FILE_EXT)) {
+                if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_SCP_TMP_FILE_EXT)) {
                     unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
                     continue;
                 }
-                if (!Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT)) {
+                if (!Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_SCP_FILE_EXT)) {
                     // Steady .cp or foreign noise - not our namespace.
                     continue;
                 }
-                final long key = parseKeyBeforeExt(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT.length());
+                final long key = parseKeyBeforeExt(nameSink, LiveViewCheckpointWriter.CP_SCP_FILE_EXT.length());
                 if (key == Numbers.LONG_NULL) {
                     continue;
                 }
-                if (!isBackfilling) {
-                    // Completed (or never-backfilled) view: no .bcp should
+                if (!isSeeding) {
+                    // Completed (or never-seeded) view: no .scp should
                     // survive. Retire leftovers from a pre-unlink crash.
                     unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
                     continue;
@@ -265,10 +265,10 @@ public final class LiveViewRecovery {
         } finally {
             ff.findClose(findPtr);
         }
-        if (!isBackfilling || highest == Numbers.LONG_NULL) {
+        if (!isSeeding || highest == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        // Second pass: retire .bcp files older than the survivor.
+        // Second pass: retire .scp files older than the survivor.
         sweepPath.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
         final long findPtr2 = ff.findFirst(sweepPath.$());
         if (findPtr2 == 0) {
@@ -284,11 +284,11 @@ public final class LiveViewRecovery {
                 if (!Utf8s.utf8ToUtf16Z(namePtr, nameSink)) {
                     continue;
                 }
-                if (!Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT)
-                        || Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_TMP_FILE_EXT)) {
+                if (!Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_SCP_FILE_EXT)
+                        || Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_SCP_TMP_FILE_EXT)) {
                     continue;
                 }
-                final long key = parseKeyBeforeExt(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT.length());
+                final long key = parseKeyBeforeExt(nameSink, LiveViewCheckpointWriter.CP_SCP_FILE_EXT.length());
                 if (key == Numbers.LONG_NULL || key == highest) {
                     continue;
                 }
