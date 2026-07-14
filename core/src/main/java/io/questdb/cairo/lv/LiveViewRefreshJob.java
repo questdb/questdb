@@ -1848,7 +1848,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The timestamp at or above which a REPLACE_RANGE commit can have removed a row the live view
      * emitted, or {@link Numbers#LONG_NULL} when it cannot have removed one. Both drains use it as
      * the commit's effective minimum timestamp (its inserted rows may all sit above the frontier,
-     * or be absent entirely), and the replay uses it as the REPLACE_RANGE low boundary.
+     * or be absent entirely), and the replay uses it as the REPLACE_RANGE low boundary. The
+     * enterprise replica's applied-base lead drain shares it too, so a read-only replica raises its
+     * O3 hatch on exactly the commits the primary replays -- hence {@code protected}.
      * <p>
      * The range low is clamped up to the view's START FROM boundary: the view holds no row below
      * it, so a deletion down there removes nothing of the view's. That clamp is what keeps the
@@ -1864,7 +1866,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * non-null timestamp instead of resting on that. LONG_NULL is not a legal designated
      * timestamp, so its successor still sits at or below every row the base can hold.
      */
-    private static long effectiveReplaceRangeDeleteLo(WalEventCursor.DataInfo dataInfo, long viewLowerBoundTimestamp) {
+    protected static long effectiveReplaceRangeDeleteLo(WalEventCursor.DataInfo dataInfo, long viewLowerBoundTimestamp) {
         if (dataInfo.getDedupMode() != WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
             return Numbers.LONG_NULL;
         }
