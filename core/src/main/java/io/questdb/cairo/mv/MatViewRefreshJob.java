@@ -48,6 +48,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -2302,7 +2303,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         // Accurate reason for both the log line and the persisted invalid state. hasTruncate()
                         // takes precedence when both a truncate and a delete fall in the same scanned gap
                         // (either alone is sufficient to invalidate).
-                        final CharSequence barrierReason = txnRangeLoader.hasTruncate() ? "truncate operation" : "delete operation";
+                        final CharSequence barrierReason = txnRangeLoader.hasTruncate() ? "truncate operation" : DeleteOperation.MAT_VIEW_INVALIDATION_REASON;
                         LOG.info().$("marking materialized view as invalid [view=").$(viewToken)
                                 .$(", reason=").$(barrierReason).$(", ts=").$ts(invalidationTimestamp)
                                 .I$();

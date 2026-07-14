@@ -204,7 +204,7 @@ public class OperationExecutor implements Closeable {
                 // Hoisted above the inner try so the catch (CairoException) below can read it. Default false is the
                 // SAFE value: if the assignment itself throws (before any window commits) the catch treats this as
                 // the atomic route - correct, because nothing was durably committed for this delete yet.
-                boolean diskBounded = false;
+                boolean isDiskBounded = false;
                 try {
                     // Opt-in non-atomic disk-bounded route (H1, cairo.wal.delete.disk.bounded): only for the
                     // arbitrary (non-time-range) survivor-replace on a table that actually has Parquet
@@ -217,20 +217,20 @@ public class OperationExecutor implements Closeable {
                     // apply. Still crash-safe: a crash mid-loop leaves durable S-1, the whole delete re-applies,
                     // finished windows re-apply as no-ops (survivors-of-survivors) and already-native partitions
                     // re-convert as no-ops.
-                    diskBounded = !deleteOp.isPureTimeRange()
+                    isDiskBounded = !deleteOp.isPureTimeRange()
                             && engine.getConfiguration().getWalDeleteDiskBounded()
                             && tableWriterHasParquet(tableWriter);
                     // Observability (M1): one line per DELETE apply naming the route taken. The strategy label
                     // is derived from the SAME predicates used to pick the route below (isPureTimeRange() and
-                    // the just-computed diskBounded), never re-derived independently, so it cannot drift from
+                    // the just-computed isDiskBounded), never re-derived independently, so it cannot drift from
                     // the actual routing decision.
                     final String deleteStrategy = deleteOp.isPureTimeRange()
                             ? "time-range"
-                            : (diskBounded ? "survivor-window-disk-bounded" : "survivor-window");
+                            : (isDiskBounded ? "survivor-window-disk-bounded" : "survivor-window");
                     LOG.info().$("DELETE apply [table=").$(tableToken)
                             .$(", strategy=").$(deleteStrategy)
                             .$(", seqTxn=").$(seqTxn).I$();
-                    if (diskBounded) {
+                    if (isDiskBounded) {
                         return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
                     }
 
@@ -287,21 +287,21 @@ public class OperationExecutor implements Closeable {
                     // re-runs txn S and idempotently completes the whole delete. (Today no WAL-tolerable exception
                     // can arise inside the disk-bounded loop - convert/replace/getCursor raise only critical errnos -
                     // so this is a defense-in-depth guard, not a live-bug fix.)
-                    if (ex.isWALTolerable() && !diskBounded) {
+                    if (ex.isWALTolerable() && !isDiskBounded) {
                         // Mark this txn applied and skip it (mirrors TableWriter.apply).
                         tableWriter.commitSeqTxn(seqTxn);
                         return 0;
                     }
                     // Mark as not applied so the apply job can retry.
                     tableWriter.setSeqTxn(seqTxn - 1);
-                    if (diskBounded && ex.isWALTolerable()) {
+                    if (isDiskBounded && ex.isWALTolerable()) {
                         // setSeqTxn(S-1)+throw is NOT enough to suspend on this route: our CALLER,
                         // ApplyWal2TableJob.processWalSql, has its own catch (CairoException) that treats a rethrown
                         // WAL-tolerable error exactly like the atomic route here does - it re-finalizes with
                         // commitSeqTxn(seqTxn), silently marking this PARTIAL disk-bounded delete complete at S. Only a
                         // NON-WAL-tolerable (critical) error makes that caller rethrow-and-suspend. So convert it:
                         // rethrow as critical, preserving the original errno/message, to force suspend + retry of the
-                        // whole delete. (Belt-and-braces with the !diskBounded skip-guard above; both are needed
+                        // whole delete. (Belt-and-braces with the !isDiskBounded skip-guard above; both are needed
                         // because both this catch AND the caller's catch would otherwise skip a WAL-tolerable error.)
                         throw CairoException.critical(0)
                                 .put("WAL-tolerable error on the non-atomic disk-bounded DELETE path must suspend, not skip [origErrno=")
@@ -334,6 +334,21 @@ public class OperationExecutor implements Closeable {
                     // backstops the case where the guarded rollback() above threw partway through its own
                     // cleanup (th2, logged above) before reaching the reload.
                     tableWriter.setSeqTxn(seqTxn - 1);
+                    if (isDiskBounded && th instanceof SqlException se && se.isWalRecoverable()) {
+                        // Symmetric with the catch (CairoException) isDiskBounded guard above. On the non-atomic
+                        // disk-bounded route earlier windows already committed at the durable seqTxn S-1, so a skip
+                        // here would finalize a PARTIALLY-applied delete at S and never retry it (silent partial
+                        // delete). A walRecoverable SqlException rethrown from here would be caught by
+                        // ApplyWal2TableJob.processWalSql's INNER catch (SqlException), which SKIPS (marks applied)
+                        // on isWalRecoverable() -- exactly that hazard. Convert to critical to force suspend + retry
+                        // of the whole delete. (Defense-in-depth: today no walRecoverable SqlException can arise
+                        // inside the window loop -- walRecoverable is produced only at compile time, the predicate
+                        // compiles once BEFORE the loop, and DELETE subqueries are banned -- but this mirrors the
+                        // CairoException guard so the two error kinds cannot diverge on this data-loss-critical path.)
+                        throw CairoException.critical(0)
+                                .put("walRecoverable SQL error on the non-atomic disk-bounded DELETE path must suspend, not skip [msg=")
+                                .put(se.getFlyweightMessage()).put(']');
+                    }
                     throw th;
                 }
             }
@@ -462,6 +477,35 @@ public class OperationExecutor implements Closeable {
     }
 
     /**
+     * Builds the SELECT*-survivor -&gt; writer row copier shared by both survivor-replace routes. The survivor
+     * cursor is a schema-identical SELECT * over the table, so its columns line up 1:1 with the writer's and the
+     * designated timestamp sits at the same index; the copier is built over an EntityColumnFilter covering all
+     * columns (mirrors MatViewRefreshJob.getRecordToRowCopier). Extracted so the 1:1 column mapping cannot drift
+     * between the atomic and disk-bounded routes.
+     */
+    private RecordToRowCopier buildSurvivorCopier(SqlCompiler compiler, RecordCursorFactory survivorFactory, TableWriter tableWriter) {
+        entityColumnFilter.of(survivorFactory.getMetadata().getColumnCount());
+        return RecordToRowCopierUtils.generateCopier(
+                compiler.getAsm(),
+                survivorFactory.getMetadata(),
+                tableWriter.getMetadata(),
+                entityColumnFilter,
+                engine.getConfiguration()
+        );
+    }
+
+    /**
+     * Exclusive high of the survivor-replace window starting at {@code wLo}, overflow-safe: caps at
+     * {@code maxTs + 1} when the remaining span fits within one {@code step}, so the final window never computes
+     * {@code wLo + step} past {@code Long.MAX_VALUE}. Extracted so the window-tiling boundary math cannot drift
+     * between the atomic and disk-bounded routes.
+     */
+    private static long windowHiExcl(long wLo, long step, long maxTs) {
+        final long remaining = maxTs - wLo + 1; // >= 1
+        return (step >= remaining) ? (maxTs + 1) : (wLo + step);
+    }
+
+    /**
      * Windowed survivor replace (Task 5 / C1): overwrites the table's whole populated timestamp range
      * {@code [minTimestamp, maxTimestamp+1)} with the survivor rows, tiled into ~{@code rowsPerStep}-sized
      * windows so peak O3 memory is bounded to one window regardless of table size - instead of staging every
@@ -494,18 +538,8 @@ public class OperationExecutor implements Closeable {
             return 0;
         }
 
-        // The survivor cursor is a schema-identical SELECT * over the table, so its columns line up 1:1 with
-        // the writer's and the designated timestamp sits at the same index. Build the copier over an
-        // EntityColumnFilter covering all columns (mirrors MatViewRefreshJob.getRecordToRowCopier).
         final int timestampCursorIndex = tableWriter.getMetadata().getTimestampIndex();
-        entityColumnFilter.of(survivorFactory.getMetadata().getColumnCount());
-        final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                compiler.getAsm(),
-                survivorFactory.getMetadata(),
-                tableWriter.getMetadata(),
-                entityColumnFilter,
-                engine.getConfiguration()
-        );
+        final RecordToRowCopier copier = buildSurvivorCopier(compiler, survivorFactory, tableWriter);
 
         final long minTs = tableWriter.getMinTimestamp();
         final long maxTs = tableWriter.getMaxTimestamp();
@@ -524,10 +558,7 @@ public class OperationExecutor implements Closeable {
         try {
             long wLo = minTs;
             while (wLo <= maxTs) {
-                // hiExcl = min(wLo + step, maxTs + 1), overflow-safe: if step covers the rest, this is the
-                // last window.
-                final long remaining = maxTs - wLo + 1; // >= 1
-                final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+                final long wHiExcl = windowHiExcl(wLo, step, maxTs);
 
                 DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
                 DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
@@ -598,17 +629,8 @@ public class OperationExecutor implements Closeable {
             return 0;
         }
 
-        // The survivor cursor is a schema-identical SELECT * over the table, so its columns line up 1:1 with the
-        // writer's and the designated timestamp sits at the same index (mirrors replaceWithSurvivors).
         final int timestampCursorIndex = tableWriter.getMetadata().getTimestampIndex();
-        entityColumnFilter.of(survivorFactory.getMetadata().getColumnCount());
-        final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                compiler.getAsm(),
-                survivorFactory.getMetadata(),
-                tableWriter.getMetadata(),
-                entityColumnFilter,
-                engine.getConfiguration()
-        );
+        final RecordToRowCopier copier = buildSurvivorCopier(compiler, survivorFactory, tableWriter);
 
         final long minTs = tableWriter.getMinTimestamp();
         final long maxTs = tableWriter.getMaxTimestamp();
@@ -624,9 +646,7 @@ public class OperationExecutor implements Closeable {
         long windowCount = 0;
         long wLo = minTs;
         while (wLo <= maxTs) {
-            // hiExcl = min(wLo + step, maxTs + 1), overflow-safe: if step covers the rest, this is the last window.
-            final long remaining = maxTs - wLo + 1; // >= 1
-            final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+            final long wHiExcl = windowHiExcl(wLo, step, maxTs);
             // Convert only THIS window's overlapping Parquet partitions to native (its own commit at S-1), so at
             // most one window's partitions are transiently native.
             convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);

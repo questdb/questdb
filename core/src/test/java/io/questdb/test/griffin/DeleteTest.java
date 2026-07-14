@@ -151,6 +151,23 @@ public class DeleteTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * EXPLAIN does not support DELETE. Rather than let 'delete' fall through to parseSelect (which yields a
+     * confusing column/FROM parse error), parseExplain rejects it with the standard EXPLAIN-target message.
+     */
+    @Test
+    public void testExplainDeleteRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            try {
+                execute("EXPLAIN DELETE FROM t WHERE x = 1");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'create', 'format', 'insert', 'update', 'select' or 'with'");
+            }
+        });
+    }
+
     // ---- end-to-end execution tests (Task 1.10) ----
 
     @Test

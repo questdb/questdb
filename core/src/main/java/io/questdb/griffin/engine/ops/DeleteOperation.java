@@ -54,13 +54,13 @@ public class DeleteOperation extends AbstractOperation {
     public static final String WINDOW_HI_BIND = "__del_win_hi";
     public static final String WINDOW_LO_BIND = "__del_win_lo";
     // Time-range fast-path classification (Task 2.1), computed by SqlCompilerImpl.generateDelete from the
-    // ORIGINAL (un-negated) predicate. When pureTimeRange is true, the whole DELETE predicate reduces to a
+    // ORIGINAL (un-negated) predicate. When isPureTimeRange is true, the whole DELETE predicate reduces to a
     // SINGLE designated-timestamp interval [timeRangeLo, timeRangeHiExcl) with no residual non-timestamp
     // filter, so OperationExecutor.executeDelete applies it as one empty replaceRange over that interval
     // instead of staging survivors. When false, executeDelete falls back to the whole-range survivor-replace
     // (always correct). Bounds are in the table's designated-timestamp units (micros or nanos); an open lower
     // bound is Long.MIN_VALUE and an open upper bound saturates timeRangeHiExcl at Long.MAX_VALUE.
-    private final boolean pureTimeRange;
+    private final boolean isPureTimeRange;
     private final long timeRangeHiExcl;
     private final long timeRangeLo;
     private RecordCursorFactory survivorFactory;
@@ -71,13 +71,13 @@ public class DeleteOperation extends AbstractOperation {
             long tableVersion,
             int tableNamePosition,
             @Nullable RecordCursorFactory survivorFactory,
-            boolean pureTimeRange,
+            boolean isPureTimeRange,
             long timeRangeLo,
             long timeRangeHiExcl
     ) {
         init(CMD_DELETE_TABLE, TableWriterTask.getCommandName(CMD_DELETE_TABLE), tableToken, tableId, tableVersion, tableNamePosition);
         this.survivorFactory = survivorFactory;
-        this.pureTimeRange = pureTimeRange;
+        this.isPureTimeRange = isPureTimeRange;
         this.timeRangeLo = timeRangeLo;
         this.timeRangeHiExcl = timeRangeHiExcl;
     }
@@ -141,7 +141,7 @@ public class DeleteOperation extends AbstractOperation {
      * applied as one empty {@code replaceRange} over the deleted interval (Task 2.1).
      */
     public boolean isPureTimeRange() {
-        return pureTimeRange;
+        return isPureTimeRange;
     }
 
     @Override

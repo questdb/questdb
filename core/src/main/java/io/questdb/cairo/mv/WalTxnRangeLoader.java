@@ -166,6 +166,12 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             // the view keeps pre-barrier rows (stale-valid). A DELETE commits as a non-data SQL
                             // txn (WalTxnType.SQL, cmdType CMD_DELETE_TABLE); getSqlInfo() is valid only when
                             // getType()==SQL, so guard on the type first.
+                            // NB the barrier keys on the CMD_DELETE_TABLE txn TYPE, not the rows removed: the row
+                            // count is not knowable here (the DELETE may be unapplied within this gap), so a
+                            // 0-row DELETE conservatively flags a barrier too -- unlike the live apply path
+                            // (ApplyWal2TableJob, gated on deleted>0) which skips it. Conservative = never-stale:
+                            // at worst a no-op DELETE forces a needless full refresh; it never leaves a
+                            // stale-valid view.
                             // Still scoped to TRUNCATE + DELETE only: DROP/DETACH PARTITION and rows-affected
                             // UPDATE also delete base rows and likewise commit as non-data SQL txns the interval
                             // scan skips, so they share the same gap-skip loss class. Treating those remaining
