@@ -16920,6 +16920,37 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillWithWeekStrideNoDigit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(FROM_TO_DDL);
+
+            String expected = """
+                    ts\tavg
+                    2017-12-20T00:00:00.000000Z\tnull
+                    2017-12-27T00:00:00.000000Z\t48.5
+                    2018-01-03T00:00:00.000000Z\t264.5
+                    2018-01-10T00:00:00.000000Z\t456.5
+                    2018-01-17T00:00:00.000000Z\tnull
+                    2018-01-24T00:00:00.000000Z\tnull
+                    """;
+
+            String queryNoDigit = "select ts, avg(x) from fromto\n" +
+                    "sample by w from '2017-12-20' to '2018-01-31' fill(null) align to calendar";
+            assertQuery(queryNoDigit)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            assertQuery(queryNoDigit.replace("sample by w", "sample by 1w"))
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testSamplePeriodInvalidWithNoUnits() throws Exception {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10 align to calendar",
