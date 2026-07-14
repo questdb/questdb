@@ -653,6 +653,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i64 1L)(i64 along)(=)(&&_sc)" +
                         "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
         );
+
+        // Decide wide-lane capability before mixed column widths select scalar short-circuit IR.
+        // The LONG element widens the INT key, so this whole tree is eligible for four-lane AVX2
+        // and must use lane-wise boolean operators: AND_SC/OR_SC cannot branch per SIMD lane.
+        int options = serialize("along = 1 and anint IN (2, 5_000_000_000)", false, false, false);
+        assertIR(
+                "(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 2L)(i32 anint)(=)(||)" +
+                        "(i64 1L)(i64 along)(=)(&&)(ret)"
+        );
+        assertOptionsHint("wide-lane IN in AND chain", options, OptionsHint.WIDE_LANE);
     }
 
     @Test
