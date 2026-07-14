@@ -151,6 +151,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // re-parses the same constant tokens. The tree does not mutate during serialize(), so the answer
     // is stable; onNodeDescended() clears the cache when it enters the next predicate.
     private final ObjIntHashMap<ExpressionNode> arithExprTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    // Memoizes pure-constant long arithmetic folds for the current predicate. Zero records a failed
+    // fold; positive values are one-based indexes into constantArithFoldValues.
+    private final ObjIntHashMap<ExpressionNode> constantArithFoldCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final LongList constantArithFoldValues = new LongList();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
@@ -165,11 +169,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // long width (a genuine LONG leaf, or a LONG operand promoting the enclosing
     // arithmetic op / comparison), so descend() must emit a full I8 IMM rather
     // than a wrapped I4. Compared by identity (ExpressionNode overrides neither
-    // equals nor hashCode). See markI64WidenFoldRoots.
+    // equals nor hashCode). See markWidthSemantics.
     private final ObjHashSet<ExpressionNode> i64WidenFoldRoots = new ObjHashSet<>();
     // Leaf nodes (column / bind variable / constant) the float-suppressed
     // narrow-i64 widening must sign-extend to i64 for the current predicate.
-    // Holds node references, compared by identity. See markFloatI64WidenLeaves.
+    // Holds node references, compared by identity. See markWidthSemantics.
     private final ObjHashSet<ExpressionNode> i64WidenLeaves = new ObjHashSet<>();
     // Narrow-int arithmetic operand leaves that must NOT sign-extend to i64 even
     // when the predicate-global narrow-i64 widening is on: they feed an INT-width
@@ -178,7 +182,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // arises in a boolean equality of two comparisons - (cmp) = (cmp) - which
     // is a single predicate: a sibling LONG comparison flips the global flag on,
     // but a narrow-int product on the wrap-side must still wrap. Compared by
-    // identity. See markI64WrapArithLeaves.
+    // identity. See markWidthSemantics.
     private final ObjHashSet<ExpressionNode> i64WrapLeaves = new ObjHashSet<>();
     // inKeyWidthOverride captured per stub offset for a constant serialized inside a width-sensitive
     // IN key; the constant backfills after the override is reset, and the key re-serializes per
@@ -236,6 +240,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Reused per-predicate width state; reset defensively so a fresh filter can never read a
         // stale mark from an earlier one (onNodeDescended / serialize() already reset before use).
         arithExprTypeCache.clear();
+        constantArithFoldCache.clear();
+        constantArithFoldValues.clear();
         genuineArithTypeCache.clear();
         containsFloatCache.clear();
         containsNarrowIntCache.clear();
@@ -259,14 +265,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return false;
         }
 
-        // Check if we're at the start of an arithmetic expression
+        // Check if we're at the start of an arithmetic expression.
         predicateContext.onNodeDescended(node);
 
         // Constant integer arithmetic subtree that overflows INT. The Java
         // filter wraps a pure-INT subtree (getInt() mod 2^32) but evaluates a
         // LONG-typed subtree at full width (getLong(), never wraps). Mirror
         // that: emit a full-width I8 IMM when the fold root is read at long
-        // width and a wrapped I4 IMM otherwise. markI64WidenFoldRoots tags the
+        // width and a wrapped I4 IMM otherwise. markWidthSemantics tags the
         // long-width roots up front from each fold's OWN comparison/arithmetic
         // context (a LONG leaf, or a LONG operand promoting the enclosing
         // comparison) - a per-comparison signal, so a predicate that mixes
@@ -963,7 +969,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * subtree (column / bind variable / numeric constant / + - * / over them),
      * or {@link #UNDEFINED_CODE} for anything that is not pure numeric
      * arithmetic. Mirrors the implicit-promotion rules the Java filter applies,
-     * so {@link #markFloatI64WidenLeaves} can find the LONG-width subtrees whose
+     * so {@link #markWidthSemantics} can find the LONG-width subtrees whose
      * narrow operands the Java filter reads at 64 bits.
      */
     private int arithExprType(ExpressionNode node) {
@@ -1284,7 +1290,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * actual Java function types. Unlike {@link #arithExprType}, an overflowing
      * pure-constant INT subtree stays {@link #I4_TYPE} (the runtime MulInt /
      * AddInt / DivInt keeps INT and wraps under getInt()), not {@link #I8_TYPE}.
-     * This lets {@link #markI64WidenFoldRoots} tell a genuine LONG-width
+     * This lets {@link #markWidthSemantics} tell a genuine LONG-width
      * ancestor (e.g. {@code c0_long + ...}, which reads its operand via getLong()
      * at full width) from a fake one promoted only by a fold overflow (e.g.
      * {@code c8_int + (const * const)}, which the Java filter still reads via
@@ -1746,309 +1752,172 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    /**
-     * Marks the narrow-int leaves that need i64 widening when a float source
-     * suppresses the global widening. The Java filter computes a LONG-width
-     * arithmetic subtree at 64 bits (operands flow through #getLong), so an
-     * INT-width op inside it must not wrap mod 2^32. Only the operands of a
-     * narrow-width op computed at 64 bits need sign-extending: a wide (I8) op
-     * already promotes its narrow operand through convert().
-     */
-    private void markFloatI64WidenLeaves(ExpressionNode node) {
-        markI64Widen(node, false);
-    }
-
-    // underLong: whether the parent reads `node` at 64-bit width.
-    private void markI64Widen(ExpressionNode node, boolean underLong) {
+    private void markWidthSemantics(
+            ExpressionNode node,
+            boolean isFoldActive,
+            boolean isFoldUnderLong,
+            boolean isWrapActive,
+            boolean isWrapUnderLong,
+            boolean isWrapNarrowResolved,
+            boolean isFloatActive,
+            boolean isFloatUnderLong
+    ) {
         if (node == null) {
-            return; // a bare leaf is widened, if needed, by its parent below
-        }
-        // An IN / NOT IN list is a FUNCTION node, not an OPERATION; let it through so the branch
-        // below can widen a narrow-int arith element the key reads at long width. Everything else stops.
-        if (node.type != ExpressionNode.OPERATION
-                && !(node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token))) {
             return;
         }
-        if (isArithmeticOperation(node)) {
-            int type = arithExprType(node);
-            boolean isThisLong = underLong || type == I8_TYPE;
-            markI64WidenOperand(node.lhs, type, isThisLong);
-            markI64WidenOperand(node.rhs, type, isThisLong);
+        markNarrowConstCmpWidenNode(node);
+        final boolean isIn = node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token);
+        if (node.type != ExpressionNode.OPERATION && !isIn) {
             return;
         }
-        if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            markI64Widen(node.rhs != null ? node.rhs : node.lhs, underLong);
+
+        final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
+        if (isArithmeticOperation(node) || isUnaryMinus) {
+            final int genuineType = genuineArithType(node);
+            final boolean isFoldLong = isFoldActive && (isFoldUnderLong || genuineType == I8_TYPE);
+            if (isFoldLong && isFoldableOverflowConst(node)) {
+                i64WidenFoldRoots.add(node);
+                return;
+            }
+            final boolean isFoldChildActive = isFoldActive
+                    && (isFoldLong || (genuineType != I1_TYPE && genuineType != I2_TYPE && genuineType != I4_TYPE));
+            final boolean isWrapLong = isWrapActive && (isWrapUnderLong || genuineType == I8_TYPE);
+            final boolean isChildNarrowResolved = isWrapActive
+                    && !isWrapLong
+                    && (isWrapNarrowResolved
+                    || genuineType == I1_TYPE
+                    || genuineType == I2_TYPE
+                    || genuineType == I4_TYPE);
+            final int exprType = isFloatActive ? arithExprType(node) : UNDEFINED_CODE;
+            final boolean isFloatLong = isFloatActive && (isFloatUnderLong || exprType == I8_TYPE);
+
+            if (isUnaryMinus) {
+                markWidthSemantics(
+                        node.rhs != null ? node.rhs : node.lhs,
+                        isFoldChildActive,
+                        isFoldLong,
+                        isWrapActive,
+                        isWrapLong,
+                        isChildNarrowResolved,
+                        isFloatActive,
+                        isFloatLong
+                );
+            } else {
+                markWidthSemanticsOperand(
+                        node.lhs,
+                        exprType,
+                        isFoldChildActive,
+                        isFoldLong,
+                        isWrapActive,
+                        isWrapLong,
+                        isChildNarrowResolved,
+                        isFloatActive,
+                        isFloatLong
+                );
+                markWidthSemanticsOperand(
+                        node.rhs,
+                        exprType,
+                        isFoldChildActive,
+                        isFoldLong,
+                        isWrapActive,
+                        isWrapLong,
+                        isChildNarrowResolved,
+                        isFloatActive,
+                        isFloatLong
+                );
+            }
             return;
         }
-        // An IN value list (args = [elements..., key]) is an OR of independent equality checks.
-        // Derive each element's width from key-vs-that-element, NOT from one list-wide width: the
-        // Java InLong path widens the key against a LONG/TIMESTAMP element (so a narrow-int arith
-        // element there sign-extends its leaves) but wraps it against a narrow-int element - so a
-        // coexisting LONG element must not over-widen an INT-arith element the key wraps (mirrors
-        // markI64WidenFoldRoots). The single-value form keeps key / element in lhs / rhs (args
-        // empty) and falls through to the comparison handling below, which pairs exactly those two.
-        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token) && node.args.size() > 0) {
+
+        if (isIn && node.args.size() > 0) {
             final ExpressionNode key = node.args.getLast();
             final int keyType = genuineArithType(key);
             for (int i = 0, n = node.args.size() - 1; i < n; i++) {
                 final ExpressionNode element = node.args.getQuick(i);
-                markI64Widen(element, foldCmpType(keyType, element) == I8_TYPE);
+                final boolean isPairLong = foldCmpType(keyType, element) == I8_TYPE;
+                markWidthSemantics(
+                        element,
+                        isFoldActive,
+                        isPairLong,
+                        false,
+                        false,
+                        false,
+                        isFloatActive,
+                        isPairLong
+                );
             }
-            markI64Widen(key, false); // the key reads at its own genuine width; elements never promote it
+            markWidthSemantics(
+                    key,
+                    isFoldActive,
+                    false,
+                    false,
+                    false,
+                    false,
+                    isFloatActive,
+                    false
+            );
             return;
         }
-        // Comparison / boolean / IN / NOT: a fresh width boundary. Derive the
-        // comparison width by promoting across ALL operands (a genuine LONG
-        // sibling reads the whole comparison at long width), then read each
-        // operand at that width - mirroring markI64WrapArithLeaves and
-        // markI64WidenFoldRoots. Checking each operand against its OWN static
-        // type instead would miss a narrow-int COLUMN product read at long width
-        // because a LONG sibling promoted the comparison (e.g. (a*b) > nl inside
-        // a boolean equality with a float), leaving the product to wrap mod 2^32
-        // and diverge from the Java filter's MulInt#getLong. A FLOAT/DOUBLE
-        // sibling yields a floating cmpType (isCmpLong stays false), so an int-read
-        // product still wraps there - matching getDouble()/getInt().
+
         int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
         cmpType = foldCmpType(cmpType, node.rhs);
         for (int i = 0, n = node.args.size(); i < n; i++) {
             cmpType = foldCmpType(cmpType, node.args.getQuick(i));
         }
-        boolean isCmpLong = cmpType == I8_TYPE;
-        // A bare out-of-INT-range integer constant compared at long width against a
-        // narrow-int arithmetic operand (e.g. (a*b) = 4999999999) widens to i64 like
-        // that operand's leaves do above: markI64Widen sign-extends a, b so the product
-        // is computed at 64 bits, so the constant must widen too. markNarrowConstCmp-
-        // WidenPair covers only the narrow-int LEAF form of this pairing (i32 = ...),
-        // not an arithmetic product / sum. See maybeWidenCmpConstOperand.
-        if (node.paramCount == 2 && isComparisonToken(node.token)) {
+        final boolean isCmpLong = cmpType == I8_TYPE;
+        if (isFloatActive && node.paramCount == 2 && isComparisonToken(node.token)) {
             maybeWidenCmpConstOperand(node.lhs, node.rhs);
             maybeWidenCmpConstOperand(node.rhs, node.lhs);
         }
-        markI64Widen(node.lhs, isCmpLong);
-        markI64Widen(node.rhs, isCmpLong);
+        markWidthSemantics(node.lhs, isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
+        markWidthSemantics(node.rhs, isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            markI64Widen(node.args.getQuick(i), isCmpLong);
+            markWidthSemantics(node.args.getQuick(i), isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
         }
     }
 
-    /**
-     * Marks the overflowing constant-arithmetic fold roots that the Java filter
-     * reads at long width, so {@link #descend} emits a full I8 IMM for them
-     * rather than a wrapped I4 (which would drop the high bits the getLong() path
-     * reads). A fold root is long-width when it is genuinely LONG-typed (a LONG
-     * leaf, e.g. {@code 2 * 5000000000L}) or when a LONG operand promotes an
-     * enclosing arithmetic op (e.g. {@code c0_long + (258558 * -259815)}) or
-     * comparison (e.g. {@code 1000000 * 1000000 > c0_long}) to long width.
-     * <p>
-     * The decision is derived per fold from its OWN context, not from a
-     * predicate-global flag: a boolean equality of two comparisons -
-     * {@code (cmp) = (cmp)} - is a single predicate that can mix an INT-width
-     * comparison with a LONG-width one, and each fold must take the width of the
-     * comparison it actually feeds.
-     * <p>
-     * At a non-arithmetic boundary (comparison / boolean / IN / NOT) the walk
-     * promotes the node's operand types: an integer comparison with a LONG
-     * operand reads all its operands at long width, while a FLOAT/DOUBLE operand
-     * promotes to floating point - there a bare INT fold is read via getInt()
-     * and wraps (isCmpLong stays false), but a genuinely LONG-typed operand is
-     * still read at long width and the arithmetic branch re-marks the folds
-     * beneath it via {@link #genuineArithType}.
-     * <p>
-     * An IN / NOT IN list is an {@link ExpressionNode#FUNCTION} node, not an
-     * OPERATION, so it is let through to the boundary handling as well. A value
-     * list of two or more elements keeps its operands in {@code args} as
-     * {@code [elements..., key]} (key last, {@code lhs} / {@code rhs} null); each
-     * element compares against the key independently (OR of equals), so its width
-     * is derived per element from key-vs-element via {@link #foldCmpType} - a
-     * coexisting genuine-LONG element must not promote (and widen) an overflowing
-     * INT element that the key compares at INT width. The single-value form keeps
-     * its key / element in {@code lhs} / {@code rhs} (args empty) and is paired by
-     * the comparison handling, which treats a non-numeric operand as identity
-     * rather than letting it absorb the width to UNDEFINED.
-     */
-    private void markI64WidenFoldRoots(ExpressionNode node, boolean isUnderGenuineLong) {
-        if (node == null) {
-            return;
-        }
-        // An IN / NOT IN list is a FUNCTION node rather than an OPERATION; let it
-        // through so the boundary handling below can mark an overflowing fold in
-        // its value list. Every other FUNCTION (e.g. a scalar call) stops here -
-        // descend() does not fold across it.
-        if (node.type != ExpressionNode.OPERATION
-                && !(node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token))) {
-            return;
-        }
-        if (isArithmeticOperation(node) || (node.paramCount == 1 && Chars.equals(node.token, '-'))) {
-            // Read this arithmetic node's genuine width once. Under a genuine-LONG context it is
-            // already I8, so skip the walk (preserving the isUnderGenuineLong short-circuit); otherwise
-            // read it directly.
-            final int nodeType = isUnderGenuineLong ? I8_TYPE : genuineArithType(node);
-            final boolean isNodeGenuineLong = nodeType == I8_TYPE;
-            if (!isNodeGenuineLong && (nodeType == I1_TYPE || nodeType == I2_TYPE || nodeType == I4_TYPE)) {
-                // A narrow-int arithmetic subtree read at INT width. promoteArithType widens
-                // monotonically (Math.max on integer codes; a float/undefined operand absorbs), so a
-                // narrow node has only narrow descendants - none read at I8 width, none an I8 widen fold
-                // root. Prune here so a deep narrow-int chain marks in O(depth) instead of recomputing
-                // genuineArithType at every level (O(depth^2)).
-                return;
-            }
-            if (isNodeGenuineLong && isFoldableOverflowConst(node)) {
-                i64WidenFoldRoots.add(node);
-                return; // folds to one IMM; no deeper fold root to find
-            }
-            markI64WidenFoldRoots(node.lhs, isNodeGenuineLong);
-            markI64WidenFoldRoots(node.rhs, isNodeGenuineLong);
-            return;
-        }
-        // An IN value list (args = [elements..., key], the key last) is an OR of
-        // independent equality checks. Derive each element's fold width from
-        // key-vs-that-element, NOT from one width folded across the whole list: a
-        // narrow / INT key compares (and wraps, via getInt) an overflowing INT
-        // element even when a coexisting genuine-LONG element would, on its own, be
-        // read at long width. A single list-wide width would let that LONG element
-        // promote the INT element to I8 and widen it, diverging from the Java InLong
-        // path that wraps it. The single-value IN keeps its key / element in lhs /
-        // rhs (args empty) and falls through to the comparison handling below, which
-        // already pairs exactly those two.
-        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token) && node.args.size() > 0) {
-            final ExpressionNode key = node.args.getLast();
-            final int keyType = genuineArithType(key);
-            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
-                final ExpressionNode element = node.args.getQuick(i);
-                markI64WidenFoldRoots(element, foldCmpType(keyType, element) == I8_TYPE);
-            }
-            // The key reads at its own genuine width (a narrow / INT key wraps, a
-            // LONG key widens); the elements never promote it.
-            markI64WidenFoldRoots(key, false);
-            return;
-        }
-        int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
-        cmpType = foldCmpType(cmpType, node.rhs);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            cmpType = foldCmpType(cmpType, node.args.getQuick(i));
-        }
-        boolean isCmpLong = cmpType == I8_TYPE;
-        markI64WidenFoldRoots(node.lhs, isCmpLong);
-        markI64WidenFoldRoots(node.rhs, isCmpLong);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            markI64WidenFoldRoots(node.args.getQuick(i), isCmpLong);
-        }
-    }
-
-    private void markI64WidenOperand(ExpressionNode child, int parentType, boolean parentLong) {
-        if (parentLong && parentType != I8_TYPE && isWidenableLeaf(child)) {
-            addNarrowLeaf(child);
-        } else if (parentLong && isIntegerConst(child) && arithExprType(child) == I8_TYPE) {
-            // An out-of-INT-range integer constant operand of a long-width arithmetic op.
-            // A co-present FLOAT/DOUBLE column suppresses the global narrow-i64 widening and
-            // types the constant down to F4/F8 (as an INT it is 4 bytes, so hasMixedSizes()
-            // is false), yet the Java filter computes the enclosing product/sum at long width
-            // via MulInt/AddInt#getLong before converting to floating point. Flag it so
-            // serializeConstant emits a full I8 IMM rather than a lossy 32-bit float, and so
-            // the predicate runs scalar: the vectorized path has no i32->i64 promotion
-            // (avx2.h convert()), while the scalar convert() widens the narrow column operand
-            // for free (as it already does for the mixed-size DOUBLE case).
-            addI64WidenLeaf(child);
-        } else {
-            markI64Widen(child, parentLong);
-        }
-    }
-
-    /**
-     * Marks the narrow-int arithmetic operand leaves that must NOT sign-extend to
-     * i64, so {@link #maybeEmitI64Widening} keeps them at their narrow width even
-     * when the predicate-global widening (or the float-suppressed widen set) is on.
-     * <p>
-     * The Java filter reads an integer arithmetic subtree at 64 bits only when the
-     * comparison it feeds is LONG-width; under an INT-width comparison it reads via
-     * getInt() and wraps mod 2^32. A predicate-global widening flag cannot express
-     * this because a boolean equality of two comparisons - {@code (cmp) = (cmp)} -
-     * is a single predicate: a sibling LONG comparison turns the global flag on,
-     * yet an overflowing narrow-int product on the wrap-side of the INT-width
-     * comparison must still wrap. This walk marks exactly those wrap-side leaves,
-     * derived per-comparison, mirroring {@link #markI64WidenFoldRoots} (which does
-     * the same for overflowing constant folds).
-     * <p>
-     * Only arithmetic operand leaves are marked. A plain narrow column read
-     * directly by a comparison sign-extends value-preservingly (SX_I64 of a single
-     * column keeps its value), so widening it is harmless and left untouched.
-     * An IN list is a FUNCTION node whose key/element widths are handled per element
-     * by {@code inKeyWidthOverride} and {@link #markI64WidenFoldRoots}, so this walk
-     * stops at it (the OPERATION guard below).
-     *
-     * @param underLong whether the enclosing context reads {@code node} at 64-bit width
-     */
-    private void markI64WrapArithLeaves(ExpressionNode node, boolean underLong) {
-        markI64WrapArithLeaves(node, underLong, false);
-    }
-
-    /**
-     * @param isNarrowResolved the enclosing arithmetic context is already known to be narrow-int (not
-     *                         LONG, not float). By the monotonic widening of {@link #promoteArithType}
-     *                         a narrow node has only narrow descendants, all read at INT width, so
-     *                         {@link #genuineArithType} need not be recomputed here. This lets a deep
-     *                         narrow-int chain mark its wrap leaves in O(depth) rather than recomputing
-     *                         genuineArithType at every level (O(depth^2)).
-     */
-    private void markI64WrapArithLeaves(ExpressionNode node, boolean underLong, boolean isNarrowResolved) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
-            return; // a bare leaf is marked, if needed, by its arithmetic parent below
-        }
-        if (isArithmeticOperation(node)) {
-            final boolean isThisLong;
-            final boolean isChildNarrowResolved;
-            if (underLong) {
-                isThisLong = true;
-                isChildNarrowResolved = false;
-            } else if (isNarrowResolved) {
-                isThisLong = false;
-                isChildNarrowResolved = true;
-            } else {
-                final int nodeType = genuineArithType(node);
-                isThisLong = nodeType == I8_TYPE;
-                // A narrow-int node (never I8) has only narrow-int descendants, so children need no
-                // genuineArithType recompute. A float/undefined node may still hide an I8 descendant
-                // (e.g. long*float promotes to float), so it does not resolve them.
-                isChildNarrowResolved = nodeType == I1_TYPE || nodeType == I2_TYPE || nodeType == I4_TYPE;
-            }
-            markI64WrapArithOperand(node.lhs, isThisLong, isChildNarrowResolved);
-            markI64WrapArithOperand(node.rhs, isThisLong, isChildNarrowResolved);
-            return;
-        }
-        if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            markI64WrapArithLeaves(node.rhs != null ? node.rhs : node.lhs, underLong, isNarrowResolved);
-            return;
-        }
-        // Comparison / boolean / NOT: a fresh width boundary. Derive the comparison width from all
-        // operands (a genuine LONG operand promotes to long width), then read each operand at that
-        // width. An overflowing constant fold stays narrow (genuineArithType), so it does not
-        // fake-promote the comparison. isNarrowResolved does not carry across a comparison.
-        int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
-        cmpType = foldCmpType(cmpType, node.rhs);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            cmpType = foldCmpType(cmpType, node.args.getQuick(i));
-        }
-        boolean isCmpLong = cmpType == I8_TYPE;
-        markI64WrapArithLeaves(node.lhs, isCmpLong);
-        markI64WrapArithLeaves(node.rhs, isCmpLong);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            markI64WrapArithLeaves(node.args.getQuick(i), isCmpLong);
-        }
-    }
-
-    private void markI64WrapArithOperand(ExpressionNode child, boolean parentLong, boolean isParentNarrowResolved) {
-        if (!parentLong && isWidenableLeaf(child)) {
-            // A narrow-int arithmetic operand read at 32 bits: it must wrap, so never
-            // sign-extend it. A wide (I8) operand read at 64 bits stays widenable.
-            int typeCode = arithExprType(child);
-            if (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE) {
+    private void markWidthSemanticsOperand(
+            ExpressionNode child,
+            int parentType,
+            boolean isFoldActive,
+            boolean isFoldUnderLong,
+            boolean isWrapActive,
+            boolean isWrapUnderLong,
+            boolean isWrapNarrowResolved,
+            boolean isFloatActive,
+            boolean isFloatUnderLong
+    ) {
+        boolean isWrapChildActive = isWrapActive;
+        if (isWrapActive && !isWrapUnderLong && isWidenableLeaf(child)) {
+            final int childType = arithExprType(child);
+            if (childType == I1_TYPE || childType == I2_TYPE || childType == I4_TYPE) {
                 i64WrapLeaves.add(child);
+                isWrapChildActive = false;
             }
-        } else {
-            markI64WrapArithLeaves(child, parentLong, isParentNarrowResolved);
         }
+
+        boolean isFloatChildActive = isFloatActive;
+        if (isFloatActive && isFloatUnderLong && parentType != I8_TYPE && isWidenableLeaf(child)) {
+            addNarrowLeaf(child);
+            isFloatChildActive = false;
+        } else if (isFloatActive && isFloatUnderLong && isIntegerConst(child) && arithExprType(child) == I8_TYPE) {
+            addI64WidenLeaf(child);
+            isFloatChildActive = false;
+        }
+
+        markWidthSemantics(
+                child,
+                isFoldActive,
+                isFoldUnderLong,
+                isWrapChildActive,
+                isWrapUnderLong,
+                isWrapNarrowResolved,
+                isFloatChildActive,
+                isFloatUnderLong
+        );
     }
 
+    // underLong: whether the parent reads `node` at 64-bit width.
     /**
      * Tags a narrow-int column / bind-variable leaf and the out-of-INT-range integer
      * constant it is compared against for i64 widening.
@@ -2061,7 +1930,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * admits 2147483647 / 2147483646). The Java filter reads the comparison at long
      * width (the constant is a LONG literal that promotes the column via getLong), so
      * no INT value equals it. Mirror that: sign-extend the leaf (value-preserving -
-     * see {@link #markI64WrapArithLeaves}) and emit the constant as a full I8 IMM. The
+     * see {@link #markWidthSemantics}) and emit the constant as a full I8 IMM. The
      * mark is per node, so a sibling in-range comparison is unaffected; eligible integer
      * comparisons, arithmetic, and IN shapes use the four-lane AVX2 path.
      * <p>
@@ -2078,7 +1947,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * compares both operands at double width. See {@link #isFloatLeaf}. DOUBLE columns
      * already compare exactly and are left vectorized.
      */
-    private void markNarrowConstCmpWidenLeaves(ExpressionNode node) {
+    private void markNarrowConstCmpWidenNode(ExpressionNode node) {
         if (node == null) {
             return;
         }
@@ -2122,21 +1991,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
             return;
         }
-        if (node.type == ExpressionNode.OPERATION) {
-            if (node.paramCount == 2 && isComparisonToken(node.token)) {
-                markNarrowConstCmpWidenPair(node);
-            }
-            markNarrowConstCmpWidenLeaves(node.lhs);
-            markNarrowConstCmpWidenLeaves(node.rhs);
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                markNarrowConstCmpWidenLeaves(node.args.getQuick(i));
-            }
+        if (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && isComparisonToken(node.token)) {
+            markNarrowConstCmpWidenPair(node);
         }
     }
 
-    // Widens a narrow-int leaf and the out-of-INT-range integer constant it is
-    // paired with (either operand order). A FLOAT leaf paired with a constant that has no exact
-    // float widens the constant alone - see markFloatCmpConst.
     private void markNarrowConstCmpWidenPair(ExpressionNode cmp) {
         final ExpressionNode a = cmp.lhs;
         final ExpressionNode b = cmp.rhs;
@@ -2191,7 +2052,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // The predicate-global flag and the float-suppressed widen set both widen a leaf
             // uniformly across the predicate, but a narrow-int arithmetic operand under an
             // INT-width comparison must wrap. i64WrapLeaves marks exactly those (derived
-            // per-comparison), so it overrides the widening decision - see markI64WrapArithLeaves.
+            // per-comparison), so it overrides the widening decision - see markWidthSemantics.
             isWidened = (predicateContext.needsNarrowI64Widening || isI64WidenLeaf(node)) && !isI64WrapLeaf(node);
         }
         if (isWidened) {
@@ -2230,7 +2091,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * (product / sum) gap it misses, so {@code other} is restricted to an OPERATION.
      * Only a bare {@link ExpressionNode#CONSTANT} widens - a negated / folded overflow
      * constant is an OPERATION handled by the fold-root path ({@link
-     * #markI64WidenFoldRoots} + {@link #descend}). An in-range (I4) constant keeps its
+     * #markWidthSemantics} + {@link #descend}). An in-range (I4) constant keeps its
      * narrow width, so a sibling INT-width comparison is unaffected.
      */
     private void maybeWidenCmpConstOperand(ExpressionNode constNode, ExpressionNode other) {
@@ -2475,7 +2336,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // path above already widens via serializeUntypedNumber; this covers the all-narrow case.
             // isWidenedToI64 also covers a plain out-of-INT-range constant vs a narrow-int leaf: the
             // observer typed it down to I4, so serializeNumber would emit a lossy float on overflow.
-            // markNarrowConstCmpWidenLeaves tags both sides to widen to i64.
+            // markNarrowConstCmpWidenNode tags both sides to widen to i64.
             // isNarrowKept overrides both: a narrow-int arithmetic operand constant on the wrap side
             // of an INT-width comparison (e.g. the 2 in i32*2 when a sibling comparison flips the
             // predicate-global flag on) must stay I4 so int32_mul wraps mod 2^32 with the I4 column
@@ -2491,7 +2352,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // A FLOAT/DOUBLE column co-present with a narrow-int leaf types this
                 // out-of-INT-range integer constant down to F4/F8 (both 4 bytes as INT, so
                 // hasMixedSizes() is false), but a marker flagged it to widen: the Java filter
-                // reads it at long width - as an arithmetic operand (markI64WidenOperand,
+                // reads it at long width - as an arithmetic operand (markWidthSemanticsOperand,
                 // MulInt/AddInt#getLong) or a direct comparison operand (markNarrowConstCmp-
                 // WidenLeaves, getLong). Emitting a lossy 32-bit float here would make the JIT
                 // do a float multiply/compare and drop rows the Java filter keeps. Emit a full
@@ -3025,7 +2886,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // Emit the constant as I8 when the predicate computes at long width and
         // has no float (SubLong / AddLong reach into MulInt.getLong), or when
-        // markFloatI64WidenLeaves tagged this constant as living under a
+        // markWidthSemantics tagged this constant as living under a
         // LONG-width subtree despite a float elsewhere. Otherwise keep it I4 so
         // int32_mul wraps mod 2^32 on both the JIT and Java sides. isNarrowKept
         // (an i64WrapLeaves constant: a narrow-int arithmetic operand on the wrap
@@ -3130,6 +2991,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * against {@code longVal} and treat a mismatch as a fold root.
      */
     private long tryFoldConstantArith(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        final int cached = constantArithFoldCache.get(node);
+        if (cached == 0) {
+            throw NumericException.INSTANCE;
+        }
+        if (cached != NOT_CACHED) {
+            return constantArithFoldValues.getQuick(cached - 1);
+        }
+        try {
+            final long value = tryFoldConstantArith0(node);
+            constantArithFoldValues.add(value);
+            constantArithFoldCache.put(node, constantArithFoldValues.size());
+            return value;
+        } catch (NumericException e) {
+            constantArithFoldCache.put(node, 0);
+            throw e;
+        }
+    }
+
+    private long tryFoldConstantArith0(ExpressionNode node) throws NumericException {
         if (node == null) {
             throw NumericException.INSTANCE;
         }
@@ -3405,7 +3288,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * <p>
      * An INT-width comparison on the wrap-side of a boolean equality still needs
      * its narrow-int arithmetic operands to wrap mod 2^32; {@link
-     * #markI64WrapArithLeaves} marks exactly those leaves per-comparison (it runs
+     * #markWidthSemantics} marks exactly those leaves per-comparison (it runs
      * unconditionally), overriding this predicate-global decision, so a
      * narrow-only chain feeding an INT-width comparison is never over-widened.
      * <p>
@@ -3589,6 +3472,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // and the node pool can hand the same objects to a later filter. Drop them with
                     // the marks.
                     arithExprTypeCache.clear();
+                    constantArithFoldCache.clear();
+                    constantArithFoldValues.clear();
                     genuineArithTypeCache.clear();
                     containsFloatCache.clear();
                     containsNarrowIntCache.clear();
@@ -3603,32 +3488,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         needsNarrowI64Widening = false;
                         hasFloatInPredicate = false;
                     }
-                    // Tag the overflowing constant fold roots that the Java
-                    // filter reads at long width, so descend() emits a full I8
-                    // IMM for exactly those and a wrapped I4 for the rest. The
-                    // tag is per-comparison, so it is correct whether or not a
-                    // float is present and even when one predicate mixes INT- and
-                    // LONG-width comparisons across a boolean equality.
-                    markI64WidenFoldRoots(node, false);
-                    // Tag the narrow-int arithmetic operand leaves that feed an
-                    // INT-width comparison so they wrap even when the global flag
-                    // (or the float-suppressed widen set) is on. This is the column
-                    // analog of the per-comparison fold-root width above: a boolean
-                    // equality of two comparisons mixes an INT-width comparison with
-                    // a LONG-width one, and a narrow product on the INT-width side
-                    // must not sign-extend. See markI64WrapArithLeaves.
-                    markI64WrapArithLeaves(node, false);
-                    // Tag a narrow-int leaf compared against an out-of-INT-range constant so
-                    // both widen to i64. See markNarrowConstCmpWidenLeaves.
-                    markNarrowConstCmpWidenLeaves(node);
-                    // A float suppresses the global narrow-i64 widening, but a
-                    // LONG-width arithmetic subtree still computes at 64 bits in
-                    // the Java filter. Tag the narrow leaves under such subtrees
-                    // so the IR sign-extends exactly them, keeping a nested INT
-                    // product from wrapping mod 2^32.
-                    if (hasFloatInPredicate) {
-                        markFloatI64WidenLeaves(node);
-                    }
+                    // One top-down pass installs all per-comparison width marks. It keeps
+                    // independent context for fold widening, INT wrapping, and FLOAT-suppressed
+                    // widening so pruning one concern never hides work needed by another.
+                    markWidthSemantics(node, true, false, true, false, false, hasFloatInPredicate, false);
                 }
                 if (topLevelBooleanColumn) {
                     columnType = ColumnType.BOOLEAN;

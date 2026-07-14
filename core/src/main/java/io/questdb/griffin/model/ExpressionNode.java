@@ -392,36 +392,12 @@ public class ExpressionNode implements Mutable, Sinkable {
      * <p>The rewrite is purely structural: it relinks existing {@link ExpressionNode}
      * instances without allocating new nodes.</p>
      *
-     * <p>Two numeric guards apply (see {@link #isReassociationSafe}). First, a constant pair
-     * is not regrouped when either constant widens the operation (floating-point or DECIMAL).
-     * Combining a widening constant with an integer one (e.g. {@code 3 + 0.0 -> 3.0}) widens
-     * the inner operation, so {@code (intCol + 3) + 0.0} would become {@code intCol + 3.0} and
-     * evaluate {@code intCol + 3} at double width - silently dropping the INT overflow wrap the
-     * un-regrouped form (and the constant-folded literal) produces. Combining two widening
-     * constants is unsafe as well: IEEE-754 {@code +} and {@code *} are not associative, so
-     * {@code (dblCol * 1e300) * 1e-300} overflows to Infinity while the regrouped
-     * {@code dblCol * (1e300 * 1e-300)} returns {@code dblCol}. Second, an integer pair is not
-     * regrouped when its fold lands exactly on an integer NULL sentinel - INT_NULL (-2^31) for
-     * an INT-typed pair, LONG_NULL (-2^63) for a LONG-typed one: {@code col + (const1 + const2)}
-     * would then read that sentinel and poison every row to NULL, while the left-associative
-     * form keeps the real wrapped value.</p>
-     *
-     * <p><b>Known limitation.</b> Both guards inspect only the constant pair, so they
-     * cannot see a poison introduced by the left-associative <em>intermediate</em>
-     * {@code col op C1}. Integer arithmetic is associative modulo 2^32 / 2^64 in the
-     * absence of the sentinel, but the wrap that lands exactly on INT_NULL / LONG_NULL is
-     * read as NULL, and that can happen at the intermediate for a particular column value
-     * even when the constant pair itself does not fold to the sentinel. For example
-     * {@code (i + 2147483647) + 2} with {@code i == 1}: the intermediate
-     * {@code i + 2147483647} wraps to INT_NULL and poisons the row to NULL, so the
-     * un-regrouped and fully-literal forms return NULL, while the regrouped
-     * {@code i + (2147483647 + 2)} returns a real value - the regroup silently changes the
-     * result for that column value. The constant pair {@code 2147483647 + 2} does not fold
-     * to the sentinel, so the second guard does not fire, and detecting the intermediate
-     * poison would need a column value the optimizer does not have. Integer-pair
-     * reassociation therefore still fires in this case. This is pre-existing behaviour -
-     * {@code master} reassociates unconditionally - that these guards narrow (they close
-     * the case where the constant pair itself is the sentinel) but do not fully close.</p>
+     * <p>Numeric reassociation is deliberately conservative. Floating-point and DECIMAL
+     * arithmetic is not associative under rounding, overflow, precision, and scale rules.
+     * Integer arithmetic is also non-associative in QuestDB because wrapped intermediate values
+     * can equal the reserved INT_NULL or LONG_NULL sentinel for row values unavailable to this
+     * pre-type-resolution pass. Consequently, only non-numeric associative operators are eligible
+     * for reassociation.</p>
      *
      * @return {@code true} if this subtree is entirely constant (every leaf is a
      * constant and every interior node is a binary operation on constants),
@@ -478,7 +454,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && lhs.token.equals(token)) {
             if (lhs.rhs.isConstantExpression) {
                 // Pattern A: (A op C1) op C2 → A op (C1 op C2)
-                if (isReassociationSafe(lhs.rhs, rhs, token)) {
+                if (isReassociationSafe(lhs.rhs, rhs)) {
                     ExpressionNode inner = lhs;
                     ExpressionNode a = inner.lhs;
                     ExpressionNode c1 = inner.rhs;
@@ -492,7 +468,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 }
             } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
                 // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
-                if (isReassociationSafe(lhs.lhs, rhs, token)) {
+                if (isReassociationSafe(lhs.lhs, rhs)) {
                     ExpressionNode inner = lhs;
                     ExpressionNode c1 = inner.lhs;
                     ExpressionNode a = inner.rhs;
@@ -514,7 +490,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && rhs.token.equals(token)) {
             if (op.isCommutative() && rhs.rhs.isConstantExpression) {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
-                if (isReassociationSafe(lhs, rhs.rhs, token)) {
+                if (isReassociationSafe(lhs, rhs.rhs)) {
                     ExpressionNode inner = rhs;
                     ExpressionNode c2 = lhs;
                     this.lhs = inner.lhs;
@@ -524,7 +500,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 }
             } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
-                if (isReassociationSafe(lhs, rhs.lhs, token)) {
+                if (isReassociationSafe(lhs, rhs.lhs)) {
                     ExpressionNode inner = rhs;
                     ExpressionNode c2 = lhs;
                     ExpressionNode c1 = inner.lhs;
@@ -808,38 +784,6 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
-     * Reports whether the integer constant pair {@code (a OP b)} wraps exactly onto a
-     * NULL sentinel at its natural width, reading {@code a}'s and {@code b}'s cached folds
-     * (populated by {@link #cacheConstantFold} when each was marked constant). An INT-typed
-     * pair (both operands fold at INT width) is checked against INT_NULL; otherwise, when at
-     * least one operand is wider (an L-suffixed or LONG-range literal that does not fold at
-     * INT width), the pair is LONG-typed and checked against LONG_NULL. Regrouping such a
-     * pair would hoist it under the column as {@code col OP NULL} and poison every row to
-     * NULL, while the left-associative literal form keeps the real wrapped value. A
-     * floating-point / non-numeric operand (which widens the pair and so cannot poison via
-     * an integer NULL sentinel) or an unmodeled operator yields false.
-     */
-    private static boolean integerPairFoldsToNull(ExpressionNode a, ExpressionNode b, CharSequence opToken) {
-        if (a.constFoldIntValue != NOT_INT_CONSTANT && b.constFoldIntValue != NOT_INT_CONSTANT) {
-            // Both operands are INT-typed: the runtime op (AddInt / MulInt / ...) wraps
-            // mod 2^32, so the poison sentinel is INT_NULL.
-            return applyIntFold(opToken, (int) a.constFoldIntValue, (int) b.constFoldIntValue) == Numbers.INT_NULL;
-        }
-        // At least one operand is wider than INT. The runtime op is LONG-typed and wraps
-        // mod 2^64, so the poison sentinel is LONG_NULL. A floating-point / non-numeric
-        // operand leaves isConstFoldLongValid false, and an unmodeled operator makes
-        // applyLongFold throw -> not a poison.
-        if (a.isConstFoldLongValid && b.isConstFoldLongValid) {
-            try {
-                return applyLongFold(opToken, a.constFoldLongValue, b.constFoldLongValue) == Numbers.LONG_NULL;
-            } catch (NumericException notLongConstant) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Screens out a constant token that no numeric parse can accept. Every numeric literal starts
      * with a digit, a sign or a decimal point (see {@link Numbers#parseInt} / {@link Numbers#parseLong}
      * / {@link Numbers#parseDouble}), so a token that starts with anything else - a quoted string, a
@@ -858,35 +802,20 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
-     * Reports whether regrouping the constant pair {@code (a OP b)} is value-preserving,
-     * so {@link #reassociateConstants} may combine them. Two hazards block it:
-     * <ul>
-     *   <li>a widening (floating-point or DECIMAL) constant on either side. Mixing one with
-     *   an integer constant widens an INT operation to floating point / DECIMAL and drops its
-     *   overflow wrap. A pair of widening constants is no safer: IEEE-754 {@code +} and
-     *   {@code *} are not associative under rounding, overflow and underflow, so
-     *   {@code (col * 1e300) * 1e-300} (which overflows to Infinity at the intermediate and
-     *   stays there) and {@code col * (1e300 * 1e-300)} (which is {@code col * 1.0}) disagree -
-     *   and {@code reassociateConstants} never regroups the all-literal form, which evaluates
-     *   left-associatively, so the regroup makes the column form diverge from the literal one.
-     *   A DECIMAL fold carries precision and scale, which regrouping shifts the same way;</li>
-     *   <li>an integer pair whose fold lands exactly on an integer NULL sentinel - the
-     *   INT_NULL (-2^31) sentinel for an INT-typed pair, or the LONG_NULL (-2^63) sentinel
-     *   for a LONG-typed one. The regrouped {@code col OP (a OP b)} would then read that
-     *   sentinel and poison every row to NULL (AddInt / AddLong / MulInt / ... all return
-     *   the matching NULL on a NULL operand), while the left-associative literal /
-     *   un-regrouped form keeps the real wrapped value.</li>
-     * </ul>
-     * <p>Only an integer pair is left to regroup, and both checks see only that pair, not the
-     * column, so a "safe" verdict here still permits a regroup whose left-associative
-     * intermediate {@code col OP a} wraps onto the sentinel for some column value (see the
-     * "Known limitation" note on {@link #reassociateConstants}). The method reports
-     * value-preserving for the pair, not for every column value.</p>
+     * Reports whether regrouping the constant pair is safe without resolved operand types or row
+     * value ranges. Numeric pairs are excluded: floating-point and DECIMAL operations may change
+     * through rounding or scale, while integer intermediates may wrap onto NULL sentinels.
      */
-    private static boolean isReassociationSafe(ExpressionNode a, ExpressionNode b, CharSequence opToken) {
-        return !a.isConstFoldWidening
-                && !b.isConstFoldWidening
-                && !integerPairFoldsToNull(a, b, opToken);
+    private static boolean isReassociationSafe(ExpressionNode a, ExpressionNode b) {
+        if (a.isConstFoldWidening || b.isConstFoldWidening) {
+            return false;
+        }
+        // Integer arithmetic is not associative in QuestDB because INT_NULL and LONG_NULL are
+        // reserved sentinel values. The original intermediate can hit a sentinel for a row value
+        // that is unavailable to this pre-type-resolution pass, even when the constant pair does
+        // not fold to NULL. Only non-integer operators, such as boolean logic and concatenation,
+        // remain eligible here.
+        return !(a.isConstFoldLongValid && b.isConstFoldLongValid);
     }
 
     /**
@@ -897,7 +826,7 @@ public class ExpressionNode implements Mutable, Sinkable {
      * <p>
      * The only caller has already run {@link Numbers#parseInt} and {@link Numbers#parseLong} over the
      * token and seen both fail, so an integer literal (INT or LONG) never reaches here - it does not
-     * widen, and an integer pair is governed by the NULL-sentinel guard instead. Re-parsing it to
+     * widen, and integer pairs are excluded from reassociation. Re-parsing it to
      * re-derive that would cost another failed parse per constant.
      */
     private static boolean isWideningConstantToken(CharSequence token) {
@@ -967,7 +896,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 // INT literal is trivially a LONG one: don't parse the token a second time.
                 constFoldLongValue = constFoldIntValue;
                 isConstFoldLongValid = true;
-                // An integer literal never widens; the NULL-sentinel guard governs integer pairs.
+                // An integer literal never widens; integer pairs are excluded from reassociation.
                 isConstFoldWidening = false;
                 return;
             } catch (NumericException notIntLiteral) {

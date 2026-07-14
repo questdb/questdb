@@ -202,6 +202,17 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMixedListPreservesSourceOrderShortCircuit() throws Exception {
+        assertQuery("SELECT k IN (1, substring(s, 1, n)) result FROM x")
+                .ddl("CREATE TABLE x AS (SELECT 1::long k, 'x' s, -1 n)")
+                .expectSize()
+                .returns("""
+                        result
+                        true
+                        """);
+    }
+
+    @Test
     public void testMergedPlanDeduplicatesCrossWidthValue() throws Exception {
         // An INT arithmetic key wraps mod 2^32 under getInt() where getLong() widens, so it is read
         // once per element width and the INT-width and long-width sets stay apart. A value present

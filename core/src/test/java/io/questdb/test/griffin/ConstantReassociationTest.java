@@ -57,14 +57,12 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     public void testDeepConstantChainFoldsAndGuardsViaCachedFold() throws Exception {
         // A long left-associative chain drives the O(n) cached-fold path: each level reads the
         // accumulating constant subtree's cached triple in O(1) rather than re-walking it, so the
-        // whole chain reassociates in O(n) instead of O(n^2). A deep, all-safe chain regroups fully.
-        assertReassociation("d + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8", "d + (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8)");
+        // whole chain reassociates in O(n) instead of O(n^2). Integer chains stay in source order because an intermediate may wrap onto a NULL sentinel.
+        assertReassociationNoOp("d + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8");
 
-        // The NULL-sentinel guard must still fire deep in the chain, using the cached running fold:
-        // 1 + 2 + 3 + 2_147_483_641 accumulates to 2_147_483_647, and the next '+ 1' wraps that
-        // cached value onto INT_NULL (-2^31). Only that final pair is blocked; the safe prefix
-        // regroups.
-        assertReassociation("d + 1 + 2 + 3 + 2_147_483_641 + 1", "d + (1 + 2 + 3 + 2_147_483_641) + 1");
+        // Integer chains stay unchanged even when only a deep intermediate reaches INT_NULL; the
+        // optimizer has no row-value range with which to prove an earlier prefix safe.
+        assertReassociationNoOp("d + 1 + 2 + 3 + 2_147_483_641 + 1");
     }
 
     @Test
@@ -72,17 +70,17 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // DivInt / RemInt are INT-typed and propagate INT_NULL just like + - *, so a
         // constant pair element built with '/' or '%' that folds to the INT_NULL sentinel
         // (-2^31) must keep the pair un-regrouped. The fold used to model only + - * & | ^,
-        // so a '/' or '%' element made it bail and integerPairFoldsToNull missed the poison;
-        // ExpressionNode#applyIntFold now models '/' and '%' too (a zero divisor folds to
-        // INT_NULL, like DivInt#getInt).
+        // Integer reassociation is disabled for all modeled operators because a row-dependent
+        // intermediate may hit INT_NULL even when the constant pair does not.
 
         // division: 2_147_483_647 + (2 / 2) = 2_147_483_647 + 1 wraps to -2^31 == INT_NULL
         assertReassociationNoOp("d + 2_147_483_647 + (2 / 2)");
         // modulo: 2_147_483_646 + (5 % 3) = 2_147_483_646 + 2 wraps to -2^31 == INT_NULL
         assertReassociationNoOp("d + 2_147_483_646 + (5 % 3)");
 
-        // control: a '/' element pair that does NOT hit the sentinel still regroups normally
-        assertReassociation("d + 1000 + (6 / 2)", "d + (1000 + 6 / 2)");
+        // A non-sentinel constant fold also stays in source order because a row-dependent
+        // intermediate may still hit the sentinel.
+        assertReassociationNoOp("d + 1000 + (6 / 2)");
     }
 
     @Test
@@ -143,12 +141,10 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // Mirror B (associative): floatConst op (C1 op col)
         assertReassociationNoOp("0.0 + (3 + d)");
 
-        // A same-category integer pair still regroups: integer addition is associative modulo
-        // 2^32 in the absence of the INT_NULL sentinel. (Not fully safe - an intermediate
-        // col op C1 can still wrap onto the sentinel for a particular column value; see
-        // testIntegerPairWrappingToIntNullIsNotReassociated for that known limitation.)
-        assertReassociation("d + 3 + 4", "d + (3 + 4)");
-        assertReassociation("d + 3 + 4L", "d + (3 + 4L)");
+        // Same-category integer pairs stay in source order because a row-dependent intermediate
+        // can wrap onto INT_NULL.
+        assertReassociationNoOp("d + 3 + 4");
+        assertReassociationNoOp("d + 3 + 4L");
     }
 
     @Test
@@ -179,19 +175,24 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // minus binds as a unary operator, so neither operand is marked constant and the pair
         // never reaches the INT_NULL guard. It stays un-regrouped for that reason instead, and
         // still avoids the poison. (See the "unary-minus escapes the guard" note: safe because
-        // reassociation never fires here, not because integerPairFoldsToNull caught it.)
+        // reassociation never fires here.)
         assertReassociation("d + -2_147_483_647 + -1", "d + -(2_147_483_647) + -(1)");
 
-        // Known limitation (NOT a correctness control): the constant pair 2_147_483_647 + 2
-        // wraps to -2_147_483_647, which is NOT the INT_NULL sentinel, so the guard does not
-        // fire and the pair regroups. But the left-associative intermediate d + 2_147_483_647
-        // DOES wrap onto INT_NULL for d == 1, so the un-regrouped and fully-literal forms
-        // return NULL while this regrouped form returns -2_147_483_646 - the regroup silently
-        // changes the result for that column value. Detecting it needs a column value the
-        // optimizer does not have (see the "Known limitation" note on reassociateConstants).
-        // These assertions pin the current, pre-existing behaviour, not a correct outcome.
-        assertReassociation("d + 2_147_483_647 + 2", "d + (2_147_483_647 + 2)");
-        assertReassociation("(2_147_483_647 + d) + 2", "d + (2_147_483_647 + 2)");
+        // A constant-pair-only guard cannot see that d + 2_147_483_647 reaches INT_NULL
+        // when d == 1, so all integer pairs stay in their original evaluation order.
+        assertReassociationNoOp("d + 2_147_483_647 + 2");
+        assertReassociationNoOp("(2_147_483_647 + d) + 2");
+    }
+
+    @Test
+    public void testIntegerReassociationPreservesIntermediateNull() throws Exception {
+        assertQuery("SELECT (i + 2_147_483_647) + 2 result FROM x")
+                .ddl("CREATE TABLE x AS (SELECT 1::int i)")
+                .expectSize()
+                .returns("""
+                        result
+                        null
+                        """);
     }
 
     @Test
@@ -215,16 +216,16 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // LONG_NULL sentinel (-2^63) must not be regrouped: col op (C1 op C2) = col op
         // LONG_NULL poisons every row to NULL, while the left-associative form keeps the
         // real wrapped value. The INT-width fold rejects LONG-range / L-suffixed literals, so
-        // integerPairFoldsToNull never saw a LONG pair; it now also folds at LONG width via
-        // ExpressionNode#applyLongFold.
+        // LONG pairs stay in source order because a row-dependent intermediate may hit LONG_NULL.
 
         // 9_223_372_036_854_775_807 + 1 wraps to -2^63 == LONG_NULL
         assertReassociationNoOp("l + 9_223_372_036_854_775_807 + 1");
         // L-suffixed operands fold the same way: 9_223_372_036_854_775_806L + 2L -> LONG_NULL
         assertReassociationNoOp("l + 9_223_372_036_854_775_806L + 2L");
 
-        // control: a LONG pair that does NOT hit the sentinel still regroups normally
-        assertReassociation("l + 9_000_000_000_000_000_000 + 100", "l + (9_000_000_000_000_000_000 + 100)");
+        // A non-sentinel LONG pair also stays in source order because a row-dependent
+        // intermediate can still hit LONG_NULL.
+        assertReassociationNoOp("l + 9_000_000_000_000_000_000 + 100");
     }
 
     @Test
@@ -243,40 +244,21 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
     @Test
     public void testReassociationMultiParams() throws Exception {
-        assertReassociation("d + coalesce(d + 1 + 2, 3, 4, 5)", "d + coalesce(d + (1 + 2), 3, 4, 5)");
+        assertReassociation("d + coalesce(d + 1 + 2, 3, 4, 5)", "d + coalesce(d + 1 + 2, 3, 4, 5)");
     }
 
     @Test
     public void testReassociationReordersTree() throws Exception {
-        // Pattern A: (A op C1) op C2 — natural left-associative chain
-        assertReassociation("d + 1 + 4", "d + (1 + 4)");
-        assertReassociation("d * 2 * 3", "d * (2 * 3)");
-        assertReassociation("l & 3 & 5", "l & (3 & 5)");
-        assertReassociation("l | 1 | 4", "l | (1 | 4)");
-        assertReassociation("l ^ 3 ^ 5", "l ^ (3 ^ 5)");
-        assertReassociation("d + 1 + 2 + 3", "d + (1 + 2 + 3)");
-        assertReassociation("d + (1 + 2) + 4", "d + (1 + 2 + 4)");
-        assertReassociation("d + 1 * 2 + 3", "d + (1 * 2 + 3)");
-
-        // Pattern B: (C1 op A) op C2 — needs associative + commutative
-        assertReassociation("(1 + d) + 4", "d + (1 + 4)");
-        assertReassociation("(2 * d) * 3", "d * (2 * 3)");
-
-        // Mirror A: C2 op (A op C1) — needs associative + commutative
-        assertReassociation("4 + (d + 1)", "d + (4 + 1)");
-        assertReassociation("3 * (d * 2)", "d * (3 * 2)");
-
-        // Mirror B: C2 op (C1 op A) — needs only associative
-        assertReassociation("4 + (1 + d)", "4 + 1 + d");
-        assertReassociation("3 * (2 * d)", "3 * 2 * d");
-
-        // NULL handling
+        assertReassociationNoOp("d + 1 + 4");
+        assertReassociationNoOp("d * 2 * 3");
+        assertReassociationNoOp("l & 3 & 5");
+        assertReassociationNoOp("l | 1 | 4");
+        assertReassociationNoOp("l ^ 3 ^ 5");
         assertReassociation("d + NULL + 4", "d + (NULL + 4)");
 
-        // Negative cases: NOT reassociated (non-commutative operators)
-        assertReassociation("d - 1 - 4", "d - 1 - 4");
-        assertReassociation("d / 2 / 5", "d / 2 / 5");
-        assertReassociation("d % 7 % 3", "d % 7 % 3");
+        assertReassociationNoOp("d - 1 - 4");
+        assertReassociationNoOp("d / 2 / 5");
+        assertReassociationNoOp("d % 7 % 3");
     }
 
     @Test
@@ -297,8 +279,8 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     public void testUnaryOperatorsAreNotReassociated() throws Exception {
         // Unary operators (paramCount == 1) are left unchanged, but
         // reassociation still applies inside their operand subtree.
-        assertReassociation("-d + 1 + 2", "-(d) + (1 + 2)");
-        assertReassociation("-(d + 1 + 2)", "-(d + (1 + 2))");
+        assertReassociation("-d + 1 + 2", "-(d) + 1 + 2");
+        assertReassociation("-(d + 1 + 2)", "-(d + 1 + 2)");
         assertReassociation("3 + (-d)", "3 + -(d)");
     }
 

@@ -28,9 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongHashSet;
+import io.questdb.std.Hash;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -162,6 +165,51 @@ public class DirectLongHashSetTest {
                 Assert.assertFalse(set.contains(1));
                 Assert.assertFalse(set.contains(2));
                 Assert.assertFalse(set.contains(0));
+            }
+        });
+    }
+
+    @Test
+    public void testCopyTo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongHashSet set = new DirectLongHashSet(4)) {
+                LongList values = new LongList();
+                values.add(42);
+
+                set.copyTo(values);
+                Assert.assertEquals(1, values.size());
+                Assert.assertEquals(42, values.getQuick(0));
+
+                long collisionA = 1;
+                long collisionB = 2;
+                final int mask = set.capacity() - 1;
+                while ((Hash.hashLong64(collisionA) & mask) != (Hash.hashLong64(collisionB) & mask)) {
+                    collisionB++;
+                }
+                Assert.assertEquals(Hash.hashLong64(collisionA) & mask, Hash.hashLong64(collisionB) & mask);
+                set.add(0);
+                set.add(-7);
+                set.add(9);
+                set.add(collisionA);
+                set.add(collisionB);
+                set.copyTo(values);
+
+                Assert.assertEquals(6, values.size());
+                Assert.assertEquals(42, values.getQuick(0));
+                values.removeIndex(0);
+                values.sort();
+                Assert.assertEquals(-7, values.getQuick(0));
+                Assert.assertTrue(values.binarySearch(0, Vect.BIN_SEARCH_SCAN_UP) >= 0);
+                Assert.assertTrue(values.binarySearch(9, Vect.BIN_SEARCH_SCAN_UP) >= 0);
+                Assert.assertTrue(values.binarySearch(collisionA, Vect.BIN_SEARCH_SCAN_UP) >= 0);
+                Assert.assertTrue(values.binarySearch(collisionB, Vect.BIN_SEARCH_SCAN_UP) >= 0);
+
+                set.clear();
+                values.clear();
+                values.add(99);
+                set.copyTo(values);
+                Assert.assertEquals(1, values.size());
+                Assert.assertEquals(99, values.getQuick(0));
             }
         });
     }
