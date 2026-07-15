@@ -585,6 +585,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
+    }
+
+    @Override
+    @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
             perWorkerLocks.setTestAcquireLatch(latch);

@@ -76,7 +76,7 @@ public class PerWorkerLocks {
                     id -= workerCount;
                 }
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
-                    assert tallyAcquire();
+                    assert tallyAcquireIfEnabled();
                     return id;
                 }
             }
@@ -99,7 +99,7 @@ public class PerWorkerLocks {
                     id -= workerCount;
                 }
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
-                    assert tallyAcquire();
+                    assert tallyAcquireIfEnabled();
                     return id;
                 }
             }
@@ -136,6 +136,11 @@ public class PerWorkerLocks {
         return slotAcquireCount.get();
     }
 
+    @TestOnly
+    public boolean hasTestAcquireLatch() {
+        return testAcquireLatch != null;
+    }
+
     public void releaseSlot(int slot) {
         if (slot > -1) {
             locks.set(INTS_PER_SLOT * slot, 0);
@@ -161,10 +166,10 @@ public class PerWorkerLocks {
         testAcquireLatch = latch;
     }
 
-    private boolean tallyAcquire() {
-        slotAcquireCount.incrementAndGet();
+    private boolean tallyAcquireIfEnabled() {
         final CountDownLatch latch = testAcquireLatch;
         if (latch != null) {
+            slotAcquireCount.incrementAndGet();
             latch.countDown();
         }
         return true;

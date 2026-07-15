@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
@@ -37,6 +38,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 
 /**
  * Pins the O(1) array-dimension path through the records that wrap a page frame.
@@ -104,6 +108,50 @@ public class ArrayAccessorForwardingTest {
         assertForwards(record);
         assertForwards(record, 1);
         assertNullSource(record, 2);
+    }
+
+    @Test
+    public void testMaterializedRecordForwards() throws Exception {
+        final Class<?> recordClass = Class.forName("io.questdb.griffin.engine.orderby.MaterializedRecord");
+        final Constructor<?> constructor = recordClass.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        final Record record = (Record) constructor.newInstance();
+        final Method of = recordClass.getDeclaredMethod(
+                "of",
+                Record.class,
+                int[].class,
+                int[].class,
+                MemoryCARW[].class
+        );
+        of.setAccessible(true);
+        of.invoke(record, new DirectOnlyArrayRecord(0), new int[]{-1}, new int[]{0}, new MemoryCARW[0]);
+        assertForwards(record);
+    }
+
+    @Test
+    public void testUnionRecordForwardsBothBranches() {
+        final io.questdb.griffin.engine.union.UnionRecord record =
+                new io.questdb.griffin.engine.union.UnionRecord();
+        record.of(new DirectOnlyArrayRecord(0), new DirectOnlyArrayRecord(0));
+        assertForwards(record);
+        record.setAb(false);
+        assertForwards(record);
+    }
+
+    @Test
+    public void testWindowLightRecordForwardsBothMappings() throws Exception {
+        final IntList sourceMap = new IntList();
+        sourceMap.add(2);
+        sourceMap.add(-4);
+        final Class<?> recordClass = Class.forName("io.questdb.griffin.engine.window.WindowLightRecord");
+        final Constructor<?> constructor = recordClass.getDeclaredConstructor(IntList.class);
+        constructor.setAccessible(true);
+        final Record record = (Record) constructor.newInstance(sourceMap);
+        final Method of = recordClass.getDeclaredMethod("of", Record.class, Record.class, long.class);
+        of.setAccessible(true);
+        of.invoke(record, new DirectOnlyArrayRecord(2), new DirectOnlyArrayRecord(3), 0L);
+        assertForwards(record);
+        assertForwards(record, 1);
     }
 
     @Test

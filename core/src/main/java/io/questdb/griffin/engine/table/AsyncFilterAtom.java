@@ -164,6 +164,12 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     @Override
     @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
+    }
+
+    @Override
+    @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
             perWorkerLocks.setTestAcquireLatch(latch);

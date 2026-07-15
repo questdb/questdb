@@ -60,6 +60,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         // two answers come from the same int - parity for held, value for the tally - so a release
         // that reset the slot to 0 instead of counting it up would read back 0 here.
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
+        locks.setTestAcquireLatch(new CountDownLatch(0));
         Assert.assertEquals(0, locks.getSlotAcquireCount());
 
         final int first = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
@@ -76,6 +77,16 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         locks.releaseSlot(locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
         Assert.assertEquals(3, locks.getSlotAcquireCount());
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
+    public void testAcquireCountStaysDisabledWithoutTestHook() {
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 2);
+
+        final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        locks.releaseSlot(slot);
+
+        Assert.assertEquals(0, locks.getSlotAcquireCount());
     }
 
     @Test
@@ -144,6 +155,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         final int slots = 3;
         final int rounds = 2_000;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots);
+        locks.setTestAcquireLatch(new CountDownLatch(0));
         final AtomicIntegerArray owners = new AtomicIntegerArray(slots);
         final AtomicInteger exclusionBreaches = new AtomicInteger();
         final CyclicBarrier start = new CyclicBarrier(threads);

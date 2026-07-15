@@ -38,6 +38,7 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     private final int noStealingThreshold;
     private final long spinTimeoutNanos;
     private StatefulAtom atom;
+    private boolean isTestSlotAcquireWaitEnabled;
     private AtomicInteger startedCounter;
 
     public AdaptiveWorkStealingStrategy(int noStealingThreshold, long spinTimeoutNanos) {
@@ -49,6 +50,7 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     public WorkStealingStrategy of(AtomicInteger startedCounter) {
         this.startedCounter = startedCounter;
         this.atom = null;
+        this.isTestSlotAcquireWaitEnabled = false;
         return this;
     }
 
@@ -56,12 +58,13 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     public WorkStealingStrategy of(AtomicInteger startedCounter, StatefulAtom atom) {
         this.startedCounter = startedCounter;
         this.atom = atom;
+        this.isTestSlotAcquireWaitEnabled = atom.isTestSlotAcquireWaitEnabled();
         return this;
     }
 
     @Override
     public boolean shouldSteal(int finishedCount) {
-        assert atom == null || atom.awaitTestSlotAcquire() : "timed out waiting for a worker slot acquisition";
+        assert !isTestSlotAcquireWaitEnabled || atom.awaitTestSlotAcquire() : "timed out waiting for a worker slot acquisition";
         // Give shared workers a chance to pick up the tasks.
         // The spin duration is time-based to ensure consistent behavior
         // across different CPU architectures (Intel vs AMD have very different

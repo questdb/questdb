@@ -86,6 +86,11 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
     }
 
     @TestOnly
+    default boolean isTestSlotAcquireWaitEnabled() {
+        return false;
+    }
+
+    @TestOnly
     default void setTestSlotAcquireLatch(CountDownLatch latch) {
     }
 

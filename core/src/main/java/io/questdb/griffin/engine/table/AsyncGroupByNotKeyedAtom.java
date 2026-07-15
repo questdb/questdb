@@ -277,6 +277,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
+    }
+
+    @Override
+    @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
             perWorkerLocks.setTestAcquireLatch(latch);
