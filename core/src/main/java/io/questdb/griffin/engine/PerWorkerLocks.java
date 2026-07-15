@@ -67,7 +67,10 @@ public class PerWorkerLocks {
     }
 
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
-        workerId = workerId == -1 ? rnd.nextInt(workerCount) : workerId;
+        // A shared pool has more workers than an atom has slots, so the incoming worker id can be
+        // >= workerCount. Fold it into [0, workerCount) up front: the single conditional subtraction
+        // in the loop only wraps a sum that stays under 2 * workerCount.
+        workerId = workerId == -1 ? rnd.nextInt(workerCount) : workerId % workerCount;
         while (true) {
             for (int i = 0; i < workerCount; i++) {
                 int id = i + workerId;
@@ -86,7 +89,10 @@ public class PerWorkerLocks {
     }
 
     public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
-        carrierId = carrierId == -1 ? rnd.nextInt(workerCount) : carrierId;
+        // A shared pool has more workers than an atom has slots, so the incoming carrier id can be
+        // >= workerCount. Fold it into [0, workerCount) up front: the single conditional subtraction
+        // in the loop only wraps a sum that stays under 2 * workerCount.
+        carrierId = carrierId == -1 ? rnd.nextInt(workerCount) : carrierId % workerCount;
         while (!circuitBreaker.checkIfTripped()) {
             for (int i = 0; i < workerCount; i++) {
                 int id = i + carrierId;
