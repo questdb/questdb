@@ -95,6 +95,15 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testAllowAllFactoryIlpDoesNotRouteTransportCredential() {
+        // ILP's principal is a JWK key id (a transport credential, not an ACL identity), so the factory must
+        // hand back the bare singleton rather than route it through the process-lifetime per-principal cache.
+        SecurityContext context = AllowAllSecurityContextFactory.INSTANCE.getInstance(principal("keyid"), SecurityContextFactory.ILP);
+        Assert.assertSame(AllowAllSecurityContext.INSTANCE, context);
+        TestUtils.assertEquals("admin", context.getPrincipal());
+    }
+
+    @Test
     public void testAllowAllFactoryReportsConfiguredPrincipal() {
         SecurityContext context = AllowAllSecurityContextFactory.INSTANCE.getInstance(principal("foo"), SecurityContextFactory.HTTP);
         Assert.assertNotSame(AllowAllSecurityContext.INSTANCE, context);
@@ -447,6 +456,15 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testReadOnlyFactoryIlpDoesNotRouteTransportCredential() {
+        // ILP's principal is a JWK key id (a transport credential, not an ACL identity), so the factory must
+        // hand back the bare singleton rather than route it through the process-lifetime per-principal cache.
+        SecurityContext context = ReadOnlySecurityContextFactory.INSTANCE.getInstance(principal("keyid"), SecurityContextFactory.ILP);
+        Assert.assertSame(ReadOnlySecurityContext.INSTANCE, context);
+        TestUtils.assertEquals("admin", context.getPrincipal());
+    }
+
+    @Test
     public void testReadOnlyFactoryReportsConfiguredPrincipal() {
         SecurityContext context = ReadOnlySecurityContextFactory.INSTANCE.getInstance(principal("foo"), SecurityContextFactory.HTTP);
         Assert.assertNotSame(ReadOnlySecurityContext.INSTANCE, context);
@@ -480,19 +498,21 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
-    public void testReadOnlyUsersAwareFactoryDefaultInterfaceReportsConfiguredPrincipal() {
-        // the default branch (e.g. ILP, interface id other than HTTP/PGWIRE) yields an allow-all context
-        // that still reports the authenticated user, and is allow-all regardless of httpReadOnly.
-        // This unit test is the deliberate coverage for the named-principal ILP path: there is no e2e test
-        // because ILP has no query path to read current_user() back, and an ACL-disabled ILP connection
-        // authenticates anonymously (null principal -> the shared singleton), so a named principal reaches
-        // this branch only through a configured ILP authenticator.
+    public void testReadOnlyUsersAwareFactoryIlpDoesNotRouteTransportCredential() {
+        // The ILP branch must NOT route its principal through forPrincipal: with a line auth db configured
+        // the ILP principal is a JWK key id -- a transport credential, not an ACL identity -- so the factory
+        // hands back the bare shared allow-all singleton reporting the default name, never a per-principal
+        // derived context. Routing it would retain every key id in the process-lifetime per-principal cache
+        // that hangs off the singleton shared by all three protocols, saturating its bound and pushing the
+        // HTTP/PGWire users onto the uncached, allocate-per-call path. ILP has no query surface to read
+        // current_user() back anyway. Mirrors EntReadOnlyUsersAwareSecurityContextFactory.
         ReadOnlyUsersAwareSecurityContextFactory factory = new ReadOnlyUsersAwareSecurityContextFactory(false, null, true);
-        SecurityContext context = factory.getInstance(principal("foo"), SecurityContextFactory.ILP);
-        TestUtils.assertEquals("foo", context.getPrincipal());
+        SecurityContext context = factory.getInstance(principal("keyid"), SecurityContextFactory.ILP);
+        Assert.assertSame(AllowAllSecurityContext.INSTANCE, context);
+        TestUtils.assertEquals("admin", context.getPrincipal());
         Assert.assertTrue(context.isSystemAdmin());
         context.authorizeInsert(null);
-        // a null principal on the default branch keeps the shared singleton
+        // a null principal likewise keeps the shared singleton
         Assert.assertSame(AllowAllSecurityContext.INSTANCE, factory.getInstance(principal(null), SecurityContextFactory.ILP));
     }
 
