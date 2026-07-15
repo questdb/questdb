@@ -67,6 +67,34 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     private static final long PAGE_SIZE = 4096L;
 
     @Test
+    public void testApproxRowSizeBytes() throws Exception {
+        // approxRowSizeBytes() turns the byte-denominated IN MEMORY growth budget into a row
+        // count for LiveViewRefreshJob's amortised-compaction gate: it sums the exact
+        // fixed-width stride of every column and charges a nominal 32B for each var-size column
+        // (whose true per-row size is data dependent). A wrong sum would skew the compaction
+        // cadence, so pin the arithmetic for representative schemas. The buffers allocate their
+        // per-column arenas at construction, so this runs under assertMemoryLeak.
+        assertMemoryLeak(() -> {
+            // Single fixed-width column: just its stride.
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(singleLongCol(), 0, PAGE_SIZE)) {
+                Assert.assertEquals(Long.BYTES, buf.approxRowSizeBytes());
+            }
+            // All fixed-width: strides add up (TIMESTAMP 8 + LONG256 32 + UUID 16 + LONG128 16).
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(wideFixedWidthSchema(), 0, PAGE_SIZE)) {
+                Assert.assertEquals(8 + 32 + 16 + 16, buf.approxRowSizeBytes());
+            }
+            // One var-size column charges the nominal 32B on top of the TIMESTAMP stride.
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(varcharSchema(), 0, PAGE_SIZE)) {
+                Assert.assertEquals(8 + 32, buf.approxRowSizeBytes());
+            }
+            // Two var-size columns are each charged 32B (TIMESTAMP 8 + STRING 32 + BINARY 32).
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(strBinSchema(), 0, PAGE_SIZE)) {
+                Assert.assertEquals(8 + 32 + 32, buf.approxRowSizeBytes());
+            }
+        });
+    }
+
+    @Test
     public void testCloseFreesAllNativeMemory() throws Exception {
         // The whole class runs under assertMemoryLeak; this test exists so the
         // failure mode (forgetting to free either column buffers or the refcount

@@ -4284,6 +4284,51 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Decides whether a slow-path evict-and-swap is worth doing on this lead/subset
+     * publish. The slow path copies the whole retained set (the IN MEMORY overlap
+     * still resident plus the un-flushed lead) into the other slot before swapping,
+     * so it is O(retained). Only AGED overlap rows - already durable on disk and
+     * older than the IN MEMORY horizon - can be reclaimed; the un-flushed lead has no
+     * disk copy and is never evicted. So a swap is worthwhile only once at least
+     * {@code growthBudget} bytes of such rows have accumulated: that bounds the extra
+     * RAM held above the IN MEMORY window to the growth budget and amortises the copy
+     * across the many in-place appends that happen in between.
+     * <p>
+     * When it returns {@code false} the caller appends in place (fast path) if no
+     * reader pins the published slot; a reader pin still forces the slow path via the
+     * failed {@code tryAcquireWrite}. Returning {@code true} for {@code growthBudget <= 0}
+     * preserves the "compact every publish" behaviour some tests rely on.
+     */
+    private boolean isCompactionWorthwhile(
+            LiveViewInMemoryBuffer pubSlot,
+            long stagingMaxTs,
+            LiveViewInstance instance,
+            long growthBudget
+    ) {
+        if (growthBudget <= 0) {
+            // No slack configured: compact on every publish (aggressive eviction).
+            return true;
+        }
+        if (stagingMaxTs == Numbers.LONG_NULL) {
+            return false;
+        }
+        // Only the overlap prefix [0, overlapCount) can age out; the trailing lead
+        // never does.
+        final long overlapCount = pubSlot.rowCount() - pubSlot.leadRowCount();
+        final long budgetRows = growthBudget / Math.max(1, pubSlot.approxRowSizeBytes());
+        if (overlapCount <= budgetRows) {
+            // Fewer than a budget's worth of reclaimable rows even if all overlap
+            // aged out - not worth an O(retained) copy yet.
+            return false;
+        }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+        final long retainThreshold = stagingMaxTs - driver.fromMicros(instance.getDefinition().getInMemoryMicros());
+        // Rows are ts-ascending, so at least budgetRows overlap rows have aged out
+        // iff the overlap row at index budgetRows still sits below the horizon.
+        return pubSlot.getLong(budgetRows, pubSlot.getTimestampColumnIndex()) < retainThreshold;
+    }
+
+    /**
      * Publishes this cycle's staging rows into the LV's in-memory tier
      * (fast-path + slow-path swap), returning {@code true} on success and
      * {@code false} only when both slots are reader-pinned in lead mode.
@@ -4347,14 +4392,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // dropped row, so the slot just rebuilds from this cycle's staging rows.
         boolean dropRetained = instance.isTierStale();
 
-        // Fast-path: append in place when no reader pins the published slot
-        // and the slot's footprint is still under the growth budget. Growth
-        // backstop ensures the in-mem tier cannot accumulate indefinitely
-        // even when readers never pin (e.g. an idle LV with steady
-        // ingestion); the IN MEMORY eviction runs on the slow-path edge
-        // that fires when the threshold trips.
+        // Fast-path: append in place when no reader pins the published slot and a
+        // slow-path compaction is not yet worthwhile. The slow path copies the
+        // entire retained set (up to the IN MEMORY window plus the un-flushed lead)
+        // into the other slot, so it must not run on every publish: it is worth
+        // paying only once enough AGED overlap rows have piled up for a swap to
+        // reclaim a meaningful amount (isCompactionWorthwhile), which amortises the
+        // O(retained) copy and keeps the tier from accumulating indefinitely even
+        // when readers never pin (an idle LV with steady ingestion). The un-flushed
+        // lead never ages out, so a slot dominated by the lead (a long FLUSH EVERY
+        // window at high ingest) keeps appending in place instead of copying the
+        // whole lead every cycle - the copy the old absolute-footprint gate forced
+        // for any tier larger than the growth budget, which O3-throttled the drain
+        // and made the view fall behind.
         long growthBudget = engine.getConfiguration().getLiveViewInMemoryBufferGrowthBytes();
-        if (pubSlot.footprintBytes() < growthBudget) {
+        if (!isCompactionWorthwhile(pubSlot, stagingMaxTs, instance, growthBudget)) {
             LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
             if (acquired != null) {
                 try {

@@ -277,6 +277,26 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         setRowCount(writeRow + rn);
     }
 
+    /**
+     * Approximate per-row footprint in bytes: the exact fixed-width stride summed
+     * over all columns, plus a nominal allowance for each var-size column (whose
+     * true per-row size is data dependent). Only used to turn the byte-denominated
+     * IN MEMORY growth budget into a row count for the amortised compaction gate in
+     * {@code LiveViewRefreshJob.publishToInMemoryTier}, so a rough var estimate is
+     * fine.
+     */
+    public long approxRowSizeBytes() {
+        long sum = 0;
+        for (int i = 0, n = columnTypeSizes.size(); i < n; i++) {
+            final int sz = columnTypeSizes.getQuick(i);
+            // Var-size columns record sz == 0 here (their payload is tracked by the
+            // append cursors, not a fixed stride); charge a nominal 16B aux entry
+            // plus a 16B payload guess so a var-heavy schema still compacts.
+            sum += sz != 0 ? sz : 32;
+        }
+        return sum;
+    }
+
     public int columnCount() {
         return columnTypes.size();
     }
@@ -766,25 +786,25 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     public long footprintBytes() {
         long sum = 0;
         // Runs lock-free off the live_views() catalogue cursor with no read pin, so
-        // a concurrent DROP / invalidate can free this buffer mid-scan: close()
-        // calls Misc.freeObjList(dataMem) then dataMem.clear() (Arrays.fill(null))
-        // before the tier nulls the slot reference, so a slot the tier still sees
-        // as non-null can have its dataMem / auxMem entries nulled underneath this
-        // loop. Bail on the first null rather than NPE the monitoring query; a
-        // freed buffer simply reports whatever it summed before teardown reached it.
+        // a concurrent DROP / invalidate can free this buffer mid-scan: close() frees
+        // and clear()s dataMem / auxMem / columnTypes, so the list this loop reads can
+        // shrink underneath it (and with no memory barrier the reader can even observe
+        // one list cleared while another still looks populated). Read every list with
+        // getQuiet, which returns null past the current length instead of tripping the
+        // getQuick bounds assert, and bail on the first null: a freed buffer simply
+        // reports whatever it summed before teardown reached it. Deciding var-ness from
+        // the aux slot's type (a real MemoryCARWImpl vs the shared NullMemory stub)
+        // avoids a separate columnTypes read that could go out of bounds on its own.
         for (int i = 0, n = dataMem.size(); i < n; i++) {
-            final MemoryCARWImpl data = dataMem.getQuick(i);
+            final MemoryCARWImpl data = dataMem.getQuiet(i);
             if (data == null) {
                 break;
             }
             sum += data.size();
-            // Add the aux region only for var-size columns; a fixed-width column's
-            // aux is the NullMemory stub, whose size() throws.
-            if (ColumnType.isVarSize(columnTypes.getQuick(i))) {
-                final MemoryCARW aux = auxMem.getQuick(i);
-                if (aux == null) {
-                    break;
-                }
+            // Add the aux region only for var-size columns; a fixed-width column parks
+            // the shared NullMemory stub there, whose size() throws.
+            final MemoryCARW aux = auxMem.getQuiet(i);
+            if (aux instanceof MemoryCARWImpl) {
                 sum += aux.size();
             }
         }

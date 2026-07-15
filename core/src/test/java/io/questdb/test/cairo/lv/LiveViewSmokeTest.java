@@ -3599,25 +3599,30 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testInMemFootprintPlateausUnderGrowthBudget() throws Exception {
-        // Under a NON-ZERO growth budget the refresh
-        // worker appends to the published slot via the fast-path until that
-        // slot's footprint crosses
-        // cairo.live.view.in.memory.buffer.growth.bytes, then switches to the
-        // slow-path swap (where IN MEMORY eviction runs). footprintBytes() sums
-        // ALLOCATED column pages and reset() retains them, so a slot's footprint
-        // is a monotonic high-water mark: once both N=2 slots have each crossed
-        // the growth budget once, the tier footprint plateaus at ~2 x
-        // growth.bytes and the fast-path self-disables (every later cycle takes
-        // the slow-path, since footprint < budget is never again true). The
-        // footprint is bounded by the growth budget, NOT by IN MEMORY or by the
-        // number of rows ingested: a small IN MEMORY keeps the logical row set
-        // tiny while the RAM still floats at the growth-budget bound.
+        // Under a NON-ZERO growth budget the refresh worker appends to the
+        // published slot via the fast-path and defers the slow-path
+        // evict-and-swap until a growth-budget's worth of AGED, reclaimable
+        // overlap has piled up (isCompactionWorthwhile). Each cycle's rows flush
+        // to disk (become overlap) and, spaced 2s apart under a 1s IN MEMORY
+        // window, age out; the fast-path holds them in place until roughly
+        // growth.bytes / approxRowSizeBytes aged rows accumulate, then a single
+        // slow-path swap evicts them. So the published slot oscillates between a
+        // fresh cycle and ~a growth-budget's worth of aged overlap, and its peak
+        // is bounded by the growth budget in rows plus one cycle - NOT by IN
+        // MEMORY or by the number of rows ingested.
+        //
+        // footprintBytes() sums ALLOCATED column pages and reset() retains them,
+        // so a slot's footprint is a monotonic high-water mark. Once both N=2
+        // slots have each reached their bounded peak the tier footprint plateaus
+        // and never grows again, however many more rows are ingested. That
+        // decoupling of RAM from ingested volume is the no-leak property under
+        // test.
         //
         // The shipped defaults (64 KiB initial page / 16 MiB growth) would need
         // millions of rows to cross, so this test scales both budgets down to
-        // exercise the same fast-path-fills-then-evicts regime cheaply. Every
-        // other eviction test forces growth.bytes = 0, which takes the slow-path
-        // on every cycle and so never enters this regime.
+        // exercise the same fills-then-evicts regime cheaply. Every other
+        // eviction test forces growth.bytes = 0, which takes the slow-path on
+        // every cycle and so never enters this regime.
         final long initialBytes = 4 * 1024;  // per-column page granule
         final long growthBytes = 64 * 1024;  // slow-path growth backstop
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, initialBytes);
@@ -3678,12 +3683,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
 
                 // RAM is growth-bound, not IN-MEMORY- or data-volume-bound: the
-                // published slot retains only a small recent window even though
-                // the footprint floats at the growth-budget bound.
+                // published slot retains at most a growth-budget's worth of aged
+                // overlap plus the freshest cycle appended on top before the next
+                // compaction - far below the ~40k rows ingested. The bound tracks
+                // the gate's own math: budgetRows = growth.bytes / approxRowSize.
+                long approxRowSize = tier.getSlot(tier.getPublishedIdx()).approxRowSizeBytes();
+                long maxRetainedRows = growthBytes / approxRowSize + rowsPerCycle;
                 long publishedRows = tier.getSlot(tier.getPublishedIdx()).rowCount();
                 Assert.assertTrue(
-                        "published slot must retain only a small recent window, not all ingested rows [rows=" + publishedRows + "]",
-                        publishedRows <= 4 * rowsPerCycle
+                        "published slot must retain only a growth-budget window, not all ingested rows"
+                                + " [rows=" + publishedRows + ", bound=" + maxRetainedRows + "]",
+                        publishedRows <= maxRetainedRows
                 );
 
                 // Plateau: many more cycles must NOT grow the footprint. Pages
@@ -3719,8 +3729,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // holding capacity retained from a past burst.
                 long liveRows = tier.publishedRowCount();
                 Assert.assertTrue(
-                        "published row count must stay at the small retained window [rows=" + liveRows + "]",
-                        liveRows <= 4 * rowsPerCycle
+                        "published row count must stay within the growth-budget window [rows=" + liveRows + ", bound=" + maxRetainedRows + "]",
+                        liveRows <= maxRetainedRows
                 );
                 assertQuery("SELECT in_mem_rows FROM live_views() WHERE view_name = 'lv'")
                         .noLeakCheck().noRandomAccess()
