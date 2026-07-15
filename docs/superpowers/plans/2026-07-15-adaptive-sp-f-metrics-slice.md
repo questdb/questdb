@@ -13,7 +13,7 @@
 - Worktree `~/claude/wt/oss/adaptive-commit`, branch `nw_adaptive_commit`. OSS core only.
 - JDK25: `JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64`.
 - Test/build command (single class): `JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64 mvn -f pom.xml -pl core test -Dtest='<Class>#<method>' -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false`. Read the authoritative report at `core/target/surefire-reports/<FQCN>.txt`.
-- Metric registered names: `wal_apply_local_durable_seq_txn`, `wal_adaptive_epoch_advances`, `wal_adaptive_recovery_events`. Prometheus scrape tags add the `questdb_` prefix (tests read `questdb_wal_...` via `TestUtils.getMetricValue(engine, tag)`).
+- Metric registered names: `wal_apply_local_durable_seq_txn`, `wal_adaptive_epoch_advances`, `wal_adaptive_recovery_events`. Prometheus scrape tags add the `questdb_` prefix (tests read `questdb_wal_...` via `TestUtils.getMetricValue(engine, tag)`). **Counters additionally get a `_total` scrape suffix** (`PrometheusFormatUtils.appendCounterNamePrefix`): a counter registered as `wal_adaptive_epoch_advances` is read as `questdb_wal_adaptive_epoch_advances_total`. Gauges have NO suffix (so Task 1's gauge is read as `questdb_wal_apply_local_durable_seq_txn`).
 - Adaptive table in tests: `node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive")` then a `... wal` table; drive apply with `drainWalQueue()`.
 - Test style: exact-value assertions where deterministic; assert the metric against the tracker's own getter to avoid brittle magic numbers (mirrors `SeqTxnMetricsTest`).
 - DRY: do NOT create a new metrics class; reuse `WalMetrics`. YAGNI: no lag gauge, no per-table labels.
@@ -159,10 +159,10 @@ git commit -m "feat(metrics): wal_apply_local_durable_seq_txn gauge (adaptive du
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, "0"); // advance every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances");
+            long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances_total");
             execute("insert into x values (0, 1)");
             drainWalQueue();
-            long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances");
+            long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances_total");
             assertTrue("each adaptive apply batch advances the durable epoch", after > before);
         });
     }
@@ -240,11 +240,11 @@ git commit -m "feat(metrics): wal_adaptive_epoch_advances counter (epoch cadence
             // (Mirror the arrange block of testRecoverSkipsEpochAheadOfRestoredTxn, but DO NOT
             //  restore the older _txn over the live one: leave live _txn at 6 and the epoch trio at 3,
             //  which is the normal "rewind to epoch" recovery input.)
-            long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events");
+            long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
 
             new io.questdb.cairo.RecoveryCoordinator(engine).recover();
 
-            long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events");
+            long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_recovery_events_total");
             assertTrue("a table recovered (rewound) at boot must increment the counter", after > before);
         });
     }
