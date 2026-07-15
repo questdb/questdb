@@ -153,7 +153,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+    public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
             try {

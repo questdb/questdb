@@ -53,7 +53,7 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
 
     void enqueueFullRefresh(TableToken matViewToken);
 
-    void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner);
+    void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner);
 
     void enqueueIncrementalRefresh(TableToken matViewToken);
 

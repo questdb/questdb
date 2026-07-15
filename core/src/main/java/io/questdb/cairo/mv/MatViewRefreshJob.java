@@ -166,9 +166,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * that published its intent before losing this latch. Every lock-holder must route its unlock through here --
      * including holders outside this class, such as the {@code REFRESH ... STATS} reset in
      * {@code SqlCompilerImpl} -- or a deferral landing during its hold freezes the view
-     * valid-but-stale. The one deliberate exception is {@code invalidateView}'s auth-refusal
-     * self-deferral, which routes through {@link #finalizeAndUnlock0} with the marker its refused mint
-     * attempt consumed, so the wake it would otherwise queue cannot feed the refusal loop (see there).
+     * valid-but-stale. The deliberate exceptions are the auth-refusal self-deferrals: {@code invalidateView}
+     * routes through {@link #finalizeAndUnlock0} with the marker its refused mint attempt consumed, and
+     * {@code fullRefresh} with the owner its refused pass carried, so the wake each would otherwise queue
+     * cannot feed the refusal loop (see there).
      * {@code shouldIncrementRefreshSeq} additionally bumps
      * {@link MatViewState#incrementRefreshSeq()}
      * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
@@ -182,7 +183,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewState viewState,
             boolean shouldIncrementRefreshSeq
     ) {
-        finalizeAndUnlock0(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq, null);
+        finalizeAndUnlock0(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq, null, null);
     }
 
     @Override
@@ -424,11 +425,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * this post-release read would queue, and with the writer refusal sticky while the engine still
      * reports writable (the enterprise demote TOCTOU), re-queueing it makes the refresh worker drain
      * and re-queue the same INVALIDATE forever. Publications CAS-replace the marker object, so identity
-     * proves nothing newer published during the hold and the retained marker safely waits for
-     * promote-time redelivery. A marker that changed since the refusal is a fresh publication and wakes
+     * proves nothing newer published during the hold and the retained marker waits for
+     * out-of-band redelivery (a later lock-holder's handoff, RESUME WAL, or a fresh request).
+     * A marker that changed since the refusal is a fresh publication and wakes
      * normally: the woken retry publishes its own marker, refuses, matches identity, and stops, so
-     * convergence is bounded by real publications. The full-refresh facet is never suppressed -- an
-     * owner riding the refused marker published before the refusal and still relies on this wake.
+     * convergence is bounded by real publications.
+     * <p>
+     * {@code suppressedFullRefreshOwner} is the same self-deferral for {@code fullRefresh}'s
+     * auth-refusal: the refused holder's own owner rides the marker, and waking it re-queues the very
+     * task that just refused. Owners are identity objects minted per publication
+     * ({@link MatViewState#markAsPendingFullRefreshAndGetOwner()}), so a matching identity proves no
+     * newer FULL request published during the hold; a mismatch is a fresh request and wakes normally.
+     * An INVALIDATE holder never suppresses the owner facet (it passes {@code null}) -- an owner riding
+     * its refused marker published before the refusal and still relies on that wake.
      */
     private static void finalizeAndUnlock0(
             CairoEngine engine,
@@ -436,7 +445,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableToken viewToken,
             MatViewState viewState,
             boolean shouldIncrementRefreshSeq,
-            @Nullable Object suppressedInvalidationMarker
+            @Nullable Object suppressedInvalidationMarker,
+            @Nullable Object suppressedFullRefreshOwner
     ) {
         assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
         try {
@@ -485,7 +495,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 throw th;
             }
         }
-        if (fullRefreshOwner != null) {
+        if (fullRefreshOwner != null && fullRefreshOwner != suppressedFullRefreshOwner) {
             try {
                 stateStore.enqueueFullRefresh(viewToken, fullRefreshOwner);
             } catch (Throwable th) {
@@ -976,6 +986,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         boolean isFullRefreshDeferred = false;
+        // Set once the auth-refusal catch below defers this invocation's own refused owner; the
+        // finally hands it to finalizeAndUnlock0, which suppresses only that owner's wake.
+        Object authRefusedOwner = null;
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
             if (baseTableToken == null) {
@@ -1047,6 +1060,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 LOG.info().$("skipping full refresh, materialized view is suspended [view=").$(viewToken).I$();
                 return false;
             }
+            if (th instanceof CairoException ex && ex.isAuthorizationError()) {
+                // A read-only refusal from the role gate (a demote racing this refresh; the writer
+                // acquire or the commit fence inside the pump refuses). This is a transient role
+                // condition, NOT a refresh failure: defer -- keep the owner facet pending on the
+                // marker and do NOT re-enqueue. The refusal can outlive this pass while the engine
+                // still reports writable (the demote TOCTOU, sticky in the enterprise chokepoint
+                // tests), so both retry channels would feed the same refused acquire forever: a
+                // handleErrorRetryRefresh re-enqueue AND the finally's owner wake each redeliver the
+                // owner-carrying task the same drain loop just refused. Mirror invalidateView's
+                // self-deferral instead: hand the finally the owner this attempt carried;
+                // finalizeAndUnlock0 suppresses exactly that identity and still wakes a newer FULL
+                // publication. The retained owner waits for out-of-band redelivery (a later
+                // lock-holder's finalize, RESUME WAL, a fresh REFRESH FULL, or promote-time rebuild).
+                isFullRefreshDeferred = true;
+                authRefusedOwner = fullRefreshOwner;
+                LOG.debug().$("materialized view full refresh deferred, node is read-only [view=").$(viewToken).I$();
+                return false;
+            }
             // Retain the exact full owner before attempting retry publication. enqueue may allocate and
             // throw; clearing ownership in finally would otherwise lose both marker and task.
             isFullRefreshDeferred = true;
@@ -1069,8 +1100,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             // A base invalidation newer than the full snapshot, from another base token/epoch, or without
             // txn provenance remains pending; the post-release handoff wakes it. A successful full pump
-            // consumed only a known marker covered by its fixed reader.
-            finalizeAndUnlock(viewToken, viewState, true);
+            // consumed only a known marker covered by its fixed reader. finalizeAndUnlock0 additionally
+            // suppresses the wake for this invocation's own auth-refused owner (authRefusedOwner):
+            // re-queueing that one self-feeds against a sticky refusal. A newer FULL publication minted
+            // a different owner and wakes normally.
+            finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, authRefusedOwner);
         }
 
         if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
@@ -1173,6 +1207,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
                         stateStore.enqueueIncrementalRefresh(viewToken);
                     } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
+                        // Unreachable from fullRefresh, whose catch intercepts authorization errors and
+                        // defers without re-enqueueing (its owner facet stays pending on the marker; a
+                        // re-enqueue here would pair with the finalize owner wake and double-feed a
+                        // sticky refusal). Kept for safety should another caller ever route a FULL task
+                        // here: a single re-enqueue is the pre-owner-machinery behavior.
                         stateStore.enqueueFullRefresh(viewToken, refreshTask.fullRefreshOwner);
                     } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                         stateStore.enqueueRangeRefresh(viewToken, refreshTask.rangeFrom, refreshTask.rangeTo);
@@ -1857,8 +1896,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // finalizeAndUnlock0 retains the marker and suppresses its wake-up while the engine remains
                 // read-only, and additionally suppresses the wake for this invocation's own auth-refused
                 // marker (authRefusedMarker): re-queueing that one self-feeds against a sticky refusal.
+                // The full-refresh owner facet is never suppressed here -- an owner riding the refused
+                // marker published before the refusal and still relies on this wake.
                 // If promotion completed concurrently, the post-release handoff queues newer work now.
-                finalizeAndUnlock0(engine, stateStore, viewToken, viewState, false, authRefusedMarker);
+                finalizeAndUnlock0(engine, stateStore, viewToken, viewState, false, authRefusedMarker, null);
             }
             // Invalidate dependent views recursively -- only after an actual mint. The force=false decline
             // above (a never-incrementally-refreshed view) leaves this view valid, and a valid parent must

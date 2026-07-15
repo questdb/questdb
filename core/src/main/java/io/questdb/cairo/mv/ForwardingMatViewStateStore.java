@@ -76,7 +76,7 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+    public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
         delegate.enqueueFullRefresh(matViewToken, fullRefreshOwner);
     }
 

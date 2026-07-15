@@ -1112,13 +1112,17 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFullRefreshRetryEnqueueOomRetainsOwner() throws Exception {
+    public void testFullRefreshOwnerWakeEnqueueOomRetainsOwner() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
 
+            // The finalize owner wake is the sole handoff that redelivers a FULL request that lost the
+            // latch (the auth-refusal deferral no longer re-enqueues). Queue growth inside that wake can
+            // throw; finalizeAndUnlock0's catch must retain the owner and arm the allocation-free retry
+            // signal so the next ordinary job tick redelivers it.
             final AtomicBoolean hasFailedEnqueue = new AtomicBoolean();
             final MatViewStateStore failOnceStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
                 @Override
@@ -1130,29 +1134,33 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 }
             };
 
-            final AtomicBoolean hasRefusedRefresh = new AtomicBoolean();
+            Assert.assertTrue(state.tryLock());
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, failOnceStore)) {
-                job.setOnBaseReaderSnapshotForTesting(() -> {
-                    if (hasRefusedRefresh.compareAndSet(false, true)) {
-                        throw CairoException.readOnlyAccess();
-                    }
-                });
-                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
                 try {
+                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
                     drainMatViewQueue(job);
-                    Assert.fail("expected the fail-once full retry queue wrapper to throw");
-                } catch (OutOfMemoryError expected) {
-                    Assert.assertEquals("test full retry queue growth failure", expected.getMessage());
+                    Assert.assertTrue("the losing full refresh must retain its owner", state.isPendingInvalidation());
+
+                    try {
+                        MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+                        Assert.fail("expected the fail-once owner-wake queue wrapper to throw");
+                    } catch (OutOfMemoryError expected) {
+                        Assert.assertEquals("test full retry queue growth failure", expected.getMessage());
+                    }
+
+                    Assert.assertTrue("the test must exercise the injected queue failure", hasFailedEnqueue.get());
+                    Assert.assertTrue("the failed owner wake must retain the full-refresh owner", state.isPendingInvalidation());
+                    Assert.assertFalse("the holder must release the view latch after queue failure", state.isLocked());
+
+                    // The wake's catch armed requestPendingFullRefreshReenqueue on the canonical store.
+                    // The next ordinary job tick must rediscover the owner and complete the full refresh.
+                    drainMatViewQueue(job);
+                } finally {
+                    if (state.isLocked()) {
+                        state.clearPendingInvalidationForTesting();
+                        state.unlock();
+                    }
                 }
-
-                Assert.assertTrue("the test must exercise the retry publication", hasRefusedRefresh.get());
-                Assert.assertTrue("the test must exercise the injected queue failure", hasFailedEnqueue.get());
-                Assert.assertTrue("the failed retry publication must retain the full-refresh owner", state.isPendingInvalidation());
-                Assert.assertFalse("the holder must release the view latch after queue failure", state.isLocked());
-
-                // finalizeAndUnlock re-publishes the retained owner after the one-shot failure. The
-                // next ordinary job tick must consume it and complete the full refresh.
-                drainMatViewQueue(job);
             }
             drainWalQueue();
 
@@ -1999,6 +2007,215 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStickyWriterRefusalBothFacetsRotateBoundedAndRecover() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The residual worst case with BOTH facets pending under a sticky refusal: each holder's
+            // deferral suppresses only its OWN facet's wake, so the refused INVALIDATE wakes the FULL
+            // owner and the refused FULL wakes the INVALIDATE -- a one-task rotation that cannot drain
+            // to empty while the refusal holds. This test pins the two properties the rotation does
+            // keep: no growth (each dequeue enqueues at most one task; the per-facet counters stay at
+            // their expected exact values) and full recovery (once the refusal clears, whichever facet
+            // runs next succeeds and the drain converges with both facets delivered).
+            final AtomicInteger fullWakeCount = new AtomicInteger();
+            final AtomicInteger invalidationWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+                    if (fullWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding full refresh loop detected");
+                    }
+                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+                }
+
+                @Override
+                public void enqueueInvalidate(
+                        TableToken matViewToken,
+                        String invalidationReason,
+                        TableToken invalidationBaseTableToken,
+                        long invalidationBaseTxn,
+                        boolean isInvalidationForced
+                ) {
+                    if (invalidationWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding invalidation loop detected");
+                    }
+                    super.enqueueInvalidate(
+                            matViewToken,
+                            invalidationReason,
+                            invalidationBaseTableToken,
+                            invalidationBaseTxn,
+                            isInvalidationForced
+                    );
+                }
+            };
+
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                final AtomicInteger dequeueCount = new AtomicInteger();
+                job.setOnRefreshTaskDequeuedForTesting(() -> {
+                    final int dequeue = dequeueCount.incrementAndGet();
+                    // Rotation ledger under the refusal: d1 INV defers (no wake: no owner facet yet),
+                    // d2 FULL defers (wakes INV), d3 INV defers (wakes FULL), d4 FULL defers (wakes
+                    // INV). The 5th dequeue is the INVALIDATE again; clear the refusal before it
+                    // executes so the rotation self-terminates by delivering both facets.
+                    if (dequeue == 5) {
+                        walRefusalToken.set(null);
+                    }
+                    Assert.assertTrue("the both-facet rotation must not grow the queue", dequeue <= 8);
+                });
+
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "both facets witness");
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+
+                Assert.assertEquals("each refused FULL pass must wake the invalidation exactly once",
+                        2, invalidationWakeCount.get());
+                Assert.assertEquals("each refused INVALIDATE pass and the final mint must wake the owner exactly once",
+                        2, fullWakeCount.get());
+            } finally {
+                walRefusalToken.set(null);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("the recovery must consume both facets", state.isPendingInvalidation());
+            Assert.assertFalse("the final full refresh must leave the view valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
+    public void testStickyWriterRefusalDefersFullRefreshWithoutRequeue() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The enterprise TOCTOU on the FULL facet: fullRefresh's writer acquire refuses with a
+            // read-only authorization error while isReadOnlyMode() still reads false, and the refusal
+            // is sticky until a re-promote. The deferral must not redeliver through EITHER channel --
+            // the handleErrorRetryRefresh re-enqueue and the finalize owner wake each hand the same
+            // drain loop the owner-carrying task it just refused, and together they mint two tasks per
+            // refused pass (unbounded queue growth; the drain never converges). The counting store and
+            // the dequeue seam bound a regression deterministically instead of hanging the test.
+            final AtomicInteger fullWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+                    if (fullWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding full refresh loop detected");
+                    }
+                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+                }
+            };
+
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                final AtomicInteger dequeueCount = new AtomicInteger();
+                job.setOnRefreshTaskDequeuedForTesting(() -> Assert.assertEquals(
+                        "the refused full refresh must not redeliver its own owner",
+                        1,
+                        dequeueCount.incrementAndGet()
+                ));
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+
+                Assert.assertEquals("the refused holder must not wake its own owner", 0, fullWakeCount.get());
+                Assert.assertTrue("the refused full refresh must be deferred (owner pending)", state.isPendingInvalidation());
+                Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
+                Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
+                Assert.assertFalse("the refused holder must release the view latch", state.isLocked());
+
+                // The re-promote: the refusal clears and the retained owner must still be deliverable
+                // through the out-of-band redelivery entry point -- the deferral must not have
+                // stranded the requested rebuild.
+                walRefusalToken.set(null);
+                job.setOnRefreshTaskDequeuedForTesting(null);
+                engine.getMatViewStateStore().reenqueuePendingOnResume(viewToken);
+                drainMatViewQueue(job);
+            } finally {
+                walRefusalToken.set(null);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("the redelivered full refresh must consume the pending owner", state.isPendingInvalidation());
+            Assert.assertFalse("the recovered full refresh must leave the view valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
+    public void testStickyWriterRefusalDefersMidPumpFullRefreshWithoutRequeue() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The commit-fence face of the same refusal: the writer acquire succeeds, the refusal lands
+            // inside the pump (rethrowReadOnlyRefusal re-throws it to the outer catch), and the deferral
+            // must take the same no-requeue path as the acquire face.
+            final AtomicInteger fullWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+                    if (fullWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding full refresh loop detected");
+                    }
+                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+                }
+            };
+
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                final AtomicInteger dequeueCount = new AtomicInteger();
+                job.setOnRefreshTaskDequeuedForTesting(() -> Assert.assertEquals(
+                        "the refused full refresh must not redeliver its own owner",
+                        1,
+                        dequeueCount.incrementAndGet()
+                ));
+                // Sticky: every pass refuses until the seam clears, exactly like the writer chokepoint.
+                job.setOnBaseReaderSnapshotForTesting(() -> {
+                    throw CairoException.readOnlyAccess();
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+
+                Assert.assertEquals("the refused holder must not wake its own owner", 0, fullWakeCount.get());
+                Assert.assertTrue("the refused full refresh must be deferred (owner pending)", state.isPendingInvalidation());
+                Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
+                Assert.assertFalse("a mid-pump refusal must not mark the view invalid", state.isInvalid());
+                Assert.assertFalse("the refused holder must release the view latch", state.isLocked());
+
+                // The re-promote: redelivery must complete the deferred rebuild.
+                job.setOnBaseReaderSnapshotForTesting(null);
+                job.setOnRefreshTaskDequeuedForTesting(null);
+                engine.getMatViewStateStore().reenqueuePendingOnResume(viewToken);
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("the redelivered full refresh must consume the pending owner", state.isPendingInvalidation());
+            Assert.assertFalse("the recovered full refresh must leave the view valid", state.isInvalid());
+        });
+    }
+
+    @Test
     public void testStickyWriterRefusalDefersWithoutSelfFeeding() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -2134,8 +2351,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // facet of the holder's own refused marker. The owner publication replaces the marker object,
             // so the first finalize sees an identity mismatch and wakes the invalidation once (bounded);
             // the woken retry then suppresses its own refused marker. The FULL facet wakes on both passes
-            // (idempotent duplicates, pre-existing behavior); the counting store does not delegate them,
-            // so no full refresh runs against the armed refusal.
+            // (each woken task would defer against the refusal without re-enqueueing); the counting store
+            // does not delegate them, so no full refresh runs against the armed refusal.
             final AtomicInteger fullWakeCount = new AtomicInteger();
             final AtomicInteger invalidationWakeCount = new AtomicInteger();
             final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
@@ -2188,6 +2405,62 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             } finally {
                 walRefusalToken.set(null);
             }
+        });
+    }
+
+    @Test
+    public void testStickyWriterRefusalStillWakesNewerFullOwner() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The other half of the owner-identity suppression: a FULL request that publishes while the
+            // refused holder owns the latch mints a fresh owner object, so the holder's finalize sees an
+            // identity mismatch and must wake it -- suppression is strictly for the holder's own refused
+            // owner. The woken retry publishes nothing new, refuses, matches identity, and stops:
+            // exactly one wake, no self-feed.
+            final AtomicInteger fullWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+                    if (fullWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding full refresh loop detected");
+                    }
+                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+                }
+            };
+
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                final AtomicBoolean hasPublishedNewerOwner = new AtomicBoolean();
+                // The refusal must land AFTER the concurrent publication, so the holder's own refused
+                // owner is already stale when its finalize runs. The seam publishes once (mid-hold, the
+                // losing-contender shape) and refuses on every pass -- sticky, like the writer chokepoint.
+                job.setOnHoldingLockForTesting(() -> {
+                    if (hasPublishedNewerOwner.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation();
+                    }
+                    throw CairoException.readOnlyAccess();
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+
+                Assert.assertTrue("the test must publish a newer owner mid-hold", hasPublishedNewerOwner.get());
+                Assert.assertEquals("the newer owner must be woken exactly once", 1, fullWakeCount.get());
+                Assert.assertTrue("the refused full refresh must stay deferred (owner pending)", state.isPendingInvalidation());
+                Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
+                Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
+
+                // The re-promote: the retained owner must still complete through redelivery.
+                job.setOnHoldingLockForTesting(null);
+                engine.getMatViewStateStore().reenqueuePendingOnResume(viewToken);
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("the redelivered full refresh must consume the pending owner", state.isPendingInvalidation());
+            Assert.assertFalse("the recovered full refresh must leave the view valid", state.isInvalid());
         });
     }
 
