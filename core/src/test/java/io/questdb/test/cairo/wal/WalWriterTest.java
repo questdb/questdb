@@ -5485,6 +5485,45 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplySuspendApplyDoesNotLiftConfigListWriteDenial() throws Exception {
+        // The config list and a runtime SUSPEND WAL are two INDEPENDENT suspend sources, and
+        // isWalApplySuspended already ORs them. isWalWriteSuspended must OR them too: adding an
+        // apply-only runtime suspend on top of a config-list write denial must not WEAKEN the
+        // denial the config independently imposes. Before the fix the runtime tracker
+        // short-circuited the config branch, so SUSPEND WAL APPLY -- a strictly more restrictive
+        // sounding statement -- silently re-opened the table for writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final String dirName = engine.verifyTableName("t").getDirName();
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+            Assert.assertTrue(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+
+            execute("alter table t suspend wal apply");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            Assert.assertTrue(
+                    "config-list write denial must survive an apply-only runtime suspend",
+                    engine.isWalWriteSuspended(engine.verifyTableName("t"))
+            );
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Dropping the config list leaves only the apply-only runtime suspend, which allows
+            // writes -- they buffer for a later apply.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            Assert.assertFalse(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+        });
+    }
+
+    @Test
     public void testWalApplySuspendViaConfigDeniesWrites() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {

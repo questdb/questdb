@@ -1655,17 +1655,31 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Whether the table is suspended in the write-denial flavour: WAL writes are rejected (like a
-     * dropped table, distinct exception), not just excluded from WAL apply. A runtime
-     * {@code ALTER TABLE ... SUSPEND WAL} carries the flavour it was suspended with (defaulting to
-     * {@code cairo.wal.apply.suspended.write.denied}); a table suspended via the
-     * {@code cairo.wal.apply.suspended.tables} config list denies writes only when that same config
-     * is on. This is the sole gate for WAL-write denial -- callers no longer combine
-     * {@code isWalApplySuspended} with the config themselves.
+     * dropped table, distinct exception), not just excluded from WAL apply. This is the sole gate for
+     * WAL-write denial -- callers no longer combine {@code isWalApplySuspended} with the config
+     * themselves.
+     * <p>
+     * There are two INDEPENDENT suspend sources and, exactly as in {@link #isWalApplySuspended}, this
+     * is the OR of them -- neither can weaken the other:
+     * <ul>
+     *   <li>a runtime {@code ALTER TABLE ... SUSPEND WAL}, which denies writes when it carries the
+     *       write-denial flavour. The flavour is CAPTURED when the statement runs, defaulting to
+     *       {@code cairo.wal.apply.suspended.write.denied}. It is captured rather than read live
+     *       because the DDL is a point-in-time command: an explicit
+     *       {@code SUSPEND WAL APPLY AND WRITE} must not silently downgrade to apply-only because
+     *       someone flipped the config default afterwards;</li>
+     *   <li>the {@code cairo.wal.apply.suspended.tables} config list, which denies writes while
+     *       {@code cairo.wal.apply.suspended.write.denied} is on. Both are reloadable config, so this
+     *       source is evaluated LIVE -- the whole state is a function of the current config, and a
+     *       reload is how an operator changes it.</li>
+     * </ul>
+     * Reading the tracker alone when it is hard-suspended would let the more restrictive-sounding
+     * {@code SUSPEND WAL APPLY} LIFT a write denial the config list independently imposes.
      */
     public boolean isWalWriteSuspended(TableToken tableToken) {
         final SeqTxnTracker tracker = tableSequencerAPI.getTxnTracker(tableToken);
-        if (tracker.isHardSuspended()) {
-            return tracker.isWriteSuspended();
+        if (tracker.isHardSuspended() && tracker.isWriteSuspended()) {
+            return true;
         }
         final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
         return configured != null
@@ -1744,17 +1758,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return lockReadersByTableToken(tableToken);
     }
 
-    /**
-     * Marks the table's readers + metadata as read-locked for an in-progress RECONCILE TABLE apply.
-     * From this call until {@link #unlockReconcileReads}, {@link #getReader}/{@link #getTableMetadata}
-     * throw {@link EntryLockedException} so no NEW reader/metadata tenant opens; the caller then spins
-     * on {@link #lockReadersAndMetadata} while the already active tenants drain, and the pool lock
-     * eventually takes. Idempotent per dir.
-     */
-    public void lockReconcileReads(TableToken tableToken) {
-        reconcileReadLocked.put(tableToken.getDirName(), tableToken);
-    }
-
     public boolean lockReadersAndMetadata(TableToken tableToken) {
         if (checkpointAgent.isInProgress()) {
             // prevent reader locking before checkpoint is released
@@ -1776,6 +1779,17 @@ public class CairoEngine implements Closeable, WriterSource {
             return false;
         }
         return readerPool.lock(tableToken);
+    }
+
+    /**
+     * Marks the table's readers + metadata as read-locked for an in-progress RECONCILE TABLE apply.
+     * From this call until {@link #unlockReconcileReads}, {@link #getReader}/{@link #getTableMetadata}
+     * throw {@link EntryLockedException} so no NEW reader/metadata tenant opens; the caller then spins
+     * on {@link #lockReadersAndMetadata} while the already active tenants drain, and the pool lock
+     * eventually takes. Idempotent per dir.
+     */
+    public void lockReconcileReads(TableToken tableToken) {
+        reconcileReadLocked.put(tableToken.getDirName(), tableToken);
     }
 
     public boolean lockTableCreate(TableToken tableToken) {
@@ -2257,17 +2271,6 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.unlock(tableToken);
     }
 
-    /**
-     * Releases a writer-pool slot lock previously acquired via
-     * {@link #lockTableWriter}. Idempotent: safe to call when the slot is not
-     * locked by this thread (the underlying pool ignores the call). Does not
-     * verify the token because the table may be in an in-flight repair
-     * (RECONCILE TABLE) where the dir state is briefly inconsistent.
-     */
-    public void unlockTableWriter(TableToken tableToken) {
-        writerPool.unlock(tableToken);
-    }
-
     public void unlockReadersAndMetadata(TableToken tableToken) {
         readerPool.unlock(tableToken);
         tableMetadataPool.unlock(tableToken);
@@ -2287,6 +2290,17 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockTableName(TableToken tableToken) {
         tableNameRegistry.unlockTableName(tableToken);
+    }
+
+    /**
+     * Releases a writer-pool slot lock previously acquired via
+     * {@link #lockTableWriter}. Idempotent: safe to call when the slot is not
+     * locked by this thread (the underlying pool ignores the call). Does not
+     * verify the token because the table may be in an in-flight repair
+     * (RECONCILE TABLE) where the dir state is briefly inconsistent.
+     */
+    public void unlockTableWriter(TableToken tableToken) {
+        writerPool.unlock(tableToken);
     }
 
     public void unlockWalPurgeJob() {

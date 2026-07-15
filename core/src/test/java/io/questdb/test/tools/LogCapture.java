@@ -40,16 +40,6 @@ public class LogCapture {
         }
     }
 
-    /**
-     * Snapshot of the captured log lines. Read-only view — the underlying
-     * sink keeps accumulating after this call, so tests that scan for
-     * "which of these events fired" should either call {@link #stop()}
-     * first or filter the returned text themselves.
-     */
-    public String captured() {
-        return sink.toString();
-    }
-
     @SuppressWarnings("unused")
     // used in the Ent
     public void assertNotLogged(String message) {
@@ -65,6 +55,16 @@ public class LogCapture {
         Matcher m = Pattern.compile(regex).matcher(sink);
         Assert.assertTrue("Message '" + regex + "' was not logged", m.find());
         Assert.assertEquals("Message '" + regex + "' was not more than once", 0, m.groupCount());
+    }
+
+    /**
+     * Snapshot of the captured log lines. Read-only view — the underlying
+     * sink keeps accumulating after this call, so tests that scan for
+     * "which of these events fired" should either call {@link #stop()}
+     * first or filter the returned text themselves.
+     */
+    public String captured() {
+        return sink.toString();
     }
 
     public void start() {

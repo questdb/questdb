@@ -48,13 +48,11 @@ import static org.junit.Assert.*;
 public class SeqTxnTrackerTest {
     private static final int F_APPLY = SeqTxnTracker.SUSPEND_FLAG_APPLY;
     private static final int F_APPLY_WRITE = SeqTxnTracker.SUSPEND_FLAG_APPLY | SeqTxnTracker.SUSPEND_FLAG_WRITE;
+    // Every hard-suspend flavour + release, for looping over combos.
+    private static final int[] FLAVOURS = {F_APPLY, F_APPLY_WRITE};
     private static final Log LOG = LogFactory.getLog(SeqTxnTrackerTest.class);
     private static final int P_DDL = SeqTxnTracker.SUSPEND_PRIORITY_DDL;
     private static final int P_REC = SeqTxnTracker.SUSPEND_PRIORITY_RECONCILE;
-    // Every hard-suspend flavour + release, for looping over combos.
-    private static final int[] FLAVOURS = {F_APPLY, F_APPLY_WRITE};
-
-    // --- Hard-suspend priority lock (trySetSuspend), all combinations. ---
 
     @Test
     public void testSuspendAcquireReleaseOnUnlocked() {
@@ -149,6 +147,48 @@ public class SeqTxnTrackerTest {
     }
 
     @Test
+    public void testSuspendReconcileCannotAcquireOverAnotherReconcile() {
+        // RECONCILE TABLE must be mutually exclusive with itself: a second reconcile CANNOT take the
+        // lock while the first still holds it. trySetSuspend deliberately lets a same-priority holder
+        // modify its own lock (which is how an operator SUSPEND WAL -> RESUME WAL works, since DDL
+        // carries no owner identity), so reconcile acquires via tryAcquireSuspend instead.
+        for (int firstFlags : FLAVOURS) {
+            SeqTxnTracker t = createSeqTracker();
+            assertTrue(t.tryAcquireSuspend(P_REC, firstFlags));
+            assertSuspend(t, true, firstFlags == F_APPLY_WRITE);
+            for (int secondFlags : FLAVOURS) {
+                assertFalse(t.tryAcquireSuspend(P_REC, secondFlags));
+                assertSuspend(t, true, firstFlags == F_APPLY_WRITE); // first holder's lock untouched
+            }
+            // The holder itself may still modify and release its own lock through trySetSuspend.
+            assertTrue(t.trySetSuspend(P_REC, 0));
+            assertSuspend(t, false, false);
+            // Released -> the next reconcile can acquire.
+            assertTrue(t.tryAcquireSuspend(P_REC, firstFlags));
+            assertSuspend(t, true, firstFlags == F_APPLY_WRITE);
+        }
+    }
+
+    @Test
+    public void testSuspendReconcileAcquirePreemptsAndRestoresDdl() {
+        // tryAcquireSuspend keeps trySetSuspend's preempt-and-restore behaviour against a strictly
+        // lower priority: reconcile takes an operator-suspended table over, and releasing restores
+        // the operator's exact flavour rather than resuming the table.
+        for (int ddlFlags : FLAVOURS) {
+            for (int recFlags : FLAVOURS) {
+                SeqTxnTracker t = createSeqTracker();
+                assertTrue(t.trySetSuspend(P_DDL, ddlFlags));
+                assertTrue(t.tryAcquireSuspend(P_REC, recFlags));
+                assertSuspend(t, true, recFlags == F_APPLY_WRITE);
+                assertTrue(t.trySetSuspend(P_REC, 0));
+                assertSuspend(t, true, ddlFlags == F_APPLY_WRITE); // operator's suspend restored
+                assertTrue(t.trySetSuspend(P_DDL, 0));
+                assertSuspend(t, false, false);
+            }
+        }
+    }
+
+    @Test
     public void testSuspendReconcileOverUnlockedClearsFully() {
         // RECONCILE over an unlocked table has nothing to restore -> release clears fully.
         for (int recFlags : FLAVOURS) {
@@ -160,9 +200,24 @@ public class SeqTxnTrackerTest {
         }
     }
 
-    private static void assertSuspend(SeqTxnTracker t, boolean applySuspended, boolean writeSuspended) {
-        assertEquals("apply-suspend", applySuspended, t.isHardSuspended());
-        assertEquals("write-suspend", writeSuspended, t.isWriteSuspended());
+    @Test
+    public void testSuspendReleaseDoesNotClearUnownedLowerPriorityLock() {
+        // A release only ever clears the CALLER'S OWN lock. A reconcile-priority release while an
+        // operator SUSPEND WAL is the active lock (nothing was preempted, so reconcile owns nothing)
+        // must leave the operator's suspend alone. Reachable in production: clearReconcileQuiesce
+        // fires a RECONCILE-priority release on every apply-failure path, and the tracker is
+        // in-memory, so after a restart the reconcile lock is gone while an operator can have
+        // re-suspended the table. Before the fix this silently RESUMED the operator's table.
+        for (int ddlFlags : FLAVOURS) {
+            SeqTxnTracker t = createSeqTracker();
+            assertTrue(t.trySetSuspend(P_DDL, ddlFlags));
+            assertSuspend(t, true, ddlFlags == F_APPLY_WRITE);
+            assertFalse(t.trySetSuspend(P_REC, 0)); // not ours -> refused, state untouched
+            assertSuspend(t, true, ddlFlags == F_APPLY_WRITE);
+            // The operator can still release its own lock afterwards.
+            assertTrue(t.trySetSuspend(P_DDL, 0));
+            assertSuspend(t, false, false);
+        }
     }
 
     @Test
@@ -497,6 +552,11 @@ public class SeqTxnTrackerTest {
             assertTrue(w.isFired());
             assertEquals(1, resumeCount[0]);
         });
+    }
+
+    private static void assertSuspend(SeqTxnTracker t, boolean applySuspended, boolean writeSuspended) {
+        assertEquals("apply-suspend", applySuspended, t.isHardSuspended());
+        assertEquals("write-suspend", writeSuspended, t.isWriteSuspended());
     }
 
     private static WorkerContinuation dummyContinuation() {
