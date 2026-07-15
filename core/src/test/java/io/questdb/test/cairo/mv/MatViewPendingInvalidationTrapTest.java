@@ -148,10 +148,18 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // holder uses. finalize must skip: the marker dies with the discarded state and nothing
             // may be enqueued, while the unlock tail (tryCloseIfClosed) still frees the parked factory.
             Assert.assertTrue(state.tryLock());
-            state.markAsPendingInvalidation("update operation");
-            state.close();
-            Assert.assertTrue(state.isClosed());
-            MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+            boolean isLatchReleased = false;
+            try {
+                state.markAsPendingInvalidation("update operation");
+                state.close();
+                Assert.assertTrue(state.isClosed());
+                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                isLatchReleased = true;
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
+            }
 
             // finalize left the marker untouched (were the isClosed clause absent it would have
             // cleared it here and queued a force=true INVALIDATE against the discarded state).
@@ -406,12 +414,20 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             };
 
             Assert.assertTrue(state.tryLock());
-            state.markAsPendingInvalidation("update operation");
+            boolean isLatchReleased = false;
             try {
-                MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
-                Assert.fail("expected the fail-once queue wrapper to throw");
-            } catch (OutOfMemoryError expected) {
-                Assert.assertEquals("test queue growth failure", expected.getMessage());
+                state.markAsPendingInvalidation("update operation");
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+                    Assert.fail("expected the fail-once queue wrapper to throw");
+                } catch (OutOfMemoryError expected) {
+                    Assert.assertEquals("test queue growth failure", expected.getMessage());
+                }
+                isLatchReleased = true;
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
             }
 
             Assert.assertTrue("the failed publication must retain the reason marker", state.isPendingInvalidation());
@@ -465,12 +481,20 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             };
 
             Assert.assertTrue(state.tryLock());
-            state.markAsPendingInvalidation("update operation");
+            boolean isLatchReleased = false;
             try {
-                MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
-                Assert.fail("expected the fail-once queue wrapper to throw");
-            } catch (OutOfMemoryError expected) {
-                Assert.assertEquals("test initial queue growth failure", expected.getMessage());
+                state.markAsPendingInvalidation("update operation");
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+                    Assert.fail("expected the fail-once queue wrapper to throw");
+                } catch (OutOfMemoryError expected) {
+                    Assert.assertEquals("test initial queue growth failure", expected.getMessage());
+                }
+                isLatchReleased = true;
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
             }
 
             final AtomicBoolean hasFailedScan = new AtomicBoolean();
@@ -646,27 +670,35 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = fixture.state();
 
             Assert.assertTrue(state.tryLock());
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                // Apply UPDATE T and consume its base-cascade task while this synthetic holder owns the
-                // view latch. invalidateView publishes the reason marker, loses the latch, and consumes
-                // the original task without enqueueing a duplicate.
-                execute("UPDATE base_price SET amount = 7 WHERE sym = 'gbpusd'");
-                drainWalQueue();
-                drainMatViewQueue(job);
-                Assert.assertTrue("the UPDATE invalidation must defer behind the holder", state.isPendingInvalidation());
+            boolean isLatchReleased = false;
+            try {
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    // Apply UPDATE T and consume its base-cascade task while this synthetic holder owns the
+                    // view latch. invalidateView publishes the reason marker, loses the latch, and consumes
+                    // the original task without enqueueing a duplicate.
+                    execute("UPDATE base_price SET amount = 7 WHERE sym = 'gbpusd'");
+                    drainWalQueue();
+                    drainMatViewQueue(job);
+                    Assert.assertTrue("the UPDATE invalidation must defer behind the holder", state.isPendingInvalidation());
 
-                // Put FULL ahead of the holder's handoff. Its fixed reader includes UPDATE T, so the
-                // successful rebuild covers the deferred invalidation. The already-queued handoff task
-                // that follows FULL must also recognize that coverage instead of invalidating the view.
-                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                MatViewRefreshJob.finalizeAndUnlock(
-                        engine,
-                        engine.getMatViewStateStore(),
-                        viewToken,
-                        state,
-                        false
-                );
-                drainMatViewQueue(job);
+                    // Put FULL ahead of the holder's handoff. Its fixed reader includes UPDATE T, so the
+                    // successful rebuild covers the deferred invalidation. The already-queued handoff task
+                    // that follows FULL must also recognize that coverage instead of invalidating the view.
+                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                    MatViewRefreshJob.finalizeAndUnlock(
+                            engine,
+                            engine.getMatViewStateStore(),
+                            viewToken,
+                            state,
+                            false
+                    );
+                    isLatchReleased = true;
+                    drainMatViewQueue(job);
+                }
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
             }
             drainWalQueue();
 
@@ -1145,14 +1177,22 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = fixture.state();
 
             Assert.assertTrue(state.tryLock());
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                drainMatViewQueue(job);
-                Assert.assertTrue("the losing full refresh must publish ownership", state.isPendingInvalidation());
+            boolean isLatchReleased = false;
+            try {
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                    drainMatViewQueue(job);
+                    Assert.assertTrue("the losing full refresh must publish ownership", state.isPendingInvalidation());
 
-                setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, "price_1h");
-                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
-                drainMatViewQueue(job);
+                    setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BLOCK_LIST, "price_1h");
+                    MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                    isLatchReleased = true;
+                    drainMatViewQueue(job);
+                }
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
             }
 
             Assert.assertFalse("the blocked retry must consume its full-refresh ownership", state.isPendingInvalidation());
@@ -1173,16 +1213,24 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = fixture.state();
 
             Assert.assertTrue(state.tryLock());
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                drainMatViewQueue(job);
-                execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
-                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
-                drainMatViewQueue(job);
-                Assert.assertTrue("suspension must retain the losing full-refresh owner", state.isPendingInvalidation());
+            boolean isLatchReleased = false;
+            try {
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                    drainMatViewQueue(job);
+                    execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+                    MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                    isLatchReleased = true;
+                    drainMatViewQueue(job);
+                    Assert.assertTrue("suspension must retain the losing full-refresh owner", state.isPendingInvalidation());
 
-                execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
-                drainMatViewQueue(job);
+                    execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                    drainMatViewQueue(job);
+                }
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
             }
             drainWalQueue();
 
@@ -1975,12 +2023,20 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // does: with the clause present the marker stays set and nothing is queued; without it finalize
             // clears the marker and queues a force=true INVALIDATE.
             Assert.assertTrue(state.tryLock());
-            state.markAsPendingInvalidation("update operation");
-            readOnly.set(true);
+            boolean isLatchReleased = false;
             try {
-                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                state.markAsPendingInvalidation("update operation");
+                readOnly.set(true);
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                    isLatchReleased = true;
+                } finally {
+                    readOnly.set(false);
+                }
             } finally {
-                readOnly.set(false);
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
             }
 
             // finalize left the marker untouched (were the clause absent it would have cleared it here).
