@@ -184,74 +184,83 @@ public final class WhereClauseParser implements Mutable {
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
+        try {
+            if (removeAndIntrinsics(
+                    timestampDriver,
+                    translator,
+                    model,
+                    node,
+                    m,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    latestByMultiColumn, reader)) {
+                createKeyValueBindVariables(model, functionParser, executionContext);
+                return model;
+            }
 
-        if (removeAndIntrinsics(
-                timestampDriver,
-                translator,
-                model,
-                node,
-                m,
-                functionParser,
-                metadata,
-                executionContext,
-                latestByMultiColumn, reader)) {
-            createKeyValueBindVariables(model, functionParser, executionContext);
-            return model;
-        }
-
-        ExpressionNode root = node;
-        stack.clear();
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                if (isAndKeyword(node.token)) {
-                    if (!removeAndIntrinsics(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node.rhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            latestByMultiColumn,
-                            reader)) {
-                        // Check if rhs is an OR of timestamp intrinsics
-                        if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
-                            stack.push(node.rhs);
+            ExpressionNode root = node;
+            stack.clear();
+            while (!stack.isEmpty() || node != null) {
+                if (node != null) {
+                    if (isAndKeyword(node.token)) {
+                        if (!removeAndIntrinsics(
+                                timestampDriver,
+                                translator,
+                                model,
+                                node.rhs,
+                                m,
+                                functionParser,
+                                metadata,
+                                executionContext,
+                                latestByMultiColumn,
+                                reader)) {
+                            // Check if rhs is an OR of timestamp intrinsics
+                            if (!tryExtractOrTimestampIntrinsics(timestampDriver, model, node.rhs, functionParser, metadata, executionContext)) {
+                                stack.push(node.rhs);
+                            }
                         }
-                    }
-                    if (removeAndIntrinsics(
-                            timestampDriver,
-                            translator,
-                            model,
-                            node.lhs,
-                            m,
-                            functionParser,
-                            metadata,
-                            executionContext,
-                            latestByMultiColumn,
-                            reader)) {
-                        node = null;
-                    } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
-                        // lhs was an OR of timestamp intrinsics, successfully extracted
-                        node = null;
+                        if (removeAndIntrinsics(
+                                timestampDriver,
+                                translator,
+                                model,
+                                node.lhs,
+                                m,
+                                functionParser,
+                                metadata,
+                                executionContext,
+                                latestByMultiColumn,
+                                reader)) {
+                            node = null;
+                        } else if (tryExtractOrTimestampIntrinsics(timestampDriver, model, node.lhs, functionParser, metadata, executionContext)) {
+                            // lhs was an OR of timestamp intrinsics, successfully extracted
+                            node = null;
+                        } else {
+                            node = node.lhs;
+                        }
+                    } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
+                        // Entire OR tree was extracted as timestamp intrinsics
+                        node = stack.poll();
                     } else {
-                        node = node.lhs;
+                        node = stack.poll();
                     }
-                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
-                    // Entire OR tree was extracted as timestamp intrinsics
-                    node = stack.poll();
                 } else {
                     node = stack.poll();
                 }
-            } else {
-                node = stack.poll();
             }
+            applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
+            model.filter = collapseIntrinsicNodes(root);
+            createKeyValueBindVariables(model, functionParser, executionContext);
+            return model;
+        } catch (SqlException | RuntimeException | Error e) {
+            // extract() owns every function accumulated in the model until it returns successfully. On failure
+            // there is no caller-visible IntrinsicModel to release them, and resetting the object pool alone does
+            // not clear pooled instances. Release partial key/interval state before propagating the error.
+            Misc.freeObjList(model.keyValueFuncs);
+            Misc.freeObjList(model.keyExcludedValueFuncs);
+            model.clear();
+            throw e;
         }
-        applyKeyExclusions(translator, functionParser, metadata, executionContext, model);
-        model.filter = collapseIntrinsicNodes(root);
-        createKeyValueBindVariables(model, functionParser, executionContext);
-        return model;
     }
 
     public IntrinsicModel getEmpty(int timestampType, int partitionBy, CairoConfiguration configuration) {

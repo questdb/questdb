@@ -86,7 +86,16 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            return start + rnd.nextPositiveLong() % (end - start);
+            final long range = end - start;
+            if (range == 0) {
+                return start;
+            }
+            // A negative signed difference represents a valid width greater than Long.MAX_VALUE. Unsigned
+            // remainder preserves the complete cross-zero timestamp interval without overflow.
+            final long offset = range > 0
+                    ? rnd.nextPositiveLong() % range
+                    : Long.remainderUnsigned(rnd.nextLong(), range);
+            return start + offset;
         }
 
         @Override

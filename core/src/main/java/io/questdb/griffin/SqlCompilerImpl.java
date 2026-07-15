@@ -803,9 +803,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // so these links remain stable across survivor windows and retries.
             return true;
         }
-        if (!function.isNonDeterministic()) {
-            return true;
-        }
+
+        // Traverse known child shapes even when the wrapper itself reports deterministic. A deterministic
+        // operator may contain a volatile argument, and replay stability is a property of the complete tree.
         if (function instanceof UnaryFunction unaryFunction) {
             return isDeletePredicateReplayStable(unaryFunction.getArg());
         }
@@ -834,7 +834,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
         // Unknown non-deterministic functions may read clocks, random state, or mutable external state.
-        return false;
+        return !function.isNonDeterministic();
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -4995,6 +4995,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Function predicateFunction = null;
         try {
             predicateFunction = functionParser.parseFunction(ExpressionNode.deepClone(sqlNodePool, predicate), metadata, executionContext);
+            // Some factories constant-fold deterministic wrappers around random children, so the compiled Function
+            // tree no longer exposes every child. Keep the AST probe as a conservative backstop for those shapes.
             isDeletePredicateReplayStable = isDeletePredicateReplayStable(predicateFunction)
                     && isDeletePredicateReplayStable(predicate, metadata, executionContext);
         } catch (SqlException ignored) {
@@ -5013,7 +5015,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
         if (node.type == ExpressionNode.BIND_VARIABLE || node.type == ExpressionNode.LITERAL) {
-            // WAL captures bind values, and standalone literals do not contain executable descendants.
             return true;
         }
 
@@ -5025,7 +5026,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     return false;
                 }
             } catch (SqlException ignored) {
-                // A failed strategy probe must not opt a DELETE into non-atomic replay.
                 return false;
             } finally {
                 Misc.free(function);
@@ -5239,9 +5239,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 windowLoBindVariableIndex = bindVariableService.getIndexedVariableCount();
                 windowHiBindVariableIndex = windowLoBindVariableIndex + 1;
                 andSurvivorWindowBounds(model.getNestedModel(), metadata, windowLoBindVariableIndex, windowHiBindVariableIndex);
-                // Default bounds leave the un-windowed factory identical to the whole-range survivor scan, so
-                // any non-windowed caller (including today's OperationExecutor, until Task 5 rebinds per window)
-                // sees exactly the same survivors. NOTE: the lower bound is Long.MIN_VALUE + 1, NOT
+                // Default bounds preserve whole-range semantics until OperationExecutor rebinds this factory for
+                // each apply window. NOTE: the lower bound is Long.MIN_VALUE + 1, NOT
                 // Long.MIN_VALUE: a timestamp bind variable equal to Long.MIN_VALUE reads as the timestamp NULL
                 // sentinel (Numbers.LONG_NULL == Long.MIN_VALUE), which RuntimeIntervalModel collapses to an
                 // EMPTY set - that would make the survivor scan return nothing and the DELETE erase the whole

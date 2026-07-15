@@ -32,15 +32,18 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.WhereClauseParser;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -64,6 +67,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RunWith(Parameterized.class)
 public class WhereClauseParserTest extends AbstractCairoTest {
@@ -1484,6 +1488,62 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testDubiousNotEquals() throws Exception {
         IntrinsicModel m = modelOf("ts != ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testExtractFailureClosesRetainedRuntimeIntervalFunction() throws Exception {
+        final AtomicInteger closeCount = new AtomicInteger();
+        final FunctionParser faultingFunctionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache()) {
+            @Override
+            public Function parseFunction(ExpressionNode node, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
+                if ("tracked".contentEquals(node.token)) {
+                    return new TimestampFunction(timestampType.getTimestampType()) {
+                        @Override
+                        public void close() {
+                            closeCount.incrementAndGet();
+                        }
+
+                        @Override
+                        public long getTimestamp(Record rec) {
+                            return 0;
+                        }
+
+                        @Override
+                        public boolean isRuntimeConstant() {
+                            return true;
+                        }
+                    };
+                }
+                throw SqlException.$(node.position, "forced extraction failure");
+            }
+        };
+        final WhereClauseParser parser = new WhereClauseParser();
+        final RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos;
+        final TableReader tableReader = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos;
+        queryModel.clear();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try {
+                parser.extract(
+                        column -> column,
+                        compiler.testParseExpression("timestamp < fail() and timestamp > tracked()", queryModel),
+                        m,
+                        null,
+                        m.getTimestampIndex(),
+                        faultingFunctionParser,
+                        m,
+                        sqlExecutionContext,
+                        false,
+                        tableReader,
+                        false
+                );
+                Assert.fail("expected forced extraction failure");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "forced extraction failure");
+            } finally {
+                parser.clear();
+            }
+        }
+        Assert.assertEquals("retained runtime interval function must be closed on extract failure", 1, closeCount.get());
     }
 
     @Test

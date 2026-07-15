@@ -26,7 +26,9 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -40,13 +42,11 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.Path;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Task 4 spike: proves the apply-time survivor factory (built by SqlCompilerImpl.generateDelete when
@@ -59,11 +59,12 @@ import org.junit.Test;
  * Task 7 adds end-to-end integration coverage on top of the spike: each test below drives a REAL
  * {@code execute("delete ...")} through {@code drainWalQueue()} under a tiny
  * {@code cairo.wal.delete.rows.per.step} (Task 5's windowed {@code OperationExecutor.replaceWithSurvivors}
- * loop) to force many windows, and checks the result against an exact pre-delete {@code ref} snapshot table
+ * loop) to force multiple partition-aligned windows where the fixture spans partitions, and checks the result
+ * against an exact pre-delete {@code ref} snapshot table
  * (never a second, independently-reseeded {@code rnd_*} statement) plus a direct
  * {@code TableSequencerAPI.isSuspended} not-suspended check.
  */
-public class DeleteWindowedApplyTest extends AbstractCairoTest {
+public class DeleteWindowedApplyTest extends AbstractDeleteApplyTest {
 
     // Designated-timestamp day boundaries (micros) for the fixture below: hourly rows x=1..96 over 4 days.
     private static final long DAY1_LO = 0L;                 // 1970-01-01T00:00:00Z, rows x=1..24
@@ -242,8 +243,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     // ------------------------------------------------------------------------------------------------------
-    // Task 7: end-to-end windowed DELETE integration tests. All force MANY windows via
-    // cairo.wal.delete.rows.per.step, drive the delete through a real execute()+drainWalQueue(), and compare
+    // Task 7: end-to-end windowed DELETE integration tests. These minimize the target row count per window;
+    // the atomic route rounds each high to a partition boundary. They drive a real execute()+drainWalQueue() and compare
     // against an EXACT oracle: a `ref` table snapshotted from `t` BEFORE the delete runs (never a re-evaluated
     // rnd_* expression), plus a direct TableSequencerAPI.isSuspended not-suspended check.
     // ------------------------------------------------------------------------------------------------------
@@ -270,14 +271,15 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * (2) Idempotent re-apply / crash-safety proxy: a tiny rows-per-step forces many windows. Once the delete
+     * (2) Idempotent re-apply / crash-safety proxy: a tiny rows-per-step forces one window per populated day.
+     * Once the delete
      * is fully applied, {@code engine.releaseInactive()} drops every cached reader/writer (simulating a clean
      * restart) and {@code drainWalQueue()} runs again with nothing new enqueued (the delete's seqTxn is
      * already durably applied). Re-applying must be a genuine no-op: identical content, table still healthy.
      */
     @Test
     public void testWindowedDeleteReappliesIdempotently() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 row/window -> many windows
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // partition alignment -> one window per day
         assertMemoryLeak(() -> {
             createAndPopulate();
             execute("create table ref as (select * from t where not (x % 2 = 0))");
@@ -300,7 +302,7 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * (3) Zero-match delete over many windows: {@code x < 0} matches nothing, so every window's survivor
+     * (3) Zero-match delete over partition-aligned windows: {@code x < 0} matches nothing, so every window's survivor
      * cursor returns its whole slice unchanged. The windowed loop must be a full no-op: identical row count
      * and content, table still healthy.
      */
@@ -322,11 +324,11 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * (4) All-match interior window(s): a residual (non-time-range) predicate matches every row of day 2
-     * (x=25..48), an INTERIOR day - neither the table's first nor its last partition - with a tiny
-     * rows-per-step so that day is covered by several small windows, all with an entirely empty survivor
-     * cursor. Days 1, 3 and 4's windows are untouched (their survivor cursors return every row), so this
-     * exercises a run of interior all-empty windows sandwiched between normal ones. The predicate is
+     * (4) All-match interior window: a residual (non-time-range) predicate matches every row of day 2
+     * (x=25..48), an INTERIOR day - neither the table's first nor its last partition. Partition alignment
+     * makes that day one entirely-empty-survivor window. Days 1, 3 and 4's windows are untouched (their
+     * survivor cursors return every row), so this exercises an interior empty window sandwiched between normal
+     * ones. The predicate is
      * deliberately expressed on {@code x}, not {@code ts}: a time-range predicate would be classified
      * {@code isPureTimeRange()} and take the single-shot fast path instead of this windowed loop.
      */
@@ -348,8 +350,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * (5) Single-partition table windowed purely by row density: no partition boundary is ever in play, so
-     * every window boundary is exactly where {@code deleteWindowStep}'s row-density estimate puts it.
+     * (5) Single-partition safety: even a tiny row target must collapse to one partition-aligned window. This
+     * prevents the atomic replace transaction from rewriting one physical partition under the same name twice.
      * <p>
      * NOTE ON DEVIATION FROM THE BRIEF: a literal {@code PARTITION BY NONE ... WAL} table cannot be created -
      * WAL write mode is rejected on a non-partitioned table ("WAL Write Mode can only be used on partitioned
@@ -381,18 +383,55 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * Task 7 Step 2 (memory-shape proxy): a 50k-row table with rows-per-step=1000 tiles into roughly 50
-     * windows. This doesn't assert RSS directly (out of scope for a JUnit test), but proves correctness at a
-     * scale where the windowed loop is genuinely exercised many times over - not collapsed to one window as
+     * Task 7 Step 2 (memory-shape proxy): a 50k-row table with one row per minute and rows-per-step=1000 tiles
+     * into roughly 35 day-aligned windows. This doesn't assert RSS directly (out of scope for a JUnit test),
+     * but proves correctness at a scale where the windowed loop is genuinely exercised many times over - not
+     * collapsed to one window as
      * in {@link #testSingleWindowEqualsWholeRange} - the observable proxy for "peak memory bounded to ~one
      * window" that Task 5's windowed rewrite targets.
      */
+    @Test
+    public void testDeleteCommitInvalidatesMatViewWhenHousekeepingFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x from long_sequence(96)");
+            drainWalQueue();
+            execute("create materialized view t_1h as (select ts, sum(x) x from t sample by 1h) partition by DAY");
+            drainWalAndMatViewQueues();
+
+            final boolean[] faulted = {false};
+            TableWriter.setReplaceRangePostCommitObserver(() -> {
+                if (!faulted[0]) {
+                    faulted[0] = true;
+                    throw io.questdb.cairo.CairoException.nonCritical().put("post-commit housekeeping fault");
+                }
+            });
+            try {
+                execute("delete from t where x % 2 = 0");
+                drainWalQueue();
+            } finally {
+                TableWriter.setReplaceRangePostCommitObserver(null);
+            }
+
+            Assert.assertTrue(faulted[0]);
+            Assert.assertTrue("post-commit apply failure must suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            engine.releaseInactive();
+            Assert.assertEquals(48, count("select count(*) from t"));
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 't_1h'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\tdelete operation\n");
+        });
+    }
+
     @Test
     public void testLargeTableProducesManyWindows() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1000");
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
-            execute("insert into t select (x*1000000L)::timestamp, x from long_sequence(50000)"); // 50k rows
+            execute("insert into t select (x*60*1000000L)::timestamp, x from long_sequence(50000)"); // 50k minute rows
             drainWalQueue();
             execute("create table ref as (select * from t where not (x % 2 = 0))");
 
@@ -406,44 +445,18 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * Finding #6: the strongest FEASIBLE in-process oracle for the C1 peak-memory claim ("peak O3 staging is
-     * bounded to ~one window, not the whole survivor set").
-     * <p>
-     * <b>Why not a real memory-limit oracle:</b> {@code cairo.wal.apply.memory.limit.bytes} does NOT govern this
-     * path. That limit is enforced by the per-query {@code WAL_APPLY} {@code MemoryTracker}, which is bound only
-     * to SQL query-operator memory (join/group-by/window maps and allocators, via
-     * {@code setMemoryTracker(executionContext.getMemoryTracker())}). The survivor-replace's O3 staging is
-     * {@code TableWriter}'s {@code o3MemColumns} ({@code MemoryTag.NATIVE_O3}), which {@code TableWriter} never
-     * binds to that tracker (it has zero {@code setMemoryTracker} calls); and the survivor cursor is a plain
-     * {@code SELECT *} interval scan that allocates no tracked operator memory. So a limit set between one
-     * window's and the whole table's survivors would fire on NEITHER - it cannot distinguish them, making a
-     * positive+negative-control pair a false oracle.
-     * <p>
-     * <b>What this proves instead:</b> it asserts the WINDOW-SIZING arithmetic - {@link OperationExecutor#deleteWindowStep},
-     * the exact {@code public static} function the apply loop uses - tiled with the loop's exact tiling formula,
-     * bounds each window's staged survivor slice (the rows that window copies into O3, == the in-window survivor
-     * count) to {@code <= rows.per.step} and to a small fraction of the whole survivor set, over a 50k-row
-     * uniformly-timestamped table. The NEGATIVE CONTROL recomputes the step with {@code rows.per.step} >> table
-     * size and shows it collapses to ONE window whose slice IS the entire survivor set - i.e. the same delete
-     * WITHOUT windowing stages every survivor at once, the peak windowing exists to avoid. A regression in
-     * {@code deleteWindowStep} (e.g. losing the row-density scaling, a unit bug, or a fixed step) changes the
-     * bounded max and fails this test. Combined with {@link #testGeneratedSurvivorFactoryRebindsPerWindow} (each
-     * window's cursor returns ONLY its slice) and {@link #testLargeTableProducesManyWindows} (the loop actually
-     * drives many windows), this closes the chain from window sizing to per-window staged rows.
-     * <p>
-     * <b>What it does NOT prove:</b> process-level peak RSS. Confirming the runtime actually frees each window's
-     * native O3 buffers before staging the next would require external RSS sampling, out of scope for a JUnit
-     * test; this is a faithful ROW-COUNT proxy (peak O3 staging is directly proportional to the max per-window
-     * staged row count), not an RSS measurement.
+     * Verifies the density/partition-aligned tiling arithmetic and observes the real WAL apply loop using the
+     * resulting many-window route. This is a row-count/window-routing oracle, not a process-RSS measurement.
      */
     @Test
-    public void testPeakWindowStagingBoundedNotWholeSurvivorSet() throws Exception {
+    public void testWindowArithmeticAndActualApplyUseManyWindows() throws Exception {
         final long rowsPerStep = 1000;
         setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, String.valueOf(rowsPerStep));
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
-            // 50k rows, one per second (uniform density -> the row-density window estimate is accurate here).
-            execute("insert into t select (x*1000000L)::timestamp, x from long_sequence(50000)");
+            // 50k rows, one per minute: enough day partitions for many safe atomic windows. A day contains
+            // 1440 rows / 720 survivors, so rounding a 1000-row density target to a day boundary stays bounded.
+            execute("insert into t select (x*60*1000000L)::timestamp, x from long_sequence(50000)");
             drainWalQueue();
             execute("create table ref as (select * from t where not (x % 2 = 0))");
 
@@ -468,8 +481,13 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             long summedStaged = 0;
             long wLo = minTs;
             while (wLo <= maxTs) {
-                final long remaining = maxTs - wLo + 1;
-                final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+                final long wHiExcl = WalUtils.deleteAtomicWindowHiExcl(
+                        wLo,
+                        step,
+                        maxTs,
+                        ColumnType.TIMESTAMP,
+                        PartitionBy.DAY
+                );
                 final long staged = count("select count(*) from t where not (x % 2 = 0) and ts >= " + wLo + " and ts < " + wHiExcl);
                 maxWindowStaged = Math.max(maxWindowStaged, staged);
                 summedStaged += staged;
@@ -505,10 +523,16 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
                     maxWindowStaged * 10 <= singleWindowStaged
             );
 
-            // Finally, the real windowed DELETE at this scale must be correct + healthy (the behaviour the bound
-            // is claimed about).
-            execute("delete from t where x % 2 = 0");
-            drainWalQueue();
+            // Finally, observe the real executor rather than relying only on the independently tiled arithmetic.
+            final AtomicLong actualWindowCount = new AtomicLong();
+            WalUtils.setDeleteWindowObserver(actualWindowCount::set);
+            try {
+                execute("delete from t where x % 2 = 0");
+                drainWalQueue();
+            } finally {
+                WalUtils.setDeleteWindowObserver(null);
+            }
+            Assert.assertTrue("real WAL apply must use many windows, was " + actualWindowCount, actualWindowCount.get() >= 20);
             Assert.assertFalse("table must not be suspended after the DELETE",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select ts, x from ref order by ts", "select ts, x from t order by ts");
@@ -517,24 +541,18 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
 
     /**
      * Task 7 (extra - folds in a Task 5 review coverage gap): deletes EVERY row of the table's LAST partition
-     * (day 4, x=73..96) with a tiny rows-per-step, so that single partition spans MANY windows (rows.per.step
-     * of 1 over a 4-day/96-row table puts roughly 20+ windows inside one day). Because the last window of the
-     * whole loop is always the one that reaches the table's chronologically-last partition, this is the shape
-     * that exercises {@code TableWriter}'s "partition fully removed by a windowed replace" guard
-     * ({@code o3ConsumePartitionUpdateSink}, ~{@code TableWriter.java:8710}: skip queuing a same-bracket
-     * {@code srcNameTxn} as a removal candidate) in a way that would actually surface a regression - per the
-     * Task 5 report, a fully-emptied INTERIOR partition's spurious candidate is silently cleared by the next
-     * window before it is ever drained, while the last partition's candidate list is the one that survives
-     * uncleared to {@code finishReplaceRange}'s trailing housekeep. The existing {@code DeleteTest} windowed
-     * cases only mutate partitions in place ({@code x % 7 = 0} never empties a whole partition) and never
-     * reach this branch at all.
+     * (day 4, x=73..96) with a tiny rows-per-step. Atomic windows align to day boundaries, so the last window of the
+     * whole loop is always the one that reaches the table's chronologically-last partition, this exercises
+     * {@code TableWriter}'s fully-removed-last-partition path and the trailing housekeeping performed by
+     * {@code finishReplaceRange}. The existing {@code DeleteTest} windowed cases only mutate partitions in
+     * place ({@code x % 7 = 0} never empties a whole partition) and never reach this branch at all.
      * <p>
      * Asserts day 4's rows are gone AND its partition directory itself is physically removed (not just zero
      * matching rows), days 1-3 are exactly intact against {@code ref}, and the table is not suspended.
      */
     @Test
     public void testWindowedDeleteEmptiesWholeMultiWindowPartition() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 row/window -> day 4 spans many windows
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // partition alignment -> one window per day
         assertMemoryLeak(() -> {
             createAndPopulate();
             // Day 4 is rows x=73..96 (see DAY4_LO above): the WHOLE last day, nothing else.
@@ -565,7 +583,7 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
      * {@code commit00}.
      * <p>
      * Oracle: a tiny {@code rows.per.step} tiles a {@code DELETE FROM t WHERE x <= 120} (arbitrary residual
-     * predicate -> windowed survivor-replace) into many windows over a 6-partition (BY DAY) table, fully dropping
+     * predicate -> windowed survivor-replace) into six day-aligned windows, fully dropping
      * days 1..5 (each in an early window) and keeping day 6. Read the on-disk state RIGHT AFTER apply, WITHOUT
      * reopening the writer or running the async purge (either would independently re-scan and reclaim the leak,
      * masking it). The fix reclaims each window's transient superseded partition-version dir synchronously in
@@ -575,7 +593,7 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
      */
     @Test
     public void testMultiWindowReplaceReclaimsEveryWindowsSupersededPartitionDirs() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 row/window -> days 1..5 each drop in early windows
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // one window per day
         assertMemoryLeak(() -> {
             // 144 hourly rows over 6 daily partitions: day1 x=1..24, day2 x=25..48, ..., day6 x=121..144.
             execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
@@ -626,12 +644,13 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
      * under test then stages the surviving var-size values, which arrive ts-ordered from the survivor cursor
      * (the O3 survivor sort itself is exercised elsewhere). A varchar and a string column each with a surviving NULL
      * (x=7 -> null varchar, x=13 -> null string; both odd, so both survive the delete and flow through the
-     * copier). {@code rows.per.step=1} tiles the single day into many windows; {@code delete where x % 2 = 0}
-     * partially survives each window. Assert content AND order against the NOT-predicate oracle + exact survivor count.
+     * copier). {@code rows.per.step=1} still yields one safe window for the single physical partition;
+     * {@code delete where x % 2 = 0} partially survives it. Assert content AND order against the NOT-predicate
+     * oracle + exact survivor count.
      */
     @Test
     public void testVarSizeColumnsThroughSurvivorReplace() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // tile the single day into many windows
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // one safe partition-aligned window
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x long, v varchar, s string) timestamp(ts) partition by DAY WAL");
             // 48 rows, ALL on 1970-01-01, minute-of-day permuted by ((x-1)*37 % 48) (37 coprime to 48) so the
@@ -663,25 +682,13 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
-     * F-G regression: a multi-window survivor-replace over a table with a REAL pre-existing SPLIT partition, where
-     * the delete FULLY empties a split sibling while survivors remain in the surrounding windows. This drives the
-     * unguarded split-partition removal sites (TableWriter o3ConsumePartitionUpdateSink :8740/:8795 and the parent
-     * line-split removal at :8999/:9005/:9015), which - proven by verification - queue removal candidates whose
-     * {@code nameTxn == txWriter.txn} (the frozen bracket txn) but never lose rows, because each such candidate is
-     * an already-detached partition disjoint from the survivors.
-     * <p>
-     * The TRUE guard here is NOT the result oracle. As the verification showed, a naive post-delete
-     * {@code assertSqlCursors} is INSUFFICIENT for this bug class: an unlinked-but-still-open partition dir stays
-     * readable in-process, so even a wrongly-unlinked live dir still passes the oracle. The real detector is the
-     * {@code -ea} drain-collision invariant assert added in {@code TableWriter.finishReplaceRange}
-     * (replaceRemoveCandidatesDisjointFromLivePartitions): with the load-bearing :8740/:8795 guard defeated it
-     * FIRES here (positive control, run manually during the fix). This test relies on that assert as the guard;
-     * the oracle below is a secondary sanity check.
+     * Empties one sibling of a real split partition, releases cached readers/writers, and verifies the surviving
+     * sibling remains durable and readable after the replace-range removal candidates are drained.
      */
     @Test
     public void testSplitPartitionSiblingEmptiedDrainKeepsLivePartitionsIntact() throws Exception {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1"); // aggressive: prefix split threshold ~0 rows
-        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");     // tile the split day into many windows
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");     // keep split siblings in one logical-day window
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
             // Three days of minute data (x=1..4319), the last day (1970-01-03) full to 23:58 - mirrors the
@@ -711,46 +718,11 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x > " + headMaxX);
             drainWalQueue();
 
-            // If the -ea invariant assert in finishReplaceRange fires (a drain-collision regression), the WAL
-            // apply throws and ApplyWal2TableJob suspends the table - so a suspended table here means the
-            // invariant caught harm. This hard check (not just the assertQuery idiom) is what turns the fired
-            // assert into a RED test in CI. Confirmed to FAIL under the :8740/:8795-defeated positive control.
-            Assert.assertFalse("a drain-collision (invariant assert firing) must surface as a suspended table",
+            engine.releaseInactive();
+            Assert.assertFalse("a drain collision must surface as a suspended table",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
-            // Secondary sanity check (see javadoc: the -ea invariant assert in finishReplaceRange is the real guard).
             assertSqlCursors("select * from t_ref where not (x > " + headMaxX + ")", "select * from t");
         });
-    }
-
-    // Counts SUPERSEDED partition-version directories physically present under the table dir: for each calendar-day
-    // partition (dir named yyyy-MM-dd, optionally with a .<nameTxn> version suffix), every physical version dir
-    // beyond the first for that day is a duplicate = a superseded version not yet reclaimed. A correct multi-window
-    // replace leaves exactly one physical dir per calendar day, so this returns 0; the D3 leak leaves a second dir
-    // per partition. The table's non-partition subdirs (wal*, txn_seq, seq) start with a letter, so a leading ASCII
-    // digit identifies a partition-version dir. Mirrors TableWriterTest's iterateDir + isDirOrSoftLinkDirNoDots idiom.
-    private int countDuplicatePartitionVersionDirs(TableToken tableToken) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final java.util.HashSet<String> seenDays = new java.util.HashSet<>();
-        final int[] duplicates = {0};
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(tableToken);
-            final int plen = path.size();
-            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                if (ff.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
-                    final byte first = Unsafe.getByte(pUtf8NameZ);
-                    if (first >= '0' && first <= '9') {
-                        final String name = path.toString().substring(plen + 1);
-                        final int dot = name.indexOf('.');
-                        final String day = dot < 0 ? name : name.substring(0, dot);
-                        if (!seenDays.add(day)) {
-                            duplicates[0]++;
-                        }
-                    }
-                    path.trimTo(plen);
-                }
-            });
-        }
-        return duplicates[0];
     }
 
     // Collects the survivor cursor's x column (index 1 of SELECT *) in cursor order as a comma-separated string.
@@ -785,14 +757,6 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     private static void setWindow(DeleteOperation operation, SqlExecutionContext executionContext, long loInclusive, long hiExclusive) throws SqlException {
         executionContext.getBindVariableService().setTimestamp(operation.getWindowLoBindVariableIndex(), loInclusive);
         executionContext.getBindVariableService().setTimestamp(operation.getWindowHiBindVariableIndex(), hiExclusive);
-    }
-
-    // Reads a single scalar (row 0, col 0) as a long: count(*), or min(ts)/max(ts) as raw micros.
-    private long count(String sql) throws Exception {
-        try (RecordCursorFactory factory = select(sql, sqlExecutionContext);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            return cursor.hasNext() ? cursor.getRecord().getLong(0) : -1;
-        }
     }
 
     private void createAndPopulate() throws Exception {

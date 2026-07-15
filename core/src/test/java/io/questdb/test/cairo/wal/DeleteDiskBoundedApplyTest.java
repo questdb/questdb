@@ -26,21 +26,29 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Tests for the opt-in, NON-ATOMIC, disk-bounded arbitrary-DELETE apply path (H1,
@@ -52,11 +60,84 @@ import org.junit.Test;
  * with a final {@code commitSeqTxn}. That makes a mid-apply crash leave a PARTIALLY-deleted table at {@code S-1}.
  * The spike proves the whole delete then re-applies idempotently to the exact NOT-predicate oracle.
  */
-public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
+public class DeleteDiskBoundedApplyTest extends AbstractDeleteApplyTest {
 
     // The arbitrary DELETE predicate exercised throughout: an all-column residual (no pure time range), so it
     // takes the survivor-replace route the disk-bounded path rewrites. 20 of 144 rows match (x = 7,14,..,140).
     private static final String PRED = "x % 7 = 0";
+
+    @Test
+    public void testConcurrentReaderPinsDiskBoundedWindowVersions() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "true");
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");
+        assertMemoryLeak(() -> {
+            createParquetFixture();
+            execute("delete from t where " + PRED);
+
+            final CountDownLatch paused = new CountDownLatch(1);
+            final CountDownLatch resume = new CountDownLatch(1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final Thread applyThread = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                }
+            });
+
+            try (RecordCursorFactory oldFactory = select("select * from t", sqlExecutionContext);
+                 RecordCursor oldCursor = oldFactory.getCursor(sqlExecutionContext)) {
+                WalUtils.setDeleteWindowObserver(windowIndex -> {
+                    if (windowIndex == 24) {
+                        paused.countDown();
+                        try {
+                            resume.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                    }
+                });
+                applyThread.start();
+                Assert.assertTrue("disk-bounded apply did not reach the pause window", paused.await(10, TimeUnit.SECONDS));
+
+                long oldSnapshotRows = 0;
+                while (oldCursor.hasNext()) {
+                    oldSnapshotRows++;
+                }
+                Assert.assertEquals("reader opened before DELETE must retain its old snapshot", 144, oldSnapshotRows);
+
+                final long partialRows = count("select count(*) from t");
+                Assert.assertTrue("new reader must see committed partial progress, rows=" + partialRows, partialRows < 144);
+                Assert.assertTrue("DELETE must not be complete at the pause, rows=" + partialRows, partialRows > 124);
+                Assert.assertTrue(
+                        "old snapshot must pin superseded partition versions",
+                        countDuplicatePartitionVersionDirs(engine.verifyTableName("t")) > 0
+                );
+            } finally {
+                WalUtils.setDeleteWindowObserver(null);
+                resume.countDown();
+                applyThread.join(10_000);
+            }
+
+            Assert.assertFalse("disk-bounded apply thread did not exit", applyThread.isAlive());
+            Assert.assertNull(failure.get());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                while (purgeJob.run()) {
+                    Os.pause();
+                }
+            }
+            Assert.assertEquals(0, countDuplicatePartitionVersionDirs(engine.verifyTableName("t")));
+        });
+    }
 
     @Test
     public void testDependentMatViewForcesAtomicRouteOnMidApplyFailure() throws Exception {
@@ -750,6 +831,41 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDiskBoundedPartitionMetadataScanIsWindowLocal() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "true");
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");
+        assertMemoryLeak(() -> {
+            createParquetFixture();
+            final AtomicLong maxPartitionsVisited = new AtomicLong();
+            final AtomicLong totalPartitionsVisited = new AtomicLong();
+            final AtomicLong windowCount = new AtomicLong();
+            WalUtils.setDeleteWindowPartitionScanObserver(partitionsVisited -> {
+                maxPartitionsVisited.accumulateAndGet(partitionsVisited, Math::max);
+                totalPartitionsVisited.addAndGet(partitionsVisited);
+                windowCount.incrementAndGet();
+            });
+            try {
+                execute("delete from t where " + PRED);
+                drainWalQueue();
+            } finally {
+                WalUtils.setDeleteWindowPartitionScanObserver(null);
+            }
+
+            Assert.assertTrue("fixture must drive many disk-bounded windows, was " + windowCount, windowCount.get() >= 100);
+            Assert.assertTrue(
+                    "each narrow window must inspect only its floor/overlap partitions and the next boundary, max=" + maxPartitionsVisited,
+                    maxPartitionsVisited.get() <= 3
+            );
+            Assert.assertTrue(
+                    "partition metadata work must be linear in windows, visited=" + totalPartitionsVisited + ", windows=" + windowCount,
+                    totalPartitionsVisited.get() <= 3 * windowCount.get()
+            );
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+        });
+    }
+
     // The disk.bounded=FALSE counterpart of testDiskBoundedManyWindowsMatchesOracle: the default atomic path over
     // the identical fixture + predicate reaches the SAME end state (the shared NOT-predicate oracle). Together the
     // two tests prove the disk-bounded and atomic routes agree on the final result.
@@ -777,43 +893,6 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
         // Convert every partition except the active last one (day 6) to Parquet.
         execute("alter table t convert partition to parquet where ts < '1970-01-06T00:00:00.000000Z'");
         drainWalQueue();
-    }
-
-    private long count(String sql) throws Exception {
-        try (RecordCursorFactory factory = select(sql, sqlExecutionContext);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            return cursor.hasNext() ? cursor.getRecord().getLong(0) : -1;
-        }
-    }
-
-    // Counts SUPERSEDED partition-version directories physically present under the table dir: for each calendar-day
-    // partition (dir named yyyy-MM-dd, optionally with a .<nameTxn> version suffix), every physical version dir
-    // beyond the first for that day is a duplicate = a superseded/orphaned version not yet reclaimed. A correct
-    // apply leaves exactly one physical dir per calendar day, so this returns 0. Replicated from
-    // DeleteWindowedApplyTest#countDuplicatePartitionVersionDirs per the F-E brief (small helper, kept local).
-    private int countDuplicatePartitionVersionDirs(TableToken tableToken) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final java.util.HashSet<String> seenDays = new java.util.HashSet<>();
-        final int[] duplicates = {0};
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(tableToken);
-            final int plen = path.size();
-            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                if (ff.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
-                    final byte first = Unsafe.getByte(pUtf8NameZ);
-                    if (first >= '0' && first <= '9') {
-                        final String name = path.toString().substring(plen + 1);
-                        final int dot = name.indexOf('.');
-                        final String day = dot < 0 ? name : name.substring(0, dot);
-                        if (!seenDays.add(day)) {
-                            duplicates[0]++;
-                        }
-                    }
-                    path.trimTo(plen);
-                }
-            });
-        }
-        return duplicates[0];
     }
 
     private long seqTxn(TableToken tt) {

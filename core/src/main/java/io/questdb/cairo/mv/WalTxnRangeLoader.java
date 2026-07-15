@@ -46,6 +46,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
+    private final LongList intervalSortBuffer = new LongList();
     private final WalEventReader walEventReader;
     private boolean hasDelete;
     private boolean hasTruncate;
@@ -105,6 +106,60 @@ public class WalTxnRangeLoader implements QuietCloseable {
         }
     }
 
+    private void sortAndMergeNewIntervals(LongList intervals, int intervalStart) {
+        final int intervalCount = (intervals.size() - intervalStart) / 2;
+        if (intervalCount < 1) {
+            return;
+        }
+
+        intervalSortBuffer.setPos(intervalCount * 2);
+        boolean sourceIsIntervals = true;
+        for (int width = 1; width < intervalCount; width = width > intervalCount / 2 ? intervalCount : width * 2) {
+            final LongList source = sourceIsIntervals ? intervals : intervalSortBuffer;
+            final LongList destination = sourceIsIntervals ? intervalSortBuffer : intervals;
+            final int sourceBase = sourceIsIntervals ? intervalStart : 0;
+            final int destinationBase = sourceIsIntervals ? 0 : intervalStart;
+            int write = 0;
+            for (int block = 0; block < intervalCount; block += 2 * width) {
+                int left = block;
+                final int leftHi = Math.min(block + width, intervalCount);
+                int right = leftHi;
+                final int rightHi = Math.min(block + 2 * width, intervalCount);
+                while (left < leftHi || right < rightHi) {
+                    final boolean takeLeft = right >= rightHi
+                            || (left < leftHi
+                            && source.getQuick(sourceBase + 2 * left) <= source.getQuick(sourceBase + 2 * right));
+                    final int read = takeLeft ? left++ : right++;
+                    destination.setQuick(destinationBase + 2 * write, source.getQuick(sourceBase + 2 * read));
+                    destination.setQuick(destinationBase + 2 * write + 1, source.getQuick(sourceBase + 2 * read + 1));
+                    write++;
+                }
+            }
+            sourceIsIntervals = !sourceIsIntervals;
+        }
+        if (!sourceIsIntervals) {
+            for (int i = 0; i < intervalCount * 2; i++) {
+                intervals.setQuick(intervalStart + i, intervalSortBuffer.getQuick(i));
+            }
+        }
+
+        int write = intervalStart;
+        for (int read = intervalStart; read < intervalStart + intervalCount * 2; read += 2) {
+            final long lo = intervals.getQuick(read);
+            final long hi = intervals.getQuick(read + 1);
+            if (write > intervalStart && lo <= intervals.getQuick(write - 1)) {
+                intervals.setQuick(write - 1, Math.max(hi, intervals.getQuick(write - 1)));
+            } else {
+                intervals.setQuick(write++, lo);
+                intervals.setQuick(write++, hi);
+            }
+        }
+        intervals.setPos(write);
+        if (intervalStart > 0 && write > intervalStart) {
+            IntervalUtils.unionInPlace(intervals, intervalStart);
+        }
+    }
+
     private void loadTransactionDetailsFromWalE(
             Path tempPath,
             int rootLen,
@@ -114,6 +169,7 @@ public class WalTxnRangeLoader implements QuietCloseable {
             long txnHi
     ) {
         txnDetails.clear();
+        final int intervalStart = intervals.size();
 
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
@@ -194,10 +250,10 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             maxTimestamp1 = dataInfo.getReplaceRangeTsHi() - 1;
                         }
                         intervals.add(minTimestamp1, maxTimestamp1);
-                        IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
                     }
                 }
 
+                sortAndMergeNewIntervals(intervals, intervalStart);
                 if (intervals.size() > 0) {
                     minTimestamp = intervals.getQuick(0);
                     maxTimestamp = intervals.getQuick(intervals.size() - 1);

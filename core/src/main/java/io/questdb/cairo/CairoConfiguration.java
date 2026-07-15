@@ -383,12 +383,11 @@ public interface CairoConfiguration {
      * apply path walks the deleted range in windows of roughly this many rows, bounding peak O3 memory to
      * one window regardless of table size. Default 1,000,000.
      * <p>
-     * Set this well below a partition's row count only deliberately: when a single partition spans many
-     * windows it is rewritten once per window, so a very small value multiplies write amplification and
-     * transiently leaves one orphaned prior-version partition directory per multi-window partition (reclaimed
-     * asynchronously by the partition-purge job). At the default a partition of up to ~1M rows is a single
-     * window, so neither effect occurs. Must be {@code >= 1}; {@code PropServerConfiguration} rejects a smaller
-     * value at startup.
+     * Atomic DELETE expands each estimated window to the logical partition ceiling, so one transaction never
+     * rewrites a physical partition twice; peak staging may therefore include a whole logical partition. The
+     * opt-in disk-bounded route keeps the unaligned estimate because each window commits independently, so a
+     * very small target can revisit one logical partition across commits and increase write amplification.
+     * Must be {@code >= 1}; {@code PropServerConfiguration} rejects a smaller value at startup.
      * <p>
      * <b>Limitation (timestamp-clustered rows):</b> the ~one-window memory bound assumes an approximately
      * UNIFORM designated-timestamp distribution, because the window is TIME-based - a ts-width chosen to span

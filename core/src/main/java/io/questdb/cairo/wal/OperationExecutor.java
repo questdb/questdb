@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
@@ -61,7 +60,6 @@ class OperationExecutor implements Closeable {
     // Sized to all survivor-cursor columns to build a 1:1 SELECT*->writer copier (see executeDelete).
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final WalApplySqlExecutionContext executionContext;
-    private final int maxRecompilationAttempts;
     private final Rnd rnd;
 
     OperationExecutor(
@@ -82,7 +80,6 @@ class OperationExecutor implements Closeable {
                 null
         );
         this.engine = engine;
-        this.maxRecompilationAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
     }
 
     /**
@@ -111,29 +108,10 @@ class OperationExecutor implements Closeable {
      * Returns result of underlying {@link AlterOperation#matViewInvalidationReason()}.
      */
     public String executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
-        TableToken tableToken = tableWriter.getTableToken();
+        final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
-            CompiledQuery compiledQuery;
-            int stallCount = 0;
-            while (true) {
-                try {
-                    compiledQuery = compiler.compile(alterSql, executionContext);
-                    break;
-                } catch (TableReferenceOutOfDateException ex) {
-                    if (stallCount++ >= maxRecompilationAttempts) {
-                        throw ex;
-                    }
-                    // The table was renamed in the registry during compilation. Follow the latest token so
-                    // subsequent failures compare against the current name rather than the original one.
-                    final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-                    if (updatedToken != null && !updatedToken.equals(tableToken)) {
-                        tableToken = updatedToken;
-                        tableWriter.updateTableToken(updatedToken);
-                        executionContext.remapTableNameResolutionTo(updatedToken);
-                    }
-                }
-            }
+            final CompiledQuery compiledQuery = compiler.compile(alterSql, executionContext);
             try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
                 alterOp.withContext(executionContext);
                 assert !alterOp.isStructural() : "alter operation must not be structural when applied as SQL";
@@ -158,7 +136,7 @@ class OperationExecutor implements Closeable {
      * replace the whole populated timestamp range via {@link TableWriter#replaceRange}: matched rows drop,
      * unmatched rows are rewritten, and a fully-emptied table truncates.
      * <p>
-     * Task 2.1 fast path: when the compiler classifies the predicate as a pure single designated-timestamp
+     * When the compiler classifies the predicate as a pure single designated-timestamp
      * interval with no residual filter ({@link DeleteOperation#isPureTimeRange()}), the delete is instead
      * applied as one empty {@code replaceRange} over the DELETED interval ({@link #deleteTimeRange}) - O(rows
      * deleted), no survivor staging.
@@ -175,36 +153,18 @@ class OperationExecutor implements Closeable {
      * @return number of rows removed
      */
     public long executeDelete(TableWriter tableWriter, CharSequence deleteSql, long seqTxn) throws SqlException {
-        TableToken tableToken = tableWriter.getTableToken();
+        final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
-            CompiledQuery compiledQuery;
-            int stallCount = 0;
-            while (true) {
-                try {
-                    compiledQuery = compiler.compile(deleteSql, executionContext);
-                    break;
-                } catch (TableReferenceOutOfDateException ex) {
-                    if (stallCount++ >= maxRecompilationAttempts) {
-                        throw ex;
-                    }
-                    // The table was renamed in the registry during compilation. Follow the latest token and
-                    // count every failed compile so rename churn cannot keep the WAL apply worker in a live lock.
-                    final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-                    if (updatedToken != null && !updatedToken.equals(tableToken)) {
-                        tableToken = updatedToken;
-                        tableWriter.updateTableToken(updatedToken);
-                        executionContext.remapTableNameResolutionTo(updatedToken);
-                    }
-                }
-            }
+            final CompiledQuery compiledQuery = compiler.compile(deleteSql, executionContext);
             try (DeleteOperation deleteOp = compiledQuery.getDeleteOperation()) {
                 // Hoisted above the inner try so the catch (CairoException) below can read it. Default false is the
                 // SAFE value: if the assignment itself throws (before any window commits) the catch treats this as
                 // the atomic route - correct, because nothing was durably committed for this delete yet.
                 boolean isDiskBounded = false;
+                long atomicReplaceTxnBefore = -1;
                 try {
-                    // Opt-in non-atomic disk-bounded route (H1, cairo.wal.delete.disk.bounded): only for the
+                    // Opt-in non-atomic disk-bounded route: only for the
                     // arbitrary (non-time-range) survivor-replace on a table that actually has Parquet
                     // partitions to convert. It manages its OWN seqTxn: each window is its own commit at the
                     // still-current durable seqTxn S-1 (progressively deleting, visible to concurrent readers),
@@ -244,7 +204,7 @@ class OperationExecutor implements Closeable {
                                     .$(", seqTxn=").$(seqTxn).I$();
                             return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
                         });
-                        if (removed > -1) {
+                        if (removed != MatViewGraph.DEPENDENT_VIEWS_PRESENT) {
                             return removed;
                         }
                         isDiskBounded = false;
@@ -255,7 +215,7 @@ class OperationExecutor implements Closeable {
                             .$(", strategy=").$(deleteStrategy)
                             .$(", seqTxn=").$(seqTxn).I$();
 
-                    // Task 3.1 Parquet convert-to-native fallback. Any Parquet partition the replace below would
+                    // Parquet convert-to-native fallback. Any Parquet partition the replace below would
                     // REWRITE (a boundary trim on the time-range route, or an arbitrary-condition rewrite) is
                     // converted to native FIRST, because the replace path cannot rewrite Parquet in place. That
                     // conversion is its own physical commit (convertPartitionParquetToNative's
@@ -277,19 +237,27 @@ class OperationExecutor implements Closeable {
                     // writer's persisted seqTxn never reaches this txn and ApplyWal2TableJob re-runs the DELETE
                     // forever. On error, rollback and mirror apply()'s WAL-tolerable / retry handling.
                     tableWriter.setSeqTxn(seqTxn);
-                    final long txnBefore = tableWriter.getTxn();
-                    // Time-range fast path (Task 2.1): a pure single designated-timestamp interval delete is
+                    atomicReplaceTxnBefore = tableWriter.getTxn();
+                    // Time-range fast path: a pure single designated-timestamp interval delete is
                     // one empty replaceRange over the DELETED interval (O(deleted), no survivor staging).
                     // Everything else keeps the always-correct whole-range survivor-replace. Both are a single
                     // table commit, so the seqTxn / no-op-advance handling below is identical for either.
                     final long deleted = deleteOp.isPureTimeRange()
                             ? deleteTimeRange(tableWriter, deleteOp)
                             : replaceWithSurvivors(compiler, tableWriter, deleteOp);
-                    if (tableWriter.getTxn() == txnBefore) {
+                    if (tableWriter.getTxn() == atomicReplaceTxnBefore) {
                         tableWriter.commitSeqTxn(seqTxn);
                     }
                     return deleted;
                 } catch (CairoException ex) {
+                    if (!isDiskBounded
+                            && atomicReplaceTxnBefore > -1
+                            && tableWriter.getTxn() > atomicReplaceTxnBefore) {
+                        // The replace transaction is already durable; only housekeeping failed. Keep seqTxn at S
+                        // so the outer apply failure path can notify materialized views and reconcile the sequencer.
+                        tableWriter.markDistressed();
+                        throw ex;
+                    }
                     // Rollback in case of any dirty state. Do not catch rollback exceptions here:
                     // let the calling code handle a distressed writer (mirrors TableWriter.apply).
                     tableWriter.rollback();
@@ -297,7 +265,7 @@ class OperationExecutor implements Closeable {
                     // the atomic routes. On the atomic route a WAL-tolerable error is reachable only BEFORE the
                     // Parquet-convert commit (#1): the convert pre-pass may already have durably landed at the PRIOR
                     // seqTxn S-1 (in-range partitions un-tiered to native), but everything after it - the replace
-                    // surgery and its housekeeping - raises only critical errnos (the T6 crash-window path relies on
+                    // surgery and its housekeeping - raises only critical errnos (crash recovery relies on
                     // this), so a WAL-tolerable error cannot reach this branch once commit #1 has landed. The skip is
                     // therefore sound either way: either nothing was durably committed, or only commit #1's
                     // data-preserving format change at S-1 persisted, which a re-run of txn S redoes idempotently as
@@ -330,6 +298,12 @@ class OperationExecutor implements Closeable {
                     }
                     throw ex;
                 } catch (Throwable th) {
+                    if (!isDiskBounded
+                            && atomicReplaceTxnBefore > -1
+                            && tableWriter.getTxn() > atomicReplaceTxnBefore) {
+                        tableWriter.markDistressed();
+                        throw th;
+                    }
                     // Any other throwable (an Error such as OOM, a SqlException thrown by
                     // survivorFactory.getCursor() before any row was staged, or a failure inside the Parquet
                     // convert pre-pass) must not escape without rolling back and marking this txn as not
@@ -379,7 +353,7 @@ class OperationExecutor implements Closeable {
     }
 
     /**
-     * Task 3.1 Parquet convert-to-native fallback. Converts to native - ahead of the delete's
+     * Parquet convert-to-native fallback. Converts to native - ahead of the delete's
      * {@link TableWriter#replaceRange} - every Parquet partition the replace would REWRITE (the replace path
      * cannot rewrite a Parquet partition in place). Which partitions those are depends on the delete's route
      * (see {@link #executeDelete}):
@@ -388,7 +362,7 @@ class OperationExecutor implements Closeable {
      *       clamped deleted interval {@code [dLo, dHiExcl)}): only the &le;2 <b>boundary</b> Parquet
      *       partitions - those a delete endpoint splits, i.e. that OVERLAP the interval but are NOT fully
      *       covered by it. Fully-covered interior Parquet partitions are dropped inline by the replace
-     *       (Task 2.2) with no data rewrite, so they are deliberately NOT converted. The coverage test mirrors
+     *       with no data rewrite, so they are deliberately NOT converted. The coverage test mirrors
      *       the replace path's own fully-covered check (exact data bounds at the table ends via
      *       {@code getMinTimestamp()}/{@code getMaxTimestamp()}, partition floor / next-floor otherwise). A
      *       Parquet partition is always a whole logical (calendar-day) partition and is NEVER split (see the
@@ -516,29 +490,19 @@ class OperationExecutor implements Closeable {
     }
 
     /**
-     * Exclusive high of the survivor-replace window starting at {@code wLo}, overflow-safe: caps at
-     * {@code maxTs + 1} when the remaining span fits within one {@code step}, so the final window never computes
-     * {@code wLo + step} past {@code Long.MAX_VALUE}. Extracted so the window-tiling boundary math cannot drift
-     * between the atomic and disk-bounded routes.
-     */
-    private static long windowHiExcl(long wLo, long step, long maxTs) {
-        final long remaining = maxTs - wLo + 1; // >= 1
-        return (step >= remaining) ? (maxTs + 1) : (wLo + step);
-    }
-
-    /**
-     * Windowed survivor replace (Task 5 / C1): overwrites the table's whole populated timestamp range
-     * {@code [minTimestamp, maxTimestamp+1)} with the survivor rows, tiled into ~{@code rowsPerStep}-sized
-     * windows so peak O3 memory is bounded to one window regardless of table size - instead of staging every
-     * surviving row into O3 memory at once (the prior whole-range {@code replaceRange} call, which could OOM
-     * on a large table).
+     * Windowed survivor replace: overwrites the table's whole populated timestamp range
+     * {@code [minTimestamp, maxTimestamp+1)} with the survivor rows. The row-density estimate targets
+     * {@code rowsPerStep}, then each exclusive high is extended to the end of its logical partition. This
+     * keeps peak O3 staging near one window plus at most one logical partition while ensuring that no physical
+     * partition is rewritten twice inside the same atomic transaction.
      * <p>
      * Each window is applied via {@link TableWriter#applyReplaceRangeWindow} under a single
      * {@link TableWriter#beginReplaceRange}/{@link TableWriter#finishReplaceRange} bracket, so the whole
-     * delete remains ONE commit (one seqTxn advance), exactly like the single-window path it replaces. Window
-     * bounds are tiled gaplessly: window K's exclusive high becomes window K+1's inclusive low, so deleted
-     * rows that fall in the gap between two adjacent windows' survivors are still covered by exactly one
-     * window.
+     * delete remains ONE commit (one seqTxn advance), exactly like the single-window path it replaces. O3
+     * partition versions use that single in-progress transaction number; allowing two windows to rewrite the
+     * same partition would make the second merge use one directory as both source and destination. Partition-
+     * aligned bounds avoid that aliasing. The bounds remain gapless: window K's exclusive high becomes window
+     * K+1's inclusive low, so deleted rows between adjacent survivors are covered exactly once.
      * <p>
      * Per window, the survivor cursor is re-obtained from {@code survivorFactory} after rebinding
      * the operation-owned indexed bounds (via {@link DeleteOperation#setWindowBound}, never a raw
@@ -582,7 +546,13 @@ class OperationExecutor implements Closeable {
         try {
             long wLo = minTs;
             while (wLo <= maxTs) {
-                final long wHiExcl = windowHiExcl(wLo, step, maxTs);
+                final long wHiExcl = WalUtils.deleteAtomicWindowHiExcl(
+                        wLo,
+                        step,
+                        maxTs,
+                        tableWriter.getTimestampType(),
+                        tableWriter.getPartitionBy()
+                );
 
                 DeleteOperation.setWindowBound(bind, windowLoBindVariableIndex, tsColType, wLo);
                 DeleteOperation.setWindowBound(bind, windowHiBindVariableIndex, tsColType, wHiExcl);
@@ -590,6 +560,7 @@ class OperationExecutor implements Closeable {
                     tableWriter.applyReplaceRangeWindow(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
                 }
                 windowCount++;
+                WalUtils.observeDeleteWindow(windowCount);
                 wLo = wHiExcl;
             }
             final long removed = tableWriter.finishReplaceRange();
@@ -607,7 +578,7 @@ class OperationExecutor implements Closeable {
     }
 
     /**
-     * Opt-in non-atomic, disk-bounded arbitrary-DELETE survivor replace (H1, {@code cairo.wal.delete.disk.bounded}).
+     * Opt-in non-atomic, disk-bounded arbitrary-DELETE survivor replace ({@code cairo.wal.delete.disk.bounded}).
      * Overwrites the table's whole populated range {@code [minTimestamp, maxTimestamp+1)} with the survivor rows,
      * tiled into ~{@code rowsPerStep}-sized windows exactly like {@link #replaceWithSurvivors}, but with two
      * differences that bound BOTH staged O3 memory AND transient Parquet-convert disk to a single window (the
@@ -632,7 +603,7 @@ class OperationExecutor implements Closeable {
      * apply job retries the whole delete over the partially-committed (still at {@code S-1}) table - the same
      * re-apply a crash triggers.
      * <p>
-     * Because each window is its own commit here, {@code txWriter.txn} advances every window, so Task 5's
+     * Because each window is its own commit here, {@code txWriter.txn} advances every window, so the atomic route's
      * same-bracket corruption guard (which only fires when {@code srcNameTxn == txWriter.txn} within a single
      * frozen-txn bracket) is inherently a no-op on this path - safe.
      * <p>
@@ -673,7 +644,7 @@ class OperationExecutor implements Closeable {
         long windowCount = 0;
         long wLo = minTs;
         while (wLo <= maxTs) {
-            final long wHiExcl = windowHiExcl(wLo, step, maxTs);
+            final long wHiExcl = WalUtils.deleteWindowHiExcl(wLo, step, maxTs);
             // Convert only THIS window's overlapping Parquet partitions to native (its own commit at S-1), so at
             // most one window's partitions are transiently native.
             convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);
@@ -684,6 +655,7 @@ class OperationExecutor implements Closeable {
                 removed += tableWriter.replaceRange(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
             }
             windowCount++;
+            WalUtils.observeDeleteWindow(windowCount);
             wLo = wHiExcl;
         }
         tableWriter.commitSeqTxn(seqTxn); // FINAL: advance durable seqTxn S-1 -> S (one small commit)
@@ -709,11 +681,17 @@ class OperationExecutor implements Closeable {
     private void convertParquetPartitionsForDeleteWindow(TableWriter tableWriter, long wLo, long wHiExcl) {
         final int partitionCount = tableWriter.getPartitionCount();
         int converted = 0;
-        for (int i = 0; i < partitionCount; i++) {
+        int partitionsVisited = 0;
+        final int partitionLo = findPartitionFloorIndex(tableWriter, wLo, partitionCount);
+        for (int i = partitionLo; i < partitionCount; i++) {
+            partitionsVisited++;
+            final long floor = tableWriter.getPartitionTimestamp(i);
+            if (floor >= wHiExcl) {
+                break;
+            }
             if (tableWriter.getPartitionFormat(i) != PartitionFormat.PARQUET) {
                 continue;
             }
-            final long floor = tableWriter.getPartitionTimestamp(i);
             // For a NON-last partition the next partition's floor is the exact upper extent of this one. The LAST
             // partition has no next floor, so use getMaxTimestamp()+1 - a sound upper bound whether or not that
             // partition is Parquet. The active/last partition CAN be Parquet on a WAL table (a born-Parquet table,
@@ -726,9 +704,24 @@ class OperationExecutor implements Closeable {
                 converted++;
             }
         }
+        WalUtils.observeDeleteWindowPartitionScan(partitionsVisited);
         if (converted > 0) {
             tableWriter.commitPendingParquetToNativeConversions();
         }
+    }
+
+    private static int findPartitionFloorIndex(TableWriter tableWriter, long timestamp, int partitionCount) {
+        int lo = 0;
+        int hi = partitionCount - 1;
+        while (lo <= hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (tableWriter.getPartitionTimestamp(mid) <= timestamp) {
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return Math.max(0, hi);
     }
 
     /**
@@ -747,7 +740,7 @@ class OperationExecutor implements Closeable {
     }
 
     /**
-     * Time-range fast path (Task 2.1): the whole DELETE predicate reduces to a single designated-timestamp
+     * Time-range fast path: the whole DELETE predicate reduces to a single designated-timestamp
      * interval {@code [lo, hiExcl)} with no residual filter (classified in
      * {@link io.questdb.griffin.SqlCompilerImpl}, exposed via {@link DeleteOperation#isPureTimeRange()}), so
      * the delete is applied as ONE empty {@link TableWriter#replaceRange} over the DELETED interval - O(rows

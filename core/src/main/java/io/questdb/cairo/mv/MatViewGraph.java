@@ -48,6 +48,8 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    public static final long DEPENDENT_VIEWS_PRESENT = -1;
+
     @FunctionalInterface
     public interface NoDependentViewsAction {
         long run() throws SqlException;
@@ -93,11 +95,16 @@ public class MatViewGraph implements Mutable {
         return true;
     }
 
+    /**
+     * Runs {@code action} while holding the base table's dependency-list read lock when that list is empty.
+     *
+     * @return the action result, or {@link #DEPENDENT_VIEWS_PRESENT} when at least one dependent view exists
+     */
     public long applyIfNoDependentViews(TableToken baseTableToken, NoDependentViewsAction action) throws SqlException {
         final ViewDependencyList dependentViews = getOrCreateDependentViews(baseTableToken.getTableName());
         final ReadOnlyObjList<TableToken> dependentViewList = dependentViews.lockForRead();
         try {
-            return dependentViewList.size() == 0 ? action.run() : -1;
+            return dependentViewList.size() == 0 ? action.run() : DEPENDENT_VIEWS_PRESENT;
         } finally {
             dependentViews.unlockAfterRead();
         }

@@ -143,6 +143,13 @@ public class DeleteOperation extends AbstractOperation {
         return windowLoBindVariableIndex;
     }
 
+    @Override
+    public boolean isAsyncWriterCommandSupported() {
+        // DELETE is WAL-only. Applying it through the physical TableWriter command queue would bypass
+        // WAL replication, and apply() deliberately rejects that execution mode.
+        return false;
+    }
+
     public boolean isPredicateReplayStable() {
         return isPredicateReplayStable;
     }

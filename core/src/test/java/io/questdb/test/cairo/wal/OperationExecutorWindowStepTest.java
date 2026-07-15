@@ -24,11 +24,80 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.wal.WalUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class OperationExecutorWindowStepTest {
+
+    @Test
+    public void testAtomicWindowAlignsExactBoundary() {
+        final long dayMicros = 86_400_000_000L;
+        Assert.assertEquals(
+                dayMicros,
+                WalUtils.deleteAtomicWindowHiExcl(0, dayMicros, 3 * dayMicros, ColumnType.TIMESTAMP, PartitionBy.DAY)
+        );
+    }
+
+    @Test
+    public void testAtomicWindowAlignsToPartitionCeiling() {
+        final long dayMicros = 86_400_000_000L;
+        final long minuteMicros = 60_000_000L;
+        Assert.assertEquals(
+                dayMicros,
+                WalUtils.deleteAtomicWindowHiExcl(
+                        minuteMicros,
+                        1000 * minuteMicros,
+                        3 * dayMicros,
+                        ColumnType.TIMESTAMP,
+                        PartitionBy.DAY
+                )
+        );
+    }
+
+    @Test
+    public void testAtomicWindowCeilingOverflowConsumesRemainder() {
+        Assert.assertEquals(
+                Long.MAX_VALUE,
+                WalUtils.deleteAtomicWindowHiExcl(
+                        Long.MAX_VALUE - 100,
+                        50,
+                        Long.MAX_VALUE - 1,
+                        ColumnType.TIMESTAMP_NANO,
+                        PartitionBy.DAY
+                )
+        );
+    }
+
+    @Test
+    public void testCrossZeroFullDomainSpanAdvancesInBoundedWindows() {
+        final long maxTs = Long.MAX_VALUE - 1;
+        final long minTs = Long.MIN_VALUE + 1;
+        final long step = WalUtils.deleteWindowStep(minTs, maxTs, 1_000_000_000L, 1_000_000L);
+        Assert.assertTrue("step must remain positive and density-scaled, was " + step, step > 1_000_000L);
+
+        long lo = minTs;
+        int windowCount = 0;
+        while (lo <= maxTs && windowCount < 2_000) {
+            final long hi = WalUtils.deleteWindowHiExcl(lo, step, maxTs);
+            Assert.assertTrue("window high must advance [lo=" + lo + ", hi=" + hi + ']', hi > lo);
+            lo = hi;
+            windowCount++;
+        }
+        Assert.assertEquals(maxTs + 1, lo);
+        Assert.assertTrue("expected multiple density windows, was " + windowCount, windowCount > 1);
+        Assert.assertTrue("window count must remain density-bounded, was " + windowCount, windowCount < 2_000);
+    }
+
+    @Test
+    public void testCrossZeroRemainingSpanDoesNotOverflow() {
+        Assert.assertEquals(
+                Long.MIN_VALUE + 2,
+                WalUtils.deleteWindowHiExcl(Long.MIN_VALUE + 1, 1, 0)
+        );
+    }
 
     @Test
     public void testUniformDensityGivesRowsPerStepWidth() {

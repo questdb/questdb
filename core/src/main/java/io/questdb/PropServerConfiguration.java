@@ -1660,10 +1660,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.walDeleteRowsPerStep = getLong(properties, env, PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, 1_000_000L);
             if (walDeleteRowsPerStep < 1) {
-                // A value < 1 makes the window-sizing estimate (WalUtils.deleteWindowStep ->
-                // MatViewRefreshJob.estimateBucketsForRows) floor the ts-window width to 1, decoupling it from the
-                // row count so the window count explodes to the whole timestamp span (billions of windows) = an
-                // effectively permanent hang of that WAL-apply attempt. Reject it at startup, naming the constraint.
+                // DELETE window sizing requires a positive target row count. Reject invalid configured values at
+                // startup; custom CairoConfiguration implementations are still clamped defensively in WalUtils.
                 throw new ServerConfigurationException(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP.getPropertyPath() + " must be >= 1");
             }
             this.walDeleteDiskBounded = getBoolean(properties, env, PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, false);
