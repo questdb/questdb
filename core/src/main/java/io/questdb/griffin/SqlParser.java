@@ -477,8 +477,10 @@ public class SqlParser {
             // minutes
             // hours
             // days
+            // weeks
             // months
-            case 'n', 'U', 'T', 's', 'm', 'h', 'd', 'M', 'y' -> true;
+            // years
+            case 'n', 'U', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y' -> true;
             default -> false;
         };
     }
