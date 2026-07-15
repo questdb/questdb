@@ -112,6 +112,25 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCarrierIdsOutsideSlotRangeAreNormalized() {
+        final int workerCount = 4;
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
+        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+
+        final int boundarySlot = locks.acquireSlot(workerCount, circuitBreaker);
+        Assert.assertEquals(0, boundarySlot);
+        final int nextSlot = locks.acquireSlot(workerCount, circuitBreaker);
+        Assert.assertEquals(1, nextSlot);
+        locks.releaseSlot(boundarySlot);
+        locks.releaseSlot(nextSlot);
+
+        final int largeSlot = locks.acquireSlot(10 * workerCount + 2, circuitBreaker);
+        Assert.assertEquals(2, largeSlot);
+        locks.releaseSlot(largeSlot);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testConcurrentAcquireReleaseHoldsMutualExclusion() throws Exception {
         // The one property the tests above cannot reach. They run on the JUnit thread, so the CAS in
         // acquireSlot never actually loses a race, and the parity protocol - the whole point of the
@@ -206,6 +225,33 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         locks.releaseSlot(-1);
         Assert.assertEquals(1, locks.getAcquiredSlotCount());
         locks.releaseSlot(slot);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
+    public void testWorkerIdsOutsideSlotRangeAreNormalized() {
+        final int workerCount = 4;
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
+
+        final int boundarySlot = locks.acquireSlot(
+                workerCount,
+                SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+        );
+        Assert.assertEquals(0, boundarySlot);
+        final int nextSlot = locks.acquireSlot(
+                workerCount,
+                SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+        );
+        Assert.assertEquals(1, nextSlot);
+        locks.releaseSlot(boundarySlot);
+        locks.releaseSlot(nextSlot);
+
+        final int largeSlot = locks.acquireSlot(
+                10 * workerCount + 2,
+                SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+        );
+        Assert.assertEquals(2, largeSlot);
+        locks.releaseSlot(largeSlot);
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
     }
 }

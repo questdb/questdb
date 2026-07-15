@@ -27,12 +27,14 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -3487,6 +3489,28 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("eq\nfalse\n");
+        });
+    }
+
+    @Test
+    public void testNullArraySingletonSurvivesConsumerClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final ArrayView first = NullConstant.NULL.getArray(null);
+            try {
+                Assert.assertEquals(ColumnType.NULL, first.getType());
+                first.close();
+
+                final ArrayView second = NullConstant.NULL.getArray(null);
+                Assert.assertSame(first, second);
+                Assert.assertEquals(ColumnType.NULL, second.getType());
+                Assert.assertEquals(0, second.getDimCount());
+                Assert.assertEquals(0, second.getCardinality());
+                Assert.assertEquals(0, second.getFlatViewLength());
+            } finally {
+                if (first instanceof DirectArray directArray) {
+                    directArray.ofNull();
+                }
+            }
         });
     }
 
