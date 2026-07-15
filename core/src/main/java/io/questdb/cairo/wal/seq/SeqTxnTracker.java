@@ -310,6 +310,9 @@ public class SeqTxnTracker {
         // (the sequencer is single-writer per table), so a plain volatile write suffices.
         // Guard against any ordering anomaly with a max() check.
         if (seqTxn > localDurableSeqTxn) {
+            // Push the delta to the global durable-frontier gauge, clamping the -1 initial to 0
+            // (mirrors the addSeqTxn(newSeqTxn - Math.max(0, stxn)) pattern above).
+            metrics.walMetrics().addLocalDurableSeqTxn(seqTxn - Math.max(0, localDurableSeqTxn));
             localDurableSeqTxn = seqTxn;
         }
     }

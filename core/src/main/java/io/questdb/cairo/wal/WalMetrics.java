@@ -35,6 +35,7 @@ public class WalMetrics implements Mutable {
     private final Counter applyPhysicallyWrittenRowsCounter;
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
+    private final LongGauge localDurableSeqTxnGauge;
     private final Counter rowsWrittenCounter;
     private final LongGauge seqTxnGauge;
     private final AtomicLong totalRowsWritten = new AtomicLong();
@@ -45,6 +46,7 @@ public class WalMetrics implements Mutable {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
+        this.localDurableSeqTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_local_durable_seq_txn");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
         this.seqTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_seq_txn");
         this.writerTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_writer_txn");
@@ -57,6 +59,10 @@ public class WalMetrics implements Mutable {
         long totalRows = totalRowsWritten.addAndGet(rows);
         long rowsAppendRate = totalRows * 1_000_000L / Math.max(1, totalRowsWrittenTotalTime.addAndGet(timeMicros));
         applyRowsWriteRateGauge.setValue(rowsAppendRate);
+    }
+
+    public void addLocalDurableSeqTxn(long txnDelta) {
+        localDurableSeqTxnGauge.add(txnDelta);
     }
 
     public void addRowsWritten(long txnRowCount) {
@@ -76,6 +82,7 @@ public class WalMetrics implements Mutable {
         applyPhysicallyWrittenRowsCounter.reset();
         applyRowsWriteRateGauge.setValue(0);
         applyRowsWrittenCounter.reset();
+        localDurableSeqTxnGauge.setValue(0);
         rowsWrittenCounter.reset();
         seqTxnGauge.setValue(0);
         totalRowsWritten.set(0);
