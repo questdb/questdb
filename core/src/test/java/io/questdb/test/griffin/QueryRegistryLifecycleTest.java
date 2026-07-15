@@ -44,20 +44,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Exercises the QueryRegistry.Entry lifecycle protocol that guards pooled
- * Entry reuse against late cancel() calls racing unregister().
- */
 public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
-    /**
-     * Cancelling an id that is no longer registered returns false. The entry is
-     * already gone from the registry map, so cancel() short-circuits at the
-     * registry lookup before it ever reaches the lifecycle guard. This covers
-     * the plain registry-miss path; the lifecycle guard itself is covered by
-     * {@link #testRecycledEntryReportsStaleLifecycle()} and
-     * {@link #testStaleCancellerCannotTouchRecycledEntry()}.
-     */
     @Test
     public void testCancelReturnsFalseForUnregisteredId() throws Exception {
         assertMemoryLeak(() -> {
@@ -177,16 +165,6 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * After an entry is unregistered and the pooled object is reused for a new
-     * query, its lifecycle word no longer matches the old query id. This is the
-     * invariant the whole fix relies on: a stale canceller (or a
-     * query_activity() snapshot) holding the recycled entry sees
-     * isActiveLifecycle() return false for the old id and rejects it, while the
-     * new id is reported active. Single-threaded, so the recycle is
-     * deterministic - register() pops the very same entry back from the
-     * thread-local pool.
-     */
     @Test
     public void testRecycledEntryReportsStaleLifecycle() throws Exception {
         assertMemoryLeak(() -> {
