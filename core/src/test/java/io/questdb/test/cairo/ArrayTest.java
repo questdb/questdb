@@ -3109,6 +3109,39 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLengthOverLateMaterializedParquetNullAndColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, marker SYMBOL, tag SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango SELECT (x * 1_000_000)::timestamp, " +
+                    "CASE WHEN x = 1000 THEN 'a_top' ELSE 'drop' END, " +
+                    "CASE WHEN x = 1000 THEN 'keep' ELSE 'drop' END FROM long_sequence(5_000)");
+            execute("ALTER TABLE tango ADD COLUMN arr DOUBLE[][]");
+            execute("""
+                    INSERT INTO tango VALUES
+                        ('1970-01-01T01:23:21.000000Z', 'b_null', 'keep', NULL),
+                        ('1970-01-01T01:23:22.000000Z', 'c_value', 'keep', ARRAY[[1.0, 2], [3.0, 4]])
+                    """);
+            execute("INSERT INTO tango SELECT ((5_002 + x) * 1_000_000)::timestamp, 'drop', 'drop', " +
+                    "ARRAY[[x::double]] FROM long_sequence(5_000)");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-02T00:00:00.000000Z', 'drop', 'drop', ARRAY[[1.0]])");
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+
+            assertQuery("SELECT marker, dim_length(arr, 1) d1, dim_length(arr, 2) d2, " +
+                    "sum(arr[1, 1]) first FROM tango WHERE tag = 'keep' GROUP BY marker, d1, d2 ORDER BY marker")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Group By workers:", "filter: tag='keep'")
+                    .returns("""
+                            marker\td1\td2\tfirst
+                            a_top\tnull\tnull\tnull
+                            b_null\tnull\tnull\tnull
+                            c_value\t2\t2\t1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testLengthOverParquet() throws Exception {
         // The parquet scan rebuilds the aux vector in the same layout the native one uses, so the
         // shape-header fast path is meant to read it identically. Nothing pinned that: every other
