@@ -1001,6 +1001,32 @@ public class LiveViewInstance implements QuietCloseable {
         return hasWarnedBelowLowerBoundDrop;
     }
 
+    /**
+     * Drops every retained checkpoint whose {@code maxTs} is at or above
+     * {@code minMaxTsInclusive} - the entries an out-of-order base commit at
+     * that timestamp has unsealed (they should have incorporated the late row
+     * but do not). Entries are held in ascending {@code maxTs} order, so the
+     * invalidated set is the trailing suffix; this removes it from the top,
+     * leaving the still-sealed prefix ({@code maxTs < minMaxTsInclusive}) intact.
+     * Pass {@link Numbers#LONG_NULL} (== {@code Long.MIN_VALUE}) to drop the
+     * whole ring, matching a non-DATA / recovery trigger that authorises no
+     * anchor to survive. The lvSeqTxn of each dropped entry is appended to
+     * {@code evictedLvSeqTxnsOut} (when non-null) so the caller can unlink the
+     * matching {@code <lvSeqTxn>.cp}; the in-memory drop is unconditional even
+     * if that unlink later fails. Runs on the refresh worker under the refresh
+     * latch. See {@link #retainedCheckpoints}.
+     */
+    public void invalidateRetainedCheckpointsFrom(long minMaxTsInclusive, @Nullable LongList evictedLvSeqTxnsOut) {
+        int count = getRetainedCheckpointCount();
+        while (count > 0 && getRetainedCheckpointMaxTs(count - 1) >= minMaxTsInclusive) {
+            if (evictedLvSeqTxnsOut != null) {
+                evictedLvSeqTxnsOut.add(getRetainedCheckpointLvSeqTxn(count - 1));
+            }
+            retainedCheckpoints.removeIndexBlock((count - 1) * RETAINED_CHECKPOINT_RECORD_SIZE, RETAINED_CHECKPOINT_RECORD_SIZE);
+            count--;
+        }
+    }
+
     public boolean isDropped() {
         return dropped;
     }

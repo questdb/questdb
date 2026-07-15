@@ -78,7 +78,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -149,6 +151,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
+    // Retained-checkpoint ring bounds. A later step replaces these with
+    // cairo.live.view.checkpoint.retention.* config knobs; until then the ring is
+    // capped by a fixed count and a total-bytes budget. The event-time horizon
+    // stays disabled (LONG_NULL passed to pruneRetainedCheckpoints) - count and
+    // bytes bind first, since near-head checkpoint spacing already covers many
+    // times the observed base lateness.
+    private static final int RETAINED_CHECKPOINT_MAX_COUNT = 8;
+    private static final long RETAINED_CHECKPOINT_MAX_TOTAL_BYTES = 64L * 1024 * 1024;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
@@ -178,6 +188,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // thread between reset() and use.
     private final DrainResult drainResult = new DrainResult();
     private final CairoEngine engine;
+    // Scratch list of lvSeqTxns evicted from the retained-checkpoint ring by a
+    // prune or a selective O3 invalidation, drained by unlinkCheckpointFiles.
+    // Worker-owned; cleared before each use.
+    private final LongList evictedCheckpoints = new LongList();
     private final LiveViewRefreshSqlExecutionContext executionContext;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
@@ -1170,7 +1184,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // O3 cycles never reach this branch: detect rolls back the
                 // in-WAL-order draft and hands off to o3Replay, which writes
                 // its own fresh head on completion (follow-up commit).
-                maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows);
+                maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows, false);
             }
         }
     }
@@ -1488,7 +1502,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
-                maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows);
+                maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows, false);
             }
         } finally {
             if (reader != null) {
@@ -2219,7 +2233,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // seam routing immediately.
                 restampSlotAfterFlush(instance, lvAppliedSeqTxn);
             }
-            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows);
+            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, flushedMaxTs, flushRows, false);
         }
     }
 
@@ -2328,6 +2342,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+    }
+
+    /**
+     * Retires the retained checkpoints an out-of-order base commit at
+     * {@code triggerLowTs} has unsealed, replacing the blanket head retire the
+     * O3 replay paths used before retention. Entries with {@code maxTs <
+     * triggerLowTs} stay sealed - the late row is above them - and survive as
+     * resume anchors; entries at or above it (including the head) are dropped
+     * from the ring and their {@code .cp} files unlinked best-effort. A non-DATA
+     * / recovery trigger ({@code triggerLowTs == LONG_NULL}) drops the whole ring
+     * and always clears the head.
+     * <p>
+     * When the head is among the unsealed set its metadata is cleared so the
+     * post-replay write lands on its first-cp cadence path. The head is unlinked
+     * explicitly in addition to the ring-driven unlinks: a restart restores head
+     * metadata without repopulating the ring, so the head may not be a ring entry
+     * yet ({@code removeQuiet} is idempotent, so a double unlink is harmless). The
+     * in-memory drop is unconditional even if an unlink fails - a failed unlink
+     * must never leave a live anchor.
+     */
+    private void invalidateRetainedCheckpointsOnO3(LiveViewInstance instance, long triggerLowTs) {
+        evictedCheckpoints.clear();
+        instance.invalidateRetainedCheckpointsFrom(triggerLowTs, evictedCheckpoints);
+        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        final boolean headUnsealed = headLvSeqTxn != Numbers.LONG_NULL
+                && (triggerLowTs == Numbers.LONG_NULL || headMaxTs == Numbers.LONG_NULL || headMaxTs >= triggerLowTs);
+        if (headUnsealed) {
+            evictedCheckpoints.add(headLvSeqTxn);
+        }
+        unlinkCheckpointFiles(instance, evictedCheckpoints);
+        if (headUnsealed) {
+            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        }
     }
 
     /**
@@ -2789,22 +2837,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             persistState(instance);
         }
         if (lvConsumedPersisted && appendedRows > 0) {
-            // Retire the head .cp the replay was built on (its state is
-            // strictly older than what we just wrote) then write a fresh
-            // post-replay head. The retire-then-write ordering puts
-            // maybeWriteHeadCheckpoint on its first-cp cadence path, which
-            // unconditionally writes regardless of row/duration cadence.
+            // Seal the post-replay state as a fresh head and keep the prior head
+            // the replay was built on in the retained-checkpoint ring: the late
+            // row sat above it, so it stays sealed and serves as a valid resume
+            // anchor rather than garbage. force writes past the cadence gate (the
+            // prior head is not cleared, so firstCp would be false) - an O3
+            // head-hit must always advance the head or the next replay re-scans
+            // from the stale maxTs.
             //
             // The zero-row replay keeps its head instead: the truncating commit
             // above left the LV table holding exactly the rows the head covers,
             // and the restore left the window state at the head's snapshot
-            // moment, so the head still describes the view. Retiring it would
-            // also leave nothing to write in its place (replayMaxTs is
-            // LONG_NULL), forcing the next O3 into a full head-miss rebuild.
-            if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
-                invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
-            }
-            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, appendedRows);
+            // moment, so the head still describes the view. There is nothing to
+            // seal (replayMaxTs is LONG_NULL).
+            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, appendedRows, true);
         }
         LOG.info().$("live view O3 head-hit replay completed [view=")
                 .$(viewName)
@@ -2842,13 +2888,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long advanceTo
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
-        // Retire any existing head .cp. The follow-up commit writes a fresh
-        // one post-replay; until then the next refresh cycle's first-commit
-        // cadence trigger will write it.
-        if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
-            invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
-        }
-
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         // The DATA trigger's authority to DELETE, expressed in the view's own coordinate space.
@@ -2869,6 +2908,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long triggerLowTs = lateRowTs == Numbers.LONG_NULL
                 ? Numbers.LONG_NULL
                 : Math.max(lateRowTs, viewLowerBoundTimestamp);
+        // Retire the checkpoints this O3 has unsealed. A DATA trigger keeps every
+        // entry with maxTs < triggerLowTs (still sealed - the late row is above
+        // them) and drops the rest, including the head; a non-DATA / recovery
+        // trigger (LONG_NULL) drops the whole ring conservatively. Clearing the
+        // head puts the post-replay write on its first-cp path. The follow-up
+        // write below seals a fresh head; until then a restart rebuilds from the
+        // boundary.
+        invalidateRetainedCheckpointsOnO3(instance, triggerLowTs);
         TableReader reader = waitForApply(baseToken, advanceTo);
         // The replay recomputes the whole view from the base reader's snapshot,
         // which reflects every base row applied up to reader.getSeqTxn() - not
@@ -3067,17 +3114,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             persistState(instance);
         }
         if (lvConsumedPersisted && appendedRows > 0) {
-            // Post-replay head: head metadata was cleared at the top of this
-            // function, so maybeWriteHeadCheckpoint's first-cp cadence path
-            // fires unconditionally and writes a fresh head reflecting the
-            // post-replay state. Restart can then short-circuit to head-hit
-            // for a subsequent O3 in the head's hit zone instead of paying
-            // for another full head-miss replay.
+            // Post-replay head: invalidateRetainedCheckpointsOnO3 cleared the head
+            // metadata and dropped the unsealed ring entries above, so force
+            // writes a fresh head reflecting the post-replay state (firstCp is
+            // already true here; force keeps the intent explicit and robust).
+            // Restart can then short-circuit to head-hit for a subsequent O3 in
+            // the head's hit zone instead of paying for another full head-miss
+            // replay.
             //
             // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
             // from the on-disk size above), so adding them again would
             // double-count lvRowPosition. Mirrors the seed-completion path.
-            maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, replayMaxTs, 0L);
+            maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, replayMaxTs, 0L, true);
         }
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
@@ -3454,7 +3502,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // a head" argument below does not apply here - there is no output to be wrong about.
         final long seedMaxTs = instance.getLatestSeenTs();
         if (seedMaxTs != Numbers.LONG_NULL) {
-            maybeWriteHeadCheckpoint(instance, windowFactory, sweepSeqTxn, seedMaxTs, 0L);
+            maybeWriteHeadCheckpoint(instance, windowFactory, sweepSeqTxn, seedMaxTs, 0L, false);
         }
         instance.setSeedState(LiveViewState.SEED_STATE_ACTIVE);
         instance.setSeedTargetSeqTxn(Numbers.LONG_NULL);
@@ -3484,6 +3532,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", seedTargetSeqTxn=").$(seedTargetSeqTxn)
                 .$(", sweepSeqTxn=").$(sweepSeqTxn)
                 .$(", lvRowsTotal=").$(instance.getLvRowsTotal()).I$();
+    }
+
+    /**
+     * Best-effort unlinks the {@code <lvSeqTxn>.cp} file of every lvSeqTxn in
+     * {@code lvSeqTxns} - the entries a prune or a selective O3 invalidation
+     * evicted from the retained-checkpoint ring. A missing file is a no-op
+     * ({@code removeQuiet}); the in-memory ring already dropped these entries, so
+     * an unlink failure only leaks the file until the startup sweep retires it.
+     */
+    private void unlinkCheckpointFiles(LiveViewInstance instance, LongList lvSeqTxns) {
+        final int n = lvSeqTxns.size();
+        if (n == 0) {
+            return;
+        }
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        for (int i = 0; i < n; i++) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .slash();
+            LiveViewCheckpointWriter.appendCpFileName(path, lvSeqTxns.getQuick(i));
+            ff.removeQuiet(path.$());
+        }
     }
 
     /**
@@ -3574,7 +3645,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             long lvSeqTxn,
             long batchMaxTs,
-            long appendedRows
+            long appendedRows,
+            boolean force
     ) {
         if (!instance.isSnapshotCapabilityComputed()) {
             instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
@@ -3595,7 +3667,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean durationTrigger = !firstCp
                 && lastWrittenUs != Numbers.LONG_NULL
                 && (nowUs - lastWrittenUs) >= durationCadence;
-        if (!(firstCp || rowTrigger || durationTrigger)) {
+        // force fires the write past the row/duration cadence gate. The O3
+        // replay paths pass it so an O3 always seals a fresh near-head anchor:
+        // a head-hit keeps its (still sealed) prior head as a ring entry rather
+        // than clearing it, so firstCp would otherwise stay false and cadence
+        // could skip the write, stranding the head at the stale maxTs.
+        if (!(force || firstCp || rowTrigger || durationTrigger)) {
             return;
         }
 
@@ -3650,9 +3727,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Capture before commit(): commit() truncates the mmap and resets
             // the writer for reuse.
             final long stateBytes = checkpointWriter.getAppendOffset();
-            checkpointWriter.commit(firstCp ? Numbers.LONG_NULL : priorLvSeqTxn);
+            // Retain the prior head (LONG_NULL suppresses commit()'s unlink): it
+            // is a sealed ring entry now, not garbage. The ring below governs
+            // retirement.
+            checkpointWriter.commit(Numbers.LONG_NULL);
 
             instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
+            // Retain the freshly sealed head in the checkpoint ring. A
+            // same-timestamp run can leave a prior entry at batchMaxTs, so drop
+            // any entry the fresh head supersedes at or above its own maxTs
+            // first - the ring is held in strictly increasing maxTs order - then
+            // add and prune back within the count / bytes budget, unlinking
+            // whatever falls out (the equal-maxTs prior and the pruned oldest).
+            evictedCheckpoints.clear();
+            instance.invalidateRetainedCheckpointsFrom(batchMaxTs, evictedCheckpoints);
+            instance.addRetainedCheckpoint(lvSeqTxn, batchMaxTs, baseSeqTxn, instance.getLvRowsTotal(), stateBytes);
+            instance.pruneRetainedCheckpoints(
+                    RETAINED_CHECKPOINT_MAX_COUNT,
+                    RETAINED_CHECKPOINT_MAX_TOTAL_BYTES,
+                    Numbers.LONG_NULL,
+                    evictedCheckpoints
+            );
+            unlinkCheckpointFiles(instance, evictedCheckpoints);
         } catch (Throwable t) {
             LOG.critical().$("could not write live view head checkpoint [view=")
                     .$(instance.getDefinition().getViewName())

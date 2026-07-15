@@ -1105,10 +1105,11 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         row.append();
     }
 
-    // The live view's single steady head .cp, or null when it has none. Steady state keeps exactly
-    // one - each head write unlinks its predecessor - so the filename identifies the head, and
-    // comparing it across a checkpoint/restore says whether the restored head is the checkpoint's
-    // or the live-ahead one. Ignores .scp (rolling seed) and .tmp (interrupted write) entries.
+    // The live view's steady head .cp - the newest by lvSeqTxn - or null when it has none. Retention
+    // keeps a bounded ring of recent heads on disk, so several .cp files can coexist; the head is the
+    // highest lvSeqTxn (the 16-digit zero-padded filename prefix makes lexical max == numeric max).
+    // Comparing it across a checkpoint/restore says whether the restored head is the checkpoint's or
+    // the live-ahead one. Ignores .scp (rolling seed) and .tmp (interrupted write) entries.
     private String headCheckpointFile(String viewName) {
         final TableToken token = engine.verifyTableName(viewName);
         final ObjList<String> heads = new ObjList<>();
@@ -1128,8 +1129,14 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 }
             });
         }
-        Assert.assertTrue("expected at most one steady head .cp, found " + heads, heads.size() <= 1);
-        return heads.size() == 1 ? heads.getQuick(0) : null;
+        String head = null;
+        for (int i = 0, n = heads.size(); i < n; i++) {
+            final String name = heads.getQuick(i);
+            if (head == null || name.compareTo(head) > 0) {
+                head = name;
+            }
+        }
+        return head;
     }
 
     private void assertCheckpointsDirExists(String viewName) {
