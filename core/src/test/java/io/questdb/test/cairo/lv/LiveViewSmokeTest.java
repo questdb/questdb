@@ -13432,8 +13432,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
         // Columns appear in the documented order so clients binding by
         // ordinal see a stable shape. The documented columns come first;
-        // the three head_checkpoint_* columns trail as debug
-        // surface.
+        // the three head_checkpoint_* columns and the two o3_*_replay_rows
+        // columns trail as debug surface.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13445,7 +13445,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "o3_rejected_count\tbelow_lower_bound_count\tlag_seqtxn\tlag_micros\t"
                         + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
                         + "view_lower_bound_timestamp\twriter_stall_micros\tseed_target_seqtxn\t"
-                        + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n");
+                        + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\t"
+                        + "o3_resume_replay_rows\to3_boundary_replay_rows\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -18172,6 +18173,88 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-11-01T00:00:45.000000Z\t45\t5\n" +
                     "2026-11-01T00:00:50.000000Z\t50\t6\n");
             assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ResumeAndBoundaryReplayRowsSurfaceInCatalogue() throws Exception {
+        // Observability (section 8 step 9). live_views() splits the rows an O3
+        // re-emits by path: o3_resume_replay_rows counts bounded resume-from-anchor
+        // replays ("the win"), o3_boundary_replay_rows counts the residual O(view age)
+        // boundary rebuild taken when the late row predates the whole ring. The two
+        // are disjoint - a given O3 replay bumps exactly one - so an operator can see
+        // the ring bounding O3 cost and spot any residual full rebuilds.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush -> dense ring
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Three in-order commits seal heads at maxTs=10, 20, 30 -> a
+                // three-entry ring. In-order forward-append never replays, so both
+                // counters stay 0.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 20)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n0\t0\n");
+
+                // Cross-commit O3 at ts=15: below the head (30), above the maxTs=10
+                // anchor. Resumes from that anchor and re-emits only the tail above it
+                // ({15, 20, 30} = 3 rows), so o3_resume_replay_rows becomes 3 while the
+                // boundary counter stays 0.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n3\t0\n");
+
+                // Cross-commit O3 at ts=05: below every surviving ring entry (the
+                // maxTs=10 anchor and the fresh post-resume head), so no anchor
+                // qualifies and the replay falls back to the full boundary rebuild. It
+                // recomputes the whole view ({5, 10, 15, 20, 30} = 5 rows), so
+                // o3_boundary_replay_rows becomes 5 while the resume counter is unchanged.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n3\t5\n");
+            }
+
+            // Five rows in ts order, row_number() a gapless 1..5 - both replay paths
+            // preserved the from-scratch answer over the applied base {5,10,15,20,30}.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:05.000000Z\t5\t1\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t2\n" +
+                    "2026-11-01T00:00:15.000000Z\t15\t3\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t4\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t5\n");
 
             execute("DROP LIVE VIEW lv");
         });

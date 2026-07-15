@@ -70,6 +70,12 @@ import io.questdb.std.ObjList;
  * refresh-worker progress before the corresponding {@code lvConsumed} flow
  * catches up. Three head-checkpoint columns trail the documented column set as
  * additional debug surface for head checkpoints.
+ * {@code o3_resume_replay_rows} and {@code o3_boundary_replay_rows} trail after
+ * them as O3-replay observability: they split the rows an O3 re-emits by path -
+ * bounded resume-from-anchor replays versus the residual O(view age) boundary
+ * rebuild - so the two are disjoint. A resume count that grows while the boundary
+ * count stays flat is the retained-checkpoint ring bounding O3 cost as intended;
+ * a growing boundary count flags late rows that predate the whole ring.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -124,7 +130,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LAG_SEQTXN = 14;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
         private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
+        private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 26;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
+        private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 25;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_VIEW_SQL = 3;
@@ -328,6 +336,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // pre-CREATE data the floor excludes. In-memory counter,
                         // resets on restart. Disjoint from o3_rejected_count.
                         case COLUMN_BELOW_LOWER_BOUND_COUNT -> instance.getBelowLowerBoundCount();
+                        // Rows re-emitted by bounded resume-from-anchor O3 replays -
+                        // "the win": each replay stays bounded to the tail above the
+                        // sealed anchor rather than recomputing the whole view.
+                        // In-memory counter, resets on restart.
+                        case COLUMN_O3_RESUME_REPLAY_ROWS -> instance.getO3ResumeReplayRows();
+                        // Rows re-emitted by boundary-rebuild O3 replays - the residual
+                        // O(view age) fallback taken when the late row predates the whole
+                        // retained-checkpoint ring. In-memory counter, resets on restart.
+                        // Disjoint from o3_resume_replay_rows.
+                        case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> instance.getO3BoundaryReplayRows();
                         default -> 0;
                     };
                 }
@@ -403,6 +421,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 22
             metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 23
             metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 24
+            metadata.add(new TableColumnMetadata("o3_resume_replay_rows", ColumnType.LONG));                // 25
+            metadata.add(new TableColumnMetadata("o3_boundary_replay_rows", ColumnType.LONG));              // 26
             METADATA = metadata;
         }
     }

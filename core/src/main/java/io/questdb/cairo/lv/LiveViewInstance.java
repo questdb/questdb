@@ -294,6 +294,16 @@ public class LiveViewInstance implements QuietCloseable {
     // both this and the cadence counter so writes and restores stay aligned.
     // Mutated under the refresh latch only.
     private long lvRowsTotal;
+    // Cumulative count of live-view rows re-emitted by boundary-rebuild O3 replays
+    // (o3HeadMissReplay - the full recompute from viewLowerBoundTimestamp). Surfaced
+    // via live_views().o3_boundary_replay_rows; the residual-fallback counterpart to
+    // o3ResumeReplayRows. This path is unbounded (O(view age)), so a growing value
+    // flags late rows that predate the whole retained-checkpoint ring - the case the
+    // resume path cannot bound. Bumped only on the refresh-worker thread at replay
+    // completion; volatile so the catalogue query thread reads a current value.
+    // In-memory only - resets to 0 on restart (an observability signal, not durable
+    // state). Disjoint from o3ResumeReplayRows: a given O3 replay bumps exactly one.
+    private volatile long o3BoundaryReplayRows;
     // Cumulative count of late O3 rows rejected because their timestamp fell below
     // viewLowerBoundTimestamp. Surfaced via live_views().o3_rejected_count. Bumped
     // only on the refresh-worker thread at the O3-detection step; volatile so the
@@ -302,6 +312,15 @@ public class LiveViewInstance implements QuietCloseable {
     // below the bound via the O3 path: in-WAL order guarantees
     // ts >= latestSeenTs >= viewLowerBoundTimestamp.
     private volatile long o3RejectedCount;
+    // Cumulative count of live-view rows re-emitted by bounded resume-from-anchor O3
+    // replays (replayFromAnchor - both the head-hit tail re-eval and the bounded-miss
+    // resume from an older sealed checkpoint). Surfaced via
+    // live_views().o3_resume_replay_rows; this is "the win" - the replay stays bounded
+    // to the tail above the anchor rather than recomputing the whole view. Bumped only
+    // on the refresh-worker thread at replay completion; volatile so the catalogue
+    // query thread reads a current value. In-memory only - resets to 0 on restart (an
+    // observability signal, not durable state). Disjoint from o3BoundaryReplayRows.
+    private volatile long o3ResumeReplayRows;
     // Reason string the refresh worker stashes here when a head-restore step
     // surfaces a "version too old" function snapshot. The worker holds the
     // refresh latch when populating this field; the same worker drains it
@@ -505,12 +524,34 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Accumulates {@code n} live-view rows re-emitted by a boundary-rebuild O3
+     * replay (the full recompute from {@code viewLowerBoundTimestamp}). Called
+     * from the refresh worker at replay completion; the value is exposed via
+     * {@code live_views().o3_boundary_replay_rows}. Disjoint from
+     * {@link #bumpO3ResumeReplayRows(long)} - a given O3 replay bumps one only.
+     */
+    public void bumpO3BoundaryReplayRows(long n) {
+        o3BoundaryReplayRows += n;
+    }
+
+    /**
      * Accumulates {@code n} late O3 rows rejected for falling below
      * {@code viewLowerBoundTimestamp}. Called from the refresh worker at the
      * O3-detection step; the value is exposed via {@code live_views().o3_rejected_count}.
      */
     public void bumpO3RejectedCount(long n) {
         o3RejectedCount += n;
+    }
+
+    /**
+     * Accumulates {@code n} live-view rows re-emitted by a bounded
+     * resume-from-anchor O3 replay (head-hit tail re-eval or bounded-miss resume
+     * from an older sealed checkpoint). Called from the refresh worker at replay
+     * completion; the value is exposed via {@code live_views().o3_resume_replay_rows}.
+     * Disjoint from {@link #bumpO3BoundaryReplayRows(long)}.
+     */
+    public void bumpO3ResumeReplayRows(long n) {
+        o3ResumeReplayRows += n;
     }
 
     @Override
@@ -846,8 +887,16 @@ public class LiveViewInstance implements QuietCloseable {
         return memoryTracker;
     }
 
+    public long getO3BoundaryReplayRows() {
+        return o3BoundaryReplayRows;
+    }
+
     public long getO3RejectedCount() {
         return o3RejectedCount;
+    }
+
+    public long getO3ResumeReplayRows() {
+        return o3ResumeReplayRows;
     }
 
     public long getRecordRowCopierMetadataVersion() {

@@ -3032,9 +3032,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // seal (replayMaxTs is LONG_NULL).
             maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, replayMaxTs, appendedRows, true);
         }
+        // The resume replay is "the win": bounded to the tail above the anchor.
+        // Counted separately from the boundary rebuild so live_views() can show how
+        // much O3 work stays cheap versus the residual unbounded fallbacks.
+        instance.bumpO3ResumeReplayRows(appendedRows);
+        // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
+        // (0 on the common path); the anchor fields record which sealed checkpoint the
+        // resume rolled back to, so a wide gap or a distant anchor is diagnosable.
         LOG.info().$("live view O3 resume replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(committedSeqTxn)
+                .$(", anchorLvSeqTxn=").$(anchorLvSeqTxn)
+                .$(", anchorMaxTs=").$(anchorMaxTs)
+                .$(", applyAheadGap=").$(effectiveSeqTxn - advanceTo)
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
 
@@ -3326,9 +3336,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // double-count lvRowPosition. Mirrors the seed-completion path.
             maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, replayMaxTs, 0L, true);
         }
+        // The boundary rebuild is the residual O(view age) fallback (late row below
+        // the whole retained ring, or a deep / unresumable apply-ahead range). Counted
+        // separately from the resume path so a growing value in live_views() flags a
+        // view the ring is failing to bound.
+        instance.bumpO3BoundaryReplayRows(appendedRows);
+        // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
+        // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
+        // sealed anchor sits below the ahead range's minimum in-view ts.
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(effectiveSeqTxn)
+                .$(", applyAheadGap=").$(effectiveSeqTxn - advanceTo)
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
 
