@@ -164,6 +164,8 @@ stages:
             env:
               GITHUB_TOKEN: $(GITHUB_TOKEN)
 
+          - template: templates/use-hetzner-apt-mirrors.yml
+
           - script: |
               sudo apt-get update
               cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
