@@ -430,6 +430,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * (non-composite) tables, LIKE tables and CREATE TABLE AS SELECT this is an empty
      * spec whose {@link PartitionSpec#isComposite()} is false.
      */
+    @Override
     public PartitionSpec getPartitionSpec() {
         return partitionSpec;
     }

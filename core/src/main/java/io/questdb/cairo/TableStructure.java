@@ -103,6 +103,17 @@ public interface TableStructure {
         return null;
     }
 
+    /**
+     * Returns the resolved composite-partitioning spec for this structure. Never null: implementers
+     * that are not composite (the vast majority) inherit this default, which returns the shared,
+     * never-mutated {@link PartitionSpec#EMPTY} whose {@link PartitionSpec#isComposite()} is false.
+     * {@link TableUtils#writeMetadata} persists the additive composite block only when the returned
+     * spec is composite.
+     */
+    default PartitionSpec getPartitionSpec() {
+        return PartitionSpec.EMPTY;
+    }
+
     default boolean isCovering(int columnIndex) {
         IntList indices = getCoveringColumnIndices(columnIndex);
         return indices != null && indices.size() > 0;

@@ -114,7 +114,11 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    // Version-gate for the additive trailing composite-partitioning block (Task 5). Written into the
+    // minor-version high short ONLY for composite tables; plain tables keep writing
+    // META_FORMAT_MINOR_VERSION_TABLE_FORMAT so their _meta bytes stay byte-identical to before.
+    public static final short META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING = 3;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -280,15 +284,22 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
-    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount, short minorVersion) {
         // Metadata Format Minor Version field is 2 shorts:
         // - Low short is a checksum that changes with every update to _meta
-        // - High short is TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+        // - High short is the effective minor format version for THIS table. Callers pass the
+        //   minimum version that describes what they actually wrote: the highest always-present
+        //   feature version (META_FORMAT_MINOR_VERSION_TABLE_FORMAT) for a table without any
+        //   version-gated, conditionally-written feature, raised (e.g. to
+        //   META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING) only when such a feature is present.
+        //   Writing the minimum keeps the _meta bytes of tables lacking the newer feature
+        //   byte-identical across releases, while old readers still validate via the checksum
+        //   (which does NOT depend on the version value) and then gate on their own required version.
         // When reading the Metadata Format Minor Version field from the metadata record, use the checksum
         // to decide whether to trust the version stored in this field.
         return Numbers.encodeLowHighShorts(
                 checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
-                META_FORMAT_MINOR_VERSION_LATEST
+                minorVersion
         );
     }
 
@@ -2632,7 +2643,16 @@ public final class TableUtils {
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Metadata version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
+        // Raise the minor version to the composite gate ONLY for composite tables, so that a plain
+        // table writes exactly META_FORMAT_MINOR_VERSION_TABLE_FORMAT (today's value) and its _meta
+        // bytes stay byte-identical. Old readers still validate via the (unchanged) checksum.
+        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(
+                0,
+                count,
+                tableStruct.getPartitionSpec().isComposite()
+                        ? META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING
+                        : META_FORMAT_MINOR_VERSION_TABLE_FORMAT
+        ));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
 
@@ -2674,6 +2694,34 @@ public final class TableUtils {
                 for (int ci = 0, cn = coveringIndices.size(); ci < cn; ci++) {
                     mem.putInt(coveringIndices.getQuick(ci));
                 }
+            }
+        }
+
+        // Additive composite-partitioning block (Task 5), appended ONLY for composite tables and
+        // gated by META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING written above. Layout:
+        //   [i8 namingMode][i32 dimensionCount]
+        //     {[i8 kind][i32 columnIndex][i32 param][str alias][str exprText]} x dimensionCount
+        //   [i32 clusterColumnCount]{[i32 columnIndex]} x clusterColumnCount
+        // Fixed-width ints (matching the covering-index section) and standard length-prefixed
+        // strings: putStr(null) writes a -1 length marker that getStr/getStrA reads back as null,
+        // so exprText (null for identity/hash/truncate) round-trips symmetrically for Task 6's reader.
+        PartitionSpec partitionSpec = tableStruct.getPartitionSpec();
+        if (partitionSpec.isComposite()) {
+            mem.putByte(partitionSpec.getNamingMode());
+            int dimensionCount = partitionSpec.getDimensionCount();
+            mem.putInt(dimensionCount);
+            for (int i = 0; i < dimensionCount; i++) {
+                PartitionDimension dimension = partitionSpec.getDimension(i);
+                mem.putByte(dimension.getKind());
+                mem.putInt(dimension.getColumnIndex());
+                mem.putInt(dimension.getParam());
+                mem.putStr(dimension.getAlias());
+                mem.putStr(dimension.getExprText());
+            }
+            int clusterColumnCount = partitionSpec.getClusterColumnCount();
+            mem.putInt(clusterColumnCount);
+            for (int i = 0; i < clusterColumnCount; i++) {
+                mem.putInt(partitionSpec.getClusterColumn(i));
             }
         }
     }

@@ -41,6 +41,17 @@ public final class PartitionSpec implements Mutable {
     public static final byte MODE_HIVE = 0;  // ts=2023-01-01/exchange=NYSE/
     public static final byte MODE_PLAIN = 1; // 2023-01-01/NYSE/
 
+    /**
+     * Shared, always-empty (non-composite) spec returned by
+     * {@link TableStructure#getPartitionSpec()} for every structure that does not carry a real one
+     * (plain tables, CREATE AS SELECT, LIKE, ILP/CSV adapters, sequencer copies, ...).
+     * <p>
+     * MUST NEVER be mutated. Sharing a single mutable instance is safe only because every consumer
+     * checks {@link #isComposite()} (always {@code false} here) before touching any dimension or
+     * cluster-column state, and none of them write to it.
+     */
+    public static final PartitionSpec EMPTY = new PartitionSpec();
+
     private final IntList clusterColumns = new IntList();
     private final ObjList<PartitionDimension> dimensions = new ObjList<>();
     private byte namingMode = MODE_HIVE;

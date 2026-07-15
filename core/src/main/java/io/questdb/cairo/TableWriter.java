@@ -12921,7 +12921,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metadata.setMetadataVersion(version);
             ddlMem.putLong(metadata.getMetadataVersion());
             ddlMem.putBool(metadata.isWalEnabled());
-            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
+            // Metadata rewrite (ALTER etc.) works from TableWriterMetadata, which does not yet carry
+            // the composite PartitionSpec, and this path does NOT re-emit the trailing composite
+            // block. Write META_FORMAT_MINOR_VERSION_TABLE_FORMAT so: (a) a plain table stays
+            // byte-identical to before, and (b) a composite table degrades consistently to "no block"
+            // (a reader gated on the composite version will not look for one) rather than falsely
+            // claiming a block that was not written. Preserving the block across ALTER is a
+            // downstream (Task 6+) concern.
+            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount, TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
 
