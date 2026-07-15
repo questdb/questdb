@@ -72,12 +72,14 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public void _close() {
-        final TableStorageRecordCursor cursor = this.cursor;
-        this.cursor = null;
-        final TxReader txReader = this.txReader;
-        this.txReader = null;
+        // Close the cursor before nulling txReader: TableStorageRecordCursor.close()
+        // clears the outer txReader field, so the field must stay set until the cursor
+        // close attempt completes. freeBestEffort() never throws, so the fields are
+        // always nulled even when a close fails.
         Throwable failure = Misc.freeBestEffort(null, cursor);
+        this.cursor = null;
         failure = Misc.freeBestEffort(failure, txReader);
+        this.txReader = null;
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -106,7 +108,12 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public void close() {
             tableBucket.clear();
-            txReader.clear();
+            // The factory nulls txReader once it is freed; a cursor closed after the
+            // factory (late close on an error path) must not dereference it.
+            final TxReader txReader = TableStorageRecordCursorFactory.this.txReader;
+            if (txReader != null) {
+                txReader.clear();
+            }
         }
 
         @Override
