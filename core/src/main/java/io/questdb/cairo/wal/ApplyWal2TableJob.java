@@ -774,6 +774,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         // Step 5: publish the durable frontier (WAL-purge floor) + cadence timestamp, LAST.
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
+        metrics.incrementEpochAdvances();
         tracker.setLastEpochTs(nowMs);
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)

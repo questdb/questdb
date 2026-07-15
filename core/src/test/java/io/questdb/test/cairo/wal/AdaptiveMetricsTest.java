@@ -54,4 +54,18 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
                     TestUtils.getMetricValue(engine, "questdb_wal_apply_local_durable_seq_txn"));
         });
     }
+
+    @Test
+    public void testEpochAdvancesCounterIncrements() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, "0"); // advance every batch
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances_total");
+            execute("insert into x values (0, 1)");
+            drainWalQueue();
+            long after = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances_total");
+            assertTrue("each adaptive apply batch advances the durable epoch", after > before);
+        });
+    }
 }
