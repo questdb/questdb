@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+#define _WIN32_WINNT 0x600 /* WSAPoll is Vista+ */
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
@@ -304,12 +305,12 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         (JNIEnv *e, jclass cl, jint fd) {
-    char c;
-    const int n = recv((SOCKET) fd, (char *) &c, 1, MSG_PEEK);
-    if (n == 0) {
-        return JNI_TRUE;
-    }
-    return (jboolean) (n < 0 && WSAGetLastError() != WSAEWOULDBLOCK);
+    WSAPOLLFD pfd;
+    pfd.fd = (SOCKET) fd;
+    pfd.events = POLLRDNORM;
+    pfd.revents = 0;
+    const int n = WSAPoll(&pfd, 1, 0);
+    return (jboolean) (n > 0 && (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send

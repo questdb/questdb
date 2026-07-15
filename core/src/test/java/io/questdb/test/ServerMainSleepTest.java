@@ -41,7 +41,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
@@ -108,16 +107,12 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
     @Test
     public void testSleepAbortedWhenClientClosesConnection() throws Exception {
-        // The Windows probe still peeks and cannot see the FIN behind JDBC's
-        // buffered Terminate byte; detecting that needs FD_CLOSE, a follow-up.
-        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
-            // Runtime resource-pin bug: a parked sleep() does not observe a clean
-            // client disconnect. JDBC conn.close() sends a PG Terminate ('X') byte
-            // then FIN; the breaker probes liveness with recv(MSG_PEEK), which sees
-            // the buffered 'X' and reports the socket alive, never advancing to the
-            // EOF. So the parked sleep keeps running and pins the connection until
-            // query.timeout fires -- not until the client actually left.
+            // Regression guard for a runtime resource-pin bug: a parked sleep() did
+            // not observe a clean client disconnect. JDBC conn.close() sends a PG
+            // Terminate ('X') byte then FIN; the old recv(MSG_PEEK) probe saw the
+            // buffered 'X', reported the socket alive, and the parked sleep kept
+            // running and pinned the connection until query.timeout fired.
             //
             // query.timeout is set well above the 100ms wake interval so the two
             // outcomes are far apart: prompt disconnect detection ends the query
@@ -179,6 +174,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     long closeMs = System.currentTimeMillis();
                     long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
                     sleeper.join(5_000);
+                    Assert.assertFalse("sleeper thread did not terminate", sleeper.isAlive());
 
                     Assert.assertTrue(
                             "sleep(3600) never ended within 20s of the client closing the connection",

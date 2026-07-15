@@ -607,8 +607,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // error. Mirrors the catch in {@link #handleQueryRequest}.
             state.getBatchBuffer().rollbackCurrentBatch();
             state.endStreaming();
+            byte status = mapErrorStatus(t);
+            if (status == QwpConstants.STATUS_CANCELLED) {
+                metrics.markQueryCancelled();
+            } else {
+                metrics.markQueryErrored();
+            }
             try {
-                sendQueryError(context, state, failedRequestId, mapErrorStatus(t),
+                sendQueryError(context, state, failedRequestId, status,
                         t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
             } catch (PeerDisconnectedException | PeerIsSlowToReadException sendFail) {
                 throw sendFail;
@@ -1089,8 +1095,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // client's next delta symbol section fails to decode.
                 state.getBatchBuffer().rollbackCurrentBatch();
                 state.endStreaming();
+                byte status = mapErrorStatus(t);
+                if (status == QwpConstants.STATUS_CANCELLED) {
+                    metrics.markQueryCancelled();
+                } else {
+                    metrics.markQueryErrored();
+                }
                 try {
-                    sendQueryError(context, state, targetRequestId, mapErrorStatus(t),
+                    sendQueryError(context, state, targetRequestId, status,
                             t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
                 } catch (Throwable ignored) {
                 }
@@ -1855,6 +1867,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // batchBuffer; the only difference is how we walk rows.
         final boolean isPageFrame = state.isStreamingPageFrame();
         final RecordCursor cursor = isPageFrame ? null : state.getStreamingCursor();
+        final NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
 
         while (true) {
             // Test-only: when the global counter is armed, fire a simulated
@@ -1890,6 +1903,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 sendQueryError(context, state, requestId, QwpConstants.STATUS_CANCELLED, "cancelled by client");
                 return;
             }
+            // The page-frame path never consults the breaker inside the SQL layer; this
+            // between-batch check is the only timeout/disconnect enforcement it gets.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             // Credit-limited streams park when the client-advertised budget hits
             // zero. The next CREDIT frame replenishes via handleCredit and
             // re-enters streamResults to continue.

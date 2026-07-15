@@ -123,15 +123,16 @@ public class NetTest {
         TestUtils.assertMemoryLeak(() -> {
             long acceptFd = Net.socketTcp(true);
             Assert.assertTrue(acceptFd > 0);
-            int port = assertCanBind(acceptFd);
-            Net.listen(acceptFd, 1024);
-            long sockAddr = Net.sockaddr("127.0.0.1", port);
             // Hoisted so a failed assertion in any block still reclaims the open fds and buffer in
             // the finally rather than leaking them.
+            long sockAddr = 0;
             long clientFd = -1;
             long serverFd = -1;
             long buf = 0;
             try {
+                int port = assertCanBind(acceptFd);
+                Net.listen(acceptFd, 1024);
+                sockAddr = Net.sockaddr("127.0.0.1", port);
                 // Idle, both ends open: no hangup on any platform.
                 clientFd = Net.socketTcp(true);
                 TestUtils.assertConnect(clientFd, sockAddr);
@@ -155,15 +156,15 @@ public class NetTest {
                 Assert.assertEquals(1, Net.send(clientFd, buf, 1));
                 // Wait until the byte is actually buffered on the server so the probe faces
                 // readable-but-no-FIN data rather than an empty socket.
-                boolean buffered = false;
-                for (int i = 0; i < 1000 && !buffered; i++) {
+                boolean isBuffered = false;
+                for (int i = 0; i < 1000 && !isBuffered; i++) {
                     if (Net.peek(serverFd, buf, 1) == 1) {
-                        buffered = true;
+                        isBuffered = true;
                     } else {
                         Os.sleep(1);
                     }
                 }
-                Assert.assertTrue("test byte did not arrive on the server side", buffered);
+                Assert.assertTrue("test byte did not arrive on the server side", isBuffered);
                 Assert.assertFalse("readable data without a FIN must not read as a disconnect",
                         Net.isPeerDisconnected(serverFd));
                 buf = Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
@@ -172,8 +173,8 @@ public class NetTest {
 
                 // Error branch (not a bare FIN): SO_LINGER 0 makes the client's close send an RST
                 // instead of a FIN. The probe must still report a disconnect, via the error/hangup
-                // side of the mask (Linux POLLERR|POLLHUP, macOS kqueue EV_EOF, Windows recv error) --
-                // the arm the POLLRDHUP / EV_EOF FIN cases below never exercise. Detected on every
+                // side of the mask (Linux/Windows POLLERR|POLLHUP, macOS kqueue EV_EOF) -- the arm
+                // the POLLRDHUP / EV_EOF FIN cases below never exercise. Detected on every
                 // platform, so it also pins the running OS's error path (a bad/closed fd would trip
                 // the fd-cache paranoia guard, so a live reset is used instead).
                 clientFd = Net.socketTcp(true);
@@ -185,9 +186,9 @@ public class NetTest {
                 awaitPeerDisconnected(serverFd);
                 serverFd = closeFd(serverFd);
 
-                // FIN behind a buffered byte: the whole point of the probe. Linux poll
-                // and macOS kqueue report the peer's FIN even with the byte still
-                // buffered; the Windows peek fallback returns the byte and stays masked.
+                // FIN behind a buffered byte: the whole point of the probe. Linux poll,
+                // macOS kqueue, and Windows WSAPoll report the peer's FIN even with the
+                // byte still buffered.
                 clientFd = Net.socketTcp(true);
                 TestUtils.assertConnect(clientFd, sockAddr);
                 serverFd = Net.accept(acceptFd);
@@ -196,11 +197,7 @@ public class NetTest {
                 Unsafe.getUnsafe().putByte(buf, (byte) 'x');
                 Assert.assertEquals(1, Net.send(clientFd, buf, 1));
                 Net.shutdown(clientFd, Net.SHUT_WR);
-                if (Os.isWindows()) {
-                    Assert.assertFalse(Net.isPeerDisconnected(serverFd));
-                } else {
-                    awaitPeerDisconnected(serverFd);
-                }
+                awaitPeerDisconnected(serverFd);
                 buf = Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                 clientFd = closeFd(clientFd);
                 serverFd = closeFd(serverFd);
@@ -220,7 +217,9 @@ public class NetTest {
                 }
                 closeFd(clientFd);
                 closeFd(serverFd);
-                Net.freeSockAddr(sockAddr);
+                if (sockAddr != 0) {
+                    Net.freeSockAddr(sockAddr);
+                }
                 Net.close(acceptFd);
             }
         });

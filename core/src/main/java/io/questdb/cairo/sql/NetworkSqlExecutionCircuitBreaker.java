@@ -48,7 +48,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private long buffer;
     private volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
-    // Wall-clock time (millis) of the last heavy connection probe; gates statefulThrowExceptionIfTrippedTimeThrottled().
+    // Wall-clock time (millis) of the last heavy connection probe; gates the throttled probes in
+    // statefulThrowExceptionIfTrippedTimeThrottled(), checkIfTripped(long, long) and getState(long, long).
     private long lastConnectionCheckTime;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -93,13 +94,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public boolean checkIfTripped(long millis, long fd) {
-        if (clock.getTicks() - timeout > millis) {
+        final long now = clock.getTicks();
+        if (now - timeout > millis) {
             return true;
         }
         if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             return true;
         }
-        return testConnection(fd);
+        if (now - lastConnectionCheckTime >= connectionCheckThrottle) {
+            lastConnectionCheckTime = now;
+            return testConnection(fd);
+        }
+        return false;
     }
 
     public void clear() {
@@ -161,14 +167,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (isCancelled()) {
             return STATE_CANCELLED;
         }
-        if (clock.getTicks() - timeout > millis) {
+        final long now = clock.getTicks();
+        if (now - timeout > millis) {
             return STATE_TIMEOUT;
         }
         if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             return STATE_CANCELLED;
         }
-        if (testConnection(fd)) {
-            return STATE_BROKEN_CONNECTION;
+        if (now - lastConnectionCheckTime >= connectionCheckThrottle) {
+            lastConnectionCheckTime = now;
+            if (testConnection(fd)) {
+                return STATE_BROKEN_CONNECTION;
+            }
         }
         return STATE_OK;
     }

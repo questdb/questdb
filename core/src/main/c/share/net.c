@@ -292,8 +292,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
     RESTARTABLE(kevent(cached_kq, &change, 1, &event, 1, &immediate), n);
     // event.ident == fd is defensive: EV_DELETE below leaves the kqueue empty at rest, so only
     // this fd is ever registered, but the check makes the result robust to a future delete gap.
-    jboolean disconnected = (jboolean) (n > 0 && event.ident == (uintptr_t) fd
-                                        && (event.flags & (EV_EOF | EV_ERROR)) != 0);
+    jboolean disconnected = JNI_FALSE;
+    if (n > 0 && event.ident == (uintptr_t) fd) {
+        if ((event.flags & EV_ERROR) != 0) {
+            disconnected = (jboolean) (event.data == EBADF);
+        } else {
+            disconnected = (jboolean) ((event.flags & EV_EOF) != 0);
+        }
+    }
     // Drop the registration so a later probe of a different fd on this thread cannot pick up
     // this fd's event by mistake. ENOENT (the socket already closed) is harmless and ignored.
     EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);

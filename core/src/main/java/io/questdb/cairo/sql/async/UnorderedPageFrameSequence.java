@@ -235,7 +235,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                 break;
             }
             if (!isUninterruptible) {
-                workStealCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                sqlExecutionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             }
             stealWork();
             workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
