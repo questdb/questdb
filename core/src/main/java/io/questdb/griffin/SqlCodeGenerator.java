@@ -9967,9 +9967,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Parent factory will perform one of SET operations on its arguments, such as UNION, UNION ALL,
      * INTERSECT or EXCEPT
      *
-     * @param model            incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
-     * @param factoryA         is compiled first argument
-     * @param executionContext execution context for authorization and parallel execution purposes
+     * @param model              incoming model is expected to have a chain of models via its QueryModel.getUnionModel() function
+     * @param factoryA           is compiled first argument
+     * @param executionContext   execution context for authorization and parallel execution purposes
+     * @param symbolUnionColumns tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
+     *                           chain; null at the head of a chain (accumulateUnionSymbolColumns seeds it
+     *                           from the first branch) and for EXCEPT / INTERSECT (which never re-symbolise)
      * @return factory that performs a SET operation
      * @throws SqlException when query contains syntax errors
      */
@@ -9977,9 +9980,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel model,
             RecordCursorFactory factoryA,
             SqlExecutionContext executionContext,
-            // Tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
-            // chain. null at the head of a chain (accumulateUnionSymbolColumns seeds it from
-            // the first branch) and for EXCEPT / INTERSECT (which never re-symbolise).
             @Nullable BitSet symbolUnionColumns
     ) throws SqlException {
         RecordCursorFactory factoryB = null;
@@ -10982,8 +10982,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Accumulates, across a UNION [ALL] chain, the columns that are SYMBOL on every contributing
     // branch. Seeds from the first branch (metadataA) when acc is null, then clears any column that
     // is not SYMBOL in the next branch (metadataB). At recursive levels acc is non-null and metadataA
-    // is the STRING-downcast running union, so it is deliberately not re-read. maybeResymboliseUnion
-    // casts the survivors back to SYMBOL once, at the end of the chain.
+    // is the STRING-downcast running union, so this method deliberately does not re-read it.
+    // maybeResymboliseUnion casts the survivors back to SYMBOL once, at the end of the chain.
     private BitSet accumulateUnionSymbolColumns(@Nullable BitSet acc, RecordMetadata metadataA, RecordMetadata metadataB) {
         final int columnCount = metadataA.getColumnCount();
         if (acc == null) {
@@ -11005,10 +11005,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
     // symbolUnionColumns) and that the chain downcast to STRING (see getUnionCastType). The cast
     // sits outside the union, so it builds one dictionary over the merged stream instead of trying
-    // to reconcile the per-branch dictionaries the wire cannot merge. It mirrors
-    // generateSelectVirtualWithSubQuery: functions resolve column references through priorityMetadata
-    // (base column i maps to i + reservedSlots). Columns that are not re-symbolised pass through
-    // unchanged; the union factory is returned as-is when there is nothing to re-symbolise.
+    // to reconcile the per-branch dictionaries the wire cannot merge. It reuses only the column
+    // resolution of generateSelectVirtualWithSubQuery - functions resolve references through
+    // priorityMetadata, base column i mapping to i + reservedSlots - and deliberately skips that
+    // method's model-driven work (timestamp propagation, memoization, constant folding, update
+    // typing), because a union result carries no model, no designated timestamp and no update target.
+    // Columns that are not re-symbolised pass through unchanged; maybeResymboliseUnion returns the
+    // union factory as-is when there is nothing to re-symbolise.
     private RecordCursorFactory maybeResymboliseUnion(
             RecordCursorFactory unionFactory,
             @Nullable BitSet symbolUnionColumns
@@ -11028,8 +11031,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!resymbolise) {
             return unionFactory;
         }
-        // The +1 reserved slot matches the projection convention in generateSelectVirtualWithSubQuery.
-        final int reservedSlots = columnCount + 1;
+        // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
+        // thread-safe. That is safe only because a union base is serial: it supports neither page
+        // frames, filter stealing nor time frames, so no parallel operator (async filter, parallel
+        // GROUP BY) ever clones or snapshots this projection. Guard the invariant so a future
+        // page-frame-capable union trips here instead of shipping a stale, empty dictionary snapshot.
+        assert !unionFactory.supportsPageFrameCursor()
+                && !unionFactory.supportsFilterStealing()
+                && !unionFactory.supportsTimeFrameCursor();
+        // One reserved slot per projected column. Unlike generateSelectVirtualWithSubQuery this
+        // projection never appends a hidden timestamp column, so there is no extra slot to reserve.
+        final int reservedSlots = columnCount;
         final PriorityMetadata priorityMetadata = new PriorityMetadata(reservedSlots, baseMetadata);
         final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         final ObjList<Function> functions = new ObjList<>(reservedSlots);
@@ -11037,17 +11049,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = baseMetadata.getColumnName(i);
                 final Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
-                final Function function;
-                final TableColumnMetadata m;
-                if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
-                    function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
-                    // A cast-to-symbol builds its dictionary lazily, so the symbol table is not static.
-                    m = new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata());
-                } else {
-                    function = baseColumn;
-                    m = new TableColumnMetadata(columnName, baseMetadata.getColumnType(i), function.getMetadata());
-                }
+                final boolean toSymbol = symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING;
+                final Function function = toSymbol ? new CastStrToSymbolFunctionFactory.Func(baseColumn) : baseColumn;
+                // Register the function before building its metadata, so a throw in the metadata
+                // constructor still leaves it in the free list for the catch below.
                 functions.add(function);
+                // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
+                final TableColumnMetadata m = toSymbol
+                        ? new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata())
+                        : new TableColumnMetadata(columnName, baseMetadata.getColumnType(i), function.getMetadata());
                 virtualMetadata.add(m);
                 priorityMetadata.add(m);
             }
