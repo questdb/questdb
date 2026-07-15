@@ -17693,7 +17693,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testO3HeadHitUnderApplyAheadFallsBackToHeadMiss() throws Exception {
+    public void testO3HeadHitUnderApplyAheadResumesFromAnchor() throws Exception {
         // Companion to testO3HeadMissReplayUnderApplyAheadDoesNotDuplicateTrailingRow
         // for the head-hit branch. A head-hit-eligible O3 trigger (ts strictly above
         // the stale head's maxTimestamp) would normally replay only the tail above
@@ -17701,9 +17701,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // already holds trailing seqTxns the forward drain has not examined; a
         // head-hit replay reads base only above headMaxTs, so it would advance the
         // watermark only to the trigger and let the forward path re-append a trailing
-        // global-max row (a duplicate, the same defect as the head-miss case). The
-        // fix detects the apply-ahead snapshot and falls back to a full head-miss
-        // recompute, which reads the whole snapshot and advances the watermark to it.
+        // global-max row (a duplicate, the same defect as the head-miss case).
+        //
+        // Before the apply-ahead resume (step 6) the replay detected the ahead
+        // snapshot and fell back to a full head-miss recompute. It now resumes from
+        // the retained head anchor instead - the ahead range's minimum ts (100s here)
+        // sits above the head, so the head is a valid sealed anchor - and commits at
+        // the effective seqTxn the snapshot reflects, replaying only the bounded tail
+        // (rowsEmitted=4, not a from-boundary recompute) while still advancing the
+        // watermark past the trailing commit so it is not re-appended. Both dispositions
+        // produce the identical result asserted below.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -17762,6 +17769,160 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-11-01T00:01:40.000000Z\t6\t6\n");
                 Assert.assertEquals(6L, lv.getLvRowsTotal());
                 assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ApplyAheadResumeGuardIncludesBackdatedAheadRow() throws Exception {
+        // The apply-ahead resume (step 6) must never drop a back-dated row hidden in
+        // the ahead range below the resume anchor. A head-hit-eligible O3 trigger
+        // (ts=25, above the stale head at maxTs=20) would resume from the head anchor
+        // and replay only (20, +inf). But ApplyWal2TableJob has raced ahead and the
+        // ahead range holds a row BELOW the head (ts=05); a naive resume from the head
+        // would scan only (20, +inf) and never read ts=05 - a silent permanent drop.
+        // The minAheadTs guard sees the ahead range's minimum (05) sits below every
+        // retained anchor, refuses the resume, and rebuilds from the boundary, which
+        // materialises the whole snapshot including ts=05.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // seqTxn 1: two in-order rows. A head lands at maxTs=20.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 10), " +
+                        "('2026-11-01T00:00:20.000000Z', 20)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+
+                // seqTxn 2: in-order rows that move latestSeenTs to 40 without
+                // rewriting the head (cadence does not fire), so headMaxTs stays 20.
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 30), " +
+                        "('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("head must still sit at maxTs=20",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getHeadCheckpointMaxTs());
+
+                // seqTxn 3: O3 trigger at ts=25 (20 < 25 < 40, head-hit eligible).
+                // seqTxn 4: a back-dated row at ts=05, BELOW the head's maxTs=20 and
+                // below every retained anchor. Both are applied to the BASE before the
+                // job runs again, with NO drainJob between them, so apply runs ahead of
+                // the O3 trigger and ts=05 hides in the unexamined seqTxn 4.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Six rows in ts order, row_number() a gapless 1..6, INCLUDING the
+                // back-dated ts=05 row the guard preserved. A resume that ignored the
+                // ahead range would have omitted it (five rows, a shifted rn).
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:05.000000Z\t5\t1\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t2\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                        "2026-11-01T00:00:25.000000Z\t25\t4\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t5\n" +
+                        "2026-11-01T00:00:40.000000Z\t40\t6\n");
+                Assert.assertEquals(6L, lv.getLvRowsTotal());
+                assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ApplyAheadRetiresStaleAnchorSoLaterO3DoesNotResumeFromIt() throws Exception {
+        // A back-dated ahead row (ts=05, below the head at maxTs=20) un-seals the head
+        // as a resume anchor: the head's window state predates ts=05, so any later
+        // resume from it would mis-sequence. Step 6 lowers the retire floor to the ahead
+        // range's minimum (min(triggerLowTs, minAheadTs)=05) so the stale head is dropped
+        // from the ring during the apply-ahead recompute, not kept as a poisoned anchor.
+        //
+        // This is the differential half of testO3ApplyAheadResumeGuardIncludesBackdatedAheadRow:
+        // a SECOND, clean (non-apply-ahead) O3 at ts=22 follows. With the stale maxTs=20
+        // anchor retired, it rebuilds from the boundary and stays gapless. Without the
+        // retire-floor fix the maxTs=20 anchor survives, the second O3 resumes from it
+        // (its counter=2 predates ts=05, and the (20,+inf) replay leaves ts=05/10/20 as a
+        // frozen 3-row prefix), and row_number() collides at rn=3 and tops out at 6 for 7
+        // rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // seqTxn 1 + 2: build a head at maxTs=20 and move latestSeenTs to 40
+                // without rewriting the head (as in the guard test).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 10), " +
+                        "('2026-11-01T00:00:20.000000Z', 20)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 30), " +
+                        "('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+
+                // O3 #1 (apply-ahead, back-dated below the head): trigger ts=25, plus a
+                // ts=05 row that lands in a seqTxn the forward drain never examines.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // O3 #2 (clean, no apply-ahead): a cross-commit O3 at ts=22, below the
+                // post-recompute head (maxTs=40) and above the retired stale anchor
+                // (maxTs=20). With the stale anchor retired it rebuilds from the boundary.
+                setCurrentMicros(650_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:22.000000Z', 22)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Seven rows in ts order, row_number() a gapless 1..7. Resuming from the
+                // poisoned maxTs=20 anchor would have produced a duplicate rn=3 and a max
+                // rn of 6 for these 7 rows.
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:05.000000Z\t5\t1\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t2\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                        "2026-11-01T00:00:22.000000Z\t22\t4\n" +
+                        "2026-11-01T00:00:25.000000Z\t25\t5\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t6\n" +
+                        "2026-11-01T00:00:40.000000Z\t40\t7\n");
+                Assert.assertEquals(7L, lv.getLvRowsTotal());
+                assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n7\n");
             }
 
             execute("DROP LIVE VIEW lv");
