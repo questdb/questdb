@@ -62,8 +62,17 @@ public class LiveViewLeadPublishAmortizationTest extends AbstractLiveViewTest {
 
     @Test
     public void testGrowingLeadStaysOnFastPath() throws Exception {
-        // Small budget so the lead crosses it after a few batches, keeping the test quick.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 256 * 1024);
+        // The growth budget the fast-path gate compares the published slot's footprint against.
+        // Small so a modest, page-quantised lead crosses it after a couple of batches: what the
+        // test needs is a lead that has grown PAST the budget with nothing to reclaim, and the
+        // amortisation path is the same whatever the absolute budget, so a small one keeps the
+        // row count (and the test) cheap.
+        final int growthBytes = 32 * 1024;
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, growthBytes);
+        // Start each column buffer at a small page so the footprint crosses the budget within a
+        // few thousand rows rather than tens of thousands. The buffers double on each extend, so
+        // this only changes WHERE the crossover lands, not the doubling behaviour under test.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 4 * 1024);
         setCurrentMicros(0L);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE core_price_xxx (timestamp TIMESTAMP, symbol SYMBOL, bid_price DOUBLE) " +
@@ -79,8 +88,8 @@ public class LiveViewLeadPublishAmortizationTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("core_price_lv");
                 final int symbols = 64;
-                final int batchRows = 5_000;
-                final int batches = 30;
+                final int batchRows = 500;
+                final int batches = 12;
                 long ts = 1_000_000L;
                 final long tsStep = 1_000L;
 
@@ -89,16 +98,16 @@ public class LiveViewLeadPublishAmortizationTest extends AbstractLiveViewTest {
                 long budgetCrossedAtBatch = -1;
 
                 for (int b = 0; b < batches; b++) {
-                    StringBuilder sb = new StringBuilder("INSERT INTO core_price_xxx VALUES ");
-                    for (int r = 0; r < batchRows; r++) {
-                        if (r > 0) {
-                            sb.append(',');
-                        }
-                        sb.append('(').append(ts).append("::timestamp,'s").append(r % symbols).append("',")
-                                .append(100.0 + (r % 50)).append(')');
-                        ts += tsStep;
-                    }
-                    execute(sb.toString());
+                    // INSERT ... SELECT over long_sequence, not a batchRows-tuple VALUES list: the
+                    // window refresh, not SQL parsing, is what this test means to exercise, and a
+                    // long VALUES list makes the compile dominate the run. timestamp_sequence keeps
+                    // the rows ts-ascending (no O3), matching the original append-only shape.
+                    execute("INSERT INTO core_price_xxx SELECT " +
+                            "timestamp_sequence(" + ts + "::timestamp, " + tsStep + "), " +
+                            "'s' || ((x - 1) % " + symbols + "), " +
+                            "100.0 + ((x - 1) % 50) " +
+                            "FROM long_sequence(" + batchRows + ")");
+                    ts += (long) batchRows * tsStep;
                     drainWalQueue();
                     drainJob(job);
 
@@ -106,7 +115,7 @@ public class LiveViewLeadPublishAmortizationTest extends AbstractLiveViewTest {
                     Assert.assertNotNull(tier);
                     int publishedIdx = tier.getPublishedIdx();
                     long footprint = tier.getSlot(publishedIdx).footprintBytes();
-                    if (budgetCrossedAtBatch < 0 && footprint >= 256 * 1024) {
+                    if (budgetCrossedAtBatch < 0 && footprint >= growthBytes) {
                         budgetCrossedAtBatch = b;
                     }
                     // Count slow-path swaps (published-slot flips) only after the lead has

@@ -15619,13 +15619,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // still keeps per-partition state that scales with the partition cardinality. The
         // tracker must therefore be acquired for these views too, not only for anchored ones,
         // or the limit silently protects nothing here.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256 * 1024);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
         // Shrink the window store page from its 1 MiB default. The bounded frame's ring buffers are
         // charged to the view's tracker, so a single default-sized page would exhaust the whole
-        // 1 MiB limit on the FIRST allocation - the view would invalidate even at cardinality 1 and
+        // 256 KiB limit on the FIRST allocation - the view would invalidate even at cardinality 1 and
         // this test would pass without ever exercising the per-partition growth it is about. At
-        // 4 KiB the first page is noise and only the growth across 200k keys can breach.
+        // 4 KiB the first page is noise and only the growth across the distinct keys can breach.
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -15638,7 +15638,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     SELECT timestamp_sequence('2026-06-01', 1_000),
                            'k' || x::STRING,
                            x::DOUBLE
-                    FROM long_sequence(200_000)
+                    FROM long_sequence(60_000)
                     """);
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -15676,7 +15676,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // breach it and invalidate the view with a diagnosable reason, rather than OOM the
         // node. Untracked (the pre-fix state) these maps allocate against nothing, no
         // breach is possible, and the view stays valid while it grows.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256 * 1024);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, sid LONG, x DOUBLE) " +
@@ -15687,14 +15687,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "SELECT ts, sym, sid, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION sid)");
 
-            // 200k distinct partition keys, none ever evictable.
+            // 60k distinct partition keys, none ever evictable.
             execute("""
                     INSERT INTO base (ts, sym, sid, x)
                     SELECT timestamp_sequence('2026-06-01', 1_000),
                            'k' || x::STRING,
                            x,
                            x::DOUBLE
-                    FROM long_sequence(200_000)
+                    FROM long_sequence(60_000)
                     """);
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
