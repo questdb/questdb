@@ -35,9 +35,11 @@ import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -81,13 +83,27 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     // injected engine below ORs this in so a test can turn the node read-only mid-hold, standing in for the
     // enterprise demote that toggles isReadOnlyMode() dynamically. Reset to false before every test.
     private static final AtomicBoolean readOnly = new AtomicBoolean();
+    // A test-controlled sticky writer refusal: while set, getWalWriter refuses this view's token with a
+    // read-only authorization error even though isReadOnlyMode() stays false -- the enterprise TOCTOU
+    // where a demote flips the writer chokepoint after invalidateView's top-of-method guard passed.
+    // Reset to null before every test.
+    private static final AtomicReference<TableToken> walRefusalToken = new AtomicReference<>();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         // Inject an engine whose isReadOnlyMode() follows the readOnly flag, so a lock-holder can be turned
         // read-only mid-hold without a live role switch. When readOnly is false (setup, and every other
-        // test) this is identical to the base engine.
+        // test) this is identical to the base engine. getWalWriter additionally refuses the armed view
+        // token, modelling the enterprise writer chokepoint refusing after the top-level guard passed.
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public @NotNull WalWriter getWalWriter(TableToken tableToken) {
+                if (tableToken.equals(walRefusalToken.get())) {
+                    throw CairoException.readOnlyAccess();
+                }
+                return super.getWalWriter(tableToken);
+            }
+
             @Override
             public boolean isReadOnlyMode() {
                 return readOnly.get() || super.isReadOnlyMode();
@@ -102,6 +118,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         // Materialized views require dev mode; without it the engine installs a no-op state store.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         readOnly.set(false);
+        walRefusalToken.set(null);
     }
 
     @Test
@@ -1978,6 +1995,199 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
                             price_1h\tbase_price\tinvalid\tupdate operation
                             """);
+        });
+    }
+
+    @Test
+    public void testStickyWriterRefusalDefersWithoutSelfFeeding() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The enterprise TOCTOU (MatViewSwitchInvariantsTest#invalidateInnerLoopDefersOnReadOnlyRefusalAndDoesNotSpin):
+            // invalidateView's top guard sees a writable node, but the getWalWriter acquire refuses with a
+            // read-only authorization error, and the refusal is sticky until a re-promote. The auth-rollback
+            // catch must defer once -- retain the marker and return -- not hand finalizeAndUnlock a wake-up
+            // that the very next drain pass feeds back into the same refused acquire forever. The counting
+            // store bounds that spin: with the self-feed present, every pass re-enqueues the INVALIDATE it
+            // just dequeued and the counter trips within the first few iterations instead of hanging the test.
+            final AtomicInteger invalidationWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueInvalidate(
+                        TableToken matViewToken,
+                        String invalidationReason,
+                        TableToken invalidationBaseTableToken,
+                        long invalidationBaseTxn,
+                        boolean isInvalidationForced
+                ) {
+                    if (invalidationWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding invalidation loop detected");
+                    }
+                    super.enqueueInvalidate(
+                            matViewToken,
+                            invalidationReason,
+                            invalidationBaseTableToken,
+                            invalidationBaseTxn,
+                            isInvalidationForced
+                    );
+                }
+            };
+
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "sticky refusal witness");
+                drainMatViewQueue(job);
+
+                Assert.assertEquals("the refused holder must not wake its own marker", 0, invalidationWakeCount.get());
+                Assert.assertTrue("the refused invalidation must be deferred (pending)", state.isPendingInvalidation());
+                Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
+
+                // The re-promote: the refusal clears and a redelivery must still mint from the retained
+                // marker -- the deferral above must not have stranded the invalidation.
+                walRefusalToken.set(null);
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "post-promote redelivery");
+                drainMatViewQueue(job);
+            } finally {
+                walRefusalToken.set(null);
+            }
+            drainWalQueue();
+
+            Assert.assertTrue("the redelivered invalidation must mint invalid state", state.isInvalid());
+            Assert.assertFalse("the mint must consume the pending marker", state.isPendingInvalidation());
+        });
+    }
+
+    @Test
+    public void testStickyWriterRefusalStillWakesConcurrentPublication() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // Guards the other half of the identity-keyed suppression: an invalidation that publishes while
+            // the refused holder still owns the latch replaces the marker object, so the holder's finalize
+            // must wake it (identity mismatch) -- suppression is strictly for the holder's own refused
+            // marker. The wake re-delivers, the retry publishes its own marker, refuses, matches identity,
+            // and stops: exactly one wake, no self-feed.
+            final AtomicInteger invalidationWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueInvalidate(
+                        TableToken matViewToken,
+                        String invalidationReason,
+                        TableToken invalidationBaseTableToken,
+                        long invalidationBaseTxn,
+                        boolean isInvalidationForced
+                ) {
+                    if (invalidationWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding invalidation loop detected");
+                    }
+                    super.enqueueInvalidate(
+                            matViewToken,
+                            invalidationReason,
+                            invalidationBaseTableToken,
+                            invalidationBaseTxn,
+                            isInvalidationForced
+                    );
+                }
+            };
+
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                final AtomicBoolean hasPublishedConcurrently = new AtomicBoolean();
+                job.setOnHoldingLockForTesting(() -> {
+                    // One-shot: only the first (refused) hold sees a concurrent publication; the woken
+                    // retry must run without one so it can suppress its own refused marker and stop.
+                    if (hasPublishedConcurrently.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("concurrent publication");
+                    }
+                });
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "sticky refusal witness");
+                drainMatViewQueue(job);
+
+                Assert.assertEquals("the concurrent publication must be woken exactly once",
+                        1, invalidationWakeCount.get());
+                Assert.assertTrue("the refused invalidation must be deferred (pending)", state.isPendingInvalidation());
+                Assert.assertEquals("the retained marker must carry the concurrent publication's reason",
+                        "concurrent publication", state.getPendingInvalidationReason());
+                Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
+            } finally {
+                walRefusalToken.set(null);
+            }
+        });
+    }
+
+    @Test
+    public void testStickyWriterRefusalStillWakesFullRefreshFacet() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // A full-refresh owner that publishes onto the marker while the refused holder owns the latch
+            // must never be stranded by the suppression: finalizeAndUnlock0 skips only the invalidation
+            // facet of the holder's own refused marker. The owner publication replaces the marker object,
+            // so the first finalize sees an identity mismatch and wakes the invalidation once (bounded);
+            // the woken retry then suppresses its own refused marker. The FULL facet wakes on both passes
+            // (idempotent duplicates, pre-existing behavior); the counting store does not delegate them,
+            // so no full refresh runs against the armed refusal.
+            final AtomicInteger fullWakeCount = new AtomicInteger();
+            final AtomicInteger invalidationWakeCount = new AtomicInteger();
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+                    fullWakeCount.incrementAndGet();
+                }
+
+                @Override
+                public void enqueueInvalidate(
+                        TableToken matViewToken,
+                        String invalidationReason,
+                        TableToken invalidationBaseTableToken,
+                        long invalidationBaseTxn,
+                        boolean isInvalidationForced
+                ) {
+                    if (invalidationWakeCount.incrementAndGet() > 10) {
+                        throw new IllegalStateException("self-feeding invalidation loop detected");
+                    }
+                    super.enqueueInvalidate(
+                            matViewToken,
+                            invalidationReason,
+                            invalidationBaseTableToken,
+                            invalidationBaseTxn,
+                            isInvalidationForced
+                    );
+                }
+            };
+
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
+                final AtomicBoolean hasPublishedFullOwner = new AtomicBoolean();
+                job.setOnHoldingLockForTesting(() -> {
+                    // One-shot: the FULL owner lands during the first (refused) hold only.
+                    if (hasPublishedFullOwner.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation();
+                    }
+                });
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "sticky refusal witness");
+                drainMatViewQueue(job);
+
+                Assert.assertEquals("the owner publication must wake the invalidation exactly once",
+                        1, invalidationWakeCount.get());
+                Assert.assertEquals("both passes must wake the never-suppressed full-refresh facet",
+                        2, fullWakeCount.get());
+                Assert.assertTrue("the refused invalidation must be deferred (pending)", state.isPendingInvalidation());
+                Assert.assertEquals("the retained marker must keep the refused reason",
+                        "sticky refusal witness", state.getPendingInvalidationReason());
+                Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
+            } finally {
+                walRefusalToken.set(null);
+            }
         });
     }
 

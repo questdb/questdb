@@ -166,7 +166,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * that published its intent before losing this latch. Every lock-holder must route its unlock through here --
      * including holders outside this class, such as the {@code REFRESH ... STATS} reset in
      * {@code SqlCompilerImpl} -- or a deferral landing during its hold freezes the view
-     * valid-but-stale. {@code shouldIncrementRefreshSeq} additionally bumps
+     * valid-but-stale. The one deliberate exception is {@code invalidateView}'s auth-refusal
+     * self-deferral, which routes through {@link #finalizeAndUnlock0} with the marker its refused mint
+     * attempt consumed, so the wake it would otherwise queue cannot feed the refusal loop (see there).
+     * {@code shouldIncrementRefreshSeq} additionally bumps
      * {@link MatViewState#incrementRefreshSeq()}
      * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
      * {@code MatViewTimerJob} skips enqueueing refreshes made redundant by the one that just ran; the
@@ -179,59 +182,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewState viewState,
             boolean shouldIncrementRefreshSeq
     ) {
-        assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
-        try {
-            if (shouldIncrementRefreshSeq) {
-                viewState.incrementRefreshSeq();
-            }
-        } finally {
-            unlockAndTryClose(viewState);
-        }
-
-        // The invalidator publishes the marker before attempting the latch. Consequently either it
-        // acquires the released latch itself, or this post-release read observes its publication and
-        // wakes one authoritative retry. Keep the marker until the operation succeeds: queue growth can
-        // throw, and clearing before publication would turn a recoverable OOM into silent stale data.
-        final Object pendingMarker = viewState.getPendingInvalidationMarker();
-        if (pendingMarker == null
-                || viewState.isDropped()
-                || viewState.isClosed()
-                || engine.isReadOnlyMode()) {
-            return;
-        }
-        final String pendingInvalidationReason = viewState.getPendingInvalidationReason(pendingMarker);
-        final Object fullRefreshOwner = viewState.getPendingFullRefreshOwner(pendingMarker);
-        // A successful invalidation already covers reason-bearing publications that raced its WAL mint,
-        // but it does not satisfy an independently requested full rebuild. Keep the gates separate so an
-        // INVALIDATE holder cannot strand a FULL task that published while losing this latch.
-        if (pendingInvalidationReason != null && !viewState.isInvalid()) {
-            try {
-                stateStore.enqueueInvalidate(
-                        viewToken,
-                        pendingInvalidationReason,
-                        viewState.getPendingInvalidationBaseTableToken(pendingMarker),
-                        viewState.getPendingInvalidationBaseTxn(pendingMarker),
-                        viewState.isPendingInvalidationForced(pendingMarker)
-                );
-            } catch (Throwable th) {
-                // The store passed here may be a test/interposition wrapper. Signal the engine's
-                // canonical store so a normal job tick can discover this allocation-free retry state.
-                final MatViewStateStore engineStateStore = engine.getMatViewStateStore();
-                engineStateStore.requestPendingInvalidationReenqueue(viewState);
-                if (fullRefreshOwner != null) {
-                    engineStateStore.requestPendingFullRefreshReenqueue(viewState);
-                }
-                throw th;
-            }
-        }
-        if (fullRefreshOwner != null) {
-            try {
-                stateStore.enqueueFullRefresh(viewToken, fullRefreshOwner);
-            } catch (Throwable th) {
-                engine.getMatViewStateStore().requestPendingFullRefreshReenqueue(viewState);
-                throw th;
-            }
-        }
+        finalizeAndUnlock0(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq, null);
     }
 
     @Override
@@ -465,6 +416,83 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long partitionDuration = driver.approxPartitionDuration(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
         return estimateBucketsForRows(targetRows, tableRows, bucket, partitionDuration, partitionCount);
+    }
+
+    /**
+     * The worker behind {@link #finalizeAndUnlock}. {@code suppressedInvalidationMarker} is
+     * {@code invalidateView}'s auth-refusal self-deferral: the holder that just refused IS the wake-up
+     * this post-release read would queue, and with the writer refusal sticky while the engine still
+     * reports writable (the enterprise demote TOCTOU), re-queueing it makes the refresh worker drain
+     * and re-queue the same INVALIDATE forever. Publications CAS-replace the marker object, so identity
+     * proves nothing newer published during the hold and the retained marker safely waits for
+     * promote-time redelivery. A marker that changed since the refusal is a fresh publication and wakes
+     * normally: the woken retry publishes its own marker, refuses, matches identity, and stops, so
+     * convergence is bounded by real publications. The full-refresh facet is never suppressed -- an
+     * owner riding the refused marker published before the refusal and still relies on this wake.
+     */
+    private static void finalizeAndUnlock0(
+            CairoEngine engine,
+            MatViewStateStore stateStore,
+            TableToken viewToken,
+            MatViewState viewState,
+            boolean shouldIncrementRefreshSeq,
+            @Nullable Object suppressedInvalidationMarker
+    ) {
+        assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
+        try {
+            if (shouldIncrementRefreshSeq) {
+                viewState.incrementRefreshSeq();
+            }
+        } finally {
+            unlockAndTryClose(viewState);
+        }
+
+        // The invalidator publishes the marker before attempting the latch. Consequently either it
+        // acquires the released latch itself, or this post-release read observes its publication and
+        // wakes one authoritative retry. Keep the marker until the operation succeeds: queue growth can
+        // throw, and clearing before publication would turn a recoverable OOM into silent stale data.
+        final Object pendingMarker = viewState.getPendingInvalidationMarker();
+        if (pendingMarker == null
+                || viewState.isDropped()
+                || viewState.isClosed()
+                || engine.isReadOnlyMode()) {
+            return;
+        }
+        final String pendingInvalidationReason = viewState.getPendingInvalidationReason(pendingMarker);
+        final Object fullRefreshOwner = viewState.getPendingFullRefreshOwner(pendingMarker);
+        // A successful invalidation already covers reason-bearing publications that raced its WAL mint,
+        // but it does not satisfy an independently requested full rebuild. Keep the gates separate so an
+        // INVALIDATE holder cannot strand a FULL task that published while losing this latch.
+        if (pendingInvalidationReason != null
+                && pendingMarker != suppressedInvalidationMarker
+                && !viewState.isInvalid()) {
+            try {
+                stateStore.enqueueInvalidate(
+                        viewToken,
+                        pendingInvalidationReason,
+                        viewState.getPendingInvalidationBaseTableToken(pendingMarker),
+                        viewState.getPendingInvalidationBaseTxn(pendingMarker),
+                        viewState.isPendingInvalidationForced(pendingMarker)
+                );
+            } catch (Throwable th) {
+                // The store passed here may be a test/interposition wrapper. Signal the engine's
+                // canonical store so a normal job tick can discover this allocation-free retry state.
+                final MatViewStateStore engineStateStore = engine.getMatViewStateStore();
+                engineStateStore.requestPendingInvalidationReenqueue(viewState);
+                if (fullRefreshOwner != null) {
+                    engineStateStore.requestPendingFullRefreshReenqueue(viewState);
+                }
+                throw th;
+            }
+        }
+        if (fullRefreshOwner != null) {
+            try {
+                stateStore.enqueueFullRefresh(viewToken, fullRefreshOwner);
+            } catch (Throwable th) {
+                engine.getMatViewStateStore().requestPendingFullRefreshReenqueue(viewState);
+                throw th;
+            }
+        }
     }
 
     private static void intersectIntervals(LongList intervals, long lo, long hi) {
@@ -1741,6 +1769,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
 
+            // Set once the auth-refusal catch below defers this invocation's own refused marker; the
+            // finally hands it to finalizeAndUnlock0, which suppresses only that marker's wake.
+            Object authRefusedMarker = null;
             // True once setInvalidState persisted the invalid mint; gates the dependent cascade below.
             boolean isInvalidated = false;
             try {
@@ -1803,6 +1834,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // (its in-memory start would otherwise sit ahead of the persisted finish).
                                 viewState.markAsValid();
                                 viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
+                                // The refusal can outlive this pass while the engine still reports writable
+                                // (the demote TOCTOU, sticky in the enterprise chokepoint tests), so the
+                                // finally must not wake this very invalidation back into the queue: the same
+                                // run loop drains it, refuses again, and self-feeds forever. Hand the finally
+                                // the marker this attempt consumed; finalizeAndUnlock0 suppresses exactly
+                                // that identity and still wakes anything newer.
+                                authRefusedMarker = pendingMarker;
                                 return;
                             }
                             if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
@@ -1816,9 +1854,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     viewState.clearPendingInvalidation(requestedMarker);
                 }
             } finally {
-                // finalizeAndUnlock retains the marker and suppresses its wake-up while the engine remains
-                // read-only. If promotion completed concurrently, the post-release handoff queues it now.
-                finalizeAndUnlock(viewToken, viewState, false);
+                // finalizeAndUnlock0 retains the marker and suppresses its wake-up while the engine remains
+                // read-only, and additionally suppresses the wake for this invocation's own auth-refused
+                // marker (authRefusedMarker): re-queueing that one self-feeds against a sticky refusal.
+                // If promotion completed concurrently, the post-release handoff queues newer work now.
+                finalizeAndUnlock0(engine, stateStore, viewToken, viewState, false, authRefusedMarker);
             }
             // Invalidate dependent views recursively -- only after an actual mint. The force=false decline
             // above (a never-incrementally-refreshed view) leaves this view valid, and a valid parent must
