@@ -92,14 +92,15 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final CharSequence value = arg.getStrA(rec);
-            return getSymbol(value);
+            // Pass-through: getSymbol never needs the dictionary (it returns the string
+            // directly). Only getInt/valueOf build one. Interning here would grow an
+            // unbounded, unaccounted heap dictionary for values no consumer looks up by key.
+            return arg.getStrA(rec);
         }
 
         @Override
         public CharSequence getSymbolB(Record rec) {
-            final CharSequence value = arg.getStrB(rec);
-            return getSymbol(value);
+            return arg.getStrB(rec);
         }
 
         @Override
@@ -144,16 +145,6 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        private CharSequence getSymbol(CharSequence value) {
-            final int keyIndex;
-            if (value != null && (keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = Chars.toString(value);
-                lookupMap.putAt(keyIndex, str, next++);
-                symbols.add(str);
-            }
-            return value;
         }
     }
 }
