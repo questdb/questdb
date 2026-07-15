@@ -2084,8 +2084,6 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    // Useful for debugging
-    @SuppressWarnings("unused")
     /**
      * Rethrows the first worker failure collected by {@link #runConcurrently}, preserving its message and
      * stack trace.
@@ -2099,6 +2097,17 @@ public final class TestUtils {
         if (error != null) {
             throw new AssertionError("a worker thread failed: " + error, error);
         }
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String reverseBeHex(String hex) {
+        var sb = new char[hex.length()];
+        for (int i = 0; i < hex.length(); i += 2) {
+            sb[hex.length() - i - 1] = hex.charAt(i + 1);
+            sb[hex.length() - i - 2] = hex.charAt(i);
+        }
+        return new String(sb);
     }
 
     /**
@@ -2130,15 +2139,6 @@ public final class TestUtils {
             threads.getQuick(t).join();
         }
         rethrowFirst(firstError);
-    }
-
-    public static String reverseBeHex(String hex) {
-        var sb = new char[hex.length()];
-        for (int i = 0; i < hex.length(); i += 2) {
-            sb[hex.length() - i - 1] = hex.charAt(i + 1);
-            sb[hex.length() - i - 2] = hex.charAt(i);
-        }
-        return new String(sb);
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
