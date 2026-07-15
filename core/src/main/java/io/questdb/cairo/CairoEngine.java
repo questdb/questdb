@@ -992,6 +992,25 @@ public class CairoEngine implements Closeable, WriterSource {
                             // the first refresh cycle knows to attempt restore;
                             // maxTs / stateBytes stay LONG_NULL / 0 until that
                             // cycle reads the manifest.
+                            //
+                            // Retained-checkpoint ring recovery (v1): only the
+                            // highest survivor is trusted as a resume anchor. The
+                            // in-memory ring is deliberately NOT rebuilt from the
+                            // surviving on-disk .cp files here (nothing calls
+                            // addRetainedCheckpoint from the recovery path) - it
+                            // starts empty and re-densifies from checkpoints
+                            // written after restart, since every post-restart O3
+                            // head-hit / resume seals a fresh near-head entry.
+                            // Rebuilding the ring from disk would be unsafe: a
+                            // selective O3 invalidation drops unsealed entries with
+                            // best-effort removeQuiet, so a stale (poisoned) .cp
+                            // whose runtime unlink failed can linger below the
+                            // highest survivor with lvSeqTxn <= appliedWatermark,
+                            // indistinguishable from a sealed entry. Resurrecting
+                            // it as an anchor would let a later O3 resume from
+                            // pre-late-row window state and serve wrong results.
+                            // See LiveViewRefreshJob.tryRestoreFromHead and the
+                            // handoff design section 6.3.
                             liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
                             final long headSeqTxn = LiveViewRecovery.sweepCheckpoints(
                                     configuration.getFilesFacade(),

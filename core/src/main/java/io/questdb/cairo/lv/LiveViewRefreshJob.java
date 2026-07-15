@@ -4259,6 +4259,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * via the pending-invalidation hook rather than serving wrong results.
      */
     private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        // Restart-restore trusts only the highest survivor as a resume anchor
+        // (v1, section 6.3). The retained-checkpoint ring is rebuilt exclusively
+        // from checkpoints written after restart, never from the surviving on-disk
+        // .cp files, so it must be empty when this single-shot restore runs. If it
+        // is not, a recovery path has started resurrecting on-disk entries as
+        // anchors, which can poison a later O3 resume - fail loudly in tests.
+        assert instance.getRetainedCheckpointCount() == 0
+                : "retained-checkpoint ring must be empty on restart restore, was "
+                + instance.getRetainedCheckpointCount();
         final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
         // The persisted applied watermark (base seqTxn) is disk truth: the LV's
         // on-disk table holds every base commit up to it. Snapshot it before the

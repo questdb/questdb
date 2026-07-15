@@ -17930,6 +17930,254 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testO3RestartDoesNotResurrectStaleCheckpointAsAnchor() throws Exception {
+        // Poisoned-anchor recovery safety (section 6.3). A selective O3
+        // invalidation drops the unsealed retained checkpoints with best-effort
+        // removeQuiet; when that unlink fails, a stale (poisoned) .cp whose window
+        // state predates the late row lingers on disk below the highest survivor,
+        // with an lvSeqTxn <= appliedWatermark (so the orphan check cannot catch
+        // it). On restart the retained-checkpoint ring must NOT be rebuilt from
+        // those on-disk files - only the highest survivor is a trusted anchor - so
+        // a later O3 whose trigger sits above the stale entry's maxTs cannot resume
+        // from it and mis-sequence the view; with an empty ring it rebuilds from
+        // the boundary and stays correct.
+        //
+        // Without the "trust only highest" rule the ring would re-adopt the poisoned
+        // maxTs=20 checkpoint (whose row_number() counter predates the ts=15 late
+        // row) and the second O3 at ts=25 would resume from it, colliding rn at 3.
+        final AtomicBoolean failCpUnlink = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                // While armed, refuse to delete steady .cp files so the stale
+                // checkpoints survive both the O3 selective invalidation and the
+                // restart sweep - the failed-unlink residue section 6.3 warns of.
+                if (failCpUnlink.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_FILE_EXT)
+                        && !Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush -> dense ring
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final TableToken token;
+            final long poisonedLvSeqTxn;
+            final long ts20 = MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Three separate in-order commits, each flushed, seal heads at
+                // maxTs=10, 20, 30 -> a three-entry ring (and three .cp on disk).
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 20)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                token = lv.getLiveViewToken();
+                Assert.assertTrue(
+                        "pre-O3 ring must hold multiple entries, was " + lv.getRetainedCheckpointCount(),
+                        lv.getRetainedCheckpointCount() > 1
+                );
+                // Capture the lvSeqTxn of the maxTs=20 entry - the one the ts=15 O3
+                // unseals and that becomes the poisoned residue on disk. Entries are
+                // ordered by maxTs ascending, so index 1 is maxTs=20.
+                Assert.assertEquals(ts20, lv.getRetainedCheckpointMaxTs(1));
+                poisonedLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
+
+                // Arm the unlink failure, then fire a clean cross-commit O3 at
+                // ts=15. It resumes from the maxTs=10 anchor and its selective
+                // invalidation unseals the maxTs=20 / maxTs=30 heads (both >= 15),
+                // trying (and now failing) to unlink their .cp - so they linger on
+                // disk while the resume seals a fresh maxTs=30 head at a higher
+                // lvSeqTxn (the new highest survivor).
+                failCpUnlink.set(true);
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Restart: rebuild the registry from disk. The startup sweep stamps the
+            // highest survivor (the fresh post-O3 maxTs=30 head); the pure-restore
+            // tick rehydrates window state from it.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue("restore must rehydrate from the highest .cp", reloaded.isCheckpointRestoreSucceeded());
+            Assert.assertEquals(
+                    "the ring must start empty on restart - never rebuilt from the surviving on-disk .cp files",
+                    0,
+                    reloaded.getRetainedCheckpointCount()
+            );
+            // The poisoned maxTs=20 .cp must genuinely survive the failed unlink -
+            // otherwise there was nothing on disk to (wrongly) resurrect and the
+            // test would prove nothing.
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot())
+                        .concat(token)
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(p, poisonedLvSeqTxn);
+                Assert.assertTrue(
+                        "the poisoned maxTs=20 .cp must survive the failed unlink on disk",
+                        ff.exists(p.$())
+                );
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A later clean cross-commit O3 at ts=25: above the stale maxTs=20
+                // entry, below the restored head (maxTs=30). A ring rebuilt from
+                // disk would resume from the poisoned maxTs=20 anchor; with an empty
+                // ring it falls back to the boundary rebuild and stays gapless.
+                setCurrentMicros(1_200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Five rows in ts order, row_number() a gapless 1..5 - identical to a
+            // from-scratch recompute over the applied base {10,15,20,25,30}.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                    "2026-11-01T00:00:25.000000Z\t25\t4\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t5\n");
+            assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+
+            failCpUnlink.set(false);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3RestartReDensifiesRingThenResumesFromAnchor() throws Exception {
+        // Restart recovery (section 6.3). The retained-checkpoint ring is NOT
+        // rebuilt from the surviving on-disk .cp files - only the highest survivor
+        // is trusted as a resume anchor. The ring starts empty after restart and
+        // re-densifies from checkpoints written post-restart, so a later
+        // cross-commit O3 resumes from a fresh near-head anchor and still matches a
+        // from-scratch recompute over the base.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush -> dense ring
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Three separate in-order commits, each flushed, seal heads at
+                // maxTs=10, 20, 30 -> a three-entry ring before restart.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 20)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertTrue(
+                        "pre-restart ring must hold multiple entries, was " + lv.getRetainedCheckpointCount(),
+                        lv.getRetainedCheckpointCount() > 1
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(800_000L);
+                drainJob(job); // pure-restore tick fires tryRestoreFromHead
+            }
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue("restore must rehydrate from the head .cp", reloaded.isCheckpointRestoreSucceeded());
+            Assert.assertEquals(
+                    "the ring must start empty on restart - never rebuilt from disk",
+                    0,
+                    reloaded.getRetainedCheckpointCount()
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Two post-restart in-order commits re-densify the ring: a fresh
+                // near-head anchor at maxTs=40 plus the head at maxTs=50.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(1_200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:50.000000Z', 50)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertTrue(
+                        "ring must re-densify from post-restart writes, was " + reloaded.getRetainedCheckpointCount(),
+                        reloaded.getRetainedCheckpointCount() > 1
+                );
+
+                // Cross-commit O3 at ts=45: below the head (50), above the fresh
+                // post-restart anchor (40). Resumes from the anchor, not the boundary.
+                setCurrentMicros(1_400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:45.000000Z', 45)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Six rows in ts order, row_number() a gapless 1..6 - identical to a
+            // from-scratch recompute. A poisoned or lost anchor would shift rn.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t3\n" +
+                    "2026-11-01T00:00:40.000000Z\t40\t4\n" +
+                    "2026-11-01T00:00:45.000000Z\t45\t5\n" +
+                    "2026-11-01T00:00:50.000000Z\t50\t6\n");
+            assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3HeadMissReplayUnderApplyAheadDoesNotDuplicateTrailingRow() throws Exception {
         // Regression for the concurrent-O3 permanent duplicate row
         // (LiveViewConcurrencyTest#testMultiWalWriterInterleavingRowNumber). The bug
