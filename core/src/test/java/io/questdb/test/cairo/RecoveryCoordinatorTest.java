@@ -195,6 +195,84 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Restore/PITR coexistence: a durable epoch is a PAST cut, so in one lineage the live {@code _txn} is
+     * always at or ahead of it. If a backup/checkpoint/PITR restore rewinds the table BENEATH a stale
+     * epoch it forgot to clear, the on-disk epoch ends up AHEAD of the (restored) live {@code _txn}.
+     * Recovery must NOT roll {@code _txn} forward to that stale, higher-lineage epoch — doing so resurrects
+     * the discarded lineage and leaves {@code _txn} ahead of the restored sequencer. Here we simulate the
+     * restore as the file copies it physically is (restore the earlier {@code _txn}/{@code _cv} over the
+     * live ones while leaving {@code _snapshot}/{@code .epoch} from a LATER cut in place).
+     */
+    @Test
+    public void testRecoverSkipsEpochAheadOfRestoredTxn() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        try {
+            execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
+            // Earlier cut: apply 3 rows, then capture (back up) _txn/_cv — the "backup".
+            for (int i = 0; i < 3; i++) {
+                execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+            }
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("r");
+            final long restoredSeqTxn = readTxnSeqTxn(tt);
+            copyTableFile(tt, TableUtils.TXN_FILE_NAME, "_txn.bak");
+            copyTableFile(tt, TableUtils.COLUMN_VERSION_FILE_NAME, "_cv.bak");
+
+            // Later cut: apply 3 more rows, then take a durable epoch at this LATER seqTxn.
+            for (int i = 3; i < 6; i++) {
+                execute("insert into r values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+            }
+            drainWalQueue();
+            final long epochSeqTxn;
+            final long epochTxn;
+            try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+                w.fsyncMaterializedState();
+                epochSeqTxn = w.getSeqTxn();
+                epochTxn = w.getTxn();
+            }
+            Assert.assertTrue("epoch cut must be ahead of the earlier/backup cut", epochSeqTxn > restoredSeqTxn);
+            try (io.questdb.cairo.SnapshotMarker marker = new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
+                 Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(p.$());
+                marker.write(epochSeqTxn, epochTxn, 1L);
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Simulate the restore: bring _txn/_cv back to the EARLIER cut, but (the bug) leave the LATER
+            // _snapshot/_txn.epoch/_cv.epoch trio in place.
+            copyTableFile(tt, "_txn.bak", TableUtils.TXN_FILE_NAME);
+            copyTableFile(tt, "_cv.bak", TableUtils.COLUMN_VERSION_FILE_NAME);
+            Assert.assertEquals("precondition: live _txn rewound to the earlier (restored) cut",
+                    restoredSeqTxn, readTxnSeqTxn(tt));
+
+            // ACT: recovery must skip the stale epoch that post-dates the restored _txn.
+            new RecoveryCoordinator(engine).recover();
+
+            // ASSERT: _txn stays at the restored cut (not rolled forward to the ahead-of-live epoch).
+            Assert.assertEquals("recovery must skip an epoch ahead of the restored _txn",
+                    restoredSeqTxn, readTxnSeqTxn(tt));
+            Assert.assertEquals("a skipped (stale) epoch must not bump recoveryIncarnation",
+                    0L, engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation());
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
+    private void copyTableFile(TableToken tt, CharSequence from, CharSequence to) {
+        final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path src = new Path(); Path dst = new Path()) {
+            src.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(from);
+            dst.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(to);
+            Assert.assertTrue("copy " + from + " -> " + to + " must succeed", ff.copy(src.$(), dst.$()) >= 0);
+        }
+    }
+
     private long readTxnSeqTxn(TableToken tt) {
         try (TxReader tx = new TxReader(engine.getConfiguration().getFilesFacade());
              Path p = new Path()) {

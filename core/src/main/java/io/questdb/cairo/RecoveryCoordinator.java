@@ -170,6 +170,21 @@ public class RecoveryCoordinator {
             return;
         }
 
+        // C2 (restore / checkpoint / PITR coexistence): a durable epoch is a PAST cut, so in one lineage the
+        // live _txn is always at or ahead of it (lazy apply only advances _txn after an epoch is taken). If
+        // the live _txn loads cleanly at a seqTxn BELOW this epoch, the table was rewound BENEATH a stale,
+        // higher-lineage epoch by a backup / checkpoint-recover / PITR restore that left _snapshot/.epoch
+        // behind (nothing on the restore path clears them). Rolling _txn forward to that epoch would
+        // resurrect the discarded lineage and leave _txn ahead of the restored sequencer. SKIP; the restored
+        // live state + normal WAL replay is correct. A TORN/unreadable live _txn (the genuine post-crash
+        // state this mechanism exists to repair) does NOT trip the guard — see epochIsAheadOfLiveTxn.
+        if (epochIsAheadOfLiveTxn(token, src, epochSeqTxn)) {
+            LOG.error().$("adaptive epoch post-dates the live _txn (stale epoch left by a restore/PITR), SKIPPING "
+                            + "roll-forward (falling back to normal open) [table=").$(token)
+                    .$(", epochSeqTxn=").$(epochSeqTxn).I$();
+            return;
+        }
+
         // Restore the durable cut: _txn.epoch -> _txn, _cv.epoch -> _cv. ff.copy() (creat O_TRUNC)
         // fully replaces the live, lazily-advanced files with the epoch's canonical A/B record. The
         // .epoch copies are immutable until the next epoch, so re-running this (a crash mid-recovery)
@@ -275,6 +290,44 @@ public class RecoveryCoordinator {
         } finally {
             Misc.free(cvReader);
             Misc.free(txReader);
+        }
+    }
+
+    /**
+     * Restore/PITR freshness guard. Returns {@code true} iff the LIVE {@code _txn} loads cleanly AND its
+     * {@code seqTxn} is strictly BELOW {@code epochSeqTxn} — i.e. the durable epoch is AHEAD of the current
+     * materialized state. In a single lineage that cannot happen (an epoch is a past cut; lazy apply only
+     * advances {@code _txn} after it), so it signals the table was rewound beneath a stale, higher-lineage
+     * epoch by a backup / checkpoint-recover / PITR restore that failed to clear {@code _snapshot}/{@code
+     * .epoch}.
+     * <p>
+     * FAIL-OPEN on an unreadable live {@code _txn}: a torn / short / garbage {@code _txn} is exactly the
+     * genuine post-crash state this whole mechanism exists to repair, so it returns {@code false} (NOT
+     * ahead -> allow the roll-forward). We only ever SKIP recovery on a CLEAN load that is provably behind
+     * the epoch — never on the crash case.
+     */
+    private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, long epochSeqTxn) {
+        final int partitionBy;
+        final int timestampType;
+        try (TableMetadata meta = engine.getTableMetadata(token)) {
+            partitionBy = meta.getPartitionBy();
+            timestampType = meta.getTimestampType();
+        } catch (CairoException | CairoError e) {
+            // Cannot interpret _txn without metadata; do NOT block recovery (the normal open path will
+            // surface any real metadata problem properly).
+            return false;
+        }
+        TxReader liveTxn = null;
+        try {
+            tablePath(scratch, token).concat(TableUtils.TXN_FILE_NAME);
+            liveTxn = new TxReader(ff);
+            liveTxn.ofRO(scratch.$(), timestampType, partitionBy);
+            return liveTxn.unsafeLoadAll() && liveTxn.getSeqTxn() < epochSeqTxn;
+        } catch (Throwable e) {
+            // Torn / unreadable live _txn = the genuine post-crash case -> NOT "ahead" -> allow recovery.
+            return false;
+        } finally {
+            Misc.free(liveTxn);
         }
     }
 
