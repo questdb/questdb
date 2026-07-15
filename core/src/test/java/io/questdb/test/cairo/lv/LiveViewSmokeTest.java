@@ -17777,6 +17777,155 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRetentionPruningUnlinksEvictedFiles() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 15_000_000L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1); Path cpPath = new Path()) {
+                final FilesFacade filesFacade = engine.getConfiguration().getFilesFacade();
+                long previousLvSeqTxn = Numbers.LONG_NULL;
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+
+                    LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull(lv);
+                    Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+                    final long currentLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                    Assert.assertEquals(currentLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
+
+                    if (previousLvSeqTxn != Numbers.LONG_NULL) {
+                        cpPath.of(engine.getConfiguration().getDbRoot())
+                                .concat(lv.getLiveViewToken())
+                                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                                .slash();
+                        LiveViewCheckpointWriter.appendCpFileName(cpPath, previousLvSeqTxn);
+                        Assert.assertFalse("evicted checkpoint file must be unlinked", filesFacade.exists(cpPath.$()));
+                    }
+                    cpPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(lv.getLiveViewToken())
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                            .slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, currentLvSeqTxn);
+                    Assert.assertTrue("retained checkpoint file must remain", filesFacade.exists(cpPath.$()));
+                    previousLvSeqTxn = currentLvSeqTxn;
+                }
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3BoundedMissUnderApplyAheadReanchorsBelowAheadMinimum() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Build retained anchors at 10 and 20, with the head at 30.
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z"), lv.getHeadCheckpointMaxTs());
+
+                // Trigger 25 initially selects anchor 20 (a bounded head miss).
+                // Apply then races ahead with minTs=15, forcing re-anchor at 10.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                        "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                        "2026-11-01T00:00:25.000000Z\t25\t4\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t5\n");
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n4\t0\n");
+                Assert.assertEquals(5L, lv.getLvRowsTotal());
+                Assert.assertEquals(5L, lv.getStateReader().getLvConsumedSeqTxn());
+                // The ahead row retires stale anchors 20 and 30; 10 and the
+                // freshly sealed head at 30 remain.
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:10.000000Z"), lv.getRetainedCheckpointMaxTs(0));
+                Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z"), lv.getRetainedCheckpointMaxTs(1));
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ApplyAheadTruncateFallsBackToBoundary() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+
+                // The trigger qualifies for anchor 20, but the unexamined ahead
+                // range contains TRUNCATE. Only boundary replay can preserve the
+                // prefix below the trigger while applying the trigger's delete
+                // authority at and above 25. TRUNCATE itself is transparent to
+                // previously materialised LV rows by contract.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t2\n");
+                assertQuery("SELECT * FROM base ORDER BY ts").noLeakCheck().timestamp("ts").returns("ts\tx\n");
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n0\t0\n");
+                Assert.assertEquals(2L, lv.getLvRowsTotal());
+                Assert.assertEquals(5L, lv.getStateReader().getLvConsumedSeqTxn());
+                Assert.assertEquals(0, lv.getRetainedCheckpointCount());
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3ApplyAheadResumeGuardIncludesBackdatedAheadRow() throws Exception {
         // The apply-ahead resume (step 6) must never drop a back-dated row hidden in
         // the ahead range below the resume anchor. A head-hit-eligible O3 trigger
