@@ -378,4 +378,29 @@ public class RecoveryCoordinator {
         tablePath(p, token).concat(baseFileName).put(TableUtils.EPOCH_COPY_SUFFIX);
         return p;
     }
+
+    /**
+     * Best-effort removal of the adaptive durable-epoch anchor for ONE table — the {@code _snapshot}
+     * marker plus the immutable {@code _txn.epoch}/{@code _cv.epoch} copies — given {@code path} positioned
+     * at the table root and {@code tableRootLen} = the length of that table-root prefix.
+     * <p>
+     * Call this when the local materialized state has been SUPERSEDED by an external event and the on-disk
+     * epoch would otherwise be a stale, wrong-lineage anchor for {@link #recover()}:
+     * <ul>
+     *   <li>a backup / checkpoint / PITR <b>restore</b> (the restore rewinds {@code _txn}/{@code _cv} but
+     *       does not re-copy the epoch, so a leftover epoch could roll the restored state forward again);</li>
+     *   <li>a primary-&gt;replica <b>demote</b> (a replica never advances the epoch and recovers by
+     *       re-download, so any local epoch is a stale primary-tenure artifact).</li>
+     * </ul>
+     * Removing the anchor makes {@code recover()} take its conservative no-marker fallback (leave the table
+     * untouched). {@code removeQuiet} no-ops on an absent file, so this is safe and idempotent for
+     * non-adaptive / never-epoch'd tables. Only the {@code .epoch} copies + marker are removed; the LIVE
+     * {@code _txn}/{@code _cv} are never touched. Leaves {@code path} trimmed back to the table root.
+     */
+    public static void removeAdaptiveEpochArtifacts(FilesFacade ff, Path path, int tableRootLen) {
+        ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
+        ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
+        ff.removeQuiet(path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).$());
+        path.trimTo(tableRootLen);
+    }
 }

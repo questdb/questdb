@@ -273,6 +273,77 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * The shared clear helper used by the ENT restore + demote paths must remove exactly the epoch trio
+     * (_snapshot + _txn.epoch + _cv.epoch), leave the LIVE _txn/_cv untouched, and be idempotent.
+     */
+    @Test
+    public void testRemoveAdaptiveEpochArtifactsRemovesTrioOnly() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        try {
+            execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into r values ('2024-09-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("r");
+
+            // Take an epoch so the _snapshot + _txn.epoch + _cv.epoch trio exists on disk.
+            final long epochSeqTxn;
+            final long epochTxn;
+            try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+                w.fsyncMaterializedState();
+                epochSeqTxn = w.getSeqTxn();
+                epochTxn = w.getTxn();
+            }
+            try (io.questdb.cairo.SnapshotMarker marker = new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
+                 Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                marker.of(p.$());
+                marker.write(epochSeqTxn, epochTxn, 1L);
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Precondition: the trio + the live files all exist.
+            Assert.assertTrue("marker present", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+            Assert.assertTrue("txn.epoch present", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, TableUtils.EPOCH_COPY_SUFFIX));
+            Assert.assertTrue("cv.epoch present", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.EPOCH_COPY_SUFFIX));
+
+            final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path p = new Path()) {
+                final int rootLen = p.of(engine.getConfiguration().getDbRoot()).concat(tt).size();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, p, rootLen);
+            }
+
+            // The trio is gone; the live _txn/_cv are untouched.
+            Assert.assertFalse("marker removed", epochArtifactExists(tt, TableUtils.SNAPSHOT_FILE_NAME, ""));
+            Assert.assertFalse("txn.epoch removed", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, TableUtils.EPOCH_COPY_SUFFIX));
+            Assert.assertFalse("cv.epoch removed", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, TableUtils.EPOCH_COPY_SUFFIX));
+            Assert.assertTrue("live _txn untouched", epochArtifactExists(tt, TableUtils.TXN_FILE_NAME, ""));
+            Assert.assertTrue("live _cv untouched", epochArtifactExists(tt, TableUtils.COLUMN_VERSION_FILE_NAME, ""));
+
+            // Idempotent: a second call on the now-absent trio is a no-op (must not throw).
+            try (Path p = new Path()) {
+                final int rootLen = p.of(engine.getConfiguration().getDbRoot()).concat(tt).size();
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, p, rootLen);
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
+    private boolean epochArtifactExists(TableToken tt, CharSequence base, CharSequence suffix) {
+        final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(base);
+            if (suffix.length() > 0) {
+                p.put(suffix);
+            }
+            return ff.exists(p.$());
+        }
+    }
+
     private long readTxnSeqTxn(TableToken tt) {
         try (TxReader tx = new TxReader(engine.getConfiguration().getFilesFacade());
              Path p = new Path()) {
