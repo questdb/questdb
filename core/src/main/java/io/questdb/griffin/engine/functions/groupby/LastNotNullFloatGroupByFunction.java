@@ -73,7 +73,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
         // setEmpty pre-seeds rowId = LONG_NULL and value = NaN. Null (NaN/Infinity) input
         // is skipped; non-null input wins when the stored value is still null or has an
         // earlier rowId.
-        // Scan backwards. probeBatch emits rows in ascending order, so forwards every later
+        // Scan direct column addresses backwards. probeBatch emits rows in ascending order, so forwards every later
         // non-null row of a key rewrites its entry: 2048 writes for a 2048-row frame over 8 keys,
         // against 8 backwards. Same result - only a key's highest-rowId non-null can win either
         // way, and the isNew row is the key's first, so it is visited last and loses to what
@@ -101,7 +101,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
                 }
             }
         } else {
-            for (long i = rowCount - 1; i >= 0; i--) {
+            for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final boolean isNew = Map.isNewBatchEntry(encoded);

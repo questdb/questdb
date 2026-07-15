@@ -94,6 +94,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1178,6 +1179,53 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
         );
     }
 
+    private static void assertFunctionValueEquals(GroupByFunction func, Record expected, Record actual) {
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.CHAR -> Assert.assertEquals(func.getChar(expected), func.getChar(actual));
+            case ColumnType.DATE -> Assert.assertEquals(func.getDate(expected), func.getDate(actual));
+            case ColumnType.DECIMAL8 -> Assert.assertEquals(func.getDecimal8(expected), func.getDecimal8(actual));
+            case ColumnType.DECIMAL16 -> Assert.assertEquals(func.getDecimal16(expected), func.getDecimal16(actual));
+            case ColumnType.DECIMAL32 -> Assert.assertEquals(func.getDecimal32(expected), func.getDecimal32(actual));
+            case ColumnType.DECIMAL64 -> Assert.assertEquals(func.getDecimal64(expected), func.getDecimal64(actual));
+            case ColumnType.DECIMAL128 -> {
+                final Decimal128 expectedValue = new Decimal128();
+                final Decimal128 actualValue = new Decimal128();
+                func.getDecimal128(expected, expectedValue);
+                func.getDecimal128(actual, actualValue);
+                Assert.assertEquals(expectedValue, actualValue);
+            }
+            case ColumnType.DECIMAL256 -> {
+                final Decimal256 expectedValue = new Decimal256();
+                final Decimal256 actualValue = new Decimal256();
+                func.getDecimal256(expected, expectedValue);
+                func.getDecimal256(actual, actualValue);
+                Assert.assertEquals(expectedValue, actualValue);
+            }
+            case ColumnType.DOUBLE -> Assert.assertEquals(func.getDouble(expected), func.getDouble(actual), 0.0);
+            case ColumnType.FLOAT -> Assert.assertEquals(func.getFloat(expected), func.getFloat(actual), 0.0f);
+            case ColumnType.GEOBYTE -> Assert.assertEquals(func.getGeoByte(expected), func.getGeoByte(actual));
+            case ColumnType.GEOSHORT -> Assert.assertEquals(func.getGeoShort(expected), func.getGeoShort(actual));
+            case ColumnType.GEOINT -> Assert.assertEquals(func.getGeoInt(expected), func.getGeoInt(actual));
+            case ColumnType.GEOLONG -> Assert.assertEquals(func.getGeoLong(expected), func.getGeoLong(actual));
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL -> Assert.assertEquals(func.getInt(expected), func.getInt(actual));
+            case ColumnType.LONG -> Assert.assertEquals(func.getLong(expected), func.getLong(actual));
+            case ColumnType.STRING -> {
+                final String expectedValue = func.getStrA(expected).toString();
+                TestUtils.assertEquals(expectedValue, func.getStrA(actual));
+            }
+            case ColumnType.TIMESTAMP -> Assert.assertEquals(func.getTimestamp(expected), func.getTimestamp(actual));
+            case ColumnType.UUID -> {
+                Assert.assertEquals(func.getLong128Hi(expected), func.getLong128Hi(actual));
+                Assert.assertEquals(func.getLong128Lo(expected), func.getLong128Lo(actual));
+            }
+            case ColumnType.VARCHAR -> {
+                final Utf8String expectedValue = Utf8String.newInstance(func.getVarcharA(expected));
+                TestUtils.assertEquals(expectedValue, func.getVarcharA(actual));
+            }
+            default -> Assert.fail("unsupported aggregate payload type: " + ColumnType.nameOf(func.getType()));
+        }
+    }
+
     private void assertFirstNotNullMergeKeepsNonNull(GroupByFunction func, Runnable setNull, Runnable setNonNull) throws Exception {
         assertMemoryLeak(() -> {
             final ArrayColumnTypes types = new ArrayColumnTypes();
@@ -1204,6 +1252,7 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                         100,
                         dest.getLong(func.getValueIndex())
                 );
+                assertFunctionValueEquals(func, src, dest);
             }
         });
     }
@@ -1232,6 +1281,7 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
                         20,
                         dest.getLong(func.getValueIndex())
                 );
+                assertFunctionValueEquals(func, src, dest);
             }
         });
     }

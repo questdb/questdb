@@ -132,7 +132,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 bindVarMemory,
                 bindVarFunctions,
                 columnTypes,
-                enablePreTouch
+                enablePreTouch,
+                workerCount
         );
         this.frameSequence = new PageFrameSequence<>(
                 engine,
@@ -326,7 +327,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         try {
             final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, owner, isParquetFrame, task.isCountOnly());
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -359,7 +360,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     }
 
                     if (isParquetFrame) {
-                        atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
+                        atom.updateSelectivityStats(filterId, workerId, owner, rows.size(), frameRowCount);
                     }
                     if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                         record.init(frameMemory);
@@ -397,7 +398,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
                 rows.setPos(filteredRowCount);
                 if (isParquetFrame) {
-                    atom.getSelectivityStats(filterId).update(filteredRowCount, frameRowCount);
+                    atom.updateSelectivityStats(filterId, workerId, owner, filteredRowCount, frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);
@@ -442,9 +443,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 MemoryCARW bindVarMemory,
                 ObjList<Function> bindVarFunctions,
                 IntList columnTypes,
-                boolean enablePreTouch
+                boolean enablePreTouch,
+                int workerCount
         ) {
-            super(configuration, filter, filterUsedColumnIndexes, perWorkerFilters, columnTypes, enablePreTouch);
+            super(configuration, filter, filterUsedColumnIndexes, perWorkerFilters, columnTypes, enablePreTouch, workerCount);
             this.compiledFilter = compiledFilter;
             this.compiledCountOnlyFilter = compiledCountOnlyFilter;
             this.bindVarMemory = bindVarMemory;

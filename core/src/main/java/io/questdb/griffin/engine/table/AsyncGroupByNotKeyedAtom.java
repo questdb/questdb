@@ -55,6 +55,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.CountDownLatch;
 
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
@@ -264,8 +265,22 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
+    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        if (perWorkerLocks != null) {
+            perWorkerLocks.setTestAcquireLatch(latch);
+        }
     }
 
     public boolean hasNonBatchFunctions() {

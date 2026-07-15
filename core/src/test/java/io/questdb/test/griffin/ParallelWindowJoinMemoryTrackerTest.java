@@ -336,9 +336,9 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // reducer turns exactly the row that names it red.
         //
         // 40k master rows over small (1k-row) frames give ~40 page frames, so there is work for the
-        // pool to pick up. It does not by itself guarantee any worker gets a slot - the first breach
-        // cancels the sequence and the owner takes none - which is why assertNoSlotLeakOnBreach keeps
-        // breaching until one actually does, and only then believes the zero held-slot count.
+        // pool to pick up. assertNoSlotLeakOnBreach coordinates each execution so a worker
+        // acquires a slot before the owner can take over, then verifies that the cached factory
+        // remains reusable.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -511,7 +511,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     joinFactory.getReducerName()
             );
         }
-        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query, AsyncWindowJoinFastRecordCursorFactory.class);
+        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
     }
 
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
@@ -573,7 +573,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     joinFactory.getReducerName()
             );
         }
-        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query, AsyncWindowJoinRecordCursorFactory.class);
+        TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
     }
 
     private static void assertReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {

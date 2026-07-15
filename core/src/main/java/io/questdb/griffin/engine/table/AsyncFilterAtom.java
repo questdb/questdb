@@ -47,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, Plannable {
@@ -54,10 +55,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
-    private final SelectivityStats ownerSelectivityStats = new SynchronizedSelectivityStats();
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
+    private final ObjList<SelectivityStats> threadSafeSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
@@ -72,7 +73,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             @NotNull IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull IntList columnTypes,
-            boolean preTouchEnabled
+            boolean preTouchEnabled,
+            int workerCount
     ) {
         this.filter = filter;
         this.filterUsedColumnIndexes = filterUsedColumnIndexes;
@@ -88,6 +90,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             perWorkerLocks = null;
             perWorkerSelectivityStats = null;
         }
+        threadSafeSelectivityStats = new ObjList<>(workerCount + 1);
+        for (int i = 0; i <= workerCount; i++) {
+            threadSafeSelectivityStats.extendAndSet(i, new SelectivityStats());
+        }
         this.columnTypes = columnTypes;
         this.preTouchEnabled = preTouchEnabled;
         this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
@@ -95,8 +101,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     @Override
     public void clear() {
-        ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        Misc.clearObjList(threadSafeSelectivityStats);
         memoryTracker = null;
         lateMatSkipColumnIndexes = null;
     }
@@ -136,17 +142,32 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return skipSet != null ? skipSet : filterUsedColumnIndexes;
     }
 
-    public SelectivityStats getSelectivityStats(int slotId) {
+    private SelectivityStats getSelectivityStats(int slotId, int workerId) {
         if (slotId == -1 || perWorkerSelectivityStats == null) {
-            return ownerSelectivityStats;
+            final int statsId = workerId > -1 ? workerId : threadSafeSelectivityStats.size() - 1;
+            return threadSafeSelectivityStats.getQuick(statsId);
         }
         return perWorkerSelectivityStats.getQuick(slotId);
     }
 
     @Override
     @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
+    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks != null ? perWorkerLocks.getSlotAcquireCount() : -1;
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        if (perWorkerLocks != null) {
+            perWorkerLocks.setTestAcquireLatch(latch);
+        }
     }
 
     @Override
@@ -301,7 +322,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
+    public boolean shouldUseLateMaterialization(int slotId, int workerId, boolean owner, boolean isParquetFrame, boolean isCountOnly) {
         if (!isParquetFrame) {
             return false;
         }
@@ -311,7 +332,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (isCountOnly) {
             return true;
         }
-        return getSelectivityStats(slotId).shouldUseLateMaterialization();
+        // Foreign query-owner threads all have workerId -1 and may steal concurrently.
+        // They cannot share mutable statistics, so use the conservative first-sample choice.
+        return slotId == -1 && workerId == -1 && !owner
+                || getSelectivityStats(slotId, workerId).shouldUseLateMaterialization();
     }
 
     @Override
@@ -322,20 +346,11 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
-    private static class SynchronizedSelectivityStats extends SelectivityStats {
-        @Override
-        public synchronized void clear() {
-            super.clear();
-        }
-
-        @Override
-        public synchronized boolean shouldUseLateMaterialization() {
-            return super.shouldUseLateMaterialization();
-        }
-
-        @Override
-        public synchronized void update(long filteredRowCount, long totalRowCount) {
-            super.update(filteredRowCount, totalRowCount);
+    public void updateSelectivityStats(int slotId, int workerId, boolean owner, long filteredRowCount, long totalRowCount) {
+        // See shouldUseLateMaterialization(): foreign owner threads have no stable reducer identity.
+        if (slotId != -1 || workerId != -1 || owner) {
+            getSelectivityStats(slotId, workerId).update(filteredRowCount, totalRowCount);
         }
     }
+
 }

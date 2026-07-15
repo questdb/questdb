@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql.async;
 
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.Os;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     private final int noStealingThreshold;
     private final long spinTimeoutNanos;
+    private StatefulAtom atom;
     private AtomicInteger startedCounter;
 
     public AdaptiveWorkStealingStrategy(int noStealingThreshold, long spinTimeoutNanos) {
@@ -46,11 +48,20 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     @Override
     public WorkStealingStrategy of(AtomicInteger startedCounter) {
         this.startedCounter = startedCounter;
+        this.atom = null;
+        return this;
+    }
+
+    @Override
+    public WorkStealingStrategy of(AtomicInteger startedCounter, StatefulAtom atom) {
+        this.startedCounter = startedCounter;
+        this.atom = atom;
         return this;
     }
 
     @Override
     public boolean shouldSteal(int finishedCount) {
+        assert atom == null || atom.awaitTestSlotAcquire() : "timed out waiting for a worker slot acquisition";
         // Give shared workers a chance to pick up the tasks.
         // The spin duration is time-based to ensure consistent behavior
         // across different CPU architectures (Intel vs AMD have very different

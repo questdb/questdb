@@ -106,7 +106,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 filterUsedColumnIndexes,
                 perWorkerFilters,
                 columnTypes,
-                enablePreTouch
+                enablePreTouch,
+                workerCount
         );
         this.frameSequence = new PageFrameSequence<>(
                 engine,
@@ -289,7 +290,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         // a slot leaked here would be lost for as long as the factory stayed in the SQL cache, and
         // once every slot had leaked each later execution would spin in acquireSlot forever.
         try {
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, owner, isParquetFrame, task.isCountOnly());
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -321,7 +322,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 }
 
                 if (isParquetFrame) {
-                    atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
+                    atom.updateSelectivityStats(filterId, workerId, owner, rows.size(), frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);

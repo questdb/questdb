@@ -95,7 +95,7 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
             // earlier rowId. The inherited LastIPv4 override takes the max rowId and writes
             // its value unconditionally, so a trailing NULL clobbers the real value.
             //
-            // Scan backwards, as the not-keyed computeBatch above does. probeBatch emits rows in
+            // Scan direct column addresses backwards, as the not-keyed computeBatch above does. probeBatch emits rows in
             // ascending order, so forwards every later non-null row of a key rewrites its entry:
             // 2048 writes for a 2048-row frame over 8 keys, against 8 backwards. Same result -
             // only a key's highest-rowId non-null can win either way, and the isNew row is the
@@ -123,7 +123,7 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                     }
                 }
             } else {
-                for (long i = rowCount - 1; i >= 0; i--) {
+                for (long i = 0; i < rowCount; i++) {
                     final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                     final long rowIndex = Map.decodeBatchRowIndex(encoded);
                     final boolean isNew = Map.isNewBatchEntry(encoded);

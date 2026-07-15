@@ -57,6 +57,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.CountDownLatch;
 
 public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final IntHashSet encodedSkipColumnIndexes;
@@ -301,8 +302,22 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     @Override
     @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
+    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        if (perWorkerLocks != null) {
+            perWorkerLocks.setTestAcquireLatch(latch);
+        }
     }
 
     public IntHashSet getSortKeyColumnIndexes() {

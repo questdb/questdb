@@ -33,21 +33,15 @@ import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Used to synchronize access to list-like collections used by worker threads.
  * <p>
- * A slot's int is a counter, not a flag: acquire increments it to an odd value, release increments
- * it again to an even one. So the parity says whether the slot is held, and the counter says how
- * many times it has been acquired. Safety comes from the state parity and the atomic compare-and-set:
- * an acquirer's CAS can only win against the exact even value it read. A 2^32 wrap is harmless -
- * 0xFFFFFFFF is odd (held) and wrapping to 0 leaves it even (free), so the parity survives; only the
- * acquire tally restarts.
- * <p>
- * The count is close to free: the acquire is the same single CAS it always was, over a volatile load
- * it already did, and the release is a volatile load plus the single store it always was. Both run
- * once per page frame, not per row.
+ * Each slot uses the 0/1 protocol: acquire changes 0 to 1 with one CAS and release stores 0.
  */
 public class PerWorkerLocks {
     // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
@@ -55,6 +49,8 @@ public class PerWorkerLocks {
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
+    private final AtomicLong slotAcquireCount = new AtomicLong();
+    private volatile CountDownLatch testAcquireLatch;
     private final int workerCount;
 
     public PerWorkerLocks(@NotNull CairoConfiguration configuration, int workerCount) {
@@ -77,9 +73,8 @@ public class PerWorkerLocks {
                 if (id >= workerCount) {
                     id -= workerCount;
                 }
-                int idx = INTS_PER_SLOT * id;
-                int state = locks.get(idx);
-                if (isFree(state) && locks.compareAndSet(idx, state, state + 1)) {
+                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+                    assert tallyAcquire();
                     return id;
                 }
             }
@@ -99,9 +94,8 @@ public class PerWorkerLocks {
                 if (id >= workerCount) {
                     id -= workerCount;
                 }
-                int idx = INTS_PER_SLOT * id;
-                int state = locks.get(idx);
-                if (isFree(state) && locks.compareAndSet(idx, state, state + 1)) {
+                if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+                    assert tallyAcquire();
                     return id;
                 }
             }
@@ -120,7 +114,7 @@ public class PerWorkerLocks {
     public int getAcquiredSlotCount() {
         int count = 0;
         for (int i = 0; i < workerCount; i++) {
-            if (!isFree(locks.get(INTS_PER_SLOT * i))) {
+            if (locks.get(INTS_PER_SLOT * i) != 0) {
                 count++;
             }
         }
@@ -135,36 +129,40 @@ public class PerWorkerLocks {
      */
     @TestOnly
     public long getSlotAcquireCount() {
-        long count = 0;
-        for (int i = 0; i < workerCount; i++) {
-            count += (Integer.toUnsignedLong(locks.get(INTS_PER_SLOT * i)) + 1) >>> 1;
-        }
-        return count;
+        return slotAcquireCount.get();
     }
 
     public void releaseSlot(int slot) {
         if (slot > -1) {
-            final int idx = INTS_PER_SLOT * slot;
-            final int state = locks.get(idx);
-            assert !isFree(state) : "releasing a slot that is not held: " + slot;
-            // The holder is the only thread that can write a held slot - an acquirer's CAS demands
-            // the even state it read - so this needs no atomicity, and the volatile store publishes
-            // the slot's state to the next acquirer just as the plain unlock store used to.
-            //
-            // Guard the store on the slot actually being held. Incrementing is not idempotent the
-            // way the old set(idx, 0) was: with assertions off, a second release would carry a free
-            // slot from even to odd and strand it as permanently held - the very starvation the
-            // parity protocol exists to prevent. No double-release path exists today. Every release
-            // runs in a finally, either directly or in a nested finally that protects it from
-            // preceding cleanup calls. The try starts only after this thread acquires the slot, so
-            // the assert above stays the detector and this guard only bounds the damage.
-            if (!isFree(state)) {
-                locks.set(idx, state + 1);
-            }
+            locks.set(INTS_PER_SLOT * slot, 0);
         }
     }
 
-    private static boolean isFree(int state) {
-        return (state & 1) == 0;
+    @TestOnly
+    public boolean awaitTestAcquire() {
+        final CountDownLatch latch = testAcquireLatch;
+        if (latch == null) {
+            return true;
+        }
+        try {
+            return latch.await(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    @TestOnly
+    public void setTestAcquireLatch(CountDownLatch latch) {
+        testAcquireLatch = latch;
+    }
+
+    private boolean tallyAcquire() {
+        slotAcquireCount.incrementAndGet();
+        final CountDownLatch latch = testAcquireLatch;
+        if (latch != null) {
+            latch.countDown();
+        }
+        return true;
     }
 }

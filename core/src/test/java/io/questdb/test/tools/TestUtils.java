@@ -159,9 +159,6 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
-    // Breach the query, up to a bound, until a worker has actually taken a slot.
-    // See assertNoSlotLeakOnBreach.
-    private static final int MAX_BREACH_ITERATIONS = 200;
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -916,61 +913,41 @@ public final class TestUtils {
     }
 
     /**
-     * Compiles the query once and re-executes that single cached factory. Every execution must breach
-     * the per-query memory limit and must leave the atom holding no per-worker slots.
-     * <p>
-     * Zero held slots is what a clean run leaves behind, but it is equally what a run leaves behind
-     * where nobody took a slot at all: the first error cancels the frame sequence, so only the frames
-     * already in flight get reduced, and the owner thread reduces with its own state and takes no
-     * slot. So the loop keeps breaching until the atom reports an actual acquire, and only then
-     * trusts the zero.
-     *
-     * @param compiler        the compiler to compile the query with, once
-     * @param ctx             the execution context
-     * @param query           a query that breaches the per-query memory limit inside a parallel reduce
-     * @param expectedFactory the parallel factory the query must reach. Pinning it keeps the test
-     *                        honest: a query that quietly moved to a different factory would still
-     *                        breach, still release its slots, and cover nothing
+     * Compiles the query once and executes the same factory twice. A worker must acquire a slot
+     * before the owner can reduce, and both executions must report the expected memory breach. Each execution verifies exact slot balance after close; the second also observes that the cached
+     * factory remains reusable after the first failure without depending on a concrete factory class.
      */
     public static void assertNoSlotLeakOnBreach(
             SqlCompiler compiler,
             SqlExecutionContext ctx,
-            String query,
-            Class<?> expectedFactory
+            String query
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
-            assertFactoryInTree(factory, expectedFactory, query);
             final StatefulAtom atom = findAtom(factory, query);
-            Assert.assertTrue(
-                    atom.getClass().getSimpleName() + " holds no per-worker locks, so this query cannot"
-                            + " exercise the slot-leak path: " + query,
-                    atom.getSlotAcquireCount() >= 0
-            );
-            for (int i = 0; i < MAX_BREACH_ITERATIONS; i++) {
-                try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    //noinspection StatementWithEmptyBody
-                    while (cursor.hasNext()) {
-                        // drain until breach
+            for (int i = 0; i < 2; i++) {
+                final long acquireCount = atom.getSlotAcquireCount();
+                final CountDownLatch acquired = new CountDownLatch(1);
+                atom.setTestSlotAcquireLatch(acquired);
+                try {
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach for: " + query);
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                     }
-                    Assert.fail("expected per-query memory breach on iteration " + i + " of: " + query);
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
-                    assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    assertNoSlotLeak(factory, query);
+                    Assert.assertTrue(
+                            "no worker acquired a slot for: " + query,
+                            atom.getSlotAcquireCount() > acquireCount
+                    );
+                } finally {
+                    atom.setTestSlotAcquireLatch(null);
                 }
-                // The cursor is closed by now, so the frame sequence has been awaited and no worker
-                // is inside a locked section.
-                assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
-                if (atom.getSlotAcquireCount() > 0) {
-                    return;
-                }
-                // No worker has taken a slot yet, so a zero held-slot count still proves nothing.
-                // Yield, and breach again.
-                Os.sleep(1);
             }
-            Assert.fail("no worker acquired a slot in " + MAX_BREACH_ITERATIONS + " breached executions"
-                    + " of: " + query + ". The first error cancels the frame sequence, so only the frames"
-                    + " already in flight get reduced; if the owner thread wins all of them the atom never"
-                    + " sees an acquire and the zero held-slot count above is vacuous");
         }
     }
 

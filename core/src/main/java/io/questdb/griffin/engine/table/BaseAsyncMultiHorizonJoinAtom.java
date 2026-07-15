@@ -62,6 +62,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Base class for multi-slave HORIZON JOIN atoms that manages per-worker x per-slave resources.
@@ -545,8 +546,22 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     @Override
     @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
+    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        if (perWorkerLocks != null) {
+            perWorkerLocks.setTestAcquireLatch(latch);
+        }
     }
 
     public MultiHorizonJoinSymbolTableSource getSymbolTableSource() {

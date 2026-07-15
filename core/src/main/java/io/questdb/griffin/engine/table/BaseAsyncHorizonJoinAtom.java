@@ -63,6 +63,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Base class for HORIZON JOIN atoms that manages common per-worker resources.
@@ -473,8 +474,22 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
+    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        if (perWorkerLocks != null) {
+            perWorkerLocks.setTestAcquireLatch(latch);
+        }
     }
 
     @Override

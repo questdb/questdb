@@ -399,7 +399,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
+            workStealingStrategy.of(reduceStartedCounter, atom);
             shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
             reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
@@ -487,7 +487,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             collectedFrameIndex = -1;
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
+            workStealingStrategy.of(reduceStartedCounter, atom);
             valid.set(true);
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
         }

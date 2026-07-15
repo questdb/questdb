@@ -32,15 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -234,39 +226,31 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                         // decode past the acquire and never fault the code under test.
                         // Keyed, unfiltered and filtered:
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' GROUP BY s",
-                                AsyncGroupByRecordCursorFactory.class);
+                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' GROUP BY s");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' GROUP BY s",
-                                AsyncGroupByRecordCursorFactory.class);
+                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' GROUP BY s");
                         // Not-keyed: count(s) alone is not batch-eligible, so it takes the row-by-row
                         // reducer; adding a batch-eligible max(v) switches it to the vectorized one,
                         // which still decodes s and so still breaches in the decode. The filtered
                         // variant takes the third reducer.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02'",
-                                AsyncGroupByNotKeyedRecordCursorFactory.class);
+                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02'");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT max(v) m, count(s) c FROM tab WHERE ts < '1970-01-02'",
-                                AsyncGroupByNotKeyedRecordCursorFactory.class);
+                                "SELECT max(v) m, count(s) c FROM tab WHERE ts < '1970-01-02'");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'",
-                                AsyncGroupByNotKeyedRecordCursorFactory.class);
+                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'");
                         // The filtered parallel top-K reducer acquires a slot the same way.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT s FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' ORDER BY s LIMIT 5",
-                                AsyncTopKRecordCursorFactory.class);
+                                "SELECT s FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' ORDER BY s LIMIT 5");
                         // A plain parallel filter - no GROUP BY, no ORDER BY - takes
                         // AsyncFilteredRecordCursorFactory.filter(), the most common parallel query
                         // shape there is. It acquires a filter slot and only then navigates to the
                         // frame, so it leaks exactly like the reducers above. The filter must be
                         // non-thread-safe for the code generator to clone per-worker filters at all,
-                        // which is what makes the atom build the locks; assertNoSlotLeak fails on an
-                        // atom that holds none, so a filter that turns out to be thread-safe cannot
-                        // pass this silently.
+                        // which is what makes the atom build the locks. The acquire latch times out if a
+                        // filter turns out to be thread-safe, so that plan change cannot pass silently.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
-                                "SELECT s, v FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'",
-                                AsyncFilteredRecordCursorFactory.class);
+                                "SELECT s, v FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'");
                     },
                     configuration,
                     LOG
@@ -326,24 +310,20 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                         // Keyed horizon join: AsyncHorizonJoinRecordCursorFactory, reduce and filterAndReduce.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT t.s, array_agg(p.price) FROM tab t HORIZON JOIN px p ON (t.sym = p.sym) "
-                                        + horizon + " WHERE t.ts < '1970-01-02'",
-                                AsyncHorizonJoinRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02'");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT t.s, array_agg(p.price) FROM tab t HORIZON JOIN px p ON (t.sym = p.sym) "
-                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
-                                AsyncHorizonJoinRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'");
                         // Non-keyed horizon join: AsyncHorizonJoinNotKeyedRecordCursorFactory. Selecting
                         // t.s would make it the grouping key and route to the keyed factory instead, so
                         // the wide column has to enter through an aggregate to keep the master decoding
                         // it while the aggregation stays keyless.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT array_agg(p.price), count(t.s) FROM tab t HORIZON JOIN px p "
-                                        + horizon + " WHERE t.ts < '1970-01-02'",
-                                AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02'");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT array_agg(p.price), count(t.s) FROM tab t HORIZON JOIN px p "
-                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
-                                AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'");
                         // A second HORIZON JOIN routes to the multi-slave factories, whose reducers
                         // take the slot before navigating to the frame just as the single-slave ones
                         // do. They are correct on master, but nothing asserted it: the only rows that
@@ -354,25 +334,21 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT t.s, array_agg(p.price), count(p2.price) FROM tab t "
                                         + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
-                                        + horizon + " WHERE t.ts < '1970-01-02'",
-                                AsyncMultiHorizonJoinRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02'");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT array_agg(p.price), count(p2.price), count(t.s) FROM tab t "
                                         + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
-                                        + horizon + " WHERE t.ts < '1970-01-02'",
-                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02'");
                         // And their filtered reducers: t.s != 'zzz' is a real master filter, unlike the
                         // interval-extracted ts predicate above.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT t.s, array_agg(p.price), count(p2.price) FROM tab t "
                                         + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
-                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
-                                AsyncMultiHorizonJoinRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'");
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT array_agg(p.price), count(p2.price), count(t.s) FROM tab t "
                                         + "HORIZON JOIN px p ON (t.sym = p.sym) HORIZON JOIN px p2 "
-                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
-                                AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                                        + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'");
 
                         // Window join: only the filtered reducers populate the frame while holding the
                         // slot, so only they can leak on the decode. The unfiltered ones populate
@@ -382,8 +358,7 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT t.ts, array_agg(p.price) FROM tab t WINDOW JOIN px p "
                                         + "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING "
-                                        + "WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
-                                AsyncWindowJoinRecordCursorFactory.class);
+                                        + "WHERE t.ts < '1970-01-02' AND t.s != 'zzz'");
                     },
                     configuration,
                     LOG

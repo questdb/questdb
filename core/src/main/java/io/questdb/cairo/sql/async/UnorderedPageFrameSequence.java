@@ -358,7 +358,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             doneLatch.reset();
             reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
+            workStealingStrategy.of(reduceStartedCounter, atom);
             errorMsg.clear();
             errorMessagePosition = 0;
             errno = CairoException.NON_CRITICAL;

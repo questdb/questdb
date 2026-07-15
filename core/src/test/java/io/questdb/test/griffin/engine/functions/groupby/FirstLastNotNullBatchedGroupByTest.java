@@ -99,7 +99,7 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                             compiler,
                             """
                                     INSERT INTO tab VALUES
-                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 1),
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 3),
                                         ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 5),
                                         ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 2)
                                     """,
@@ -118,8 +118,8 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                             .withCompiler(compiler)
                             .withContext(ctx)
                             .assertsPlanContaining("Async Group By");
-                    assertExceptionNoLeakCheck(firstQuery, -1, "array dimension out of bounds [dim=5, dims=2]", ctx);
-                    assertExceptionNoLeakCheck(lastQuery, -1, "array dimension out of bounds [dim=5, dims=2]", ctx);
+                    assertExceptionNoLeakCheck(firstQuery, -1, "array dimension out of bounds [dim=3, dims=2]", ctx);
+                    assertExceptionNoLeakCheck(lastQuery, -1, "array dimension out of bounds [dim=3, dims=2]", ctx);
                 }, configuration, LOG);
             }
         });

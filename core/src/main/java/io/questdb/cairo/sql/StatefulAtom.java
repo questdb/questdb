@@ -30,7 +30,14 @@ import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.CountDownLatch;
+
 public interface StatefulAtom extends QuietCloseable, Mutable {
+
+    @TestOnly
+    default boolean awaitTestSlotAcquire() {
+        return true;
+    }
 
     @Override
     default void clear() {
@@ -76,6 +83,10 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
     @TestOnly
     default long getSlotAcquireCount() {
         return -1;
+    }
+
+    @TestOnly
+    default void setTestSlotAcquireLatch(CountDownLatch latch) {
     }
 
     /**
