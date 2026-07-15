@@ -202,12 +202,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
-        // SECURITY: these unconditional resets are the safety net for the conditional
-        // skip in reset(), which preserves securityContext while isProtocolSwitched is true.
-        // Both fields MUST be reset here to prevent security context leaks between pooled
-        // connections. Do not make these conditional.
+        // SECURITY: these unconditional resets are the safety net for the conditional skips in
+        // reset(), which preserve securityContext and the circuit breaker while isProtocolSwitched
+        // is true. securityContext MUST be reset here to prevent security context leaks between
+        // pooled connections. Do not make these conditional.
         this.isProtocolSwitched = false;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        if (httpCircuitBreaker != null) {
+            httpCircuitBreaker.clear();
+        }
     }
 
     @Override
@@ -418,7 +421,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
-        if (httpCircuitBreaker != null) {
+        // Preserve the breaker for protocol-switched connections (e.g., WebSocket); a parked
+        // credit-suspended egress stream still needs it. clear() resets it on pool return.
+        if (httpCircuitBreaker != null && !isProtocolSwitched) {
             httpCircuitBreaker.clear();
         }
         this.multipartParserState.multipartRetry = false;
