@@ -8390,8 +8390,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
             // A branch that is not SYMBOL keeps the union result STRING: re-symbolisation only
             // kicks in when every contributing branch is SYMBOL.
-            assertResultColumnType("SELECT s FROM ta UNION ALL SELECT s FROM ts", 0, ColumnType.STRING);
-            assertResultColumnType("SELECT s FROM ts UNION ALL SELECT s FROM ta", 0, ColumnType.STRING);
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM ts")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).noRandomAccess().expectSize()
+                    .returns("s\na\nb\nc\n");
+            assertQuery("SELECT s FROM ts UNION ALL SELECT s FROM ta")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).noRandomAccess().expectSize()
+                    .returns("s\nc\na\nb\n");
         });
     }
 
@@ -8406,24 +8410,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("INSERT INTO tc VALUES ('d', 5)");
 
             // UNION ALL of two SYMBOL columns comes back as SYMBOL, re-symbolised once at the end
-            // of the chain, rather than left as the STRING the union produces internally.
-            assertResultColumnType("SELECT s FROM ta UNION ALL SELECT s FROM tb", 0, ColumnType.SYMBOL);
+            // of the chain, rather than left as the STRING the union produces internally. Each
+            // assertion drives a full cursor pass, so the re-symbolised values are checked too.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\nb\nc\na\n");
             // UNION (distinct) too.
-            assertResultColumnType("SELECT s FROM ta UNION SELECT s FROM tb", 0, ColumnType.SYMBOL);
+            assertQuery("SELECT s FROM ta UNION SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess()
+                    .returns("s\na\nb\nc\n");
             // N-way chain: still SYMBOL, wrapped only once at the outermost level.
-            assertResultColumnType("SELECT s FROM ta UNION ALL SELECT s FROM tb UNION ALL SELECT s FROM tc", 0, ColumnType.SYMBOL);
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb UNION ALL SELECT s FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\nb\nc\na\nd\n");
             // Constant symbols have no backing table dictionary yet still round-trip.
-            assertResultColumnType(
-                    "SELECT cast('x' AS SYMBOL) s FROM long_sequence(1) UNION ALL SELECT cast('y' AS SYMBOL) s FROM long_sequence(1)",
-                    0,
-                    ColumnType.SYMBOL
-            );
-            // EXCEPT keeps side-A symbols natively (unaffected by re-symbolisation).
-            assertResultColumnType("SELECT s FROM ta EXCEPT SELECT s FROM tb", 0, ColumnType.SYMBOL);
-
-            // Values survive the re-symbolisation (UNION ALL preserves branch order). Declare the
-            // union cursor's capabilities as the harness expects: no random access, determined size.
-            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb").noRandomAccess().expectSize().returns("s\na\nb\nc\na\n");
+            assertQuery("SELECT cast('x' AS SYMBOL) s FROM long_sequence(1) UNION ALL SELECT cast('y' AS SYMBOL) s FROM long_sequence(1)")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\nx\ny\n");
+            // EXCEPT keeps side-A symbols natively (unaffected by re-symbolisation). Its cursor
+            // materialises the result, so it supports random access.
+            assertQuery("SELECT s FROM ta EXCEPT SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\nb\n");
         });
     }
 
@@ -8439,18 +8447,82 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // union now materialises a SYMBOL column where it previously widened it to STRING.
             execute("CREATE TABLE tu AS (SELECT s FROM ta UNION ALL SELECT s FROM tb)");
 
-            assertResultColumnType("SELECT s FROM tu", 0, ColumnType.SYMBOL);
-            assertQuery("SELECT s FROM tu").expectSize().returns("s\na\nb\nc\na\n");
+            assertQuery("SELECT s FROM tu")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\na\nb\nc\na\n");
         });
     }
 
-    private static void assertResultColumnType(CharSequence sql, int columnIndex, int expectedType) throws SqlException {
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(
-                    ColumnType.nameOf(expectedType),
-                    ColumnType.nameOf(factory.getMetadata().getColumnType(columnIndex))
-            );
-        }
+    @Test
+    public void testUnionOfSymbolColumnsInsertIntoTypedTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), (null)");
+            execute("INSERT INTO tb VALUES ('b'), ('a')");
+            execute("CREATE TABLE t_str (s STRING)");
+            execute("CREATE TABLE t_varchar (s VARCHAR)");
+            execute("CREATE TABLE t_sym (s SYMBOL)");
+
+            // The union result is now SYMBOL, so INSERT ... SELECT routes through the SYMBOL-source
+            // row copier into each target type. Values, including a NULL symbol, must round-trip.
+            execute("INSERT INTO t_str SELECT s FROM ta UNION ALL SELECT s FROM tb");
+            execute("INSERT INTO t_varchar SELECT s FROM ta UNION ALL SELECT s FROM tb");
+            execute("INSERT INTO t_sym SELECT s FROM ta UNION ALL SELECT s FROM tb");
+
+            assertQuery("SELECT s FROM t_str").noLeakCheck().columnType(0, ColumnType.STRING).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_varchar").noLeakCheck().columnType(0, ColumnType.VARCHAR).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_sym").noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\n\nb\na\n");
+            // The NULL symbol survived as NULL on the SYMBOL target, not as an empty string.
+            assertQuery("SELECT count(*) c FROM t_sym WHERE s IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsNullReadsBackAsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), (null)");
+            execute("INSERT INTO tb VALUES ('b')");
+
+            // A NULL symbol survives re-symbolisation as a real NULL, not an empty string: the
+            // result type is SYMBOL, `s IS NULL` matches exactly the null row and `s = ''` matches
+            // none. (A blank cell in a printed table alone cannot tell NULL from an empty string.)
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\n\nb\n");
+            assertQuery("SELECT count(*) c FROM (SELECT s FROM ta UNION ALL SELECT s FROM tb) WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count(*) c FROM (SELECT s FROM ta UNION ALL SELECT s FROM tb) WHERE s = ''")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsPartialMask() throws Exception {
+        assertMemoryLeak(() -> {
+            // s1 is SYMBOL on every branch and is re-symbolised; s2 is SYMBOL on only one branch
+            // and stays STRING. Only the all-SYMBOL columns come back SYMBOL.
+            execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tb (s1 SYMBOL, s2 STRING)");
+            execute("INSERT INTO ta VALUES ('a', 'p')");
+            execute("INSERT INTO tb VALUES ('b', 'q')");
+            assertQuery("SELECT s1, s2 FROM ta UNION ALL SELECT s1, s2 FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.STRING)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\n");
+
+            // When every column is SYMBOL on every branch, all of them come back SYMBOL.
+            execute("CREATE TABLE tc (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE td (s1 SYMBOL, s2 SYMBOL)");
+            execute("INSERT INTO tc VALUES ('a', 'p')");
+            execute("INSERT INTO td VALUES ('b', 'q')");
+            assertQuery("SELECT s1, s2 FROM tc UNION ALL SELECT s1, s2 FROM td")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.SYMBOL)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\n");
+        });
     }
 
     @Test
