@@ -212,6 +212,7 @@ public class RecoveryCoordinator {
         // (not on no-op/skip/absent-marker/torn-copy paths). The tracker is initialised lazily on
         // first WAL apply, but the object itself always exists (getSeqTxnTracker creates it).
         engine.getTableSequencerAPI().getTxnTracker(token).bumpRecoveryIncarnation();
+        engine.getMetrics().walMetrics().incrementRecoveryEvents();
     }
 
     /**

@@ -37,6 +37,7 @@ public class WalMetrics implements Mutable {
     private final Counter applyRowsWrittenCounter;
     private final Counter epochAdvancesCounter;
     private final LongGauge localDurableSeqTxnGauge;
+    private final Counter recoveryEventsCounter;
     private final Counter rowsWrittenCounter;
     private final LongGauge seqTxnGauge;
     private final AtomicLong totalRowsWritten = new AtomicLong();
@@ -49,6 +50,7 @@ public class WalMetrics implements Mutable {
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.epochAdvancesCounter = metricsRegistry.newCounter("wal_adaptive_epoch_advances");
         this.localDurableSeqTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_local_durable_seq_txn");
+        this.recoveryEventsCounter = metricsRegistry.newCounter("wal_adaptive_recovery_events");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
         this.seqTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_seq_txn");
         this.writerTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_writer_txn");
@@ -83,6 +85,10 @@ public class WalMetrics implements Mutable {
         epochAdvancesCounter.inc();
     }
 
+    public void incrementRecoveryEvents() {
+        recoveryEventsCounter.inc();
+    }
+
     @Override
     public void clear() {
         applyPhysicallyWrittenRowsCounter.reset();
@@ -90,6 +96,7 @@ public class WalMetrics implements Mutable {
         applyRowsWrittenCounter.reset();
         epochAdvancesCounter.reset();
         localDurableSeqTxnGauge.setValue(0);
+        recoveryEventsCounter.reset();
         rowsWrittenCounter.reset();
         seqTxnGauge.setValue(0);
         totalRowsWritten.set(0);
