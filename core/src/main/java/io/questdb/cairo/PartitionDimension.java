@@ -48,11 +48,11 @@ public final class PartitionDimension {
     // (expr) AS alias
     public static final byte KIND_EXPRESSION = 3;
 
-    private final String alias;
-    private final int columnIndex;
-    private final String exprText;
+    private final String alias;         // dir key label + dimension name; never null
+    private final int columnIndex;      // source SYMBOL column; -1 for KIND_EXPRESSION
+    private final String exprText;      // serialized expression for KIND_EXPRESSION; null otherwise
     private final byte kind;
-    private final int param;
+    private final int param;            // N for HASH/TRUNCATE; 0 otherwise
 
     public PartitionDimension(byte kind, int columnIndex, int param, String alias, String exprText) {
         this.kind = kind;

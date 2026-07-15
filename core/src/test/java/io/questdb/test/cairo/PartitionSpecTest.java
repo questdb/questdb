@@ -53,6 +53,35 @@ public class PartitionSpecTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearResetsSpec() {
+        PartitionSpec s = new PartitionSpec();
+        s.setTimeUnit(PartitionBy.DAY);
+        s.setNamingMode(PartitionSpec.MODE_PLAIN);
+        s.addDimension(new PartitionDimension(PartitionDimension.KIND_IDENTITY, 1, 0, "exchange", null));
+        s.addClusterColumn(2);
+        Assert.assertTrue(s.isComposite());
+
+        s.clear();
+
+        Assert.assertEquals(0, s.getDimensionCount());
+        Assert.assertEquals(0, s.getClusterColumnCount());
+        Assert.assertFalse(s.isComposite());
+        Assert.assertEquals(PartitionBy.NONE, s.getTimeUnit());
+        Assert.assertEquals(PartitionSpec.MODE_HIVE, s.getNamingMode());
+    }
+
+    @Test
+    public void testDimensionEqualsHashCode() {
+        PartitionDimension a = new PartitionDimension(PartitionDimension.KIND_HASH, 2, 32, "symbol_hash", null);
+        PartitionDimension b = new PartitionDimension(PartitionDimension.KIND_HASH, 2, 32, "symbol_hash", null);
+        Assert.assertEquals(a, b);
+        Assert.assertEquals(a.hashCode(), b.hashCode());
+
+        PartitionDimension c = new PartitionDimension(PartitionDimension.KIND_HASH, 2, 16, "symbol_hash", null);
+        Assert.assertNotEquals(a, c);
+    }
+
+    @Test
     public void testEmptySpecIsNotComposite() {
         PartitionSpec s = new PartitionSpec();
         s.setTimeUnit(PartitionBy.DAY);
