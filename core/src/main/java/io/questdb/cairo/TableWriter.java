@@ -3540,6 +3540,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void rollback() {
         checkDistressed();
+        // Rollback restores _txn/_cv, making the old Parquet directories live again. Never let deferred cleanup
+        // from an abandoned conversion batch run during a later, unrelated batch.
+        pendingParquetToNativeConversions.clear();
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();

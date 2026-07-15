@@ -42,17 +42,9 @@ import static io.questdb.tasks.TableWriterTask.CMD_DELETE_TABLE;
 
 public class DeleteOperation extends AbstractOperation {
     public static final String MAT_VIEW_INVALIDATION_REASON = "delete operation";
-    // Names of the two NAMED timestamp bind variables that SqlCompilerImpl.generateDelete ANDs onto the
-    // apply-time survivor scan (WHERE NOT(pred)) as "<designatedTs> >= :__del_win_lo AND <designatedTs> <
-    // :__del_win_hi" (lower bound inclusive, upper bound exclusive). They bound the survivor cursor to a
-    // per-window designated-timestamp interval [lo, hi) so OperationExecutor can re-drive the SAME survivor
-    // factory window by window (rebinding these two variables and re-running getCursor), each pass reading only
-    // the window's partitions via an interval scan instead of re-scanning the whole table. Compiled with
-    // (min-non-null, MAX) defaults, so an un-windowed caller gets the whole-range survivor set. Names are WITHOUT
-    // the leading ':' (the bind-variable service key form); the survivor model's AST carries the ':'-prefixed
-    // literal. Used by the WAL-apply executor (Task 5).
-    public static final String WINDOW_HI_BIND = "__del_win_hi";
-    public static final String WINDOW_LO_BIND = "__del_win_lo";
+    // Replay-stability classification computed from the original predicate. The non-atomic disk-bounded route
+    // requires this to be true because a retry evaluates the predicate against survivors of earlier commits.
+    private final boolean isPredicateReplayStable;
     // Time-range fast-path classification (Task 2.1), computed by SqlCompilerImpl.generateDelete from the
     // ORIGINAL (un-negated) predicate. When isPureTimeRange is true, the whole DELETE predicate reduces to a
     // SINGLE designated-timestamp interval [timeRangeLo, timeRangeHiExcl) with no residual non-timestamp
@@ -63,6 +55,8 @@ public class DeleteOperation extends AbstractOperation {
     private final boolean isPureTimeRange;
     private final long timeRangeHiExcl;
     private final long timeRangeLo;
+    private final int windowHiBindVariableIndex;
+    private final int windowLoBindVariableIndex;
     private RecordCursorFactory survivorFactory;
 
     public DeleteOperation(
@@ -71,15 +65,21 @@ public class DeleteOperation extends AbstractOperation {
             long tableVersion,
             int tableNamePosition,
             @Nullable RecordCursorFactory survivorFactory,
+            boolean isPredicateReplayStable,
             boolean isPureTimeRange,
             long timeRangeLo,
-            long timeRangeHiExcl
+            long timeRangeHiExcl,
+            int windowLoBindVariableIndex,
+            int windowHiBindVariableIndex
     ) {
         init(CMD_DELETE_TABLE, TableWriterTask.getCommandName(CMD_DELETE_TABLE), tableToken, tableId, tableVersion, tableNamePosition);
         this.survivorFactory = survivorFactory;
+        this.isPredicateReplayStable = isPredicateReplayStable;
         this.isPureTimeRange = isPureTimeRange;
         this.timeRangeLo = timeRangeLo;
         this.timeRangeHiExcl = timeRangeHiExcl;
+        this.windowHiBindVariableIndex = windowHiBindVariableIndex;
+        this.windowLoBindVariableIndex = windowLoBindVariableIndex;
     }
 
     @Override
@@ -135,6 +135,18 @@ public class DeleteOperation extends AbstractOperation {
         return timeRangeLo;
     }
 
+    public int getWindowHiBindVariableIndex() {
+        return windowHiBindVariableIndex;
+    }
+
+    public int getWindowLoBindVariableIndex() {
+        return windowLoBindVariableIndex;
+    }
+
+    public boolean isPredicateReplayStable() {
+        return isPredicateReplayStable;
+    }
+
     /**
      * True when the whole DELETE predicate reduces to a single designated-timestamp interval
      * {@code [getTimeRangeLo(), getTimeRangeHiExcl())} with no residual non-timestamp filter, so it can be
@@ -160,8 +172,8 @@ public class DeleteOperation extends AbstractOperation {
         task.setAsyncWriterCommand(this);
     }
 
-    // Sets a DELETE window-bound bind variable (WINDOW_LO_BIND / WINDOW_HI_BIND) in the designated-timestamp
-    // column's OWN unit, so the runtime interval bound is interpreted without a micros<->nanos rescale. A
+    // Sets a DELETE window-bound indexed bind variable in the designated-timestamp column's OWN unit, so the
+    // runtime interval bound is interpreted without a micros<->nanos rescale. A
     // micros-typed bind variable (BindVariableService.setTimestamp) evaluated against a TIMESTAMP_NANO
     // designated column is rescaled x1000 by NanosTimestampDriver.from(value, TIMESTAMP_MICRO) -
     // Long.MIN_VALUE+1 / Long.MAX_VALUE (the compiled-in whole-range defaults) then overflow
@@ -170,11 +182,11 @@ public class DeleteOperation extends AbstractOperation {
     // no-op rescale). This is the ONE place that sets these bind variables, shared by
     // SqlCompilerImpl.generateDelete (compile-time whole-range defaults) and OperationExecutor (Task 5,
     // per-window rebinds), so both paths stay unit-correct together.
-    public static void setWindowBound(BindVariableService bindVariableService, CharSequence name, int timestampColumnType, long value) throws SqlException {
+    public static void setWindowBound(BindVariableService bindVariableService, int index, int timestampColumnType, long value) throws SqlException {
         if (ColumnType.isTimestampNano(timestampColumnType)) {
-            bindVariableService.setTimestampNano(name, value);
+            bindVariableService.setTimestampNano(index, value);
         } else {
-            bindVariableService.setTimestamp(name, value);
+            bindVariableService.setTimestamp(index, value);
         }
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -49,8 +50,8 @@ import org.junit.Test;
 
 /**
  * Task 4 spike: proves the apply-time survivor factory (built by SqlCompilerImpl.generateDelete when
- * isWalApplication) can be bounded to a per-window designated-timestamp interval via the two named bind
- * variables {@link DeleteOperation#WINDOW_LO_BIND}/{@link DeleteOperation#WINDOW_HI_BIND}, that this bound
+ * isWalApplication) can be bounded to a per-window designated-timestamp interval via two operation-owned
+ * indexed bind variables, that this bound
  * executes as an INTERVAL SCAN (so N windows sum to one table pass rather than N full scans), and that the
  * SAME factory is rebindable window by window. This is the linchpin: OperationExecutor (Task 5) drives this
  * one factory per window, re-running getCursor with new bounds.
@@ -103,26 +104,70 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             createAndPopulate();
             try (SqlExecutionContext applyContext = newApplyContext();
                  SqlCompiler compiler = engine.getSqlCompiler()) {
+                applyContext.getBindVariableService().setInt(0, 42);
+                applyContext.getBindVariableService().setInt("__del_win_lo", 11);
+                applyContext.getBindVariableService().setStr("__del_win_hi", "user-value");
                 // Mirrors OperationExecutor.executeDelete's apply-context compile (isWalApplication()==true).
                 final CompiledQuery cc = compiler.compile("delete from t where x % 2 = 0", applyContext);
                 try (DeleteOperation op = cc.getDeleteOperation()) {
                     final RecordCursorFactory factory = op.getSurvivorFactory();
                     Assert.assertNotNull("survivor factory must be built at WAL apply time", factory);
+                    Assert.assertEquals(1, op.getWindowLoBindVariableIndex());
+                    Assert.assertEquals(2, op.getWindowHiBindVariableIndex());
+                    Assert.assertEquals(ColumnType.INT, applyContext.getBindVariableService().getFunction(0).getType());
+                    Assert.assertEquals(42, applyContext.getBindVariableService().getFunction(0).getInt(null));
+                    Assert.assertEquals(ColumnType.INT, applyContext.getBindVariableService().getFunction(":__del_win_lo").getType());
+                    Assert.assertEquals(11, applyContext.getBindVariableService().getFunction(":__del_win_lo").getInt(null));
+                    Assert.assertEquals(ColumnType.STRING, applyContext.getBindVariableService().getFunction(":__del_win_hi").getType());
+                    Assert.assertEquals("user-value", applyContext.getBindVariableService().getFunction(":__del_win_hi").getStrA(null).toString());
 
                     // Default bounds compiled in by generateDelete: the whole survivor set (odd x, 1..95).
                     Assert.assertEquals(oddsInclusive(1, 96), collectX(factory, applyContext));
 
                     // Window [day1, day2) -> rows x=1..24, survivors (odd x) 1..23.
-                    setWindow(applyContext, DAY1_LO, DAY2_LO);
+                    setWindow(op, applyContext, DAY1_LO, DAY2_LO);
                     Assert.assertEquals(oddsInclusive(1, 24), collectX(factory, applyContext));
 
                     // Re-bind a different window [day3, day4) on the SAME factory -> rows x=49..72, odds 49..71.
-                    setWindow(applyContext, DAY3_LO, DAY4_LO);
+                    setWindow(op, applyContext, DAY3_LO, DAY4_LO);
                     Assert.assertEquals(oddsInclusive(49, 72), collectX(factory, applyContext));
 
                     // Re-bind back to the first window to confirm the rebind is stateless/repeatable.
-                    setWindow(applyContext, DAY1_LO, DAY2_LO);
+                    setWindow(op, applyContext, DAY1_LO, DAY2_LO);
                     Assert.assertEquals(oddsInclusive(1, 24), collectX(factory, applyContext));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPredicateReplayStabilityClassification() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulate();
+            try (SqlExecutionContext applyContext = newApplyContext();
+                 SqlCompiler compiler = engine.getSqlCompiler()) {
+                applyContext.getBindVariableService().setLong(0, 7);
+                applyContext.getBindVariableService().setLong("divisor", 7);
+                try (DeleteOperation operation = compiler.compile("DELETE FROM t WHERE x % 7 = 0", applyContext).getDeleteOperation()) {
+                    Assert.assertTrue(operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile("DELETE FROM t WHERE x % $1 = 0", applyContext).getDeleteOperation()) {
+                    Assert.assertTrue("WAL-captured indexed binds must be replay-stable", operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile("DELETE FROM t WHERE x % :divisor = 0", applyContext).getDeleteOperation()) {
+                    Assert.assertTrue("WAL-captured named binds must be replay-stable", operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile("DELETE FROM t WHERE rnd_boolean()", applyContext).getDeleteOperation()) {
+                    Assert.assertFalse(operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile(
+                        "DELETE FROM t WHERE geo_distance_meters(0, 0, rnd_double(), 0) > 50000",
+                        applyContext
+                ).getDeleteOperation()) {
+                    Assert.assertFalse("wrapped random functions must not be replay-stable", operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile("DELETE FROM t WHERE ts < now()", applyContext).getDeleteOperation()) {
+                    Assert.assertFalse(operation.isPredicateReplayStable());
                 }
             }
         });
@@ -725,9 +770,9 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    private static void setWindow(SqlExecutionContext executionContext, long loInclusive, long hiExclusive) throws SqlException {
-        executionContext.getBindVariableService().setTimestamp(DeleteOperation.WINDOW_LO_BIND, loInclusive);
-        executionContext.getBindVariableService().setTimestamp(DeleteOperation.WINDOW_HI_BIND, hiExclusive);
+    private static void setWindow(DeleteOperation operation, SqlExecutionContext executionContext, long loInclusive, long hiExclusive) throws SqlException {
+        executionContext.getBindVariableService().setTimestamp(operation.getWindowLoBindVariableIndex(), loInclusive);
+        executionContext.getBindVariableService().setTimestamp(operation.getWindowHiBindVariableIndex(), hiExclusive);
     }
 
     // Reads a single scalar (row 0, col 0) as a long: count(*), or min(ts)/max(ts) as raw micros.

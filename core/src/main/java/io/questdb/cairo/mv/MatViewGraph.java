@@ -27,14 +27,15 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDependencyList;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -47,6 +48,28 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    public static final class DependentViewsReadGuard implements QuietCloseable {
+        private ViewDependencyList dependentViews;
+        private final boolean isEmpty;
+
+        private DependentViewsReadGuard(ViewDependencyList dependentViews) {
+            this.dependentViews = dependentViews;
+            this.isEmpty = dependentViews.lockForRead().size() == 0;
+        }
+
+        @Override
+        public void close() {
+            if (dependentViews != null) {
+                dependentViews.unlockAfterRead();
+                dependentViews = null;
+            }
+        }
+
+        public boolean isEmpty() {
+            return isEmpty;
+        }
+    }
+
     private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
     private static final CarrierLocal<LowerCaseCharSequenceHashSet> tlSeen = new CarrierLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final CarrierLocal<ArrayDeque<CharSequence>> tlStack = new CarrierLocal<>(ArrayDeque::new);
@@ -112,6 +135,10 @@ public class MatViewGraph implements Mutable {
         for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
         }
+    }
+
+    public DependentViewsReadGuard lockDependentViews(TableToken baseTableToken) {
+        return new DependentViewsReadGuard(getOrCreateDependentViews(baseTableToken.getTableName()));
     }
 
     /**

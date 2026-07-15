@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -217,19 +218,10 @@ public class OperationExecutor implements Closeable {
                     // apply. Still crash-safe: a crash mid-loop leaves durable S-1, the whole delete re-applies,
                     // finished windows re-apply as no-ops (survivors-of-survivors) and already-native partitions
                     // re-convert as no-ops.
-                    isDiskBounded = !deleteOp.isPureTimeRange()
+                    final boolean isDiskBoundedCandidate = !deleteOp.isPureTimeRange()
+                            && deleteOp.isPredicateReplayStable()
                             && engine.getConfiguration().getWalDeleteDiskBounded()
                             && tableWriterHasParquet(tableWriter);
-                    // Observability (M1): one line per DELETE apply naming the route taken. The strategy label
-                    // is derived from the SAME predicates used to pick the route below (isPureTimeRange() and
-                    // the just-computed isDiskBounded), never re-derived independently, so it cannot drift from
-                    // the actual routing decision.
-                    final String deleteStrategy = deleteOp.isPureTimeRange()
-                            ? "time-range"
-                            : (isDiskBounded ? "survivor-window-disk-bounded" : "survivor-window");
-                    LOG.info().$("DELETE apply [table=").$(tableToken)
-                            .$(", strategy=").$(deleteStrategy)
-                            .$(", seqTxn=").$(seqTxn).I$();
                     // Defensive: the window-tiling upper bound (maxTs+1 in windowHiExcl) and deleteWindowStep's
                     // span (maxTs-minTs+1) both overflow when the table's maxTimestamp is exactly Long.MAX_VALUE,
                     // which would infinite-loop the apply thread on the survivor routes and silently no-op the
@@ -243,9 +235,26 @@ public class OperationExecutor implements Closeable {
                                 .put("DELETE unsupported when the table's maxTimestamp is Long.MAX_VALUE (window bound would overflow) [table=")
                                 .put(tableToken.getTableName()).put(']');
                     }
-                    if (isDiskBounded) {
-                        return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
+                    if (isDiskBoundedCandidate) {
+                        final MatViewGraph graph = engine.getMatViewGraph();
+                        final TableToken currentTableToken = tableWriter.getTableToken();
+                        // The graph-owned guard retains the exact dependency-list identity and its read lock across
+                        // the non-atomic loop, so a concurrent materialized-view add cannot race any window commit.
+                        try (MatViewGraph.DependentViewsReadGuard dependentViews = graph.lockDependentViews(currentTableToken)) {
+                            if (dependentViews.isEmpty()) {
+                                isDiskBounded = true;
+                                LOG.info().$("DELETE apply [table=").$(currentTableToken)
+                                        .$(", strategy=survivor-window-disk-bounded")
+                                        .$(", seqTxn=").$(seqTxn).I$();
+                                return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
+                            }
+                        }
                     }
+
+                    final String deleteStrategy = deleteOp.isPureTimeRange() ? "time-range" : "survivor-window";
+                    LOG.info().$("DELETE apply [table=").$(tableWriter.getTableToken())
+                            .$(", strategy=").$(deleteStrategy)
+                            .$(", seqTxn=").$(seqTxn).I$();
 
                     // Task 3.1 Parquet convert-to-native fallback. Any Parquet partition the replace below would
                     // REWRITE (a boundary trim on the time-range route, or an arbitrary-condition rewrite) is
@@ -533,8 +542,8 @@ public class OperationExecutor implements Closeable {
      * window.
      * <p>
      * Per window, the survivor cursor is re-obtained from {@code survivorFactory} after rebinding
-     * {@link DeleteOperation#WINDOW_LO_BIND}/{@link DeleteOperation#WINDOW_HI_BIND} (via
-     * {@link DeleteOperation#setWindowBound}, never a raw {@code bind.setTimestamp} - see the field comment
+     * the operation-owned indexed bounds (via {@link DeleteOperation#setWindowBound}, never a raw
+     * {@code bind.setTimestamp} - see the field comment
      * on {@code tsColType} below) to the window's {@code [wLo, wHiExcl)}, so
      * {@code SqlCompilerImpl.generateDelete}'s ANDed interval predicate restricts each pass to an interval
      * scan of just that window rather than a full-table rescan. Every window reads the table's COMMITTED
@@ -562,8 +571,11 @@ public class OperationExecutor implements Closeable {
         // Designated-ts column type (TIMESTAMP_MICRO or TIMESTAMP_NANO). The window bounds MUST be set in
         // this unit via DeleteOperation.setWindowBound: a raw bind.setTimestamp is micros-only and overflows
         // in NanosTimestampDriver.from on a nanos table -> ImplicitCastException -> table SUSPENDED. Never
-        // call bind.setTimestamp on WINDOW_LO_BIND/WINDOW_HI_BIND directly.
+        // call bind.setTimestamp on the window-bound indexes directly.
         final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex);
+        final int windowHiBindVariableIndex = deleteOp.getWindowHiBindVariableIndex();
+        final int windowLoBindVariableIndex = deleteOp.getWindowLoBindVariableIndex();
+        assert windowHiBindVariableIndex >= 0 && windowLoBindVariableIndex >= 0;
 
         tableWriter.beginReplaceRange();
         boolean finished = false;
@@ -573,8 +585,8 @@ public class OperationExecutor implements Closeable {
             while (wLo <= maxTs) {
                 final long wHiExcl = windowHiExcl(wLo, step, maxTs);
 
-                DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
-                DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
+                DeleteOperation.setWindowBound(bind, windowLoBindVariableIndex, tsColType, wLo);
+                DeleteOperation.setWindowBound(bind, windowHiBindVariableIndex, tsColType, wHiExcl);
                 try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
                     tableWriter.applyReplaceRangeWindow(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
                 }
@@ -654,6 +666,9 @@ public class OperationExecutor implements Closeable {
         // unit via DeleteOperation.setWindowBound, never a raw bind.setTimestamp (micros-only -> overflow/suspend
         // on a nanos table). See replaceWithSurvivors' identical field comment.
         final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex);
+        final int windowHiBindVariableIndex = deleteOp.getWindowHiBindVariableIndex();
+        final int windowLoBindVariableIndex = deleteOp.getWindowLoBindVariableIndex();
+        assert windowHiBindVariableIndex >= 0 && windowLoBindVariableIndex >= 0;
 
         long removed = 0;
         long windowCount = 0;
@@ -663,8 +678,8 @@ public class OperationExecutor implements Closeable {
             // Convert only THIS window's overlapping Parquet partitions to native (its own commit at S-1), so at
             // most one window's partitions are transiently native.
             convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);
-            DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
-            DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
+            DeleteOperation.setWindowBound(bind, windowLoBindVariableIndex, tsColType, wLo);
+            DeleteOperation.setWindowBound(bind, windowHiBindVariableIndex, tsColType, wHiExcl);
             try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
                 // Single-call replaceRange => this window is its own commit (still at durable seqTxn S-1).
                 removed += tableWriter.replaceRange(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);

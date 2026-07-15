@@ -972,7 +972,8 @@ public interface CairoConfiguration {
      * per-window convert+replace+commit loop that bounds transient Parquet-convert disk to a single window
      * (at most one window's partitions are transiently native at a time). This path is intentionally
      * <b>non-atomic</b>: a concurrent reader may observe a partially-applied delete while WAL apply is in
-     * progress (it is still crash-safe - a crash re-applies the whole delete). When {@code false} (default),
+     * progress (it is still crash-safe - a crash re-applies the whole delete). Replay-unstable predicates and
+     * base tables with dependent materialized views always use the atomic route. When {@code false} (default),
      * the atomic windowed survivor-replace is used, which bounds staged memory but converts all Parquet
      * partitions up front. Only affects the arbitrary route; pure time-range deletes are unaffected.
      * <p>

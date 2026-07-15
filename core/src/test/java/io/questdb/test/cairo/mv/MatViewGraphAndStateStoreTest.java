@@ -72,6 +72,26 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         Assert.assertFalse(graph.addView(viewDefinition));
     }
 
+    @Test
+    public void testDependentViewsReadGuard() {
+        final TableToken tableToken = newTableToken("table1");
+        final TableToken viewToken = newMatViewToken("view1");
+
+        try (MatViewGraph.DependentViewsReadGuard guard = graph.lockDependentViews(tableToken)) {
+            Assert.assertTrue(guard.isEmpty());
+        }
+
+        graph.addView(createDefinition(viewToken, tableToken));
+        try (MatViewGraph.DependentViewsReadGuard guard = graph.lockDependentViews(tableToken)) {
+            Assert.assertFalse(guard.isEmpty());
+        }
+
+        graph.removeView(viewToken);
+        try (MatViewGraph.DependentViewsReadGuard guard = graph.lockDependentViews(tableToken)) {
+            Assert.assertTrue(guard.isEmpty());
+        }
+    }
+
     // loops
     @Test
     public void testDirectSelfLoop() {
