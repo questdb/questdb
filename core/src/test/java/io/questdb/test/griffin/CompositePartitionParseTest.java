@@ -99,6 +99,23 @@ public class CompositePartitionParseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDanglingCommaAfterDimensionThrows() throws Exception {
+        // Trailing comma after a real dimension: the comma has been consumed, so the parser
+        // requires another dimension expression to follow; EOF here must be a clean parse
+        // error, not a silently-stored null entry in the dimension list.
+        final String sql = "create table t10 (ts timestamp, s symbol) timestamp(ts) partition by day, s,";
+        assertException(sql, sql.length(), "partition dimension expected");
+    }
+
+    @Test
+    public void testDanglingCommaAfterTimeUnitThrows() throws Exception {
+        // Trailing comma right after the time unit: same requirement as above, but with an
+        // empty dimension list so far (the comma directly follows "day").
+        final String sql = "create table t11 (ts timestamp, s symbol) timestamp(ts) partition by day,";
+        assertException(sql, sql.length(), "partition dimension expected");
+    }
+
+    @Test
     public void testLayoutHiveExplicit() throws Exception {
         final String sql = "create table t8 (ts timestamp, exchange symbol) timestamp(ts) " +
                 "partition by day, exchange layout hive wal";

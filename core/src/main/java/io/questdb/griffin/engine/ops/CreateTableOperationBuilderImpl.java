@@ -57,17 +57,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
+    private final ObjList<ExpressionNode> clusterExprs = new ObjList<>();
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
+    private byte namingMode = PartitionSpec.MODE_HIVE;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
-    // Composite partitioning (parse-time only): raw dimension/cluster expressions collected by the
-    // parser. Resolved into PartitionSpec/PartitionDimension (see PartitionTransform) in a later stage;
-    // this builder never interprets them.
-    private final ObjList<ExpressionNode> clusterExprs = new ObjList<>();
-    private byte namingMode = PartitionSpec.MODE_HIVE;
     private final ObjList<ExpressionNode> partitionDimensionExprs = new ObjList<>();
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;

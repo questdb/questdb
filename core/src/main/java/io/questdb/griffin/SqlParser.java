@@ -1738,7 +1738,15 @@ public class SqlParser {
             // Composite partitioning dimension list: PARTITION BY <time-unit> [, <dimension>]*
             // Dimensions are collected as raw expressions only; resolution to PartitionSpec happens later.
             while (tok != null && Chars.equals(tok, ',')) {
-                builder.addPartitionDimensionExpr(expr(lexer, (IQueryModel) null, sqlParserCallback));
+                final int dimPos = lexer.getPosition();
+                final ExpressionNode dimExpr = expr(lexer, (IQueryModel) null, sqlParserCallback);
+                if (dimExpr == null) {
+                    // The comma was already consumed above, so unlike the WITH-clause loop (which
+                    // uses a null expr as its natural terminator), null here means a dangling comma
+                    // with nothing following it: malformed input that must be rejected, not skipped.
+                    throw SqlException.$(dimPos, "partition dimension expected");
+                }
+                builder.addPartitionDimensionExpr(dimExpr);
                 tok = optTok(lexer);
             }
 
