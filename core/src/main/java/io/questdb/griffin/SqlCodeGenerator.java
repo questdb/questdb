@@ -11021,14 +11021,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final RecordMetadata baseMetadata = unionFactory.getMetadata();
         final int columnCount = baseMetadata.getColumnCount();
-        boolean resymbolise = false;
+        boolean isResymboliseRequired = false;
         for (int i = 0; i < columnCount; i++) {
             if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
-                resymbolise = true;
+                isResymboliseRequired = true;
                 break;
             }
         }
-        if (!resymbolise) {
+        if (!isResymboliseRequired) {
             return unionFactory;
         }
         // One reserved slot per projected column. Unlike generateSelectVirtualWithSubQuery this
@@ -11052,16 +11052,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             functions = new ObjList<>(reservedSlots);
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = baseMetadata.getColumnName(i);
+                // Register baseColumn before wrapping it: both the cast-to-symbol constructor and the
+                // metadata constructor below can throw (an OutOfMemoryError, say), and the catch can
+                // only free what the list already holds. When the wrapper is built it takes ownership
+                // of baseColumn (UnaryFunction.close closes its arg), so swap it into the slot rather
+                // than adding it, to avoid freeing baseColumn twice.
                 final Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
-                final boolean toSymbol = symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING;
-                final Function function = toSymbol ? new CastStrToSymbolFunctionFactory.Func(baseColumn) : baseColumn;
-                // Register the function before building its metadata, so a throw in the metadata
-                // constructor still leaves it in the free list for the catch below.
-                functions.add(function);
-                // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
-                final TableColumnMetadata m = toSymbol
-                        ? new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata())
-                        : new TableColumnMetadata(columnName, baseMetadata.getColumnType(i), function.getMetadata());
+                functions.add(baseColumn);
+                final TableColumnMetadata m;
+                if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
+                    final Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    functions.setQuick(i, function);
+                    // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
+                    m = new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata());
+                } else {
+                    m = new TableColumnMetadata(columnName, baseMetadata.getColumnType(i), baseColumn.getMetadata());
+                }
                 virtualMetadata.add(m);
                 priorityMetadata.add(m);
             }
