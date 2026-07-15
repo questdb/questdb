@@ -71,6 +71,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final int durableEpochSeqTxnColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
+    private static final int lastEpochTsColumn;
+    private static final int localDurableSeqTxnColumn;
     private static final int memoryPressureLevelColumn;
     private static final int nameColumn;
     private static final int recoveryIncarnationColumn;
@@ -207,6 +209,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 private long durableEpochSeqTxn;
                 private String errorMessage;
                 private String errorTag;
+                private long lastEpochTs;
+                private long localDurableSeqTxn;
                 private int memoryPressureLevel;
                 private long recoveryIncarnation;
                 private long sequencerTxn;
@@ -250,6 +254,12 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                     if (col == recoveryIncarnationColumn) {
                         return recoveryIncarnation;
+                    }
+                    if (col == localDurableSeqTxnColumn) {
+                        return localDurableSeqTxn;
+                    }
+                    if (col == lastEpochTsColumn) {
+                        return lastEpochTs;
                     }
                     return Numbers.LONG_NULL;
                 }
@@ -303,6 +313,12 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
                             walRetentionTxn = seqTxnTracker.getDurableEpochSeqTxn();
                             recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
+                            localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
+                            // getLastEpochTs() is wall-clock MILLIS (0 == no epoch yet); the column is
+                            // TIMESTAMP (MICROS). Render NULL for "no epoch" rather than a misleading
+                            // 1970-01-01 (epoch 0) timestamp; scale ms -> micros when a real epoch exists.
+                            long lastEpochMs = seqTxnTracker.getLastEpochTs();
+                            lastEpochTs = lastEpochMs > 0 ? lastEpochMs * 1000 : Numbers.LONG_NULL;
                             if (suspendedFlag) {
                                 // only read error details from seqTxnTracker if the table is suspended
                                 // when the table is not suspended, it is not guaranteed that error details are immediately cleared
@@ -319,6 +335,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         durableEpochSeqTxn = 0;
                         walRetentionTxn = 0;
                         recoveryIncarnation = 0;
+                        localDurableSeqTxn = 0;
+                        lastEpochTs = Numbers.LONG_NULL;
 
                         try {
                             // We used to have suspended flag saved in the sequencer metadata file
@@ -396,6 +414,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         walRetentionTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));
         recoveryIncarnationColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("localDurableSeqTxn", ColumnType.LONG));
+        localDurableSeqTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("lastEpochTs", ColumnType.TIMESTAMP));
+        lastEpochTsColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }
