@@ -105,7 +105,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
-    protected final PerWorkerLocks perWorkerLocks;
+    protected PerWorkerLocks perWorkerLocks;
     protected final ObjList<RecordSink> perWorkerMasterAsOfJoinMapSinks;
     protected final ObjList<RecordSink> perWorkerSlaveAsOfJoinMapSinks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
@@ -494,7 +494,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 

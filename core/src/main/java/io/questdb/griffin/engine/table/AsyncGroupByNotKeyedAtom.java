@@ -73,7 +73,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
-    private final PerWorkerLocks perWorkerLocks;
+    private PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
@@ -285,7 +285,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 

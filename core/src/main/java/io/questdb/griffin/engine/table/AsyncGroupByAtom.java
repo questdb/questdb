@@ -81,7 +81,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
-    private final PerWorkerLocks perWorkerLocks;
+    private PerWorkerLocks perWorkerLocks;
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
@@ -418,7 +418,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 

@@ -73,7 +73,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final ObjList<LimitedSizeLongTreeChain> perWorkerChains;
     private final ObjList<RecordComparator> perWorkerComparators;
     private final ObjList<SortKeyEncoder> perWorkerEncoders;
-    private final PerWorkerLocks perWorkerLocks;
+    private PerWorkerLocks perWorkerLocks;
     private final ObjList<PageFrameMemoryRecord> perWorkerRecordsB;
     private final ObjList<EncodedTopKBuffer> perWorkerTopK;
     private final ObjList<DirectIntList> rankMaps;
@@ -322,7 +322,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 

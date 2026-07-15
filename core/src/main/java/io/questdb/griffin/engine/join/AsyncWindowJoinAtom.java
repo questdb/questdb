@@ -119,7 +119,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     private final ObjList<FlyweightMapValue> perWorkerGroupByValues;
     private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
-    private final PerWorkerLocks perWorkerLocks;
+    private PerWorkerLocks perWorkerLocks;
     private final ObjList<GroupByLongList> perWorkerLongLists;
     private final ObjList<Function> perWorkerMasterFilters;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
@@ -593,7 +593,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 

@@ -37,8 +37,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     private final int noStealingThreshold;
     private final long spinTimeoutNanos;
-    private StatefulAtom atom;
-    private boolean isTestSlotAcquireWaitEnabled;
     private AtomicInteger startedCounter;
 
     public AdaptiveWorkStealingStrategy(int noStealingThreshold, long spinTimeoutNanos) {
@@ -49,22 +47,18 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     @Override
     public WorkStealingStrategy of(AtomicInteger startedCounter) {
         this.startedCounter = startedCounter;
-        this.atom = null;
-        this.isTestSlotAcquireWaitEnabled = false;
         return this;
     }
 
     @Override
     public WorkStealingStrategy of(AtomicInteger startedCounter, StatefulAtom atom) {
-        this.startedCounter = startedCounter;
-        this.atom = atom;
-        this.isTestSlotAcquireWaitEnabled = atom.isTestSlotAcquireWaitEnabled();
-        return this;
+        return atom.isTestSlotAcquireWaitEnabled()
+                ? new TestAdaptiveWorkStealingStrategy(noStealingThreshold, spinTimeoutNanos, atom).of(startedCounter)
+                : of(startedCounter);
     }
 
     @Override
     public boolean shouldSteal(int finishedCount) {
-        assert !isTestSlotAcquireWaitEnabled || atom.awaitTestSlotAcquire() : "timed out waiting for a worker slot acquisition";
         // Give shared workers a chance to pick up the tasks.
         // The spin duration is time-based to ensure consistent behavior
         // across different CPU architectures (Intel vs AMD have very different
@@ -88,5 +82,24 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
             }
         } while (System.nanoTime() < deadline);
         return true;
+    }
+
+    private static class TestAdaptiveWorkStealingStrategy extends AdaptiveWorkStealingStrategy {
+        private final StatefulAtom atom;
+
+        private TestAdaptiveWorkStealingStrategy(
+                int noStealingThreshold,
+                long spinTimeoutNanos,
+                StatefulAtom atom
+        ) {
+            super(noStealingThreshold, spinTimeoutNanos);
+            this.atom = atom;
+        }
+
+        @Override
+        public boolean shouldSteal(int finishedCount) {
+            assert atom.awaitTestSlotAcquire() : "timed out waiting for a worker slot acquisition";
+            return super.shouldSteal(finishedCount);
+        }
     }
 }

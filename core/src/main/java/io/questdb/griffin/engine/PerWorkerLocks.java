@@ -49,8 +49,6 @@ public class PerWorkerLocks {
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
-    private final AtomicLong slotAcquireCount = new AtomicLong();
-    private volatile CountDownLatch testAcquireLatch;
     private final int workerCount;
 
     public PerWorkerLocks(@NotNull CairoConfiguration configuration, int workerCount) {
@@ -60,6 +58,12 @@ public class PerWorkerLocks {
         );
         this.workerCount = workerCount;
         locks = new AtomicIntegerArray(INTS_PER_SLOT * workerCount);
+    }
+
+    private PerWorkerLocks(PerWorkerLocks locks) {
+        this.locks = locks.locks;
+        this.rnd = locks.rnd;
+        this.workerCount = locks.workerCount;
     }
 
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
@@ -76,7 +80,6 @@ public class PerWorkerLocks {
                     id -= workerCount;
                 }
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
-                    assert tallyAcquireIfEnabled();
                     return id;
                 }
             }
@@ -99,7 +102,6 @@ public class PerWorkerLocks {
                     id -= workerCount;
                 }
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
-                    assert tallyAcquireIfEnabled();
                     return id;
                 }
             }
@@ -133,12 +135,12 @@ public class PerWorkerLocks {
      */
     @TestOnly
     public long getSlotAcquireCount() {
-        return slotAcquireCount.get();
+        return 0;
     }
 
     @TestOnly
     public boolean hasTestAcquireLatch() {
-        return testAcquireLatch != null;
+        return false;
     }
 
     public void releaseSlot(int slot) {
@@ -149,29 +151,64 @@ public class PerWorkerLocks {
 
     @TestOnly
     public boolean awaitTestAcquire() {
-        final CountDownLatch latch = testAcquireLatch;
-        if (latch == null) {
-            return true;
-        }
-        try {
-            return latch.await(30, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return true;
     }
 
     @TestOnly
-    public void setTestAcquireLatch(CountDownLatch latch) {
-        testAcquireLatch = latch;
+    public PerWorkerLocks withTestAcquireLatch(CountDownLatch latch) {
+        return latch != null ? new TestPerWorkerLocks(this, latch) : this;
     }
 
-    private boolean tallyAcquireIfEnabled() {
-        final CountDownLatch latch = testAcquireLatch;
-        if (latch != null) {
-            slotAcquireCount.incrementAndGet();
-            latch.countDown();
+    private static class TestPerWorkerLocks extends PerWorkerLocks {
+        private final PerWorkerLocks normalLocks;
+        private final AtomicLong slotAcquireCount = new AtomicLong();
+        private final CountDownLatch testAcquireLatch;
+
+        private TestPerWorkerLocks(PerWorkerLocks locks, CountDownLatch testAcquireLatch) {
+            super(locks);
+            this.normalLocks = locks instanceof TestPerWorkerLocks testLocks ? testLocks.normalLocks : locks;
+            this.testAcquireLatch = testAcquireLatch;
         }
-        return true;
+
+        @Override
+        public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
+            final int slot = super.acquireSlot(workerId, sqlCircuitBreaker);
+            slotAcquireCount.incrementAndGet();
+            testAcquireLatch.countDown();
+            return slot;
+        }
+
+        @Override
+        public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
+            final int slot = super.acquireSlot(carrierId, circuitBreaker);
+            slotAcquireCount.incrementAndGet();
+            testAcquireLatch.countDown();
+            return slot;
+        }
+
+        @Override
+        public boolean awaitTestAcquire() {
+            try {
+                return testAcquireLatch.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+
+        @Override
+        public long getSlotAcquireCount() {
+            return slotAcquireCount.get();
+        }
+
+        @Override
+        public boolean hasTestAcquireLatch() {
+            return true;
+        }
+
+        @Override
+        public PerWorkerLocks withTestAcquireLatch(CountDownLatch latch) {
+            return latch != null ? new TestPerWorkerLocks(normalLocks, latch) : normalLocks;
+        }
     }
 }

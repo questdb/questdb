@@ -104,7 +104,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
-    protected final PerWorkerLocks perWorkerLocks;
+    protected PerWorkerLocks perWorkerLocks;
     protected final ObjList<ObjList<RecordSink>> perWorkerMasterAsOfJoinSinks;
     protected final ObjList<ObjList<RecordSink>> perWorkerSlaveAsOfJoinSinks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
@@ -566,7 +566,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 

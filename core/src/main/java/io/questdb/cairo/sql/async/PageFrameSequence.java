@@ -74,7 +74,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final PageFrameReducer reducer;
     private final byte taskType; // PageFrameReduceTask.TYPE_*
     private final AtomicBoolean valid = new AtomicBoolean(true);
-    private final WorkStealingStrategy workStealingStrategy;
+    private final WorkStealingStrategy workStealingStrategyBase;
     public volatile boolean done;
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
@@ -98,6 +98,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private boolean uninterruptible;
     // Must be initialized from the original SQL context's circuit breaker before use.
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
+    private WorkStealingStrategy workStealingStrategy;
 
     /**
      * Constructs a page frame sequence instance. The returned instance takes ownership of the input atom.
@@ -119,7 +120,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
             this.localTaskFactory = localTaskFactory;
-            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategyBase = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategy = workStealingStrategyBase;
             this.taskType = taskType;
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
         } catch (Throwable th) {
@@ -399,7 +401,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter, atom);
+            workStealingStrategy = workStealingStrategyBase.of(reduceStartedCounter, atom);
             shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
             reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
@@ -487,7 +489,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             collectedFrameIndex = -1;
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter, atom);
+            workStealingStrategy = workStealingStrategyBase.of(reduceStartedCounter, atom);
             valid.set(true);
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
         }

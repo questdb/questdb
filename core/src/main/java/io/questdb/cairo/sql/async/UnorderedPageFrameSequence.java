@@ -83,7 +83,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
-    private final WorkStealingStrategy workStealingStrategy;
+    private final WorkStealingStrategy workStealingStrategyBase;
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
@@ -105,6 +105,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
+    private WorkStealingStrategy workStealingStrategy;
 
     public UnorderedPageFrameSequence(
             CairoEngine engine,
@@ -119,7 +120,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.frameAddressCache = new PageFrameAddressCache();
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
-            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategyBase = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategy = workStealingStrategyBase;
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
@@ -358,7 +360,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             doneLatch.reset();
             reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter, atom);
+            workStealingStrategy = workStealingStrategyBase.of(reduceStartedCounter, atom);
             errorMsg.clear();
             errorMessagePosition = 0;
             errno = CairoException.NON_CRITICAL;

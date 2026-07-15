@@ -56,7 +56,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
     private final ObjList<Function> perWorkerFilters;
-    private final PerWorkerLocks perWorkerLocks;
+    private PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final ObjList<SelectivityStats> threadSafeSelectivityStats;
     private final boolean preTouchEnabled;
@@ -172,7 +172,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     @TestOnly
     public void setTestSlotAcquireLatch(CountDownLatch latch) {
         if (perWorkerLocks != null) {
-            perWorkerLocks.setTestAcquireLatch(latch);
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
         }
     }
 
