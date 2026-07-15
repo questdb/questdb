@@ -51,10 +51,13 @@ import static io.questdb.TelemetryEvent.*;
  * {@link MatViewRefreshJob}s.
  * <p>
  * Unlike {@link MatViewStateReader}, it does not carry a persisted invalidation
- * reason string. The only reason it holds, the {@link #pendingInvalidationMarker}, is a
- * transient in-memory marker for an invalidation that deferred behind the view lock;
- * it is distinct from the reader's durable invalidationReason and is cleared once the
- * lock-holding refresh finalizes the deferral.
+ * reason string. The {@link #pendingInvalidationMarker} is a transient in-memory marker
+ * with two facets: a deferred invalidation (reason plus optional base-table txn
+ * provenance) and a pending full-refresh owner. Either facet can be present alone or
+ * combined on one marker; publications merge facets keep-strongest. A lock-holder's
+ * finalize wakes whichever facets remain after its hold, and each facet is cleared only
+ * by the operation that consumes it (an invalid-state mint, or a covering or terminal
+ * full refresh). It is distinct from the reader's durable invalidationReason.
  */
 public class MatViewState implements QuietCloseable {
     // Cold-start gap-width threshold used when no scan/commit samples have
@@ -573,6 +576,16 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshStartTimestampUs;
     }
 
+    @TestOnly
+    public TableToken getPendingInvalidationBaseTableTokenForTesting() {
+        return getPendingInvalidationBaseTableToken(pendingInvalidationMarker);
+    }
+
+    @TestOnly
+    public long getPendingInvalidationBaseTxnForTesting() {
+        return getPendingInvalidationBaseTxn(pendingInvalidationMarker);
+    }
+
     public String getPendingInvalidationReason() {
         return getPendingInvalidationReason(pendingInvalidationMarker);
     }
@@ -635,6 +648,11 @@ public class MatViewState implements QuietCloseable {
         return viewDefinition;
     }
 
+    @TestOnly
+    public boolean hasPendingFullRefreshOwnerForTesting() {
+        return getPendingFullRefreshOwner(pendingInvalidationMarker) != null;
+    }
+
     public void incrementRefreshIntervalsSeq() {
         refreshIntervalsSeq.incrementAndGet();
     }
@@ -675,6 +693,11 @@ public class MatViewState implements QuietCloseable {
 
     public boolean isPendingInvalidation() {
         return pendingInvalidationMarker != null;
+    }
+
+    @TestOnly
+    public boolean isPendingInvalidationForcedForTesting() {
+        return isPendingInvalidationForced(pendingInvalidationMarker);
     }
 
     /**
@@ -720,6 +743,21 @@ public class MatViewState implements QuietCloseable {
 
     public void markAsPendingInvalidation(String invalidationReason) {
         markAsPendingInvalidationAndGetMarker(invalidationReason);
+    }
+
+    @TestOnly
+    public void markAsPendingInvalidationForTesting(
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
+        markAsPendingInvalidationAndGetMarker(
+                invalidationReason,
+                invalidationBaseTableToken,
+                invalidationBaseTxn,
+                isInvalidationForced
+        );
     }
 
     Object markAsPendingFullRefreshAndGetOwner() {

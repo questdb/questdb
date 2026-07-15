@@ -38,6 +38,7 @@ import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -553,6 +554,85 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .returns("""
                             count
                             0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFinalizePartialFullWakeFailureRedrives() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            final AtomicInteger invalidationWakeCount = new AtomicInteger();
+            final MatViewStateStore splittingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+                    throw new OutOfMemoryError("test full wake enqueue failure");
+                }
+
+                @Override
+                public void enqueueInvalidate(
+                        TableToken matViewToken,
+                        String invalidationReason,
+                        TableToken invalidationBaseTableToken,
+                        long invalidationBaseTxn,
+                        boolean isInvalidationForced
+                ) {
+                    invalidationWakeCount.incrementAndGet();
+                    super.enqueueInvalidate(
+                            matViewToken,
+                            invalidationReason,
+                            invalidationBaseTableToken,
+                            invalidationBaseTxn,
+                            isInvalidationForced
+                    );
+                }
+            };
+
+            // A synthetic holder defers both facets, then finalizes through the splitting store:
+            // the invalidation wake is delivered, the FULL wake throws. The finalize must have
+            // released the latch before either wake, and the FULL failure must arm the canonical
+            // store's allocation-free retry bit rather than losing the owner.
+            Assert.assertTrue(state.tryLock());
+            boolean isLatchReleased = false;
+            try {
+                state.markAsPendingInvalidation("split finalize witness");
+                state.markAsPendingInvalidation();
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, splittingStore, viewToken, state, false);
+                    Assert.fail("the FULL wake enqueue failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                }
+                isLatchReleased = true;
+            } finally {
+                if (!isLatchReleased) {
+                    state.unlock();
+                }
+            }
+            Assert.assertFalse("finalize must unlock before attempting the wakes", state.isLocked());
+            Assert.assertEquals("the invalidation wake must be delivered despite the FULL failure",
+                    1, invalidationWakeCount.get());
+            Assert.assertTrue(state.isPendingInvalidation());
+
+            // Next ticks: the retry scan redelivers the FULL owner from the marker, the queued
+            // invalidation mints invalid state, and the redelivered FULL performs invalid-view
+            // recovery back to valid.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            Assert.assertFalse("recovery must consume both facets", state.isPendingInvalidation());
+            Assert.assertFalse("recovery must end valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
                             """);
         });
     }
@@ -1602,10 +1682,68 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPendingInvalidationMarkerMergeSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createUnseededAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final TableToken baseToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseToken);
+            final TableToken otherToken = fixture.viewToken();
+
+            // Same-token merge: the newer reason wins, the txn frontier keeps the maximum, and the
+            // force flag ORs -- a forced publication can never be demoted by a later unforced one.
+            state.markAsPendingInvalidationForTesting("first reason", baseToken, 5, false);
+            Assert.assertFalse(state.isPendingInvalidationForcedForTesting());
+            state.markAsPendingInvalidationForTesting("second reason", baseToken, 3, true);
+            Assert.assertEquals("second reason", state.getPendingInvalidationReason());
+            Assert.assertEquals("same-token merge must keep the maximum txn frontier",
+                    5, state.getPendingInvalidationBaseTxnForTesting());
+            Assert.assertTrue("force must merge with OR semantics",
+                    state.isPendingInvalidationForcedForTesting());
+            Assert.assertEquals(baseToken, state.getPendingInvalidationBaseTableTokenForTesting());
+            state.markAsPendingInvalidationForTesting("third reason", baseToken, 9, false);
+            Assert.assertEquals(9, state.getPendingInvalidationBaseTxnForTesting());
+            Assert.assertTrue("force must stay sticky through later unforced merges",
+                    state.isPendingInvalidationForcedForTesting());
+
+            // Cross-token merge collapses provenance conservatively: without a comparable frontier
+            // the marker must survive any full-refresh coverage check.
+            state.markAsPendingInvalidationForTesting("fourth reason", otherToken, 11, false);
+            Assert.assertNull("differing tokens must collapse provenance",
+                    state.getPendingInvalidationBaseTableTokenForTesting());
+            Assert.assertEquals(Numbers.LONG_NULL, state.getPendingInvalidationBaseTxnForTesting());
+
+            // Unknown provenance merging with known collapses too. The one-arg publication carries
+            // no provenance and defaults to forced.
+            clearPendingInvalidation(state);
+            state.markAsPendingInvalidationForTesting("known provenance", baseToken, 5, false);
+            state.markAsPendingInvalidation("unknown provenance");
+            Assert.assertNull(state.getPendingInvalidationBaseTableTokenForTesting());
+            Assert.assertEquals(Numbers.LONG_NULL, state.getPendingInvalidationBaseTxnForTesting());
+            Assert.assertTrue(state.isPendingInvalidationForcedForTesting());
+
+            // Facets combine on one marker: the no-arg overload ADDS the owner facet (it is not a
+            // no-op) while preserving the reason, and a later reason publication preserves the owner.
+            Assert.assertFalse(state.hasPendingFullRefreshOwnerForTesting());
+            state.markAsPendingInvalidation();
+            Assert.assertTrue("the no-arg overload must add the owner facet",
+                    state.hasPendingFullRefreshOwnerForTesting());
+            Assert.assertEquals("unknown provenance", state.getPendingInvalidationReason());
+            state.markAsPendingInvalidationForTesting("fifth reason", baseToken, 2, false);
+            Assert.assertTrue("a reason publication must preserve the owner facet",
+                    state.hasPendingFullRefreshOwnerForTesting());
+            Assert.assertEquals("fifth reason", state.getPendingInvalidationReason());
+
+            clearPendingInvalidation(state);
+        });
+    }
+
     // Locks in the pending-invalidation marker state machine after the (pendingInvalidation,
     // pendingInvalidationReason) two-volatile composite was collapsed into a single atomic reference
     // (MatViewState#pendingInvalidationMarker). Every transition must be observable as exactly one of:
-    // not-pending, pending-with-reason, or the no-reason full-refresh marker -- never a torn mix.
+    // not-pending, pending-with-reason, owner-only, or reason-plus-owner combined -- never a torn mix.
+    // Merge and facet-combination semantics are pinned by testPendingInvalidationMarkerMergeSemantics.
     @Test
     public void testPendingInvalidationMarkerStateMachineIsAtomic() throws Exception {
         assertMemoryLeak(() -> {
@@ -1625,8 +1763,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertEquals("truncate operation", state.getPendingInvalidationReason());
 
             // The no-arg overload is the full-refresh reschedule sentinel, and it is keep-strongest: on a
-            // reason-bearing marker it is a no-op, so a losing full refresh cannot demote a deferral that a
-            // lock-holder's finalize would recover into one only the queued full refresh clears.
+            // reason-bearing marker it adds the owner facet while preserving the reason, so a losing full
+            // refresh cannot demote a deferral that a lock-holder's finalize would recover into one only
+            // the queued full refresh clears.
             state.markAsPendingInvalidation();
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertEquals("the sentinel must not demote a reason-bearing deferral",
