@@ -364,10 +364,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
         // clearTemporaryData() sits inside the try that releases the slot, as it does in the five
         // filterAndAggregate* reducers below and in the sixteen of the general factory. It cannot
-        // throw today - it only shrinks the temporary allocator's chunk index back to its initial
-        // capacity, and a shrinking realloc passes a negative delta to Unsafe's alloc-limit check,
-        // which skips it - so this is structural rather than a fix for a live leak, and the next
-        // throwing call added here is safe by construction. A slot leaked here would be permanent:
+        // throw today - chunks.isOpen() guards the only realloc, which only shrinks the temporary
+        // allocator's chunk index back to its initial capacity. A shrinking realloc passes a negative
+        // delta to Unsafe's alloc-limit check, which skips it - so this is structural rather than a
+        // fix for a live leak, and the next throwing call added here is safe by construction. A slot
+        // leaked here would be permanent:
         // PerWorkerLocks has no reset and the atom belongs to the factory, so once every slot had
         // leaked, each later execution of the cached statement would spin in acquireSlot for a slot
         // nobody will release. (The getters between the acquire and this try are ObjList lookups and

@@ -40,10 +40,10 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * <p>
  * A slot's int is a counter, not a flag: acquire increments it to an odd value, release increments
  * it again to an even one. So the parity says whether the slot is held, and the counter says how
- * many times it has been acquired. The counter never goes down, so it stays ABA-free: an acquirer's
- * CAS can only win against the exact even value it read. A 2^32 wrap is harmless - 0xFFFFFFFF is odd
- * (held) and wrapping to 0 leaves it even (free), so the parity survives; only the acquire tally
- * restarts.
+ * many times it has been acquired. Safety comes from the state parity and the atomic compare-and-set:
+ * an acquirer's CAS can only win against the exact even value it read. A 2^32 wrap is harmless -
+ * 0xFFFFFFFF is odd (held) and wrapping to 0 leaves it even (free), so the parity survives; only the
+ * acquire tally restarts.
  * <p>
  * The count is close to free: the acquire is the same single CAS it always was, over a volatile load
  * it already did, and the release is a volatile load plus the single store it always was. Both run

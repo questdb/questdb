@@ -90,11 +90,9 @@ final class KeyedBatchTestUtils {
     // last_not_null override's stored-value-is-null guard as redundant disjuncts that no
     // assertion can tell apart from the plain base.
     //
-    // Entries 5 and 7 are the ones that can hold a stored NULL at a real rowId, so the descending
-    // batch must pair them with a NON-null row to reach that guard. Rows 0, 4 and 6 are non-null in
-    // every type's fixture, rows 1, 3 and 5 are not: Numbers.isNull(double) counts an infinity as
-    // NULL, so DOUBLE/FLOAT are null at 3 and 5 as well as 1. Rows may repeat - buildBatchBuffer
-    // pairs rows with entry offsets independently.
+    // Null placement varies by type (notably IPv4), so which entries hold a stored NULL also varies.
+    // The descending rows are chosen to revisit the mix with lower rowIds; rows may repeat because
+    // buildBatchBuffer pairs rows with entry offsets independently.
     private static final long DESCENDING_BASE_ROW_ID = 1000;
     private static final boolean[] DESCENDING_IS_NEW = {false, false, false, false, false, false, false, false};
     private static final long[] DESCENDING_ROWS = {0, 4, 1, 7, 2, 6, 6, 0};
@@ -108,10 +106,9 @@ final class KeyedBatchTestUtils {
     // from another. This batch covers it: four entries, two rows each, ascending rows, over fresh
     // regions so the first row to reach an entry creates it, as probeBatch marks it.
     //
-    //   entry 0 <- rows 0, 3: non-null then NULL. last_not_null keeps the non-null; last takes NULL.
-    //   entry 1 <- rows 1, 4: two non-nulls, so the later wins for last, the earlier for first.
-    //   entry 2 <- rows 2, 6: a NULL creates the entry, then a non-null must replace that stored NULL.
-    //   entry 3 <- rows 5, 7: two non-nulls on an entry created later in the same batch.
+    // The exact NULL/non-null combination for each entry depends on the type-specific fixture. The
+    // shared invariant is that every entry receives two rows, exercising revisits and scan direction;
+    // fixtures with NULLs additionally exercise replacing or retaining stored NULL values.
     private static final long REPEATED_BASE_ROW_ID = 4000;
     private static final boolean[] REPEATED_IS_NEW = {true, true, true, false, false, true, false, false};
     private static final long[] REPEATED_ROWS = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -315,8 +312,8 @@ final class KeyedBatchTestUtils {
                 assertBytesEqual(baseA, baseB, regionBytes);
 
                 // Test batch: existing entries first, then new entries. Row
-                // indexes alternate null / non-null values from the caller's
-                // ARG_VALUES to cover {isNew, isNull} × {true, false}.
+                // indexes select the caller's type-specific mix of null and non-null values to cover
+                // new and existing entries with both value states.
                 final long[] testOffsets = {
                         0, valueSize, 2 * valueSize, 3 * valueSize,
                         4 * valueSize, 5 * valueSize, 6 * valueSize, 7 * valueSize

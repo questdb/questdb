@@ -114,17 +114,6 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         return arrayArg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
-    /**
-     * Peels the memoizer the code generator adds around a column an alias references more than once.
-     * Both the column index and the array type below have to be read off the function this returns:
-     * taking the index from the unwrapped column and the type from the wrapper would arm the fast
-     * path against a type that does not describe the column it is about to read.
-     */
-    private static Function unwrapArrayArg(Function arrayArg) {
-        final ColumnFunction cf = ColumnFunction.unwrap(arrayArg);
-        return cf != null ? cf : arrayArg;
-    }
-
     private static class ConstFunc extends IntFunction implements UnaryFunction {
         private final Function arrayArg;
         private final int arrayColumnIndex;
@@ -134,9 +123,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
         public ConstFunc(Function arrayArg, int dim, int dimArgPos) {
             this.arrayArg = arrayArg;
-            final Function unwrapped = unwrapArrayArg(arrayArg);
-            this.arrayColumnIndex = arrayColumnIndex(unwrapped);
-            this.arrayColumnType = unwrapped.getType();
+            this.arrayColumnIndex = arrayColumnIndex(arrayArg);
+            this.arrayColumnType = arrayArg.getType();
             this.dim = dim;
             this.dimArgPos = dimArgPos;
         }
@@ -191,9 +179,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
         public Func(Function arrayArg, Function dimArg, int dimArgPos) {
             this.arrayArg = arrayArg;
-            final Function unwrapped = unwrapArrayArg(arrayArg);
-            this.arrayColumnIndex = arrayColumnIndex(unwrapped);
-            this.arrayColumnType = unwrapped.getType();
+            this.arrayColumnIndex = arrayColumnIndex(arrayArg);
+            this.arrayColumnType = arrayArg.getType();
             this.dimArg = dimArg;
             this.dimArgPos = dimArgPos;
         }
