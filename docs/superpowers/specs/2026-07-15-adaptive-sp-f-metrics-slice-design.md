@@ -40,7 +40,10 @@ updated on the apply path). Add, alongside them:
   updated on the same apply/durability path as its siblings.
 - **`wal_adaptive_epoch_advances`** (`Counter`) — incremented once per successful durable-epoch
   advance (in the epoch hook).
-- **`wal_adaptive_recovery_incarnation`** (`LongGauge`) — set at boot by the recovery pass.
+- **`wal_adaptive_recovery_events`** (`Counter`) — incremented once per successful validated table
+  restore in the recovery pass (a process-wide recovery-event count; complements the per-table
+  `recoveryIncarnation` already surfaced in `wal_tables()`). Scrapes as
+  `questdb_wal_adaptive_recovery_events_total` (counters get a `_total` suffix).
 
 **Durable-frontier lag is deliberately NOT a separate gauge.** It is
 `wal_apply_seq_txn − wal_apply_local_durable_seq_txn`, computed Prometheus/Grafana-side. Rationale:
@@ -66,7 +69,8 @@ column. Plumbing mirrors the existing `durableEpochSeqTxn` column exactly.
   `setLocalDurableSeqTxn` path).
 - **Epoch hook** (`ApplyWal2TableJob.maybeAdvanceDurableEpoch`) increments the epoch-advances counter
   after the epoch is published.
-- **Recovery pass** (`RecoveryCoordinator`) sets the recovery-incarnation gauge at boot.
+- **Recovery pass** (`RecoveryCoordinator.recoverTable`) increments the recovery-events counter once
+  per successful validated table restore (co-located with the per-table `bumpRecoveryIncarnation`).
 - **`WalTableListFunctionFactory`** reads the two new values from the per-table `SeqTxnTracker`,
   mirroring the existing `durableEpochSeqTxn` column.
 
@@ -87,6 +91,9 @@ alert-on-lag" note handed to the SP-C/SP-D work (full user docs = late SP-F). Un
 
 ## Open decisions (resolved in the SP-F plan)
 
-- Recovery-incarnation as **gauge** (last value; aggregated max/sum at scrape) vs counter —
-  gauge recommended (it is per-table state, not a process-wide event count).
+- Recovery signal as gauge vs counter — **RESOLVED (shipped): a `Counter`
+  `wal_adaptive_recovery_events`**, a process-wide count of successful recovery restores. The
+  per-table incarnation *state* is already exposed via `wal_tables().recoveryIncarnation`, so the
+  process-wide Prometheus metric is most useful as a monotonic event count (counters scrape with a
+  `_total` suffix).
 - Final metric names, aligned to QuestDB's `wal_*` naming conventions.
