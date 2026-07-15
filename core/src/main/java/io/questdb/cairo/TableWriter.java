@@ -12921,14 +12921,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metadata.setMetadataVersion(version);
             ddlMem.putLong(metadata.getMetadataVersion());
             ddlMem.putBool(metadata.isWalEnabled());
-            // Metadata rewrite (ALTER etc.) works from TableWriterMetadata, which does not yet carry
-            // the composite PartitionSpec, and this path does NOT re-emit the trailing composite
-            // block. Write META_FORMAT_MINOR_VERSION_TABLE_FORMAT so: (a) a plain table stays
-            // byte-identical to before, and (b) a composite table degrades consistently to "no block"
-            // (a reader gated on the composite version will not look for one) rather than falsely
-            // claiming a block that was not written. Preserving the block across ALTER is a
-            // downstream (Task 6+) concern.
-            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount, TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT));
+            // Metadata rewrite (ALTER etc.) works from TableWriterMetadata, which now carries the
+            // composite PartitionSpec (read from _meta in reload()). Raise the minor version to the
+            // composite gate IFF the table is composite, and re-emit the trailing block below, so a
+            // composite table's block survives structural ALTERs; a plain table writes exactly
+            // META_FORMAT_MINOR_VERSION_TABLE_FORMAT and no block, staying byte-identical. Keeping the
+            // version <-> block presence in lock-step preserves readCompositePartitionSpec's gate
+            // (v3 <=> block present).
+            PartitionSpec partitionSpec = metadata.getPartitionSpec();
+            boolean composite = partitionSpec.isComposite();
+            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(
+                    version,
+                    columnCount,
+                    composite
+                            ? TableUtils.META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING
+                            : TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT
+            ));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
 
@@ -12977,6 +12985,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ddlMem.putInt(coveringIndices.getQuick(ci));
                     }
                 }
+            }
+
+            // Re-emit the additive composite-partitioning block, byte-identical to writeMetadata's,
+            // after the covering-index section. Without this, the first structural ALTER of a
+            // composite table would drop the block (and the minor version above would already have
+            // been lowered to TABLE_FORMAT), silently losing the partition scheme on the next reload.
+            if (composite) {
+                TableUtils.writeCompositePartitionBlock(ddlMem, partitionSpec);
             }
 
             ddlMem.sync(false);

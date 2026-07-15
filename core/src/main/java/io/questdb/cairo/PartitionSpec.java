@@ -58,15 +58,18 @@ public final class PartitionSpec implements Mutable {
     private int timeUnit = PartitionBy.NONE;
 
     public void addClusterColumn(int columnIndex) {
+        checkMutable();
         clusterColumns.add(columnIndex);
     }
 
     public void addDimension(PartitionDimension d) {
+        checkMutable();
         dimensions.add(d);
     }
 
     @Override
     public void clear() {
+        checkMutable();
         timeUnit = PartitionBy.NONE;
         namingMode = MODE_HIVE;
         dimensions.clear();
@@ -102,10 +105,25 @@ public final class PartitionSpec implements Mutable {
     }
 
     public void setNamingMode(byte mode) {
+        checkMutable();
         this.namingMode = mode;
     }
 
     public void setTimeUnit(int unit) {
+        checkMutable();
         this.timeUnit = unit;
+    }
+
+    /**
+     * Guards the shared {@link #EMPTY} singleton against mutation. A mutated EMPTY would be
+     * catastrophic: every plain table inherits it via {@link TableStructure#getPartitionSpec()}, so a
+     * stray dimension/cluster column would make {@link #isComposite()} true and cause plain tables to
+     * persist a bogus composite {@code _meta} block. This is a programming error, never a data
+     * condition, hence {@link UnsupportedOperationException}.
+     */
+    private void checkMutable() {
+        if (this == EMPTY) {
+            throw new UnsupportedOperationException("PartitionSpec.EMPTY is immutable and must not be mutated");
+        }
     }
 }

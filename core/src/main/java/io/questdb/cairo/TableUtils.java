@@ -2697,33 +2697,184 @@ public final class TableUtils {
             }
         }
 
-        // Additive composite-partitioning block (Task 5), appended ONLY for composite tables and
-        // gated by META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING written above. Layout:
-        //   [i8 namingMode][i32 dimensionCount]
-        //     {[i8 kind][i32 columnIndex][i32 param][str alias][str exprText]} x dimensionCount
-        //   [i32 clusterColumnCount]{[i32 columnIndex]} x clusterColumnCount
-        // Fixed-width ints (matching the covering-index section) and standard length-prefixed
-        // strings: putStr(null) writes a -1 length marker that getStr/getStrA reads back as null,
-        // so exprText (null for identity/hash/truncate) round-trips symmetrically for Task 6's reader.
+        // Additive composite-partitioning block, appended ONLY for composite tables and gated by
+        // META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING written above. The write is shared with
+        // TableWriter.rewriteMetadata (the ALTER re-emit path) so both are byte-identical, and it is
+        // read back symmetrically by readCompositePartitionSpec().
         PartitionSpec partitionSpec = tableStruct.getPartitionSpec();
         if (partitionSpec.isComposite()) {
-            mem.putByte(partitionSpec.getNamingMode());
-            int dimensionCount = partitionSpec.getDimensionCount();
-            mem.putInt(dimensionCount);
-            for (int i = 0; i < dimensionCount; i++) {
-                PartitionDimension dimension = partitionSpec.getDimension(i);
-                mem.putByte(dimension.getKind());
-                mem.putInt(dimension.getColumnIndex());
-                mem.putInt(dimension.getParam());
-                mem.putStr(dimension.getAlias());
-                mem.putStr(dimension.getExprText());
+            writeCompositePartitionBlock(mem, partitionSpec);
+        }
+    }
+
+    /**
+     * Reads the additive composite-partitioning block written by {@link #writeCompositePartitionBlock}
+     * back into {@code dest}, or leaves {@code dest} an empty (non-composite) spec when the table is
+     * not composite. Symmetric with the writer; the block layout is:
+     * <pre>
+     *   [i8 namingMode][i32 dimensionCount]
+     *     {[i8 kind][i32 columnIndex][i32 param][str alias][str exprText]} x dimensionCount
+     *   [i32 clusterColumnCount]{[i32 columnIndex]} x clusterColumnCount
+     * </pre>
+     * appended immediately after the covering-index section. Strings are standard length-prefixed
+     * (a {@code -1} length marker reads back as {@code null}); the null-string storage length is
+     * {@code 4 + (len < 0 ? 0 : len*2)} bytes -- do NOT use {@link Vm#getStorageLength(int)} here,
+     * which assumes a non-negative length and is wrong by 2 bytes for a null string.
+     * <p>
+     * FORWARD-COMPAT INVARIANT: this gates purely on {@code minorVersion >= COMPOSITE_PARTITIONING (3)}.
+     * That is correct ONLY because {@link #writeMetadata} / {@link #writeCompositePartitionBlock}
+     * raise the minor version to 3 IFF the table is composite (v3 <=> block present). A future,
+     * always-written feature that bumps the metadata baseline to >= 3 MUST preserve this property
+     * (write v3 only when the composite block is actually present) or introduce an explicit presence
+     * flag; otherwise this reader would parse a block that was never written. As a safety net every
+     * read below is bounds-checked against the mapped size and the dimension/cluster counts are
+     * sanity-bounded, so a mis-gated or truncated file degrades to an empty spec rather than an
+     * out-of-bounds read.
+     */
+    public static void readCompositePartitionSpec(MemoryR mem, PartitionSpec dest) {
+        dest.clear();
+        if (!isMetaFormatAtLeast(mem, META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING)) {
+            return;
+        }
+        final long memSize = mem.size();
+        final int columnCount = mem.getInt(META_OFFSET_COUNT);
+        if (columnCount <= 0) {
+            return;
+        }
+        // Walk to the start of the composite block: past the fixed column entries + names, then past
+        // the covering-index section -- exactly mirroring writeMetadata's tail layout.
+        long offset = getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
             }
-            int clusterColumnCount = partitionSpec.getClusterColumnCount();
-            mem.putInt(clusterColumnCount);
-            for (int i = 0; i < clusterColumnCount; i++) {
-                mem.putInt(partitionSpec.getClusterColumn(i));
+            offset += Vm.getStorageLength(mem.getInt(offset)); // column names are never null here
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (!isColumnCovering(mem, i)) {
+                continue;
+            }
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int includeCount = mem.getInt(offset);
+            offset += Integer.BYTES;
+            if (includeCount > 0) {
+                if (offset + (long) includeCount * Integer.BYTES > memSize) {
+                    return;
+                }
+                offset += (long) includeCount * Integer.BYTES;
             }
         }
+
+        // [i8 namingMode][i32 dimensionCount]
+        if (offset + Byte.BYTES + Integer.BYTES > memSize) {
+            return;
+        }
+        final byte namingMode = mem.getByte(offset);
+        offset += Byte.BYTES;
+        final int dimensionCount = mem.getInt(offset);
+        offset += Integer.BYTES;
+        // Sanity bound: a dimension is at least 1(kind)+4(colIdx)+4(param)+4(alias len)+4(expr len)
+        // = 17 bytes, so reject a count that cannot possibly fit in the remaining mapped memory.
+        if (dimensionCount < 0 || (long) dimensionCount * 17L > memSize - offset) {
+            return;
+        }
+        for (int i = 0; i < dimensionCount; i++) {
+            // [i8 kind][i32 columnIndex][i32 param]
+            if (offset + Byte.BYTES + 2L * Integer.BYTES > memSize) {
+                dest.clear();
+                return;
+            }
+            final byte kind = mem.getByte(offset);
+            offset += Byte.BYTES;
+            final int columnIndex = mem.getInt(offset);
+            offset += Integer.BYTES;
+            final int param = mem.getInt(offset);
+            offset += Integer.BYTES;
+            // [str alias] -- convert to String immediately: getStrA returns a reused flyweight that
+            // the next getStrA (exprText) would clobber.
+            if (offset + Integer.BYTES > memSize) {
+                dest.clear();
+                return;
+            }
+            long aliasStorage = compositeStrStorageLen(mem.getInt(offset));
+            if (offset + aliasStorage > memSize) {
+                dest.clear();
+                return;
+            }
+            CharSequence aliasCs = mem.getStrA(offset);
+            String alias = aliasCs == null ? null : Chars.toString(aliasCs);
+            offset += aliasStorage;
+            // [str exprText] -- null for identity/hash/truncate
+            if (offset + Integer.BYTES > memSize) {
+                dest.clear();
+                return;
+            }
+            long exprStorage = compositeStrStorageLen(mem.getInt(offset));
+            if (offset + exprStorage > memSize) {
+                dest.clear();
+                return;
+            }
+            CharSequence exprCs = mem.getStrA(offset);
+            String exprText = exprCs == null ? null : Chars.toString(exprCs);
+            offset += exprStorage;
+            dest.addDimension(new PartitionDimension(kind, columnIndex, param, alias, exprText));
+        }
+
+        // [i32 clusterColumnCount]{ [i32 columnIndex] }
+        if (offset + Integer.BYTES > memSize) {
+            dest.clear();
+            return;
+        }
+        final int clusterColumnCount = mem.getInt(offset);
+        offset += Integer.BYTES;
+        if (clusterColumnCount < 0 || (long) clusterColumnCount * Integer.BYTES > memSize - offset) {
+            dest.clear();
+            return;
+        }
+        for (int i = 0; i < clusterColumnCount; i++) {
+            dest.addClusterColumn(mem.getInt(offset));
+            offset += Integer.BYTES;
+        }
+        dest.setNamingMode(namingMode);
+        // The time unit is not stored in the block; it lives in the standard partition-by field.
+        dest.setTimeUnit(mem.getInt(META_OFFSET_PARTITION_BY));
+    }
+
+    /**
+     * Writes the additive composite-partitioning block for {@code partitionSpec} at the current
+     * append offset. Shared by {@link #writeMetadata} (CREATE) and TableWriter.rewriteMetadata
+     * (ALTER re-emit) so the two are byte-identical, and read back by
+     * {@link #readCompositePartitionSpec}. Fixed-width ints (matching the covering-index section)
+     * and standard length-prefixed strings: {@code putStr(null)} writes a {@code -1} length marker
+     * that {@code getStr/getStrA} reads back as null, so exprText (null for identity/hash/truncate)
+     * round-trips symmetrically. Callers MUST have already raised the minor version to
+     * {@link #META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING} and gated on {@code isComposite()}.
+     */
+    public static void writeCompositePartitionBlock(MemoryA mem, PartitionSpec partitionSpec) {
+        mem.putByte(partitionSpec.getNamingMode());
+        int dimensionCount = partitionSpec.getDimensionCount();
+        mem.putInt(dimensionCount);
+        for (int i = 0; i < dimensionCount; i++) {
+            PartitionDimension dimension = partitionSpec.getDimension(i);
+            mem.putByte(dimension.getKind());
+            mem.putInt(dimension.getColumnIndex());
+            mem.putInt(dimension.getParam());
+            mem.putStr(dimension.getAlias());
+            mem.putStr(dimension.getExprText());
+        }
+        int clusterColumnCount = partitionSpec.getClusterColumnCount();
+        mem.putInt(clusterColumnCount);
+        for (int i = 0; i < clusterColumnCount; i++) {
+            mem.putInt(partitionSpec.getClusterColumn(i));
+        }
+    }
+
+    // Storage length of a length-prefixed string given its length prefix, handling the null marker
+    // (len == -1 -> 4 bytes, no payload). Vm.getStorageLength(int) is WRONG for null (returns 2).
+    private static long compositeStrStorageLen(int len) {
+        return Integer.BYTES + (len < 0 ? 0L : (long) len * 2L);
     }
 
     private static int exists(FilesFacade ff, Path path) {

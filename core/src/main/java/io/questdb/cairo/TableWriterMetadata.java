@@ -36,6 +36,10 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    // Composite-partitioning spec read from the additive _meta block; stays an empty (non-composite)
+    // spec -- never null -- for plain / low-minor-version tables. Populated in reload() and re-emitted
+    // by TableWriter.rewriteMetadata so a composite table's block survives structural ALTERs.
+    private final PartitionSpec partitionSpec = new PartitionSpec();
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -50,6 +54,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        partitionSpec.clear();
     }
 
     @Override
@@ -95,6 +105,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    @Override
+    public PartitionSpec getPartitionSpec() {
+        return partitionSpec;
     }
 
     public int getReplacingColumnIndex(int columnIndex) {
@@ -223,6 +238,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+        // Additive composite-partitioning block sits after the covering-index section (gated on the
+        // composite minor version); leaves an empty spec for plain / low-version tables. offset now
+        // points at the block start (or at end-of-file for a plain table).
+        TableUtils.readCompositePartitionSpec(metaMem, partitionSpec);
     }
 
     public void setMaxUncommittedRows(int rows) {

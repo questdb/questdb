@@ -45,6 +45,9 @@ public class CairoTable implements Sinkable {
     private long metadataVersion = -1;
     private long o3MaxLag;
     private int partitionBy;
+    // Composite-partitioning spec surfaced from _meta; PartitionSpec.EMPTY (non-composite) by default,
+    // never null. Mirrors how partitionBy flows through the cache.
+    private PartitionSpec partitionSpec = PartitionSpec.EMPTY;
     private boolean softLink;
     private int tableFormat;
     private int timestampIndex;
@@ -70,6 +73,7 @@ public class CairoTable implements Sinkable {
         metadataVersion = fromTab.getMetadataVersion();
         timestampType = fromTab.getTimestampType();
         partitionBy = fromTab.getPartitionBy();
+        partitionSpec = fromTab.getPartitionSpec();
         maxUncommittedRows = fromTab.getMaxUncommittedRows();
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
@@ -147,6 +151,10 @@ public class CairoTable implements Sinkable {
 
     public @NotNull String getPartitionByName() {
         return PartitionBy.toString(partitionBy);
+    }
+
+    public @NotNull PartitionSpec getPartitionSpec() {
+        return partitionSpec;
     }
 
     public int getTableFormat() {
@@ -227,6 +235,10 @@ public class CairoTable implements Sinkable {
         this.partitionBy = partitionBy;
     }
 
+    public void setPartitionSpec(@NotNull PartitionSpec partitionSpec) {
+        this.partitionSpec = partitionSpec;
+    }
+
     public void setSoftLinkFlag(boolean softLink) {
         this.softLink = softLink;
     }
@@ -263,6 +275,10 @@ public class CairoTable implements Sinkable {
         sink.put("maxUncommittedRows=").put(getMaxUncommittedRows()).put(", ");
         sink.put("o3MaxLag=").put(getO3MaxLag()).put(", ");
         sink.put("partitionBy=").put(getPartitionByName()).put(", ");
+        // Only emitted for composite tables so plain-table output stays byte-identical.
+        if (partitionSpec.isComposite()) {
+            sink.put("compositePartitionDimensions=").put(partitionSpec.getDimensionCount()).put(", ");
+        }
         sink.put("timestampIndex=").put(getTimestampIndex()).put(", ");
         sink.put("timestampName=").put(getTimestampName()).put(", ");
         final int ttlHoursOrMonths = getTtlHoursOrMonths();

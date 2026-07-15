@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
@@ -45,11 +45,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Task 5 of composite partitioning: verifies the WRITE side of the additive, minor-version-gated
- * composite {@code _meta} block. This test does not use the Task 6 reader (which is not yet
- * implemented); instead it parses the raw {@code _meta} bytes directly. The
- * {@link #readCompositeBlockOffset} / {@link Cursor} helpers below are a temporary stand-in that
- * Task 6 will replace with the real {@code TableMetadata.getPartitionSpec()} reader.
+ * Composite partitioning: round-trip coverage of the additive, minor-version-gated composite
+ * {@code _meta} block. Task 5 wrote the block; Task 6 reads it back through the real metadata
+ * readers ({@code TableReaderMetadata} / {@code TableWriterMetadata} / {@code MetadataCache}) via
+ * {@link TableMetadata#getPartitionSpec()} and re-emits it on ALTER, so the assertions below drive
+ * the production reader rather than parsing raw bytes.
  * <p>
  * The on-disk composite block, appended after the covering-index section only when the spec is
  * composite, is:
@@ -69,12 +69,106 @@ import org.junit.Test;
  */
 public class CompositeMetaFormatTest extends AbstractCairoTest {
 
-    // Mirror of the package-private TableUtils.META_FLAG_BIT_COVERING (1 << 6): this test lives in a
-    // different package and cannot reference the constant directly. Temporary; removed with Task 6.
-    private static final long META_FLAG_BIT_COVERING = 1L << 6;
+    @Test
+    public void testAlterPreservesCompositeSpec() throws Exception {
+        // Proves the rewriteMetadata re-emit: a structural ALTER rewrites _meta, and the composite
+        // block (dropped by the pre-Task-6 code path) must now survive so getPartitionSpec() still
+        // reports the same dimensions after the table's metadata is re-read from disk.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol) timestamp(ts) partition by day, exchange wal");
+            execute("alter table t add column px double");
+            drainWalQueue();
+            engine.releaseInactive(); // force a fresh _meta read (the rewritten file)
+
+            TableToken tableToken = engine.verifyTableName("t");
+            try (TableMetadata m = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(3, m.getColumnCount()); // ts, exchange, px
+                PartitionSpec spec = m.getPartitionSpec();
+                Assert.assertTrue("composite spec must survive ADD COLUMN", spec.isComposite());
+                Assert.assertEquals(PartitionBy.DAY, spec.getTimeUnit());
+                Assert.assertEquals(1, spec.getDimensionCount());
+                Assert.assertEquals(PartitionDimension.KIND_IDENTITY, spec.getDimension(0).getKind());
+                Assert.assertEquals("exchange", spec.getDimension(0).getAlias());
+                Assert.assertNull(spec.getDimension(0).getExprText());
+            }
+
+            // A second structural ALTER (DROP of the non-key column) rewrites _meta again; the block
+            // must still survive, and the dimension's stable writer index (exchange=1) is unaffected.
+            execute("alter table t drop column px");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableMetadata m = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(2, m.getColumnCount()); // ts, exchange
+                PartitionSpec spec = m.getPartitionSpec();
+                Assert.assertTrue("composite spec must survive DROP COLUMN", spec.isComposite());
+                Assert.assertEquals(1, spec.getDimensionCount());
+                Assert.assertEquals(1, spec.getDimension(0).getColumnIndex());
+                Assert.assertEquals("exchange", spec.getDimension(0).getAlias());
+            }
+
+            // Regression: a plain-table ALTER must still work and stay non-composite.
+            execute("create table p (ts timestamp, s symbol) timestamp(ts) partition by day wal");
+            execute("alter table p add column px double");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("p"))) {
+                Assert.assertEquals(3, m.getColumnCount()); // ts, s, px
+                Assert.assertFalse(m.getPartitionSpec().isComposite());
+            }
+        });
+    }
 
     @Test
-    public void testCompositeMetaRaisesMinorAndWritesBlock() throws Exception {
+    public void testCompositeBlockRoundTripAfterCoveringSection() throws Exception {
+        // A table that is BOTH composite AND has a covering index writes the covering-index section
+        // and THEN the composite block into the same additive _meta tail; the reader must walk past
+        // the covering section to find the block. Proves the two sections coexist byte-correctly.
+        assertMemoryLeak(() -> {
+            final PartitionSpec spec = new PartitionSpec();
+            spec.setTimeUnit(PartitionBy.DAY);
+            spec.setNamingMode(PartitionSpec.MODE_HIVE);
+            spec.addDimension(new PartitionDimension(PartitionDimension.KIND_IDENTITY, 1, 0, "exchange", null));
+
+            final IntList covering = new IntList();
+            covering.add(0);
+            covering.add(2);
+
+            TableModel model = new TableModel(configuration, "d", PartitionBy.DAY) {
+                @Override
+                public IntList getCoveringColumnIndices(int columnIndex) {
+                    return columnIndex == 1 ? covering : null;
+                }
+
+                @Override
+                public PartitionSpec getPartitionSpec() {
+                    return spec;
+                }
+            };
+            model.timestamp("ts").col("exchange", ColumnType.SYMBOL).col("symbol", ColumnType.SYMBOL);
+
+            try (MemoryCARW mem = Vm.getCARWInstance(4096, 8, MemoryTag.NATIVE_DEFAULT)) {
+                TableUtils.writeMetadata(model, ColumnType.VERSION, 7, mem);
+
+                PartitionSpec readBack = new PartitionSpec();
+                TableUtils.readCompositePartitionSpec(mem, readBack);
+
+                Assert.assertTrue(readBack.isComposite());
+                Assert.assertEquals(PartitionBy.DAY, readBack.getTimeUnit());
+                Assert.assertEquals(1, readBack.getDimensionCount());
+                PartitionDimension d0 = readBack.getDimension(0);
+                Assert.assertEquals(PartitionDimension.KIND_IDENTITY, d0.getKind());
+                Assert.assertEquals(1, d0.getColumnIndex());
+                Assert.assertEquals("exchange", d0.getAlias());
+                Assert.assertNull(d0.getExprText());
+                Assert.assertEquals(0, readBack.getClusterColumnCount());
+            }
+        });
+    }
+
+    @Test
+    public void testCompositeMetaRaisesMinorAndReadsBackSpec() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                     "timestamp(ts) partition by day, exchange, hash(symbol, 16) wal");
@@ -88,32 +182,53 @@ public class CompositeMetaFormatTest extends AbstractCairoTest {
                         TableUtils.META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING,
                         Numbers.decodeHighShort(mem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION))
                 );
-
-                Cursor c = new Cursor(mem, readCompositeBlockOffset(mem));
-                Assert.assertEquals(PartitionSpec.MODE_HIVE, c.nextByte()); // namingMode
-                Assert.assertEquals(2, c.nextInt());                        // dimensionCount
-
-                // dim 0: identity(exchange) -> null exprText (null-string write path)
-                Dim d0 = c.nextDim();
-                Assert.assertEquals(PartitionDimension.KIND_IDENTITY, d0.kind);
-                Assert.assertNull(d0.exprText);
-
-                // dim 1: hash(symbol, 16)
-                Dim d1 = c.nextDim();
-                Assert.assertEquals(PartitionDimension.KIND_HASH, d1.kind);
-                Assert.assertEquals(16, d1.param);
-                Assert.assertNull(d1.exprText);
-
-                Assert.assertEquals(0, c.nextInt()); // clusterColumnCount
             }
 
-            // Backward-compat: an existing reader (which knows nothing of the composite block) must
-            // still open a composite table's _meta without error -- the trailing block sits in the
-            // same additive tail as the covering-index section that readers already tolerate.
+            // The real reader (TableReaderMetadata via the metadata pool) now surfaces the block.
             try (TableMetadata md = engine.getTableMetadata(tableToken)) {
                 Assert.assertEquals(3, md.getColumnCount());
+                PartitionSpec spec = md.getPartitionSpec();
+                Assert.assertTrue(spec.isComposite());
+                Assert.assertEquals(PartitionSpec.MODE_HIVE, spec.getNamingMode());
+                Assert.assertEquals(PartitionBy.DAY, spec.getTimeUnit());
+                Assert.assertEquals(2, spec.getDimensionCount());
+
+                // dim 0: identity(exchange) -> column 1, null exprText (null-string read path)
+                PartitionDimension d0 = spec.getDimension(0);
+                Assert.assertEquals(PartitionDimension.KIND_IDENTITY, d0.getKind());
+                Assert.assertEquals(1, d0.getColumnIndex());
+                Assert.assertEquals("exchange", d0.getAlias());
+                Assert.assertNull(d0.getExprText());
+
+                // dim 1: hash(symbol, 16) -> column 2, null exprText
+                PartitionDimension d1 = spec.getDimension(1);
+                Assert.assertEquals(PartitionDimension.KIND_HASH, d1.getKind());
+                Assert.assertEquals(2, d1.getColumnIndex());
+                Assert.assertEquals(16, d1.getParam());
+                Assert.assertNull(d1.getExprText());
+
+                Assert.assertEquals(0, spec.getClusterColumnCount());
             }
         });
+    }
+
+    @Test
+    public void testEmptySpecIsImmutable() {
+        // Hardening: PartitionSpec.EMPTY is a shared static returned by the TableStructure default;
+        // any mutation must throw, otherwise a single corrupted EMPTY would make every plain table
+        // write a bogus composite block. NOTE: run in isolation when demonstrating the pre-fix
+        // failure -- an unguarded EMPTY.addDimension() would pollute EMPTY for the whole JVM.
+        assertThrowsUnsupported(() -> PartitionSpec.EMPTY.addDimension(
+                new PartitionDimension(PartitionDimension.KIND_IDENTITY, 0, 0, "x", null)));
+        assertThrowsUnsupported(() -> PartitionSpec.EMPTY.addClusterColumn(0));
+        assertThrowsUnsupported(() -> PartitionSpec.EMPTY.setNamingMode(PartitionSpec.MODE_PLAIN));
+        assertThrowsUnsupported(() -> PartitionSpec.EMPTY.setTimeUnit(PartitionBy.DAY));
+        assertThrowsUnsupported(PartitionSpec.EMPTY::clear);
+
+        // Still pristine and non-composite after the rejected mutations.
+        Assert.assertFalse(PartitionSpec.EMPTY.isComposite());
+        Assert.assertEquals(0, PartitionSpec.EMPTY.getDimensionCount());
+        Assert.assertEquals(0, PartitionSpec.EMPTY.getClusterColumnCount());
     }
 
     @Test
@@ -131,19 +246,36 @@ public class CompositeMetaFormatTest extends AbstractCairoTest {
                         TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT,
                         Numbers.decodeHighShort(mem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION))
                 );
-                // The table must still read back through the ordinary metadata path without error.
-                try (TableMetadata md = engine.getTableMetadata(tableToken)) {
-                    Assert.assertEquals(2, md.getColumnCount());
-                }
+            }
+            // The table reads back through the ordinary metadata path with an empty (non-composite)
+            // spec -- never null.
+            try (TableMetadata md = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(2, md.getColumnCount());
+                Assert.assertNotNull(md.getPartitionSpec());
+                Assert.assertFalse(md.getPartitionSpec().isComposite());
+            }
+        });
+    }
+
+    @Test
+    public void testReopenAfterRestartKeepsSpec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol) timestamp(ts) partition by day, exchange wal");
+            engine.releaseInactive(); // force re-read of _meta from disk
+
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("t"))) {
+                Assert.assertTrue(m.getPartitionSpec().isComposite());
+                Assert.assertEquals("exchange", m.getPartitionSpec().getDimension(0).getAlias());
             }
         });
     }
 
     /**
-     * Hermetic round-trip directly against {@link TableUtils#writeMetadata}, exercising BOTH the
-     * null exprText path (hash dimension) and the non-null exprText path (expression dimension),
-     * plus cluster columns and the non-default naming mode -- shapes the end-to-end DDL above does
-     * not all reach today. This is the definitive byte-format contract Task 6 must read back.
+     * Hermetic round-trip: write directly with {@link TableUtils#writeMetadata} then read back with
+     * the production {@link TableUtils#readCompositePartitionSpec} reader, exercising BOTH the null
+     * exprText path (hash dimension) and the non-null exprText path (expression dimension), plus
+     * cluster columns and the non-default naming mode -- shapes the end-to-end DDL above does not
+     * all reach today. This is the definitive proof the read is byte-exactly symmetric to the write.
      */
     @Test
     public void testWriteMetadataCompositeBlockRoundTrip() throws Exception {
@@ -172,104 +304,47 @@ public class CompositeMetaFormatTest extends AbstractCairoTest {
                         Numbers.decodeHighShort(mem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION))
                 );
 
-                Cursor c = new Cursor(mem, readCompositeBlockOffset(mem));
-                Assert.assertEquals(PartitionSpec.MODE_PLAIN, c.nextByte());
-                Assert.assertEquals(2, c.nextInt());
+                PartitionSpec readBack = new PartitionSpec();
+                TableUtils.readCompositePartitionSpec(mem, readBack);
 
-                Dim d0 = c.nextDim();
-                Assert.assertEquals(PartitionDimension.KIND_HASH, d0.kind);
-                Assert.assertEquals(2, d0.columnIndex);
-                Assert.assertEquals(16, d0.param);
-                Assert.assertEquals("symbol_hash", d0.alias);
-                Assert.assertNull(d0.exprText); // null exprText round-trips to null
+                Assert.assertTrue(readBack.isComposite());
+                Assert.assertEquals(PartitionSpec.MODE_PLAIN, readBack.getNamingMode());
+                Assert.assertEquals(PartitionBy.DAY, readBack.getTimeUnit());
+                Assert.assertEquals(2, readBack.getDimensionCount());
 
-                Dim d1 = c.nextDim();
-                Assert.assertEquals(PartitionDimension.KIND_EXPRESSION, d1.kind);
-                Assert.assertEquals(-1, d1.columnIndex);
-                Assert.assertEquals(0, d1.param);
-                Assert.assertEquals("asset_class", d1.alias);
-                Assert.assertEquals("s in ('BTC','ETH')", d1.exprText); // non-null exprText round-trips
+                PartitionDimension d0 = readBack.getDimension(0);
+                Assert.assertEquals(PartitionDimension.KIND_HASH, d0.getKind());
+                Assert.assertEquals(2, d0.getColumnIndex());
+                Assert.assertEquals(16, d0.getParam());
+                Assert.assertEquals("symbol_hash", d0.getAlias());
+                Assert.assertNull(d0.getExprText()); // null exprText round-trips to null
 
-                Assert.assertEquals(2, c.nextInt()); // clusterColumnCount
-                Assert.assertEquals(1, c.nextInt());
-                Assert.assertEquals(2, c.nextInt());
+                PartitionDimension d1 = readBack.getDimension(1);
+                Assert.assertEquals(PartitionDimension.KIND_EXPRESSION, d1.getKind());
+                Assert.assertEquals(-1, d1.getColumnIndex());
+                Assert.assertEquals(0, d1.getParam());
+                Assert.assertEquals("asset_class", d1.getAlias());
+                Assert.assertEquals("s in ('BTC','ETH')", d1.getExprText()); // non-null exprText round-trips
+
+                Assert.assertEquals(2, readBack.getClusterColumnCount());
+                Assert.assertEquals(1, readBack.getClusterColumn(0));
+                Assert.assertEquals(2, readBack.getClusterColumn(1));
             }
         });
+    }
+
+    private static void assertThrowsUnsupported(Runnable r) {
+        try {
+            r.run();
+            Assert.fail("expected UnsupportedOperationException mutating PartitionSpec.EMPTY");
+        } catch (UnsupportedOperationException expected) {
+            // ok
+        }
     }
 
     private static MemoryMR openMeta(Path path, TableToken tableToken) {
         FilesFacade ff = configuration.getFilesFacade();
         LPSZ name = path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
         return Vm.getCMRInstance(ff, name, ff.length(name), MemoryTag.MMAP_DEFAULT);
-    }
-
-    /**
-     * Replays the exact layout {@link TableUtils#writeMetadata} writes to find where the trailing
-     * composite block begins: fixed header, then {@code count} fixed-size column entries, then the
-     * variable-length column names, then the covering-index section (present per column only when
-     * that column's entry has the covering flag set).
-     */
-    private static long readCompositeBlockOffset(MemoryR mem) {
-        final int count = mem.getInt(TableUtils.META_OFFSET_COUNT);
-        long pos = TableUtils.META_OFFSET_COLUMN_TYPES + (long) count * TableUtils.META_COLUMN_DATA_SIZE;
-        for (int i = 0; i < count; i++) {
-            pos += strStorageLen(mem, pos); // column names
-        }
-        for (int i = 0; i < count; i++) {
-            long flags = mem.getLong(TableUtils.META_OFFSET_COLUMN_TYPES + (long) i * TableUtils.META_COLUMN_DATA_SIZE + Integer.BYTES);
-            if ((flags & META_FLAG_BIT_COVERING) != 0) {
-                pos += Integer.BYTES + (long) mem.getInt(pos) * Integer.BYTES;
-            }
-        }
-        return pos;
-    }
-
-    private static long strStorageLen(MemoryR mem, long pos) {
-        int len = mem.getInt(pos);
-        return Integer.BYTES + (len < 0 ? 0L : (long) len * 2);
-    }
-
-    private static final class Cursor {
-        private final MemoryR mem;
-        private long pos;
-
-        private Cursor(MemoryR mem, long pos) {
-            this.mem = mem;
-            this.pos = pos;
-        }
-
-        byte nextByte() {
-            return mem.getByte(pos++);
-        }
-
-        Dim nextDim() {
-            Dim d = new Dim();
-            d.kind = nextByte();
-            d.columnIndex = nextInt();
-            d.param = nextInt();
-            d.alias = nextStr();
-            d.exprText = nextStr();
-            return d;
-        }
-
-        int nextInt() {
-            int v = mem.getInt(pos);
-            pos += Integer.BYTES;
-            return v;
-        }
-
-        String nextStr() {
-            CharSequence cs = mem.getStrA(pos);
-            pos += strStorageLen(mem, pos);
-            return cs == null ? null : cs.toString();
-        }
-    }
-
-    private static final class Dim {
-        String alias;
-        int columnIndex;
-        String exprText;
-        byte kind;
-        int param;
     }
 }

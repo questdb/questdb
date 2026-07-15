@@ -646,6 +646,17 @@ public class MetadataCache implements QuietCloseable {
 
             readCoveringColumnIndicesIntoTable(metaMem, columnCount, table);
 
+            // Surface the composite-partitioning spec from the additive _meta block. Only allocate
+            // for composite tables (minor version gate); plain tables keep the shared EMPTY default
+            // set on the CairoTable, so the common path stays garbage-free.
+            if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING)) {
+                PartitionSpec spec = new PartitionSpec();
+                TableUtils.readCompositePartitionSpec(metaMem, spec);
+                if (spec.isComposite()) {
+                    table.setPartitionSpec(spec);
+                }
+            }
+
             if (PartitionBy.isPartitioned(partitionBy)) {
                 try {
                     if (txReader == null) {
