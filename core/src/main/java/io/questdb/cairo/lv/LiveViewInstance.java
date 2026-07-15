@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -72,6 +73,15 @@ public class LiveViewInstance implements QuietCloseable {
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
     private static final int HEAD_CHECKPOINT_STATE_BYTES = 2;
+    // Field offsets within one packed record of the retained-checkpoint ring
+    // (see retainedCheckpoints). Each record spans RETAINED_CHECKPOINT_RECORD_SIZE
+    // longs; the ring stores records back-to-back in a single LongList.
+    private static final int RETAINED_CHECKPOINT_BASE_SEQ_TXN = 2;
+    private static final int RETAINED_CHECKPOINT_LV_ROWS_TOTAL = 3;
+    private static final int RETAINED_CHECKPOINT_LV_SEQ_TXN = 0;
+    private static final int RETAINED_CHECKPOINT_MAX_TS = 1;
+    private static final int RETAINED_CHECKPOINT_RECORD_SIZE = 5;
+    private static final int RETAINED_CHECKPOINT_STATE_BYTES = 4;
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
@@ -328,6 +338,20 @@ public class LiveViewInstance implements QuietCloseable {
     // flushed point), never under-retains, but the visibility must not rely on the
     // latch a purge run never takes.
     private volatile long refreshedUpToSeqTxn = Numbers.LONG_NULL;
+    // Bounded ring of recently committed head checkpoints, retained so a
+    // cross-commit / apply-ahead O3 replay can resume from the newest sealed
+    // checkpoint whose maxTs is below the late row instead of rebuilding the
+    // whole view from the START FROM boundary. Each entry is one packed record
+    // of RETAINED_CHECKPOINT_RECORD_SIZE longs -
+    // (lvSeqTxn, maxTs, baseSeqTxn, lvRowsTotal, stateBytes) - and records are
+    // held in strictly increasing maxTs order (oldest first, newest last), which
+    // matches the order the flush cycle writes them. Worker-owned: every mutation
+    // and lookup runs on the refresh worker under the refresh latch, so no volatile
+    // publication is needed. If a later change mirrors the ring onto an off-thread
+    // surface (e.g. live_views()), it must publish an immutable snapshot the way
+    // headCheckpoint does. The pruned .cp files are unlinked by the caller, not here -
+    // this holds only the in-memory descriptors.
+    private final LongList retainedCheckpoints = new LongList();
     // Live-view-row count applied since the most recent head-checkpoint commit.
     // The refresh worker compares this against cairo.live.view.checkpoint.rows
     // each cycle to decide whether the row-count trigger has fired. Mutated
@@ -422,6 +446,27 @@ public class LiveViewInstance implements QuietCloseable {
         this.definition = null;
         this.liveViewToken = liveViewToken;
         this.stubState = stubState;
+    }
+
+    /**
+     * Appends a freshly committed head checkpoint to the retained-checkpoint
+     * ring as the newest entry. Records are held in strictly increasing
+     * {@code maxTs} order, so the caller must add heads in the order they are
+     * written (each new head covers a higher {@code maxTs} than the prior one);
+     * the assert guards that contract. Does not prune - the caller invokes
+     * {@link #pruneRetainedCheckpoints(int, long, long, LongList)} afterwards so
+     * the pruned {@code .cp} files can be unlinked in one place. Runs on the
+     * refresh worker under the refresh latch. See {@link #retainedCheckpoints}.
+     */
+    public void addRetainedCheckpoint(long lvSeqTxn, long maxTs, long baseSeqTxn, long lvRowsTotal, long stateBytes) {
+        assert retainedCheckpoints.size() == 0
+                || maxTs > retainedCheckpoints.getQuick(retainedCheckpoints.size() - RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_MAX_TS)
+                : "retained checkpoints must be added in strictly increasing maxTs order";
+        retainedCheckpoints.add(lvSeqTxn);
+        retainedCheckpoints.add(maxTs);
+        retainedCheckpoints.add(baseSeqTxn);
+        retainedCheckpoints.add(lvRowsTotal);
+        retainedCheckpoints.add(stateBytes);
     }
 
     /**
@@ -833,6 +878,68 @@ public class LiveViewInstance implements QuietCloseable {
         return refreshFaultCount;
     }
 
+    /**
+     * @return the base seqTxn covered by the retained checkpoint at ring
+     * position {@code index} (0 = oldest). See {@link #retainedCheckpoints}.
+     */
+    public long getRetainedCheckpointBaseSeqTxn(int index) {
+        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_BASE_SEQ_TXN);
+    }
+
+    /**
+     * @return the number of checkpoints currently retained in the ring. Position
+     * 0 is the oldest, {@code count - 1} the newest (the head). See
+     * {@link #retainedCheckpoints}.
+     */
+    public int getRetainedCheckpointCount() {
+        return retainedCheckpoints.size() / RETAINED_CHECKPOINT_RECORD_SIZE;
+    }
+
+    /**
+     * @return the cumulative LV row count ({@code MANIFEST.lvRowPosition}) of the
+     * retained checkpoint at ring position {@code index}. See {@link #retainedCheckpoints}.
+     */
+    public long getRetainedCheckpointLvRowsTotal(int index) {
+        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_LV_ROWS_TOTAL);
+    }
+
+    /**
+     * @return the lvSeqTxn (the {@code <lvSeqTxn>.cp} file key) of the retained
+     * checkpoint at ring position {@code index}. See {@link #retainedCheckpoints}.
+     */
+    public long getRetainedCheckpointLvSeqTxn(int index) {
+        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_LV_SEQ_TXN);
+    }
+
+    /**
+     * @return the maximum base-row timestamp sealed into the retained checkpoint
+     * at ring position {@code index}. Records are ordered by this value. See
+     * {@link #retainedCheckpoints}.
+     */
+    public long getRetainedCheckpointMaxTs(int index) {
+        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_MAX_TS);
+    }
+
+    /**
+     * @return the serialized state size (bytes) of the retained checkpoint at ring
+     * position {@code index}, used by the byte-budget prune. See {@link #retainedCheckpoints}.
+     */
+    public long getRetainedCheckpointStateBytes(int index) {
+        return retainedCheckpoints.getQuick(index * RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_STATE_BYTES);
+    }
+
+    /**
+     * @return the sum of every retained checkpoint's serialized state size, the
+     * quantity the byte-budget prune caps. See {@link #retainedCheckpoints}.
+     */
+    public long getRetainedCheckpointsTotalStateBytes() {
+        long total = 0;
+        for (int i = RETAINED_CHECKPOINT_STATE_BYTES, n = retainedCheckpoints.size(); i < n; i += RETAINED_CHECKPOINT_RECORD_SIZE) {
+            total += retainedCheckpoints.getQuick(i);
+        }
+        return total;
+    }
+
     public long getRowsSinceLastCheckpointWritten() {
         return rowsSinceLastCheckpointWritten;
     }
@@ -1037,6 +1144,42 @@ public class LiveViewInstance implements QuietCloseable {
         // through the old factory's column layout.
         recordToRowCopier = null;
         recordRowCopierMetadataVersion = -1;
+    }
+
+    /**
+     * Trims the retained-checkpoint ring down to the given bounds, evicting the
+     * oldest entries first and always keeping at least one (the newest, needed for
+     * restart restore). An entry is dropped while any bound is exceeded:
+     * <ul>
+     *     <li>{@code maxCount} - the hard cap on retained entries; ignored when
+     *         {@code <= 0}. The primary bound.</li>
+     *     <li>{@code maxTotalBytes} - the per-view budget on total serialized state
+     *         bytes; ignored when {@code <= 0}. The safety bound for high-cardinality
+     *         / many-function views whose checkpoints are large.</li>
+     *     <li>{@code minRetainedMaxTs} - an event-time floor: entries whose
+     *         {@code maxTs} is below it are older than the retention horizon; pass
+     *         {@link Numbers#LONG_NULL} to disable. A loose upper safety only.</li>
+     * </ul>
+     * The lvSeqTxn of each evicted entry is appended to {@code evictedLvSeqTxnsOut}
+     * (when non-null) so the caller can unlink the matching {@code <lvSeqTxn>.cp}
+     * file - this method touches only the in-memory ring. Runs on the refresh
+     * worker under the refresh latch. See {@link #retainedCheckpoints}.
+     */
+    public void pruneRetainedCheckpoints(int maxCount, long maxTotalBytes, long minRetainedMaxTs, @Nullable LongList evictedLvSeqTxnsOut) {
+        long totalBytes = getRetainedCheckpointsTotalStateBytes();
+        while (getRetainedCheckpointCount() > 1) {
+            final boolean overCount = maxCount > 0 && getRetainedCheckpointCount() > maxCount;
+            final boolean overBytes = maxTotalBytes > 0 && totalBytes > maxTotalBytes;
+            final boolean overHorizon = minRetainedMaxTs != Numbers.LONG_NULL && getRetainedCheckpointMaxTs(0) < minRetainedMaxTs;
+            if (!overCount && !overBytes && !overHorizon) {
+                break;
+            }
+            if (evictedLvSeqTxnsOut != null) {
+                evictedLvSeqTxnsOut.add(getRetainedCheckpointLvSeqTxn(0));
+            }
+            totalBytes -= getRetainedCheckpointStateBytes(0);
+            retainedCheckpoints.removeIndexBlock(0, RETAINED_CHECKPOINT_RECORD_SIZE);
+        }
     }
 
     /**
