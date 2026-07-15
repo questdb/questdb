@@ -414,7 +414,6 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             };
 
             Assert.assertTrue(state.tryLock());
-            boolean isLatchReleased = false;
             try {
                 state.markAsPendingInvalidation("update operation");
                 try {
@@ -423,9 +422,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 } catch (OutOfMemoryError expected) {
                     Assert.assertEquals("test queue growth failure", expected.getMessage());
                 }
-                isLatchReleased = true;
             } finally {
-                if (!isLatchReleased) {
+                if (state.isLocked()) {
                     state.unlock();
                 }
             }
@@ -481,7 +479,6 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             };
 
             Assert.assertTrue(state.tryLock());
-            boolean isLatchReleased = false;
             try {
                 state.markAsPendingInvalidation("update operation");
                 try {
@@ -490,9 +487,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 } catch (OutOfMemoryError expected) {
                     Assert.assertEquals("test initial queue growth failure", expected.getMessage());
                 }
-                isLatchReleased = true;
             } finally {
-                if (!isLatchReleased) {
+                if (state.isLocked()) {
                     state.unlock();
                 }
             }
@@ -1025,29 +1021,35 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // Drive fullRefresh's losing branch deterministically. The task publishes the sentinel before
             // tryLock, loses to this holder, and returns without publishing N retries.
             Assert.assertTrue(state.tryLock());
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                final AtomicInteger dequeueCount = new AtomicInteger();
-                job.setOnRefreshTaskDequeuedForTesting(() -> Assert.assertEquals(
-                        "the losing full refresh must not self-republish while the latch remains held",
-                        1,
-                        dequeueCount.incrementAndGet()
-                ));
-                try {
-                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                    drainMatViewQueue(job);
+            try {
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    final AtomicInteger dequeueCount = new AtomicInteger();
+                    job.setOnRefreshTaskDequeuedForTesting(() -> Assert.assertEquals(
+                            "the losing full refresh must not self-republish while the latch remains held",
+                            1,
+                            dequeueCount.incrementAndGet()
+                    ));
+                    try {
+                        engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                        drainMatViewQueue(job);
 
-                    Assert.assertTrue("the losing full refresh must retain its reschedule sentinel", state.isPendingInvalidation());
-                    Assert.assertNull(state.getPendingInvalidationReason());
-                    Assert.assertFalse(state.isInvalid());
+                        Assert.assertTrue("the losing full refresh must retain its reschedule sentinel", state.isPendingInvalidation());
+                        Assert.assertNull(state.getPendingInvalidationReason());
+                        Assert.assertFalse(state.isInvalid());
 
-                    job.setOnRefreshTaskDequeuedForTesting(null);
-                    MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
-                    drainMatViewQueue(job);
-                } finally {
-                    if (state.isLocked()) {
-                        state.clearPendingInvalidationForTesting();
-                        state.unlock();
+                        job.setOnRefreshTaskDequeuedForTesting(null);
+                        MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                        drainMatViewQueue(job);
+                    } finally {
+                        if (state.isLocked()) {
+                            state.clearPendingInvalidationForTesting();
+                            state.unlock();
+                        }
                     }
+                }
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
                 }
             }
             drainWalAndMatViewQueues();
@@ -1125,32 +1127,38 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // A losing full refresh and a reason-bearing invalidation must retain independent ownership in
             // one atomic marker. Neither publication may demote or erase the other.
             Assert.assertTrue(state.tryLock());
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                final AtomicInteger dequeueCount = new AtomicInteger();
-                job.setOnRefreshTaskDequeuedForTesting(() -> Assert.assertTrue(
-                        "a losing full refresh must not self-republish while the latch remains held",
-                        dequeueCount.incrementAndGet() <= 2
-                ));
-                try {
-                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                    drainMatViewQueue(job);
-                    Assert.assertTrue(state.isPendingInvalidation());
-                    Assert.assertNull(state.getPendingInvalidationReason());
+            try {
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    final AtomicInteger dequeueCount = new AtomicInteger();
+                    job.setOnRefreshTaskDequeuedForTesting(() -> Assert.assertTrue(
+                            "a losing full refresh must not self-republish while the latch remains held",
+                            dequeueCount.incrementAndGet() <= 2
+                    ));
+                    try {
+                        engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                        drainMatViewQueue(job);
+                        Assert.assertTrue(state.isPendingInvalidation());
+                        Assert.assertNull(state.getPendingInvalidationReason());
 
-                    state.markAsPendingInvalidation("update operation");
-                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                    drainMatViewQueue(job);
-                    Assert.assertEquals("the losing full refresh demoted a reason-bearing deferral",
-                            "update operation", state.getPendingInvalidationReason());
+                        state.markAsPendingInvalidation("update operation");
+                        engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                        drainMatViewQueue(job);
+                        Assert.assertEquals("the losing full refresh demoted a reason-bearing deferral",
+                                "update operation", state.getPendingInvalidationReason());
 
-                    job.setOnRefreshTaskDequeuedForTesting(null);
-                    MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
-                    drainMatViewQueue(job);
-                } finally {
-                    if (state.isLocked()) {
-                        state.clearPendingInvalidationForTesting();
-                        state.unlock();
+                        job.setOnRefreshTaskDequeuedForTesting(null);
+                        MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                        drainMatViewQueue(job);
+                    } finally {
+                        if (state.isLocked()) {
+                            state.clearPendingInvalidationForTesting();
+                            state.unlock();
+                        }
                     }
+                }
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
                 }
             }
             drainWalQueue();
@@ -1263,31 +1271,37 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             };
 
             Assert.assertTrue(state.tryLock());
-            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, failOnceStore)) {
-                try {
-                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                    drainMatViewQueue(job);
-                    Assert.assertTrue("the losing full refresh must retain its owner", state.isPendingInvalidation());
-
+            try {
+                try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, failOnceStore)) {
                     try {
-                        MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
-                        Assert.fail("expected the fail-once owner-wake queue wrapper to throw");
-                    } catch (OutOfMemoryError expected) {
-                        Assert.assertEquals("test full retry queue growth failure", expected.getMessage());
-                    }
+                        engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                        drainMatViewQueue(job);
+                        Assert.assertTrue("the losing full refresh must retain its owner", state.isPendingInvalidation());
 
-                    Assert.assertTrue("the test must exercise the injected queue failure", hasFailedEnqueue.get());
-                    Assert.assertTrue("the failed owner wake must retain the full-refresh owner", state.isPendingInvalidation());
-                    Assert.assertFalse("the holder must release the view latch after queue failure", state.isLocked());
+                        try {
+                            MatViewRefreshJob.finalizeAndUnlock(engine, failOnceStore, viewToken, state, false);
+                            Assert.fail("expected the fail-once owner-wake queue wrapper to throw");
+                        } catch (OutOfMemoryError expected) {
+                            Assert.assertEquals("test full retry queue growth failure", expected.getMessage());
+                        }
 
-                    // The wake's catch armed requestPendingFullRefreshReenqueue on the canonical store.
-                    // The next ordinary job tick must rediscover the owner and complete the full refresh.
-                    drainMatViewQueue(job);
-                } finally {
-                    if (state.isLocked()) {
-                        state.clearPendingInvalidationForTesting();
-                        state.unlock();
+                        Assert.assertTrue("the test must exercise the injected queue failure", hasFailedEnqueue.get());
+                        Assert.assertTrue("the failed owner wake must retain the full-refresh owner", state.isPendingInvalidation());
+                        Assert.assertFalse("the holder must release the view latch after queue failure", state.isLocked());
+
+                        // The wake's catch armed requestPendingFullRefreshReenqueue on the canonical store.
+                        // The next ordinary job tick must rediscover the owner and complete the full refresh.
+                        drainMatViewQueue(job);
+                    } finally {
+                        if (state.isLocked()) {
+                            state.clearPendingInvalidationForTesting();
+                            state.unlock();
+                        }
                     }
+                }
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
                 }
             }
             drainWalQueue();
