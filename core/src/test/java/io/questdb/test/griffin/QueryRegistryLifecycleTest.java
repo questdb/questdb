@@ -321,18 +321,75 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Reproduces the pooled-entry reuse race: a canceller looks an entry up in
-     * the registry, the owner unregisters the query and the entry is recycled
-     * for a new query, then the stale canceller proceeds. Without the lifecycle
-     * guard the stale canceller sets the cancelled flag of the new, unrelated
-     * query.
-     * <p>
-     * Cancellers only ever target even query ids, so a cancelled flag observed
-     * on an odd-id query proves a stale canceller touched a recycled entry.
-     */
     @Test
     public void testStaleCancellerCannotTouchRecycledEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch entryLookedUp = new CountDownLatch(1);
+            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final AtomicBoolean cancelResult = new AtomicBoolean(true);
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long oldId = registry.register("SELECT old", ownerContext);
+                final QueryRegistry.Entry oldEntry = registry.getEntry(oldId);
+                Assert.assertNotNull(oldEntry);
+
+                registry.setCancelLookupTestHook(() -> {
+                    entryLookedUp.countDown();
+                    TestUtils.await(releaseCanceller);
+                });
+
+                final Thread cancellerThread = new Thread(() -> {
+                    try {
+                        cancelResult.set(registry.cancel(oldId, cancelContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    }
+                }, "query_registry_stale_canceller");
+
+                long newId = -1;
+                cancellerThread.start();
+                try {
+                    Assert.assertTrue("canceller did not look up the old entry", entryLookedUp.await(5, TimeUnit.SECONDS));
+
+                    registry.unregister(oldId, ownerContext);
+                    newId = registry.register("SELECT new", ownerContext);
+                    final QueryRegistry.Entry newEntry = registry.getEntry(newId);
+                    Assert.assertSame(oldEntry, newEntry);
+                    Assert.assertFalse(newEntry.getCancelled().get());
+
+                    releaseCanceller.countDown();
+                    cancellerThread.join(5_000);
+                    Assert.assertFalse("stale canceller thread hung", cancellerThread.isAlive());
+                    if (fault.get() != null) {
+                        throw new AssertionError("stale canceller failed", fault.get());
+                    }
+                    Assert.assertFalse(cancelResult.get());
+                    Assert.assertFalse("stale canceller touched the recycled entry", newEntry.getCancelled().get());
+                } finally {
+                    registry.setCancelLookupTestHook(null);
+                    releaseCanceller.countDown();
+                    if (cancellerThread.isAlive()) {
+                        cancellerThread.interrupt();
+                        cancellerThread.join(5_000);
+                    }
+                    if (newId >= 0 && registry.getEntry(newId) != null) {
+                        registry.unregister(newId, ownerContext);
+                    } else if (registry.getEntry(oldId) != null) {
+                        registry.unregister(oldId, ownerContext);
+                    }
+                }
+                Assert.assertFalse("stale canceller thread survived cleanup", cancellerThread.isAlive());
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentCancelCannotTouchRecycledEntry() throws Exception {
         assertMemoryLeak(() -> {
             final QueryRegistry registry = engine.getQueryRegistry();
             final int producerCount = 4;
@@ -346,6 +403,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
             final AtomicInteger runningProducers = new AtomicInteger(producerCount);
             final AtomicLong cancelAttempts = new AtomicLong();
             final AtomicReference<Throwable> fault = new AtomicReference<>();
+            final AtomicBoolean stop = new AtomicBoolean();
             final CyclicBarrier startBarrier = new CyclicBarrier(producerCount + cancellerCount);
             final ObjList<Thread> threads = new ObjList<>();
 
@@ -354,7 +412,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 final Thread thread = new Thread(() -> {
                     try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                         startBarrier.await();
-                        for (int i = 0; i < iterations && fault.get() == null; i++) {
+                        for (int i = 0; i < iterations && fault.get() == null && !stop.get(); i++) {
                             final long queryId = registry.register("SELECT " + slot, context);
                             final QueryRegistry.Entry entry = registry.getEntry(queryId);
                             final AtomicBoolean cancelledFlag = entry.getCancelled();
@@ -382,7 +440,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     } finally {
                         runningProducers.decrementAndGet();
                     }
-                });
+                }, "query_registry_producer_" + p);
                 threads.add(thread);
             }
 
@@ -392,7 +450,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                         startBarrier.await();
                         int slot = seed;
-                        while (runningProducers.get() > 0 && fault.get() == null) {
+                        while (runningProducers.get() > 0 && fault.get() == null && !stop.get()) {
                             slot = (slot + 1) % producerCount;
                             final long queryId = liveCancellableIds.get(slot);
                             if (queryId < 0) {
@@ -408,16 +466,36 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     } catch (Throwable t) {
                         fault.compareAndSet(null, t);
                     }
-                });
+                }, "query_registry_canceller_" + c);
                 threads.add(thread);
             }
 
-            for (int i = 0, n = threads.size(); i < n; i++) {
-                threads.getQuick(i).start();
+            final long joinDeadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(120);
+            try {
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    threads.getQuick(i).start();
+                }
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    final long remainingMillis = TimeUnit.NANOSECONDS.toMillis(joinDeadlineNanos - System.nanoTime());
+                    if (remainingMillis > 0) {
+                        threads.getQuick(i).join(remainingMillis);
+                    }
+                }
+            } finally {
+                stop.set(true);
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    final Thread thread = threads.getQuick(i);
+                    if (thread.isAlive()) {
+                        thread.interrupt();
+                    }
+                }
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    threads.getQuick(i).join(5_000);
+                }
             }
+
             for (int i = 0, n = threads.size(); i < n; i++) {
-                threads.getQuick(i).join(120_000);
-                Assert.assertFalse("worker thread hung", threads.getQuick(i).isAlive());
+                Assert.assertFalse("worker thread hung: " + threads.getQuick(i).getName(), threads.getQuick(i).isAlive());
             }
 
             if (fault.get() != null) {

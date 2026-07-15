@@ -60,6 +60,7 @@ public class QueryRegistry {
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
     private final CarrierLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
 
+    private volatile Runnable cancelLookupTestHook;
     private volatile Listener listener;
 
     public QueryRegistry(CairoConfiguration configuration) {
@@ -85,6 +86,10 @@ public class QueryRegistry {
 
         Entry entry = registry.get(queryId);
         if (entry != null) {
+            final Runnable testHook = cancelLookupTestHook;
+            if (testHook != null) {
+                testHook.run();
+            }
             final CharSequence cancellerPrincipal = securityContext.getPrincipal();
             if (!entry.beginCancel(queryId)) {
                 LOG.info().$("query not found in registry [id=").$(queryId).I$();
@@ -267,6 +272,11 @@ public class QueryRegistry {
 
         executionContext.setCancelledFlag(e.cancelled);
         return queryId;
+    }
+
+    @TestOnly
+    public void setCancelLookupTestHook(Runnable cancelLookupTestHook) {
+        this.cancelLookupTestHook = cancelLookupTestHook;
     }
 
     @TestOnly
