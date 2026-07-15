@@ -152,6 +152,8 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     @TestOnly
+    private volatile Runnable onClearPendingFullRefreshForTesting;
+    @TestOnly
     private volatile Runnable onPendingFullRefreshMarkerReadForTesting;
     @TestOnly
     private volatile Runnable onPendingInvalidationMarkerReadForTesting;
@@ -380,6 +382,11 @@ public class MatViewState implements QuietCloseable {
 
     boolean clearPendingFullRefresh(Object expectedOwner) {
         assert latch.get();
+        final Runnable onClear = onClearPendingFullRefreshForTesting;
+        if (onClear != null) {
+            onClearPendingFullRefreshForTesting = null;
+            onClear.run();
+        }
         while (true) {
             final Object marker = pendingInvalidationMarker;
             if (!(marker instanceof PendingInvalidation pending) || pending.fullRefreshOwner != expectedOwner) {
@@ -1024,6 +1031,11 @@ public class MatViewState implements QuietCloseable {
 
     public void setLastRefreshTimestampUs(long timestampUs) {
         this.lastRefreshFinishTimestampUs = timestampUs;
+    }
+
+    @TestOnly
+    public void setOnClearPendingFullRefreshForTesting(Runnable onClearPendingFullRefreshForTesting) {
+        this.onClearPendingFullRefreshForTesting = onClearPendingFullRefreshForTesting;
     }
 
     @TestOnly

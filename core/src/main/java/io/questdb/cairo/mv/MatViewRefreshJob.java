@@ -1095,16 +1095,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(viewDefinition, viewState, null, th);
             return false;
         } finally {
-            if (!isFullRefreshDeferred) {
-                viewState.clearPendingFullRefresh(fullRefreshOwner);
+            try {
+                if (!isFullRefreshDeferred) {
+                    viewState.clearPendingFullRefresh(fullRefreshOwner);
+                }
+            } finally {
+                // A base invalidation newer than the full snapshot, from another base token/epoch, or without
+                // txn provenance remains pending; the post-release handoff wakes it. A successful full pump
+                // consumed only a known marker covered by its fixed reader. finalizeAndUnlock0 additionally
+                // suppresses the wake for this invocation's own auth-refused owner (authRefusedOwner):
+                // re-queueing that one self-feeds against a sticky refusal. A newer FULL publication minted
+                // a different owner and wakes normally. The nested finally keeps the unlock unconditional:
+                // clearPendingFullRefresh allocates a replacement marker when a reason shares it, and a
+                // clear that throws must not leave the latch held (the surviving owner facet is then
+                // redelivered by the handoff and re-runs once, which is bounded and safe). Same pattern as
+                // clearBlockedFullRefresh.
+                finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, authRefusedOwner);
             }
-            // A base invalidation newer than the full snapshot, from another base token/epoch, or without
-            // txn provenance remains pending; the post-release handoff wakes it. A successful full pump
-            // consumed only a known marker covered by its fixed reader. finalizeAndUnlock0 additionally
-            // suppresses the wake for this invocation's own auth-refused owner (authRefusedOwner):
-            // re-queueing that one self-feeds against a sticky refusal. A newer FULL publication minted
-            // a different owner and wakes normally.
-            finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, authRefusedOwner);
         }
 
         if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {

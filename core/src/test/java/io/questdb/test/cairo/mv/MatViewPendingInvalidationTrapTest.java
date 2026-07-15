@@ -1170,6 +1170,62 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshOwnerClearFailureStillUnlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // A successful full refresh clears its owner facet in the finally. When a reason shares
+            // the marker (published mid-hold, unknown provenance -- survives the coverage check), the
+            // clear allocates a replacement marker and can throw under memory pressure. The unlock
+            // must still run: a skipped finalize leaves the view latch held forever, wedging every
+            // later refresh, close, and drop of this view.
+            walRefusalToken.set(null);
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                final AtomicBoolean hasPublished = new AtomicBoolean();
+                job.setOnHoldingLockForTesting(() -> {
+                    if (hasPublished.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("mid-hold publication");
+                    }
+                });
+                state.setOnClearPendingFullRefreshForTesting(() -> {
+                    throw new OutOfMemoryError("test marker replacement allocation failure");
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                try {
+                    drainMatViewQueue(job);
+                    Assert.fail("the owner clear failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                }
+
+                Assert.assertFalse("the finally must release the latch even when the owner clear throws",
+                        state.isLocked());
+                Assert.assertTrue("the marker must survive the failed clear", state.isPendingInvalidation());
+                Assert.assertEquals("mid-hold publication", state.getPendingInvalidationReason());
+
+                // The nested finally's handoff already woke the surviving facets; the next drain
+                // mints the invalidation and the redelivered FULL performs invalid-view recovery.
+                drainMatViewQueue(job);
+                drainWalQueue();
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse("recovery must consume the marker", state.isPendingInvalidation());
+            Assert.assertFalse("recovery must end valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testFullRefreshTerminalFailureClearsPendingFull() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
