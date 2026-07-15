@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -62,6 +63,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
+    // Composite partitioning (parse-time only): raw dimension/cluster expressions collected by the
+    // parser. Resolved into PartitionSpec/PartitionDimension (see PartitionTransform) in a later stage;
+    // this builder never interprets them.
+    private final ObjList<ExpressionNode> clusterExprs = new ObjList<>();
+    private byte namingMode = PartitionSpec.MODE_HIVE;
+    private final ObjList<ExpressionNode> partitionDimensionExprs = new ObjList<>();
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;
     private CharSequence selectText;
@@ -78,6 +85,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int volumePosition;
     private boolean walEnabled;
 
+    public void addClusterExpr(ExpressionNode expr) {
+        clusterExprs.add(expr);
+    }
+
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
         if (columnModels.get(columnName) != null) {
             throw SqlException.duplicateColumn(model.getColumnNamePos(), columnName);
@@ -85,6 +96,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnNameIndexMap.put(columnName, columnModels.size());
         columnModels.put(columnName, model);
         columnNames.add(columnName);
+    }
+
+    public void addPartitionDimensionExpr(ExpressionNode expr) {
+        partitionDimensionExprs.add(expr);
     }
 
     @Override
@@ -179,6 +194,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
+        partitionDimensionExprs.clear();
+        clusterExprs.clear();
+        namingMode = PartitionSpec.MODE_HIVE;
         ttlToSinkOverride = null;
         tableNameExpr = null;
         timestampExpr = null;
@@ -191,6 +209,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlPosition = 0;
         walEnabled = false;
         tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
+    }
+
+    public ExpressionNode getClusterExpr(int index) {
+        return clusterExprs.getQuick(index);
+    }
+
+    public int getClusterExprCount() {
+        return clusterExprs.size();
     }
 
     public int getColumnCount() {
@@ -209,8 +235,20 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return columnNames.get(index);
     }
 
+    public byte getNamingMode() {
+        return namingMode;
+    }
+
     public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
+    }
+
+    public ExpressionNode getPartitionDimensionExpr(int index) {
+        return partitionDimensionExprs.getQuick(index);
+    }
+
+    public int getPartitionDimensionExprCount() {
+        return partitionDimensionExprs.size();
     }
 
     @Override
@@ -294,6 +332,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setNamingMode(byte namingMode) {
+        this.namingMode = namingMode;
     }
 
     public void setO3MaxLag(long o3MaxLag) {
