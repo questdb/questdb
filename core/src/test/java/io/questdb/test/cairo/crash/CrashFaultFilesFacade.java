@@ -133,6 +133,10 @@ import java.util.stream.Stream;
 public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     // fds are tracked so fsync can map a fd back to its file; only fsync advances durableSize.
     private final Map<Long, String> fdToPath = new HashMap<>();
+    // Non-cached opens (openRWNoCache/openRONoCache): tracked separately from fdToPath (they are NOT part of
+    // the path-keyed durability model) so the sweep driver can reclaim any left open by an fsync-interrupted
+    // operation — modelling the OS closing them on the process death a live-JVM crash cannot actually cause.
+    private final Set<Long> noCacheOpenFds = new LinkedHashSet<>();
     private final Map<String, Long> durableSize = new HashMap<>();
     private final Map<String, List<long[]>> tornTails = new HashMap<>();
     private final java.util.List<String> syncOrder = new java.util.ArrayList<>();
@@ -217,8 +221,27 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public long openRONoCache(LPSZ name) {
+        long fd = super.openRONoCache(name);
+        if (fd > -1) {
+            noCacheOpenFds.add(fd);
+        }
+        return fd;
+    }
+
+    @Override
+    public long openRWNoCache(LPSZ name, int opts) {
+        long fd = super.openRWNoCache(name, opts);
+        if (fd > -1) {
+            noCacheOpenFds.add(fd);
+        }
+        return fd;
+    }
+
+    @Override
     public boolean close(long fd) {
         fdToPath.remove(fd);
+        noCacheOpenFds.remove(fd);
         return super.close(fd);
     }
 
@@ -372,6 +395,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         final long size = p != null ? super.length(fd) : -1L;
         final byte[] snapshot = p != null ? readCurrent(p) : null; // read BEFORE close drops the fd
         super.fsyncAndClose(fd); // performs fsync + close; close() below drops the fd
+        noCacheOpenFds.remove(fd); // fsyncAndClose closes the OS fd WITHOUT routing through close(), so drop it here
         if (p != null) {
             syncOrder.add(p);
             if (size >= 0L) {
@@ -445,6 +469,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     /** Clear all tracked fd→path and durable-size/content state (for reuse across crash/retry cycles). */
     public void reset() {
         fdToPath.clear();
+        noCacheOpenFds.clear();
         durableSize.clear();
         tornTails.clear();
         syncOrder.clear();
@@ -540,6 +565,32 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     /** Number of durability ops (fsync/fsyncAndClose/msync) observed so far. */
     public int durabilityOpCount() {
         return durabilityOps;
+    }
+
+    /**
+     * Snapshot of the NON-cached fds ({@code openRWNoCache}/{@code openRONoCache}) currently open. These
+     * bypass the path-keyed durability tracking (so they are recorded here, NOT in {@code fdToPath}); the
+     * sweep driver uses this to model process-death fd reclamation — a simulated crash on a live JVM cannot
+     * actually kill the process, so a NON-cached fd left open by an fsync-interrupted operation lingers
+     * where a real power loss would have the OS reclaim it. The driver closes the per-cycle delta.
+     */
+    public java.util.List<Long> noCacheOpenFdsSnapshot() {
+        return new ArrayList<>(noCacheOpenFds);
+    }
+
+    /**
+     * Reclaim a non-cached fd (used by the sweep driver to model process-death fd closure). Robust to a
+     * stale bookkeeping entry: a non-cached fd can leave the fd cache via a path this facade does not
+     * intercept ({@code detach}, etc.), so the underlying close may report the fd as already gone — that is
+     * fine here (it means the OS descriptor is already reclaimed). Tracking is dropped regardless.
+     */
+    public void forceClose(long fd) {
+        try {
+            close(fd);
+        } catch (IllegalStateException | AssertionError alreadyGone) {
+            noCacheOpenFds.remove(fd);
+            fdToPath.remove(fd);
+        }
     }
 
     // === content-model test introspection (used by CrashModelSelfCheckTest) ===
