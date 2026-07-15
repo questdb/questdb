@@ -71,12 +71,7 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
 
     @Override
     public long size() {
-        final long sizeA = cursorA.size();
-        final long sizeB = cursorB.size();
-        if (sizeA == -1 || sizeB == -1) {
-            return -1;
-        }
-        return sizeA + sizeB;
+        return sumBranchSizes();
     }
 
     @Override
