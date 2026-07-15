@@ -36,7 +36,7 @@ import java.util.function.Function;
  * Resolves a parsed CREATE-TABLE partition-dimension expression node into a
  * {@link PartitionDimension}.
  * <p>
- * Handles three node shapes: a bare column-name literal (e.g. {@code exchange}),
+ * Handles four node shapes: a bare column-name literal (e.g. {@code exchange}),
  * which resolves to {@link PartitionDimension#KIND_IDENTITY} with the column name
  * as its alias; and calls to the built-in transform functions {@code identity(col)},
  * {@code hash(col, N)} and {@code truncate(col, N)}.
@@ -133,13 +133,8 @@ public final class PartitionTransform {
             ExpressionNode colNode,
             Function<CharSequence, Integer> symbolColumnResolver
     ) throws SqlException {
-        Integer idx;
-        try {
-            idx = symbolColumnResolver.apply(colNode.token);
-        } catch (RuntimeException e) {
-            idx = null;
-        }
-        if (idx == null || idx < 0) {
+        int idx = symbolColumnResolver.apply(colNode.token);
+        if (idx < 0) {
             throw SqlException.position(node.position).put("partition dimension must be a SYMBOL column");
         }
         return idx;

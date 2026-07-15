@@ -38,7 +38,7 @@ import java.util.function.Function;
 
 public class PartitionTransformTest extends AbstractCairoTest {
 
-    // resolver maps "exchange"->1, "symbol"->2, anything else -> throws "not a SYMBOL column"
+    // resolver maps "exchange"->1, "symbol"->2, any non-SYMBOL/unknown name -> -1 sentinel
     private static final Function<CharSequence, Integer> RES = name -> {
         if (Chars.equalsIgnoreCase(name, "exchange")) {
             return 1;
@@ -46,7 +46,7 @@ public class PartitionTransformTest extends AbstractCairoTest {
         if (Chars.equalsIgnoreCase(name, "symbol")) {
             return 2;
         }
-        throw new RuntimeException("not a SYMBOL column: " + name);
+        return -1;
     };
 
     @Test
@@ -72,6 +72,24 @@ public class PartitionTransformTest extends AbstractCairoTest {
         Assert.assertEquals(PartitionDimension.KIND_TRUNCATE, d.getKind());
         Assert.assertEquals(3, d.getParam());
         Assert.assertEquals("symbol_trunc", d.getAlias());
+    }
+
+    @Test
+    public void testIdentityFunctionShape() throws Exception {
+        PartitionDimension d = PartitionTransform.resolve(fn("identity", lit("exchange")), RES);
+        Assert.assertEquals(PartitionDimension.KIND_IDENTITY, d.getKind());
+        Assert.assertEquals(1, d.getColumnIndex());
+        Assert.assertEquals("exchange", d.getAlias());
+    }
+
+    @Test
+    public void testUnsupportedTransform() {
+        try {
+            PartitionTransform.resolve(fn("weird", lit("symbol")), RES);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "unsupported partition transform");
+        }
     }
 
     @Test
