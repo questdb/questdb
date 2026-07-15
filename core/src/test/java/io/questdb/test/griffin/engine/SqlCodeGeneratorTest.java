@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,8 +38,10 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
@@ -57,6 +60,7 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 
@@ -8400,6 +8404,30 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsCountDoesNotMaterializeKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keep the input cardinality high enough to exercise dictionary growth without
+            // making the regression depend on the test JVM's heap size.
+            execute("CREATE TABLE ta AS (SELECT x::symbol s FROM long_sequence(50000))");
+            execute("CREATE TABLE tb AS (SELECT (x + 50000)::symbol s FROM long_sequence(50000))");
+
+            try (RecordCursorFactory factory = select("SELECT count(s) FROM (ta UNION ALL tb)")) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(100000, cursor.getRecord().getLong(0));
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // count(K) only needs nullness. In particular, consuming all 100k distinct
+                    // values must not populate the union's lazy symbol dictionary.
+                    Assert.assertEquals(0, getCachedSymbolCount(symbolCasts.getQuick(0)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsCastsBackToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG)");
@@ -8432,6 +8460,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("SELECT s FROM ta EXCEPT SELECT s FROM tb")
                     .noLeakCheck().columnType(0, ColumnType.SYMBOL)
                     .returns("s\nb\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsDynamicEqualityDoesNotMaterializeKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta AS (SELECT x::symbol s, x::symbol expected FROM long_sequence(1000))");
+            execute("CREATE TABLE tb AS (SELECT (x + 1000)::symbol s, (x + 1001)::symbol expected FROM long_sequence(1000))");
+
+            try (RecordCursorFactory factory = select("SELECT s FROM (ta UNION ALL tb) WHERE s = expected")) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(2, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    int rowCount = 0;
+                    while (cursor.hasNext()) {
+                        rowCount++;
+                    }
+                    Assert.assertEquals(1000, rowCount);
+
+                    // Both sides are non-static SYMBOL columns, so equality compares their
+                    // string values and leaves both lazy dictionaries untouched.
+                    Assert.assertEquals(0, getCachedSymbolCount(symbolCasts.getQuick(0)));
+                    Assert.assertEquals(0, getCachedSymbolCount(symbolCasts.getQuick(1)));
+                }
+            }
         });
     }
 
@@ -9524,6 +9577,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
                             """);
         });
+    }
+
+    private static ObjList<CastStrToSymbolFunctionFactory.Func> findUnionSymbolCasts(RecordCursorFactory factory) {
+        final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = new ObjList<>();
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof VirtualRecordCursorFactory) {
+                final ObjList<Function> functions = ((VirtualRecordCursorFactory) current).getFunctions();
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    final Function function = functions.getQuick(i);
+                    if (function instanceof CastStrToSymbolFunctionFactory.Func) {
+                        symbolCasts.add((CastStrToSymbolFunctionFactory.Func) function);
+                    }
+                }
+                if (symbolCasts.size() > 0) {
+                    return symbolCasts;
+                }
+            }
+        }
+        Assert.fail("could not find the union symbol casts in the factory chain");
+        return null;
+    }
+
+    private static int getCachedSymbolCount(CastStrToSymbolFunctionFactory.Func function) throws Exception {
+        final Field next = CastStrToSymbolFunctionFactory.Func.class.getDeclaredField("next");
+        next.setAccessible(true);
+        return next.getInt(function) - 1;
     }
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {

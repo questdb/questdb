@@ -60,13 +60,24 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
     public static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final CharSequenceIntHashMap lookupMap = new CharSequenceIntHashMap();
-        private final ObjList<CharSequence> symbols = new ObjList<>();
+        private CharSequenceIntHashMap lookupMap = new CharSequenceIntHashMap();
+        private ObjList<CharSequence> symbols = new ObjList<>();
         private int next = 1;
 
         public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
+        }
+
+        @Override
+        public void cursorClosed() {
+            arg.cursorClosed();
+            // A cached factory can outlive its cursor. Drop the grown backing arrays as well
+            // as their String entries so a genuine key consumer does not pin its dictionary.
+            lookupMap = new CharSequenceIntHashMap();
+            symbols = new ObjList<>();
+            symbols.add(null);
+            next = 1;
         }
 
         @Override

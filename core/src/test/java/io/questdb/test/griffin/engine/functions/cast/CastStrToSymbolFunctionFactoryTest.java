@@ -73,6 +73,12 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
         arg.valueA = null;
         Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));
         Assert.assertNull(func.valueOf(SymbolTable.VALUE_IS_NULL));
+
+        // A cached factory may outlive the cursor. Closing the cursor must drop the
+        // dictionary, so the next use starts from key 0 even before another init call.
+        func.cursorClosed();
+        arg.valueA = "after_cursor_close";
+        Assert.assertEquals(0, func.getInt(null));
     }
 
     private static class FeedFunction extends StrFunction {
