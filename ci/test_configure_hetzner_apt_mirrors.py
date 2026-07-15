@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -27,9 +29,9 @@ deb https://apt.releases.hashicorp.com noble main
 
         self.assertEqual(
             """\
-deb https://mirror.hetzner.com/ubuntu/packages/ noble main universe
-deb https://mirror.hetzner.com/ubuntu/security/ noble-security main universe
-deb https://mirror.hetzner.com/ubuntu/packages/ noble-updates main
+deb mirror+file:/etc/apt/mirrors/questdb-ubuntu-packages.list noble main universe
+deb mirror+file:/etc/apt/mirrors/questdb-ubuntu-security.list noble-security main universe
+deb mirror+file:/etc/apt/mirrors/questdb-ubuntu-packages.list noble-updates main
 deb https://apt.releases.hashicorp.com noble main
 # deb http://archive.ubuntu.com/ubuntu noble-backports main
 """,
@@ -56,13 +58,13 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
         self.assertEqual(
             """\
 Types: deb
-URIs: https://mirror.hetzner.com/ubuntu-ports/packages/
+URIs: mirror+file:/etc/apt/mirrors/questdb-ubuntu-ports-packages.list
 Suites: noble noble-updates noble-backports
 Components: main universe restricted multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 
 Types: deb
-URIs: https://mirror.hetzner.com/ubuntu-ports/security/
+URIs: mirror+file:/etc/apt/mirrors/questdb-ubuntu-ports-security.list
 Suites: noble-security
 Components: main universe restricted multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
@@ -86,7 +88,7 @@ components: main universe
             """\
 types: deb
 uris:
- https://mirror.hetzner.com/ubuntu-ports/security/
+ mirror+file:/etc/apt/mirrors/questdb-ubuntu-ports-security.list
 suites:
  noble-security
 components: main universe
@@ -120,13 +122,27 @@ deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main
 
         self.assertEqual(
             """\
-deb [arch=arm64] https://mirror.hetzner.com/ubuntu-ports/packages/ noble main
-deb [arch=amd64] https://mirror.hetzner.com/ubuntu/packages/ noble main
+deb [arch=arm64] mirror+file:/etc/apt/mirrors/questdb-ubuntu-ports-packages.list noble main
+deb [arch=amd64] mirror+file:/etc/apt/mirrors/questdb-ubuntu-packages.list noble main
 """,
             actual,
         )
 
-    def test_configure_is_idempotent_and_skips_unsupported_systems(self):
+    def test_rewrites_existing_hetzner_sources_to_prioritized_lists(self):
+        source = """\
+Types: deb
+URIs: https://mirror.hetzner.com/ubuntu-ports/security
+Suites: noble-security
+"""
+
+        actual = MIRRORS.rewrite_deb822_sources(source)
+
+        self.assertIn(
+            "mirror+file:/etc/apt/mirrors/questdb-ubuntu-ports-security.list",
+            actual,
+        )
+
+    def test_configure_writes_prioritized_fallback_lists_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             source_directory = root / "etc/apt/sources.list.d"
@@ -141,12 +157,52 @@ deb [arch=amd64] https://mirror.hetzner.com/ubuntu/packages/ noble main
                 encoding="utf-8",
             )
 
-            self.assertEqual(1, MIRRORS.configure(root, "arm64"))
+            original_umask = os.umask(0o077)
+            try:
+                self.assertEqual(1, MIRRORS.configure(root, "arm64"))
+            finally:
+                os.umask(original_umask)
+
             first_result = source_file.read_text(encoding="utf-8")
+            mirror_list_directory = root / "etc/apt/mirrors"
+            package_list = (
+                mirror_list_directory / "questdb-ubuntu-ports-packages.list"
+            )
+            mirror_list_directory.chmod(0o700)
+            package_list.chmod(0o600)
+
             self.assertEqual(0, MIRRORS.configure(root, "arm64"))
             self.assertEqual(first_result, source_file.read_text(encoding="utf-8"))
-            self.assertEqual(0, MIRRORS.configure(root, "riscv64"))
+            self.assertEqual(
+                0o755, stat.S_IMODE(mirror_list_directory.stat().st_mode)
+            )
 
+            expected_mirror_lists = {
+                "questdb-ubuntu-packages.list": (
+                    "https://mirror.hetzner.com/ubuntu/packages\tpriority:1\n"
+                    "https://archive.ubuntu.com/ubuntu\tpriority:2\n"
+                ),
+                "questdb-ubuntu-security.list": (
+                    "https://mirror.hetzner.com/ubuntu/security\tpriority:1\n"
+                    "https://security.ubuntu.com/ubuntu\tpriority:2\n"
+                ),
+                "questdb-ubuntu-ports-packages.list": (
+                    "https://mirror.hetzner.com/ubuntu-ports/packages\tpriority:1\n"
+                    "https://ports.ubuntu.com/ubuntu-ports\tpriority:2\n"
+                ),
+                "questdb-ubuntu-ports-security.list": (
+                    "https://mirror.hetzner.com/ubuntu-ports/security\tpriority:1\n"
+                    "https://ports.ubuntu.com/ubuntu-ports\tpriority:2\n"
+                ),
+            }
+            for filename, expected_contents in expected_mirror_lists.items():
+                mirror_list = mirror_list_directory / filename
+                self.assertEqual(
+                    expected_contents, mirror_list.read_text(encoding="utf-8")
+                )
+                self.assertEqual(0o644, stat.S_IMODE(mirror_list.stat().st_mode))
+
+            self.assertEqual(0, MIRRORS.configure(root, "riscv64"))
             os_release.write_text("ID=debian\n", encoding="utf-8")
             self.assertEqual(0, MIRRORS.configure(root, "amd64"))
 
@@ -172,7 +228,7 @@ deb [arch=amd64] https://mirror.hetzner.com/ubuntu/packages/ noble main
                 ):
                     MIRRORS.configure(root, "arm64")
 
-    def test_mixed_deb822_suite_uses_package_mirror(self):
+    def test_mixed_deb822_suite_uses_package_mirror_list(self):
         source = """\
 Types: deb
 URIs: http://ports.ubuntu.com/ubuntu-ports/
@@ -182,8 +238,8 @@ Suites: noble
 
         actual = MIRRORS.rewrite_deb822_sources(source)
 
-        self.assertIn("/ubuntu-ports/packages/", actual)
-        self.assertNotIn("/ubuntu-ports/security/", actual)
+        self.assertIn("questdb-ubuntu-ports-packages.list", actual)
+        self.assertNotIn("questdb-ubuntu-ports-security.list", actual)
 
 
 if __name__ == "__main__":
