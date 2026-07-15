@@ -1207,7 +1207,8 @@ public class FirstLastParallelOrderingTest extends AbstractCairoTest {
             case ColumnType.GEOSHORT -> Assert.assertEquals(func.getGeoShort(expected), func.getGeoShort(actual));
             case ColumnType.GEOINT -> Assert.assertEquals(func.getGeoInt(expected), func.getGeoInt(actual));
             case ColumnType.GEOLONG -> Assert.assertEquals(func.getGeoLong(expected), func.getGeoLong(actual));
-            case ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL -> Assert.assertEquals(func.getInt(expected), func.getInt(actual));
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL ->
+                    Assert.assertEquals(func.getInt(expected), func.getInt(actual));
             case ColumnType.LONG -> Assert.assertEquals(func.getLong(expected), func.getLong(actual));
             case ColumnType.STRING -> {
                 final String expectedValue = func.getStrA(expected).toString();
