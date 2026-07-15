@@ -95,6 +95,16 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("timestamp_shuffle(").val(start).val(',').val(end).val(')');
         }

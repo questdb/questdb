@@ -125,17 +125,15 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowDelete() throws Exception {
-        // we don't support DELETE yet. this test exists as a reminder to check read-only security context is honoured
-        // when/if DELETE is implemented.
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP)");
-            try {
-                executeWithPg("delete from src");
-                assertExceptionNoLeakCheck("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
-            } catch (PSQLException e) {
-                // the parser does not support DELETE
-                assertContains(e.getMessage(), "unexpected token [from]");
-            }
+            execute("CREATE TABLE src (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO src VALUES ('2026-01-01T00:00:00.000000Z')");
+            assertQueryDisallowed("DELETE FROM src WHERE ts >= 0");
+            drainWalQueue();
+            assertQuery("SELECT * FROM src")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\n2026-01-01T00:00:00.000000Z\n");
         });
     }
 

@@ -876,6 +876,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         operationExecutor.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
         sqlInfo.populateBindVariableService(operationExecutor.getBindVariableService());
         try {
+            int recompilationAttempts = 0;
             while (true) {
                 try {
                     switch (cmdType) {
@@ -922,6 +923,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }
+                }
+
+                if (recompilationAttempts++ >= engine.getConfiguration().getMaxSqlRecompileAttempts()) {
+                    LOG.info().$("failed to compile WAL SQL after table rename retries, will retry later [table=")
+                            .$(tableWriter.getTableToken())
+                            .$(", attempts=").$(recompilationAttempts).I$();
+                    throw EjectApplyWalException.INSTANCE;
                 }
 
                 TableToken tableToken = tableWriter.getTableToken();

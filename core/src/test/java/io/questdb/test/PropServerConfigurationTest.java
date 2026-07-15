@@ -1403,7 +1403,7 @@ public class PropServerConfigurationTest {
 
     // cairo.wal.delete.rows.per.step < 1 must be rejected at startup: a value <= 0 makes the windowed-DELETE
     // survivor-replace window-sizing estimate floor the ts-window to 1, exploding the window count to the whole
-    // timestamp span = an effectively permanent WAL-apply hang. See OperationExecutor.deleteWindowStep.
+    // timestamp span = an effectively permanent WAL-apply hang. See WalUtils.deleteWindowStep.
     @Test
     public void testInvalidWalDeleteRowsPerStepNegative() throws Exception {
         Properties properties = new Properties();

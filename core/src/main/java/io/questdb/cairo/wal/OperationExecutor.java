@@ -54,7 +54,7 @@ import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
-public class OperationExecutor implements Closeable {
+class OperationExecutor implements Closeable {
     private static final Log LOG = LogFactory.getLog(OperationExecutor.class);
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
@@ -111,7 +111,7 @@ public class OperationExecutor implements Closeable {
      * Returns result of underlying {@link AlterOperation#matViewInvalidationReason()}.
      */
     public String executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
-        final TableToken tableToken = tableWriter.getTableToken();
+        TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
             CompiledQuery compiledQuery;
@@ -121,21 +121,16 @@ public class OperationExecutor implements Closeable {
                     compiledQuery = compiler.compile(alterSql, executionContext);
                     break;
                 } catch (TableReferenceOutOfDateException ex) {
-                    // The table is renamed in the table registry
-                    // just before the compilation of this ALTER
-                    TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                    if (stallCount++ >= maxRecompilationAttempts) {
+                        throw ex;
+                    }
+                    // The table was renamed in the registry during compilation. Follow the latest token so
+                    // subsequent failures compare against the current name rather than the original one.
+                    final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
                     if (updatedToken != null && !updatedToken.equals(tableToken)) {
+                        tableToken = updatedToken;
                         tableWriter.updateTableToken(updatedToken);
                         executionContext.remapTableNameResolutionTo(updatedToken);
-                    } else {
-                        // This is a transient error, we should retry
-                        // it can happen if the table renamed in the middle
-                        // of alter compilation but then renamed back.
-                        // This is highly unlikely to stall in real life
-                        // but keeping the DB in live lock is not a good idea, hence there is a limit
-                        if (stallCount++ > maxRecompilationAttempts) {
-                            throw ex;
-                        }
                     }
                 }
             }
@@ -180,7 +175,7 @@ public class OperationExecutor implements Closeable {
      * @return number of rows removed
      */
     public long executeDelete(TableWriter tableWriter, CharSequence deleteSql, long seqTxn) throws SqlException {
-        final TableToken tableToken = tableWriter.getTableToken();
+        TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
             CompiledQuery compiledQuery;
@@ -190,14 +185,16 @@ public class OperationExecutor implements Closeable {
                     compiledQuery = compiler.compile(deleteSql, executionContext);
                     break;
                 } catch (TableReferenceOutOfDateException ex) {
-                    // The table was renamed in the registry between apply and this recompile; re-point and
-                    // retry (mirrors executeAlter). Bounded to avoid a live lock on a rename/rename-back.
-                    TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                    if (stallCount++ >= maxRecompilationAttempts) {
+                        throw ex;
+                    }
+                    // The table was renamed in the registry during compilation. Follow the latest token and
+                    // count every failed compile so rename churn cannot keep the WAL apply worker in a live lock.
+                    final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
                     if (updatedToken != null && !updatedToken.equals(tableToken)) {
+                        tableToken = updatedToken;
                         tableWriter.updateTableToken(updatedToken);
                         executionContext.remapTableNameResolutionTo(updatedToken);
-                    } else if (stallCount++ > maxRecompilationAttempts) {
-                        throw ex;
                     }
                 }
             }
@@ -238,17 +235,19 @@ public class OperationExecutor implements Closeable {
                     if (isDiskBoundedCandidate) {
                         final MatViewGraph graph = engine.getMatViewGraph();
                         final TableToken currentTableToken = tableWriter.getTableToken();
-                        // The graph-owned guard retains the exact dependency-list identity and its read lock across
-                        // the non-atomic loop, so a concurrent materialized-view add cannot race any window commit.
-                        try (MatViewGraph.DependentViewsReadGuard dependentViews = graph.lockDependentViews(currentTableToken)) {
-                            if (dependentViews.isEmpty()) {
-                                isDiskBounded = true;
-                                LOG.info().$("DELETE apply [table=").$(currentTableToken)
-                                        .$(", strategy=survivor-window-disk-bounded")
-                                        .$(", seqTxn=").$(seqTxn).I$();
-                                return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
-                            }
+                        // The graph retains the exact dependency-list read lock while it invokes the non-atomic
+                        // loop, so a concurrent materialized-view add cannot race any window commit.
+                        isDiskBounded = true;
+                        final long removed = graph.applyIfNoDependentViews(currentTableToken, () -> {
+                            LOG.info().$("DELETE apply [table=").$(currentTableToken)
+                                    .$(", strategy=survivor-window-disk-bounded")
+                                    .$(", seqTxn=").$(seqTxn).I$();
+                            return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
+                        });
+                        if (removed > -1) {
+                            return removed;
                         }
+                        isDiskBounded = false;
                     }
 
                     final String deleteStrategy = deleteOp.isPureTimeRange() ? "time-range" : "survivor-window";
@@ -566,7 +565,7 @@ public class OperationExecutor implements Closeable {
         final long minTs = tableWriter.getMinTimestamp();
         final long maxTs = tableWriter.getMaxTimestamp();
         final long rowsPerStep = engine.getConfiguration().getWalDeleteRowsPerStep();
-        final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
+        final long step = WalUtils.deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
         final BindVariableService bind = executionContext.getBindVariableService();
         // Designated-ts column type (TIMESTAMP_MICRO or TIMESTAMP_NANO). The window bounds MUST be set in
         // this unit via DeleteOperation.setWindowBound: a raw bind.setTimestamp is micros-only and overflows
@@ -660,7 +659,7 @@ public class OperationExecutor implements Closeable {
         final long minTs = tableWriter.getMinTimestamp();
         final long maxTs = tableWriter.getMaxTimestamp();
         final long rowsPerStep = engine.getConfiguration().getWalDeleteRowsPerStep();
-        final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
+        final long step = WalUtils.deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
         final BindVariableService bind = executionContext.getBindVariableService();
         // Designated-ts column type (TIMESTAMP_MICRO or TIMESTAMP_NANO): the window bounds MUST be set in this
         // unit via DeleteOperation.setWindowBound, never a raw bind.setTimestamp (micros-only -> overflow/suspend
@@ -745,37 +744,6 @@ public class OperationExecutor implements Closeable {
             }
         }
         return false;
-    }
-
-    /**
-     * Ts-width (in the table's designated-timestamp unit) that spans roughly {@code rowsPerStep} rows over the
-     * populated range {@code [minTs, maxTs]}, used to tile an arbitrary DELETE's survivor-replace into
-     * memory-bounded windows. Reuses {@link MatViewRefreshJob#estimateBucketsForRows} with {@code bucket=1},
-     * {@code partitionDuration=span}, {@code partitionCount=1}, which reduces to
-     * {@code max(1, span * rowsPerStep / tableRows)} computed in double (overflow-safe for large spans). Returns
-     * {@code Long.MAX_VALUE} (one window) for an empty table.
-     */
-    // public for testing (mirrors MatViewRefreshJob.estimateBucketsForRows, which this delegates to)
-    public static long deleteWindowStep(long minTs, long maxTs, long tableRows, long rowsPerStep) {
-        if (tableRows <= 0) {
-            return Long.MAX_VALUE;
-        }
-        // PropServerConfiguration rejects cairo.wal.delete.rows.per.step < 1, but getWalDeleteRowsPerStep() is an
-        // overridable CairoConfiguration getter, so a programmatic override could still supply a degenerate value;
-        // clamp to >= 1 so estimateBucketsForRows can never floor the window to 1 ts-unit and explode the window
-        // count to the whole timestamp span.
-        final long safeRowsPerStep = Math.max(1, rowsPerStep);
-        // maxTs - minTs cannot overflow: designated timestamps below 1970-01-01 are rejected at insert
-        // (TableWriter's "timestamp before 1970-01-01"), so 0 <= minTs <= maxTs and the difference stays in
-        // [0, Long.MAX_VALUE]. Only the +1 can overflow -- to a NEGATIVE span -- when the populated range fills
-        // the whole positive domain (minTs==0, maxTs==Long.MAX_VALUE), which would floor the step to 1 and
-        // explode the window count. Clamp that single case to Long.MAX_VALUE so the step stays large and finite
-        // (memory-bounded window count), never floored to 1. (executeDelete guards maxTs==Long.MAX_VALUE before
-        // reaching here, so in production this branch is belt-and-braces; it keeps this public helper correct
-        // when called in isolation.)
-        final long diff = maxTs - minTs;
-        final long span = (diff == Long.MAX_VALUE) ? Long.MAX_VALUE : diff + 1;
-        return MatViewRefreshJob.estimateBucketsForRows(safeRowsPerStep, tableRows, 1, span, 1);
     }
 
     /**

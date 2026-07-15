@@ -73,23 +73,30 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDependentViewsReadGuard() {
+    public void testApplyIfNoDependentViews() throws Exception {
         final TableToken tableToken = newTableToken("table1");
         final TableToken viewToken = newMatViewToken("view1");
+        final int[] invocationCount = {0};
 
-        try (MatViewGraph.DependentViewsReadGuard guard = graph.lockDependentViews(tableToken)) {
-            Assert.assertTrue(guard.isEmpty());
-        }
+        Assert.assertEquals(42, graph.applyIfNoDependentViews(tableToken, () -> {
+            invocationCount[0]++;
+            return 42;
+        }));
+        Assert.assertEquals(1, invocationCount[0]);
 
         graph.addView(createDefinition(viewToken, tableToken));
-        try (MatViewGraph.DependentViewsReadGuard guard = graph.lockDependentViews(tableToken)) {
-            Assert.assertFalse(guard.isEmpty());
-        }
+        Assert.assertEquals(-1, graph.applyIfNoDependentViews(tableToken, () -> {
+            invocationCount[0]++;
+            return 42;
+        }));
+        Assert.assertEquals(1, invocationCount[0]);
 
         graph.removeView(viewToken);
-        try (MatViewGraph.DependentViewsReadGuard guard = graph.lockDependentViews(tableToken)) {
-            Assert.assertTrue(guard.isEmpty());
-        }
+        Assert.assertEquals(42, graph.applyIfNoDependentViews(tableToken, () -> {
+            invocationCount[0]++;
+            return 42;
+        }));
+        Assert.assertEquals(2, invocationCount[0]);
     }
 
     // loops

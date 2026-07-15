@@ -383,14 +383,9 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                     // DELETE x < 5 -- removes rows 1..4 (x in {1,2,3,4}), survivors {5..10}.
                     ExecResult r = executeExec(client, "DELETE FROM del WHERE x < 5");
                     Assert.assertEquals(CompiledQuery.DELETE, r.opType);
-                    // On a WAL table the deferred op reports the sequencer txn it minted (like UPDATE-on-WAL,
-                    // not a logical row count); the real deletion is asserted via the drained SELECT below.
-                    // The key regression check: a REAL positive sequencer txn, not the stale -1 the
-                    // fake-success default arm returned before the fix.
-                    Assert.assertTrue(
-                            "WAL DELETE must report a real minted sequencer txn, not fake -1 [got=" + r.rowsAffected + ']',
-                            r.rowsAffected > 0
-                    );
+                    // WAL apply computes the exact count after this acknowledgement. The wire response uses 0
+                    // as the unavailable-count placeholder and must never expose the minted sequencer txn.
+                    Assert.assertEquals(0, r.rowsAffected);
                     // Apply the WAL DELETE txn, then verify the exact survivor set over the wire.
                     serverMain.awaitTable("del");
                     final boolean[] present = new boolean[11]; // index == x value (1..10)

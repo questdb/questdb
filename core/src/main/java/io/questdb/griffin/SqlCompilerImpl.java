@@ -795,6 +795,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private static boolean isDeletePredicateReplayStable(Function function) {
+        if (function.isRandom()) {
+            return false;
+        }
         if (function instanceof IndexedParameterLinkFunction || function instanceof NamedParameterLinkFunction) {
             // WAL captures user bind values with the DELETE SQL transaction and restores them once before apply,
             // so these links remain stable across survivor windows and retries.

@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
-import io.questdb.cairo.wal.OperationExecutor;
+import io.questdb.cairo.wal.WalUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -33,31 +33,31 @@ public class OperationExecutorWindowStepTest {
     @Test
     public void testUniformDensityGivesRowsPerStepWidth() {
         // 1000 rows uniformly over ts [0, 999] (span 1000). rowsPerStep=100 -> ~100 ts units per window.
-        Assert.assertEquals(100, OperationExecutor.deleteWindowStep(0, 999, 1000, 100));
+        Assert.assertEquals(100, WalUtils.deleteWindowStep(0, 999, 1000, 100));
     }
 
     @Test
     public void testStepAtLeastOne() {
         // Denser than one row per ts unit: step floors at 1 (never 0, which would not advance the loop).
-        Assert.assertEquals(1, OperationExecutor.deleteWindowStep(0, 9, 1_000_000, 100));
+        Assert.assertEquals(1, WalUtils.deleteWindowStep(0, 9, 1_000_000, 100));
     }
 
     @Test
     public void testRowsPerStepExceedsTableGivesSingleWindow() {
         // rowsPerStep >= tableRows -> step spans the whole populated range (one window).
-        long step = OperationExecutor.deleteWindowStep(0, 999, 1000, 10_000);
+        long step = WalUtils.deleteWindowStep(0, 999, 1000, 10_000);
         Assert.assertTrue("step must cover the whole span", step >= 1000);
     }
 
     @Test
     public void testEmptyTableSingleWindow() {
-        Assert.assertEquals(Long.MAX_VALUE, OperationExecutor.deleteWindowStep(0, 0, 0, 100));
+        Assert.assertEquals(Long.MAX_VALUE, WalUtils.deleteWindowStep(0, 0, 0, 100));
     }
 
     @Test
     public void testHugeSpanNoOverflow() {
         // Near-max span must not overflow to a negative/zero step (double math in estimateBucketsForRows).
-        long step = OperationExecutor.deleteWindowStep(0, (Long.MAX_VALUE >> 1), 1_000_000_000L, 1_000_000L);
+        long step = WalUtils.deleteWindowStep(0, (Long.MAX_VALUE >> 1), 1_000_000_000L, 1_000_000L);
         Assert.assertTrue("step positive", step > 0);
     }
 
@@ -66,7 +66,7 @@ public class OperationExecutorWindowStepTest {
         // minTs=0, maxTs=Long.MAX_VALUE fills the whole positive domain: `maxTs - minTs + 1` overflows to a
         // negative span, which (before the clamp) floored the step to 1 and exploded the window count to ~2^63.
         // The clamp must keep the step large (one/few windows), not 1.
-        long step = OperationExecutor.deleteWindowStep(0, Long.MAX_VALUE, 1_000_000_000L, 1_000_000L);
+        long step = WalUtils.deleteWindowStep(0, Long.MAX_VALUE, 1_000_000_000L, 1_000_000L);
         Assert.assertTrue("step must not be floored to 1 by span overflow, was " + step, step > 1_000_000L);
     }
 }

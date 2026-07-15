@@ -1483,35 +1483,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * partition reopen if the last partition was converted). Empty batch is a no-op. The
      * pending list is cleared regardless of outcome.
      * <p>
-     * This is <b>not</b> a final commit. {@code txWriter.commit} below persists {@code _txn},
-     * but the new native column files written by {@link #produceNativeFromParquet} were closed
-     * without fsync and are not part of the writer's active column set, so no data fsync is
-     * issued here. Real durability is established by the column-conversion final commit
-     * ({@link #commit00}) that the caller (typically
-     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) runs after the column
-     * type-conversion phase: that commit's {@code syncColumns} fsyncs both the just-reopened
-     * native partition data and the new column-conversion output before publishing the next
-     * {@code _txn}.
+     * Before this method publishes {@code _txn}, the conversion syncs the reconstructed native
+     * column and index files, plus the partition directory, whenever commit mode requires it.
+     * The caller (typically {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) still
+     * performs its final {@link #commit00} after the column type-conversion phase.
      * <p>
-     * Consequence for error handling: any failure here (the {@code txWriter.commit} itself,
-     * the metadata cache update, or the per-partition close/rmdir/reopen housekeeping) means
-     * the surrounding ALTER as a whole has not completed - the column-conversion phase will
-     * not run, the final commit will not happen, and on crash no part of the operation is
-     * durable. Sub-failures must therefore propagate as ordinary errors, not as the
-     * "data persisted, housekeeping failed" signal of {@link #handleHousekeepingException}:
-     * no data has been persisted in the durable sense at this point.
-     * <p>
-     * <b>Caller-specific note (DELETE).</b> The "not durable at this point" reasoning above is
-     * specific to the <b>ALTER</b> caller, whose later {@link #commit00} supersedes this
-     * {@code _txn} and is where durability is established. The <b>DELETE</b> caller
-     * ({@code OperationExecutor.convertParquetPartitionsForDelete}) uses this method differently:
-     * here the {@code commitTxWriter} above <b>is</b> the durability point for the format change -
-     * it is commit&nbsp;#1 at seqTxn S-1, run before {@code setSeqTxn(S)}. So a housekeeping throw
-     * <i>after</i> that {@code commitTxWriter} leaves the parquet-&gt;native conversion durably applied;
-     * crash-recovery re-reads the now-native partitions and skips the convert when it re-applies the
-     * delete's own txn&nbsp;S - which is exactly why DELETE re-apply is idempotent and crash-safe. (The
-     * reconstructed native column <i>data</i> is still written without fsync; under SYNC commit mode
-     * that is a separate, documented power-loss residual - see the DELETE design spec &sect;14.)
+     * A failure before {@code commitTxWriter} leaves the on-disk transaction unchanged. A failure
+     * afterward leaves the format conversion durable even if metadata-cache or old-directory
+     * housekeeping has not completed. Callers propagate that failure and a retry observes the native
+     * partition, making the conversion pre-commit idempotent for both ALTER and DELETE.
      */
     public void commitPendingParquetToNativeConversions() {
         if (pendingParquetToNativeConversions.size() == 0) {
@@ -1780,16 +1760,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * When {@code doCommit} is false, performs the partition rewrite and updates in-memory
      * {@code txWriter} state, but does not commit and does not run post-commit housekeeping.
-     * The new native column files are written and closed without fsync. The caller must
-     * invoke {@link #commitPendingParquetToNativeConversions()} once after the batch to
-     * push {@code _txn} to disk and run the deferred housekeeping. Even after that
-     * pre-commit, the new data files are not yet fsynced - the real durability fence is
-     * the caller's subsequent {@link #commit00} (or equivalent {@code syncColumns} +
-     * {@code txWriter.commit}) at the end of the surrounding operation, typically the
-     * column-conversion final commit driven by
-     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}. If the caller fails
-     * before either of those, the in-memory updates are discarded along with the
-     * (subsequently distressed) writer, leaving the on-disk state unchanged.
+     * The caller must invoke {@link #commitPendingParquetToNativeConversions()} once after
+     * the batch to push {@code _txn} to disk and run the deferred housekeeping. Before that
+     * publication, the conversion syncs native column and index files when commit mode requires
+     * it. If the caller fails before the pre-commit, the in-memory updates are discarded along
+     * with the (subsequently distressed) writer, leaving the on-disk state unchanged.
      */
     public boolean convertPartitionParquetToNative(long partitionTimestamp, boolean doCommit) {
         assert metadata.getTimestampIndex() > -1;
@@ -1842,6 +1817,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("rebuilding index files after parquet decode [path=").$substr(pathRootSize, other).I$();
             rebuildPartitionIndexFiles(partitionTimestamp, newPartitionDirLen, parquetRowCount);
+            if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+                final long dirFd = TableUtils.openRONoCache(ff, other.trimTo(newPartitionDirLen).$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            }
 
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -11781,6 +11762,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
+                    final long dstAuxFd = columnFdAndDataSize.get(3L * i);
+                    if (dstAuxFd > -1) {
+                        ff.fsync(dstAuxFd);
+                    }
+                    final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                    if (dstDataFd > -1) {
+                        ff.fsync(dstDataFd);
+                    }
+                }
+            }
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to native [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -12475,6 +12468,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
+                        indexWriter.commit();
                         indexWriter.seal();
                     } finally {
                         ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);

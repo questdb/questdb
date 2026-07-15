@@ -170,7 +170,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     );
                     Assert.fail();
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "ERROR: unexpected token [test]");
+                    TestUtils.assertContains(e.getMessage(), "ERROR: FROM expected");
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -194,7 +194,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testB;");
                     assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "ERROR: unexpected token [FROM]");
+                    TestUtils.assertContains(e.getMessage(), "WHERE");
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
@@ -449,7 +449,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, _, mode, _) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, _, _, _) -> {
             Statement statement = connection.createStatement();
             try {
                 statement.execute("CREATE TABLE mytable(l long); " +
@@ -460,8 +460,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "DELETE FROM mytable3;");
                 Assert.fail();
             } catch (PSQLException e) {
-                int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 115 : 9;
-                assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
+                TestUtils.assertContains(e.getMessage(), "WHERE");
             }
             boolean hasResult = statement.execute("select * from mytable;");
             assertResults(statement, hasResult, data(row(1L), row(2L)));
@@ -531,8 +530,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "INSERT INTO test VALUES (21, 'x');");
                 assertExceptionNoLeakCheck("PSQLException should be thrown");
             } catch (PSQLException e) {
-                int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 94 : 9;
-                assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
+                TestUtils.assertContains(e.getMessage(), "WHERE");
             }
 
             boolean hasResult = statement.execute("select * from test; ");
@@ -557,8 +555,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "INSERT INTO testA VALUES (21, 'x');");
                 assertExceptionNoLeakCheck("PSQLException should be thrown");
             } catch (PSQLException e) {
-                int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 178 : 9;
-                assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
+                TestUtils.assertContains(e.getMessage(), "WHERE");
             }
 
             boolean hasResult = statement.execute("select * from testA; select * from testB; ");
@@ -604,6 +601,43 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     data(row(27L, "f")
                     )
             );
+        });
+    }
+
+    @Test
+    public void testDeleteReportsUnavailableCount() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE delete_count (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.executeUpdate("INSERT INTO delete_count VALUES (0, 1), (1000000, 2), (2000000, 3)");
+                drainWalQueue();
+                Assert.assertEquals(0, statement.executeUpdate("DELETE FROM delete_count WHERE x < 3"));
+                drainWalQueue();
+                try (ResultSet resultSet = statement.executeQuery("SELECT x FROM delete_count")) {
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertEquals(3, resultSet.getInt(1));
+                    Assert.assertFalse(resultSet.next());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeleteWithParkedWriterReportsUnavailableCount() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE parked_delete_count (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                connection.setAutoCommit(false);
+                statement.executeUpdate("INSERT INTO parked_delete_count VALUES (0, 1), (1000000, 2), (2000000, 3)");
+                Assert.assertEquals(0, statement.executeUpdate("DELETE FROM parked_delete_count WHERE x < 3"));
+                connection.commit();
+                drainWalQueue();
+                try (ResultSet resultSet = statement.executeQuery("SELECT x FROM parked_delete_count")) {
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertEquals(3, resultSet.getInt(1));
+                    Assert.assertFalse(resultSet.next());
+                }
+            }
         });
     }
 
@@ -703,8 +737,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "COMMIT; " +
                         "INSERT INTO test VALUES (20, 'z');");
             } catch (PSQLException e) {
-                int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 86 : 9;
-                assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
+                TestUtils.assertContains(e.getMessage(), "WHERE");
             }
 
             boolean hasResult = statement.execute("select * from test; ");
@@ -727,8 +760,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "DELETE FROM testA; " +
                         "INSERT INTO testA VALUES (20, 'z');");
             } catch (PSQLException e) {
-                int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 158 : 9;
-                assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
+                TestUtils.assertContains(e.getMessage(), "WHERE");
             }
 
             boolean hasResult = statement.execute("select * from testA; select * from testB;");

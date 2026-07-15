@@ -549,6 +549,10 @@ public class MatViewState implements QuietCloseable {
         this.refreshRetryCount = 0;
     }
 
+    public void clearPendingInvalidation() {
+        pendingInvalidation = false;
+    }
+
     /**
      * Clears the pending transient-refresh retry deadline <em>iff</em> it still equals
      * {@code observedDeadline}, marking the view eligible for refresh now. This is an off-latch CAS:

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -244,6 +245,21 @@ public class WalUtils {
         } finally {
             txnSeqDirPath.trimTo(rootLen);
         }
+    }
+
+    /**
+     * Returns a timestamp width that spans roughly {@code rowsPerStep} rows across
+     * {@code [minTs, maxTs]}. The calculation remains positive when the populated range fills the
+     * complete non-negative timestamp domain and returns one effective window for an empty table.
+     */
+    public static long deleteWindowStep(long minTs, long maxTs, long tableRows, long rowsPerStep) {
+        if (tableRows <= 0) {
+            return Long.MAX_VALUE;
+        }
+        final long safeRowsPerStep = Math.max(1, rowsPerStep);
+        final long diff = maxTs - minTs;
+        final long span = diff == Long.MAX_VALUE ? Long.MAX_VALUE : diff + 1;
+        return MatViewRefreshJob.estimateBucketsForRows(safeRowsPerStep, tableRows, 1, span, 1);
     }
 
     /**

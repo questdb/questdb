@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -46,6 +47,24 @@ public class DeleteTest extends AbstractCairoTest {
                 Assert.assertEquals(CompiledQuery.DELETE, cc.getType());
                 Assert.assertNotNull(cc.getDeleteOperation());
             }
+        });
+    }
+
+    @Test
+    public void testDeleteReportsUnavailableAffectedRowCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (0, 1), (1000000, 2), (2000000, 3)");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery query = compiler.compile("DELETE FROM t WHERE x < 3", sqlExecutionContext);
+                try (OperationFuture future = query.execute(sqlExecutionContext, null, false)) {
+                    future.await();
+                    Assert.assertEquals("WAL DELETE must not expose seqTxn as affected rows", 0, future.getAffectedRowsCount());
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT x FROM t").expectSize().returns("x\n3\n");
         });
     }
 

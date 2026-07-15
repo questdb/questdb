@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDependencyList;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
@@ -34,7 +35,6 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.ReadOnlyObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -48,26 +48,9 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
-    public static final class DependentViewsReadGuard implements QuietCloseable {
-        private ViewDependencyList dependentViews;
-        private final boolean isEmpty;
-
-        private DependentViewsReadGuard(ViewDependencyList dependentViews) {
-            this.dependentViews = dependentViews;
-            this.isEmpty = dependentViews.lockForRead().size() == 0;
-        }
-
-        @Override
-        public void close() {
-            if (dependentViews != null) {
-                dependentViews.unlockAfterRead();
-                dependentViews = null;
-            }
-        }
-
-        public boolean isEmpty() {
-            return isEmpty;
-        }
+    @FunctionalInterface
+    public interface NoDependentViewsAction {
+        long run() throws SqlException;
     }
 
     private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
@@ -110,6 +93,16 @@ public class MatViewGraph implements Mutable {
         return true;
     }
 
+    public long applyIfNoDependentViews(TableToken baseTableToken, NoDependentViewsAction action) throws SqlException {
+        final ViewDependencyList dependentViews = getOrCreateDependentViews(baseTableToken.getTableName());
+        final ReadOnlyObjList<TableToken> dependentViewList = dependentViews.lockForRead();
+        try {
+            return dependentViewList.size() == 0 ? action.run() : -1;
+        } finally {
+            dependentViews.unlockAfterRead();
+        }
+    }
+
     @TestOnly
     @Override
     public void clear() {
@@ -135,10 +128,6 @@ public class MatViewGraph implements Mutable {
         for (MatViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getMatViewToken());
         }
-    }
-
-    public DependentViewsReadGuard lockDependentViews(TableToken baseTableToken) {
-        return new DependentViewsReadGuard(getOrCreateDependentViews(baseTableToken.getTableName()));
     }
 
     /**

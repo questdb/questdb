@@ -31,7 +31,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.wal.OperationExecutor;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -168,6 +168,18 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
                 }
                 try (DeleteOperation operation = compiler.compile("DELETE FROM t WHERE ts < now()", applyContext).getDeleteOperation()) {
                     Assert.assertFalse(operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile(
+                        "DELETE FROM t WHERE ts < timestamp_shuffle(0, 600000000000)",
+                        applyContext
+                ).getDeleteOperation()) {
+                    Assert.assertFalse("timestamp_shuffle must not be replay-stable", operation.isPredicateReplayStable());
+                }
+                try (DeleteOperation operation = compiler.compile(
+                        "DELETE FROM t WHERE rnd_interval()::STRING = ''",
+                        applyContext
+                ).getDeleteOperation()) {
+                    Assert.assertFalse("isRandom functions must not be replay-stable", operation.isPredicateReplayStable());
                 }
             }
         });
@@ -446,7 +458,7 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             Assert.assertEquals(25000, totalSurvivors);
 
             // The exact step the apply loop uses for this rows.per.step.
-            final long step = OperationExecutor.deleteWindowStep(minTs, maxTs, tableRows, rowsPerStep);
+            final long step = WalUtils.deleteWindowStep(minTs, maxTs, tableRows, rowsPerStep);
             Assert.assertTrue("windowed step must be a strict sub-range of the populated span", step < (maxTs - minTs + 1));
 
             // Tile [minTs, maxTs+1) with the loop's EXACT formula and measure each window's staged survivor slice
@@ -483,7 +495,7 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             // NEGATIVE CONTROL: rows.per.step >> table size collapses to ONE window whose staged slice IS the
             // ENTIRE survivor set - the whole-table peak windowing exists to avoid. This is what maxWindowStaged
             // would equal if windowing were disabled.
-            final long hugeStep = OperationExecutor.deleteWindowStep(minTs, maxTs, tableRows, 100_000_000L);
+            final long hugeStep = WalUtils.deleteWindowStep(minTs, maxTs, tableRows, 100_000_000L);
             Assert.assertTrue("a rows.per.step >> table size must collapse to a single window",
                     hugeStep >= (maxTs - minTs + 1));
             final long singleWindowStaged = count("select count(*) from t where not (x % 2 = 0) and ts >= " + minTs + " and ts < " + (maxTs + 1));

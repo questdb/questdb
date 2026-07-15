@@ -238,7 +238,17 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
             createParquetFixture();
             final TableToken tableToken = engine.verifyTableName("t");
             final long writerTxnBefore = writerTxn(tableToken);
+            final long seed0 = 0x2468_ace0_1357_9bdfL;
+            final long seed1 = 0x1357_9bdf_2468_ace0L;
+            final Rnd expectedRnd = new Rnd(seed0, seed1);
+            final StringBuilder expected = new StringBuilder("x\n");
+            for (int x = 1; x <= 144; x++) {
+                if (expectedRnd.nextDouble() * 111_320.0 <= 50_000.0) {
+                    expected.append(x).append('\n');
+                }
+            }
 
+            sqlExecutionContext.getRandom().reset(seed0, seed1);
             execute("DELETE FROM t WHERE geo_distance_meters(0, 0, rnd_double(), 0) > 50000");
             armed[0] = true;
             drainWalQueue();
@@ -254,8 +264,7 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             Assert.assertEquals(writerTxnBefore + 1, writerTxn(tableToken));
             Assert.assertEquals(seqTxn(tableToken), writerTxn(tableToken));
-            final long survivorCount = count("SELECT count(*) FROM t");
-            Assert.assertTrue("wrapped random DELETE must remove a non-empty subset", survivorCount > 0 && survivorCount < 144);
+            assertQuery("SELECT x FROM t").expectSize().returns(expected.toString());
         });
     }
 
