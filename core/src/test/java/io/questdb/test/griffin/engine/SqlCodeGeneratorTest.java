@@ -60,7 +60,6 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 
@@ -8421,7 +8420,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
                     // count(K) only needs nullness. In particular, consuming all 100k distinct
                     // values must not populate the union's lazy symbol dictionary.
-                    Assert.assertEquals(0, getCachedSymbolCount(symbolCasts.getQuick(0)));
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
                 }
             }
         });
@@ -8481,8 +8480,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
                     // Both sides are non-static SYMBOL columns, so equality compares their
                     // string values and leaves both lazy dictionaries untouched.
-                    Assert.assertEquals(0, getCachedSymbolCount(symbolCasts.getQuick(0)));
-                    Assert.assertEquals(0, getCachedSymbolCount(symbolCasts.getQuick(1)));
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                    Assert.assertNull(symbolCasts.getQuick(1).valueOf(0));
                 }
             }
         });
@@ -9597,12 +9596,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         }
         Assert.fail("could not find the union symbol casts in the factory chain");
         return null;
-    }
-
-    private static int getCachedSymbolCount(CastStrToSymbolFunctionFactory.Func function) throws Exception {
-        final Field next = CastStrToSymbolFunctionFactory.Func.class.getDeclaredField("next");
-        next.setAccessible(true);
-        return next.getInt(function) - 1;
     }
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
