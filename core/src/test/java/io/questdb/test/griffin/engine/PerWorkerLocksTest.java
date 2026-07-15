@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine;
 
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.Os;
@@ -129,14 +130,18 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         final CyclicBarrier start = new CyclicBarrier(threads);
         final CountDownLatch done = new CountDownLatch(threads);
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicBooleanCircuitBreaker[] circuitBreakers = new AtomicBooleanCircuitBreaker[threads];
+        final Thread[] workers = new Thread[threads];
 
         for (int t = 0; t < threads; t++) {
             final int threadId = t + 1; // 0 means "free", so ids start at 1
+            final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            circuitBreakers[t] = circuitBreaker;
             final Thread thread = new Thread(() -> {
                 try {
                     start.await();
                     for (int i = 0; i < rounds; i++) {
-                        final int slot = locks.acquireSlot(-1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        final int slot = locks.acquireSlot(-1, circuitBreaker);
                         if (slot < 0 || slot >= slots) {
                             errors.add(new AssertionError("slot out of range: " + slot));
                             return;
@@ -164,22 +169,32 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
                     done.countDown();
                 }
             });
-            // Daemon: on the failure path the latch times out while survivors are still spinning in
-            // acquireSlot against NOOP_CIRCUIT_BREAKER, which never trips. Non-daemon they would burn
-            // a core for the rest of the surefire fork.
+            // Keep this as a final safeguard if a broken acquire path ignores the cancellable breaker.
+            // The finally block below cancels and joins every worker on normal and failure paths.
             thread.setDaemon(true);
+            workers[t] = thread;
             thread.start();
         }
 
-        Assert.assertTrue("threads did not finish", done.await(60, TimeUnit.SECONDS));
-        if (!errors.isEmpty()) {
-            throw new AssertionError("thread failed", errors.peek());
+        try {
+            Assert.assertTrue("threads did not finish", done.await(60, TimeUnit.SECONDS));
+            if (!errors.isEmpty()) {
+                throw new AssertionError("thread failed", errors.peek());
+            }
+            Assert.assertEquals("two threads held the same slot", 0, exclusionBreaches.get());
+            // Every acquire was released, and every one of them was counted: a lost CAS or a
+            // double-counted acquire would show up here.
+            Assert.assertEquals(0, locks.getAcquiredSlotCount());
+            Assert.assertEquals((long) threads * rounds, locks.getSlotAcquireCount());
+        } finally {
+            for (int i = 0; i < threads; i++) {
+                circuitBreakers[i].cancel();
+            }
+            for (int i = 0; i < threads; i++) {
+                workers[i].join(10_000);
+                Assert.assertFalse("worker did not stop: " + i, workers[i].isAlive());
+            }
         }
-        Assert.assertEquals("two threads held the same slot", 0, exclusionBreaches.get());
-        // Every acquire was released, and every one of them was counted: a lost CAS or a
-        // double-counted acquire would show up here.
-        Assert.assertEquals(0, locks.getAcquiredSlotCount());
-        Assert.assertEquals((long) threads * rounds, locks.getSlotAcquireCount());
     }
 
     @Test
