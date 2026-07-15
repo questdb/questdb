@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -93,6 +94,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long o3MaxLag;
     private int partitionBy;
     private int partitionByPosition;
+    // Resolved composite-partitioning scheme (Task 4). Always non-null: empty/non-composite
+    // for plain (non-composite) tables, LIKE tables and CREATE TABLE AS SELECT.
+    private PartitionSpec partitionSpec = new PartitionSpec();
     private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
     private int selectSqlScanDirection;
     private int selectTextPosition;
@@ -421,6 +425,15 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return partitionBy;
     }
 
+    /**
+     * @return the resolved composite-partitioning spec (Task 4). Never null: for plain
+     * (non-composite) tables, LIKE tables and CREATE TABLE AS SELECT this is an empty
+     * spec whose {@link PartitionSpec#isComposite()} is false.
+     */
+    public PartitionSpec getPartitionSpec() {
+        return partitionSpec;
+    }
+
     @Override
     public int getSelectSqlScanDirection() {
         return selectSqlScanDirection;
@@ -586,6 +599,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
+    }
+
+    public void setPartitionSpec(@NotNull PartitionSpec partitionSpec) {
+        this.partitionSpec = partitionSpec;
     }
 
     public void setTableKind(int tableKind) {

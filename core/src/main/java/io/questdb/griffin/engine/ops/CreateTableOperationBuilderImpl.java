@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.PartitionTransform;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,6 +50,8 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.function.Function;
 
 public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
     private static final IntList castGroups = new IntList();
@@ -107,6 +110,16 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     ) throws SqlException {
         boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
+            // Composite partitioning is resolved against known column definitions (below); a
+            // CREATE TABLE AS SELECT's columns aren't known until the select is executed, so
+            // composite dimensions can't be resolved at build() time. Full support is deferred;
+            // reject clearly rather than let the resolver misreport columns as non-existent.
+            if (partitionDimensionExprs.size() > 0) {
+                throw SqlException.$(
+                        partitionDimensionExprs.getQuick(0).position,
+                        "composite partitioning is not yet supported with CREATE TABLE AS SELECT"
+                );
+            }
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
@@ -154,7 +167,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             );
         }
 
-        return new CreateTableOperationImpl(
+        CreateTableOperationImpl op = new CreateTableOperationImpl(
                 Chars.toString(sqlText),
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
@@ -174,6 +187,66 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 walEnabled,
                 autoIncludeTs
         );
+        op.setPartitionSpec(resolvePartitionSpec());
+        return op;
+    }
+
+    /**
+     * Resolves the parse-time PARTITION BY dimension/cluster-column expression lists (Task 3)
+     * captured on this builder into a validated {@link PartitionSpec}. Only called from the
+     * plain column-def {@link #build} path, where column definitions (and therefore column
+     * types/indices) are already known.
+     * <p>
+     * Composite dimensions require time partitioning; each dimension must be a bare column
+     * literal or a call to a recognized transform function ({@code identity}/{@code hash}/
+     * {@code truncate}), resolved via {@link PartitionTransform#resolve}. Any other expression
+     * shape (e.g. an operator expression) is rejected: aliased arbitrary-expression dimensions
+     * are a later phase. Cluster (ORDER BY) columns may be of any column type.
+     */
+    private PartitionSpec resolvePartitionSpec() throws SqlException {
+        int dimCount = partitionDimensionExprs.size();
+        if (dimCount > 0 && getPartitionByFromExpr() == PartitionBy.NONE) {
+            throw SqlException.$(
+                    partitionDimensionExprs.getQuick(0).position,
+                    "composite partition dimensions require time partitioning"
+            );
+        }
+
+        PartitionSpec spec = new PartitionSpec();
+        spec.setTimeUnit(getPartitionByFromExpr());
+        spec.setNamingMode(namingMode);
+
+        // Missing or non-SYMBOL columns both resolve to -1: PartitionTransform.resolve() turns
+        // that sentinel into the "must be a SYMBOL column" error.
+        Function<CharSequence, Integer> symbolColumnResolver = name -> {
+            CreateTableColumnModel m = getColumnModel(name);
+            if (m == null || !ColumnType.isSymbol(m.getColumnType())) {
+                return -1;
+            }
+            return columnNameIndexMap.get(name);
+        };
+
+        for (int i = 0; i < dimCount; i++) {
+            ExpressionNode node = partitionDimensionExprs.getQuick(i);
+            if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.FUNCTION) {
+                spec.addDimension(PartitionTransform.resolve(node, symbolColumnResolver));
+            } else {
+                // e.g. an operator expression such as (s = 'BTC'); AS-alias support is a later phase.
+                throw SqlException.$(node.position, "partition expression must be aliased with AS");
+            }
+        }
+
+        int clusterCount = clusterExprs.size();
+        for (int i = 0; i < clusterCount; i++) {
+            ExpressionNode node = clusterExprs.getQuick(i);
+            int idx = columnNameIndexMap.get(node.token);
+            if (idx < 0) {
+                throw SqlException.invalidColumn(node.position, node.token);
+            }
+            spec.addClusterColumn(idx);
+        }
+
+        return spec;
     }
 
     @Override
