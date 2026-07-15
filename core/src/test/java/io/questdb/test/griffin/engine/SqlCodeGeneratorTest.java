@@ -8436,6 +8436,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), ('b'), ('a')");
+            execute("INSERT INTO tb VALUES ('b'), ('c')");
+
+            // DISTINCT over a symbol union keeps the SYMBOL type and collapses duplicates
+            // across both branches.
+            assertQuery("SELECT DISTINCT s FROM (ta UNION ALL tb) ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\nb\nc\n");
+            // count_distinct / count(DISTINCT) drive the symbol through getInt, whose lazy
+            // dictionary assigns one key per distinct value, so the count is the distinct
+            // string count across both branches.
+            assertQuery("SELECT count_distinct(s) c FROM (ta UNION ALL tb)")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n3\n");
+            assertQuery("SELECT count(DISTINCT s) c FROM (ta UNION ALL tb)")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n3\n");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsCreateTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG)");
@@ -8475,6 +8497,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("SELECT s FROM t_sym").noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\n\nb\na\n");
             // The NULL symbol survived as NULL on the SYMBOL target, not as an empty string.
             assertQuery("SELECT count(*) c FROM t_sym WHERE s IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsJoinKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("CREATE TABLE dim (s SYMBOL, label STRING)");
+            execute("INSERT INTO ta VALUES ('a'), ('b')");
+            execute("INSERT INTO tb VALUES ('c')");
+            execute("INSERT INTO dim VALUES ('a', 'AA'), ('c', 'CC')");
+
+            // The symbol union column is used as a join key. A non-static symbol join key is
+            // compared as a string, so it matches dim rows drawn from both union branches.
+            assertQuery("SELECT u.s, d.label FROM (ta UNION ALL tb) u JOIN dim d ON u.s = d.s ORDER BY u.s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\tlabel\na\tAA\nc\tCC\n");
         });
     }
 
@@ -8522,6 +8562,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.SYMBOL)
                     .noRandomAccess().expectSize()
                     .returns("s1\ts2\na\tp\nb\tq\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsWindowPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            execute("INSERT INTO ta VALUES ('a', 1), ('b', 2)");
+            execute("INSERT INTO tb VALUES ('a', 3), ('c', 4)");
+
+            // A window function partitions by the re-symbolised union column; the two 'a'
+            // rows (one per branch) share a partition, so row_number numbers them 1,2.
+            assertQuery("SELECT s, row_number() OVER (PARTITION BY s ORDER BY v) rn FROM (ta UNION ALL tb) ORDER BY s, v")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\trn\na\t1\na\t2\nb\t1\nc\t1\n");
         });
     }
 

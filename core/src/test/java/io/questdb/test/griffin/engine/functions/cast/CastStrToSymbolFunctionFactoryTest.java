@@ -46,48 +46,47 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
         final FeedFunction arg = new FeedFunction();
         final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
 
-        // getSymbol / getSymbolB return the argument verbatim.
-        arg.value = "seen_only_via_getSymbol";
-        Assert.assertEquals("seen_only_via_getSymbol", func.getSymbol(null));
-        Assert.assertEquals("seen_only_via_getSymbol", func.getSymbolB(null));
-        arg.value = null;
+        // getSymbol reads the A-slot and getSymbolB the B-slot; both pass their argument
+        // through verbatim without touching the dictionary. Distinct A/B feed values prove
+        // getSymbolB reads getStrB, not getStrA.
+        arg.valueA = "a_via_getSymbol";
+        arg.valueB = "b_via_getSymbolB";
+        Assert.assertEquals("a_via_getSymbol", func.getSymbol(null));
+        Assert.assertEquals("b_via_getSymbolB", func.getSymbolB(null));
+        arg.valueA = null;
         Assert.assertNull(func.getSymbol(null));
 
         // Those getSymbol calls must have consumed no symbol keys, so the first value
         // routed through getInt is assigned key 0.
-        arg.value = "seen_via_getInt";
+        arg.valueA = "seen_via_getInt";
         Assert.assertEquals(0, func.getInt(null));
-        arg.value = "second_via_getInt";
+        arg.valueA = "second_via_getInt";
         Assert.assertEquals(1, func.getInt(null));
 
         // getInt/valueOf round-trip, and a repeated value reuses its key.
         Assert.assertEquals("seen_via_getInt", func.valueOf(0));
         Assert.assertEquals("second_via_getInt", func.valueOf(1));
-        arg.value = "seen_via_getInt";
+        arg.valueA = "seen_via_getInt";
         Assert.assertEquals(0, func.getInt(null));
 
         // NULL maps to the null sentinel and resolves back to null.
-        arg.value = null;
+        arg.valueA = null;
         Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));
         Assert.assertNull(func.valueOf(SymbolTable.VALUE_IS_NULL));
     }
 
     private static class FeedFunction extends StrFunction {
-        CharSequence value;
+        CharSequence valueA;
+        CharSequence valueB;
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return value;
+            return valueA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return value;
-        }
-
-        @Override
-        public int getStrLen(Record rec) {
-            return value == null ? -1 : value.length();
+            return valueB;
         }
     }
 }

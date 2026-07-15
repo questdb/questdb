@@ -11031,21 +11031,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!resymbolise) {
             return unionFactory;
         }
-        // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
-        // thread-safe. That is safe only because a union base is serial: it supports neither page
-        // frames, filter stealing nor time frames, so no parallel operator (async filter, parallel
-        // GROUP BY) ever clones or snapshots this projection. Guard the invariant so a future
-        // page-frame-capable union trips here instead of shipping a stale, empty dictionary snapshot.
-        assert !unionFactory.supportsPageFrameCursor()
-                && !unionFactory.supportsFilterStealing()
-                && !unionFactory.supportsTimeFrameCursor();
         // One reserved slot per projected column. Unlike generateSelectVirtualWithSubQuery this
         // projection never appends a hidden timestamp column, so there is no extra slot to reserve.
         final int reservedSlots = columnCount;
-        final PriorityMetadata priorityMetadata = new PriorityMetadata(reservedSlots, baseMetadata);
-        final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
-        final ObjList<Function> functions = new ObjList<>(reservedSlots);
+        // Own unionFactory from here on: the guard assert and the metadata/list allocations below can
+        // all throw (an OutOfMemoryError, say), and for a distinct UNION unionFactory already holds a
+        // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
+        ObjList<Function> functions = null;
         try {
+            // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
+            // thread-safe. That is safe only because a union base is serial: it supports neither page
+            // frames, filter stealing nor time frames, so no parallel operator (async filter, parallel
+            // GROUP BY) ever clones or snapshots this projection. Guard the invariant so a future
+            // page-frame-capable union trips here instead of shipping a stale, empty dictionary snapshot.
+            assert !unionFactory.supportsPageFrameCursor()
+                    && !unionFactory.supportsFilterStealing()
+                    && !unionFactory.supportsTimeFrameCursor();
+            final PriorityMetadata priorityMetadata = new PriorityMetadata(reservedSlots, baseMetadata);
+            final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
+            functions = new ObjList<>(reservedSlots);
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = baseMetadata.getColumnName(i);
                 final Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
