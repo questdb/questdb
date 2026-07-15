@@ -818,12 +818,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantReassociationFoldsAddition() throws Exception {
+    public void testConstantReassociationDoesNotFoldAddition() throws Exception {
         assertQuery("select * from tab where d + 1 + 4 > 10")
                 .ddl("create table tab (d double, ts timestamp);")
                 .assertsPlan("""
                         Async JIT Filter workers: 1
-                          filter: 10<d+5
+                          filter: 10<d+1+4
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -831,12 +831,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
+    public void testConstantReassociationDoesNotFoldBitwiseAnd() throws Exception {
         assertQuery("select * from tab where l & 3 & 5 > 0")
                 .ddl("create table tab (l long, ts timestamp);")
                 .assertsPlan("""
                         Async Filter workers: 1
-                          filter: 0<l&1
+                          filter: 0<l&3&5
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -844,12 +844,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantReassociationFoldsCommutativePattern() throws Exception {
+    public void testConstantReassociationDoesNotFoldCommutativePattern() throws Exception {
         assertQuery("select * from tab where 4 + (d + 1) > 10")
                 .ddl("create table tab (d double, ts timestamp);")
                 .assertsPlan("""
                         Async JIT Filter workers: 1
-                          filter: 10<d+5
+                          filter: 10<4+d+1
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab

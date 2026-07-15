@@ -1918,6 +1918,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     // underLong: whether the parent reads `node` at 64-bit width.
+
     /**
      * Tags a narrow-int column / bind-variable leaf and the out-of-INT-range integer
      * constant it is compared against for i64 widening.
