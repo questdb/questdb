@@ -688,6 +688,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Returns the ring index of the newest retained checkpoint whose
+     * {@code maxTs} is strictly below {@code ceilTs}, or {@code -1} when the ring
+     * holds no such entry (every retained anchor sits at or above the ceiling, so
+     * the late row predates the whole ring and the caller must rebuild from the
+     * view boundary).
+     * <p>
+     * The retained-checkpoint ring is held in strictly increasing {@code maxTs}
+     * order (oldest at index 0), so the scan walks from the newest entry down and
+     * returns the first one under the ceiling - the closest sealed anchor below
+     * the late row, which yields the shortest resume replay {@code (maxTs, head]}.
+     * A head-hit resumes from the newest entry; this picks an OLDER entry only
+     * when the newest one (the head) sits at or above the late row - the
+     * bounded-miss case.
+     */
+    private static int findResumeAnchorBelow(LiveViewInstance instance, long ceilTs) {
+        for (int i = instance.getRetainedCheckpointCount() - 1; i >= 0; i--) {
+            if (instance.getRetainedCheckpointMaxTs(i) < ceilTs) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Determines whether the anchor expression is provably monotone non-decreasing
      * with the base scan order, which is the enabling condition for frontier-gated
      * anchor-map compaction (see {@link LiveViewWindow}). During incremental refresh
@@ -2616,11 +2640,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (headHitEligible) {
             // The head is simply the newest ring entry, so a head-hit is a
-            // resume from that newest anchor. The same helper serves a resume
-            // from an older sealed anchor (the bounded-miss path).
-            replayFromAnchor(instance, windowFactory, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
+            // resume from that newest anchor.
+            replayFromAnchor(instance, windowFactory, lateRowTs, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
         } else {
-            o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
+            // Bounded-miss: the late row sits at or below the head, so the head
+            // cannot anchor the replay. A DATA trigger (lateRowTs != LONG_NULL)
+            // may still find an OLDER sealed ring entry whose maxTs is strictly
+            // below the late row - resume from that anchor through the same helper
+            // instead of rebuilding the whole view from the boundary. Replay cost
+            // drops from O(view age) to O(head - anchor.maxTs), a few hundred rows
+            // near the head. A non-DATA / recovery trigger (LONG_NULL) keeps the
+            // frozen-prefix full rebuild, and a late row below every retained
+            // anchor falls back to it too.
+            //
+            // Apply-ahead is NOT resumed here yet: replayFromAnchor bails to the
+            // full head-miss rebuild whenever the base reader has advanced past
+            // advanceTo, because a back-dated row hidden in an unexamined seqTxn
+            // below the anchor would be dropped. Bounding that case to an anchor
+            // below the ahead range's minimum is step 6 (the minAheadTs guard).
+            final int anchorIdx = lateRowTs != Numbers.LONG_NULL
+                    ? findResumeAnchorBelow(instance, lateRowTs)
+                    : -1;
+            if (anchorIdx >= 0) {
+                replayFromAnchor(
+                        instance,
+                        windowFactory,
+                        lateRowTs,
+                        baseToken,
+                        advanceTo,
+                        instance.getRetainedCheckpointLvSeqTxn(anchorIdx),
+                        instance.getRetainedCheckpointMaxTs(anchorIdx)
+                );
+            } else {
+                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
+            }
         }
 
         // The replay rewrote the on-disk tier (REPLACE_RANGE); the in-mem tier
@@ -2649,10 +2702,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * reflects everything in {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the
      * replay only re-evaluates the tail above the anchor.
      * <p>
-     * The head is simply the newest ring entry, so today's head-hit is a resume
-     * from the newest anchor; the bounded-miss path resumes from an older sealed
-     * anchor through this same body. The caller has already verified the anchor is
+     * The head is simply the newest ring entry, so a head-hit is a resume from
+     * the newest anchor; the bounded-miss path resumes from an older sealed anchor
+     * through this same body. The caller has already verified the anchor is
      * hit-eligible (it exists and its {@code maxTimestamp < lateRowTs}).
+     * <p>
+     * Before restoring, this retires every retained checkpoint the O3 at
+     * {@code lateRowTs} unsealed (entries with {@code maxTs >= lateRowTs},
+     * including the prior head) so no later resume ever anchors on state that
+     * predates this late row. For a head-hit the late row sits above the head, so
+     * nothing is unsealed and the retire is a no-op; for a bounded-miss it drops
+     * the poisoned entries between the anchor and the head. The anchor itself
+     * ({@code anchorMaxTs < lateRowTs}) always survives.
      * <p>
      * Restore can still fail here (corrupt {@code .cp}, unsupported format
      * version). Structural corruption drives {@code restoreFromHead} ->
@@ -2673,6 +2734,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void replayFromAnchor(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
+            long lateRowTs,
             TableToken baseToken,
             long advanceTo,
             long anchorLvSeqTxn,
@@ -2713,13 +2775,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // exactly at the trigger (no unexamined seqTxns, so no gap and no
             // duplicate).
             reader.close();
-            // The anchor was hit-eligible, so the trigger row sits above
-            // anchorMaxTs and the full rebuild's produced minimum stays at or below
-            // it: no lateRowTs extension needed (LONG_NULL keeps the plain
-            // replayMinTs boundary).
-            o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, baseToken, advanceTo);
+            // Fall back to the full rebuild, forwarding this O3's own trigger ts so
+            // the head-miss keeps its DELETE authority. The bounded-miss caller can
+            // reach here with the late row at or below an OLDER anchor, where a
+            // convergent dedup / replacement that removes the lowest surviving row
+            // would strand a ghost if the boundary floored at replayMinTs alone;
+            // passing lateRowTs floors it at min(replayMinTs, triggerLowTs) instead.
+            // For the head-hit caller lateRowTs sits above anchorMaxTs, so the full
+            // rebuild's produced minimum is already at or below it and the extension
+            // is a no-op on the REPLACE_RANGE boundary (it only keeps the still-
+            // sealed sub-trigger ring entries rather than dropping the whole ring).
+            // Bounding this apply-ahead rebuild to an anchor below the ahead range's
+            // minimum is step 6 (the minAheadTs guard); today it rebuilds in full.
+            o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
             return;
         }
+        // Retire the checkpoints this O3 unsealed before resuming: entries with
+        // maxTs >= lateRowTs (including the prior head on the bounded-miss path)
+        // predate the late row and must never anchor a later resume. The anchor
+        // survives (anchorMaxTs < lateRowTs), and for a head-hit nothing is
+        // unsealed so this is a no-op. Mirrors o3HeadMissReplay's retire; the
+        // apply-ahead bail above already routed through it, so this runs only on
+        // the exactly-at-trigger resume.
+        final long triggerLowTs = lateRowTs == Numbers.LONG_NULL
+                ? Numbers.LONG_NULL
+                : Math.max(lateRowTs, viewLowerBoundTimestamp);
+        invalidateRetainedCheckpointsOnO3(instance, triggerLowTs);
         boolean readerAttached = false;
         long appendedRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
@@ -2853,9 +2934,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Seal the post-replay state as a fresh head and keep the anchor the
             // replay was built on in the retained-checkpoint ring: the late row sat
             // above it, so it stays sealed and serves as a valid resume anchor
-            // rather than garbage. force writes past the cadence gate (the anchor is
-            // not cleared, so firstCp would be false) - an O3 resume must always
-            // advance the head or the next replay re-scans from the stale maxTs.
+            // rather than garbage. force writes past the cadence gate - on a head-hit
+            // the anchor (prior head) is not cleared, so firstCp would be false; on a
+            // bounded-miss the invalidate above cleared the head, so firstCp is
+            // already true. Either way an O3 resume must advance the head or the next
+            // replay re-scans from the stale maxTs.
             //
             // The zero-row replay keeps its anchor as the head instead: the
             // truncating commit above left the LV table holding exactly the rows the
