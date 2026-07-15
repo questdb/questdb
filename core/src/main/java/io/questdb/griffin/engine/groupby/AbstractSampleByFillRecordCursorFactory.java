@@ -47,9 +47,9 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
-    protected final ObjList<GroupByFunction> groupByFunctions;
+    protected ObjList<GroupByFunction> groupByFunctions;
     // factory keeps a reference but allocation lifecycle is governed by cursor
-    protected final Map map;
+    protected Map map;
     protected final RecordSink mapSink;
 
     public AbstractSampleByFillRecordCursorFactory(
@@ -144,13 +144,11 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
 
     @Override
     protected void _close() {
-        Throwable failure = null;
-        try {
-            super._close();
-        } catch (Throwable th) {
-            failure = th;
-        }
-        failure = Misc.freeBestEffort(failure, getRawCursor());
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        this.groupByFunctions = null; // groupByFunctions are included in recordFunctions
+        this.map = null; // the cursor owns the map allocation lifecycle
+        Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeBestEffort(failure, cursor);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

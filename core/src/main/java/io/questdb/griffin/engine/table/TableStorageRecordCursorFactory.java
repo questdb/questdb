@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
@@ -58,9 +59,9 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private static final int TABLE_NAME = 0;
     private static final int WAL_ENABLED = 1;
     private final CairoConfiguration configuration;
-    private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
     private final CairoEngine engine;
-    private final TxReader txReader;
+    private TableStorageRecordCursor cursor = new TableStorageRecordCursor();
+    private TxReader txReader;
 
     public TableStorageRecordCursorFactory(CairoEngine engine) {
         super(METADATA);
@@ -71,8 +72,13 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public void _close() {
-        Misc.free(cursor);
-        Misc.free(txReader);
+        final TableStorageRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final TxReader txReader = this.txReader;
+        this.txReader = null;
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, txReader);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

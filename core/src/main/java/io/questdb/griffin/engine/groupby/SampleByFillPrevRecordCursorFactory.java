@@ -39,7 +39,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final SampleByFillPrevRecordCursor cursor;
+    private SampleByFillPrevRecordCursor cursor;
 
     public SampleByFillPrevRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -117,6 +117,13 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillPrevRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

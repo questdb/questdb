@@ -51,10 +51,10 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.join.AbstractHashOuterJoinRecordCursor.populateRecordHashMap;
 
 public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final HashJoinRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final SymbolTranslatingRecord symbolTranslatingRecord;
+    private HashJoinRecordCursor cursor;
+    private SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -168,14 +168,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        try {
-            Misc.freeIfCloseable(getMetadata());
-        } catch (Throwable th) {
-            cleanupFailure = th;
-        }
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        final HashJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable cleanupFailure = closeJoinOwnersBestEffort();
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, symbolTranslatingRecord);
         CairoException.rethrowCleanupFailure(cleanupFailure);

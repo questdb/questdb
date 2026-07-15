@@ -70,13 +70,13 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * (single output row).
  */
 public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final MultiHorizonJoinNotKeyedRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private MultiHorizonJoinNotKeyedRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final ObjList<HorizonJoinSlaveState> slaveStates;
-    private final SimpleMapValue value;
+    private ObjList<HorizonJoinSlaveState> slaveStates;
+    private SimpleMapValue value;
 
     public MultiHorizonJoinNotKeyedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -175,8 +175,20 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, value);
+        final MultiHorizonJoinNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final ObjList<HorizonJoinSlaveState> slaveStates = this.slaveStates;
+        this.slaveStates = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, value);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, slaveStates);

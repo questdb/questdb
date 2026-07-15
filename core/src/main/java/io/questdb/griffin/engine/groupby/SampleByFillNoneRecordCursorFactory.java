@@ -47,7 +47,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
-    private final SampleByFillNoneRecordCursor cursor;
+    private SampleByFillNoneRecordCursor cursor;
 
     public SampleByFillNoneRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -115,6 +115,13 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillNoneRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
+    }
+
+    @Override
     public AbstractNoRecordSampleByCursor getRawCursor() {
         return cursor;
     }
@@ -129,16 +136,30 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
     @Override
     protected void _close() {
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final Function offsetFunc = this.offsetFunc;
+        this.offsetFunc = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final Function sampleFromFunc = this.sampleFromFunc;
+        this.sampleFromFunc = null;
+        final Function sampleToFunc = this.sampleToFunc;
+        this.sampleToFunc = null;
+        final Function timezoneNameFunc = this.timezoneNameFunc;
+        this.timezoneNameFunc = null;
+
         Throwable failure = Misc.freeBestEffort(null, cursor);
-        try {
-            super._close();
-        } catch (Throwable th) {
-            if (failure == null) {
-                failure = th;
-            } else if (th != failure) {
-                failure.addSuppressed(th);
-            }
-        }
+        failure = closeDetachedSampleByOwnersBestEffort(
+                failure,
+                base,
+                offsetFunc,
+                recordFunctions,
+                sampleFromFunc,
+                sampleToFunc,
+                timezoneNameFunc
+        );
         CairoException.rethrowCleanupFailure(failure);
     }
 }

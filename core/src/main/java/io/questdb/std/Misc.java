@@ -163,6 +163,16 @@ public final class Misc {
         return null;
     }
 
+    /**
+     * Closes an optionally-closeable object while keeping multi-resource cleanup best-effort.
+     */
+    public static <T> @Nullable Throwable freeIfCloseableBestEffort(@Nullable Throwable primary, @Nullable T object) {
+        if (object instanceof Closeable closeable) {
+            return freeBestEffort(primary, closeable);
+        }
+        return primary;
+    }
+
     public static <T extends Closeable> void freeObjList(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
@@ -202,6 +212,21 @@ public final class Misc {
     }
 
     /**
+     * Closes every list entry while retaining the entries and keeping cleanup best-effort.
+     */
+    public static <T extends Closeable> @Nullable Throwable freeObjListAndKeepObjectsBestEffort(
+            @Nullable Throwable primary,
+            @Nullable ObjList<T> list
+    ) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                primary = freeBestEffort(primary, list.getQuick(i));
+            }
+        }
+        return primary;
+    }
+
+    /**
      * Closes every list entry and nulls its slot even when earlier entries throw, folding
      * close() failures into the given failure chain the same way
      * {@link #freeBestEffort(Throwable, Closeable)} does. Callers that already have a non-null
@@ -224,6 +249,23 @@ public final class Misc {
         if (list != null) {
             freeObjList0(list);
         }
+    }
+
+    /**
+     * Closes every optionally-closeable list entry and nulls its slot while keeping cleanup best-effort.
+     */
+    public static <T> @Nullable Throwable freeObjListIfCloseableBestEffort(
+            @Nullable Throwable primary,
+            @Nullable ObjList<T> list
+    ) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                primary = freeIfCloseableBestEffort(primary, object);
+            }
+        }
+        return primary;
     }
 
     // same as freeObjListIfCloseable() but for arrays

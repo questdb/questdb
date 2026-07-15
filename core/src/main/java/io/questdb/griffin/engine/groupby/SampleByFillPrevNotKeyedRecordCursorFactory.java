@@ -38,8 +38,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
-    private final SampleByFillPrevNotKeyedRecordCursor cursor;
-    private final SimpleMapValue value;
+    private SampleByFillPrevNotKeyedRecordCursor cursor;
+    private SimpleMapValue value;
 
     public SampleByFillPrevNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -99,15 +99,20 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     protected void _close() {
-        Throwable failure = null;
-        try {
-            super._close();
-        } catch (Throwable th) {
-            failure = th;
-        }
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final SimpleMapValue value = this.value;
+        this.value = null;
+        Throwable failure = closeSampleByOwnersBestEffort(null);
         failure = Misc.freeBestEffort(failure, value);
         failure = Misc.freeBestEffort(failure, cursor);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillPrevNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

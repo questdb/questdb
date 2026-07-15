@@ -50,11 +50,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final GroupByNotKeyedRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
-    private final SimpleMapValue value;
+    private RecordCursorFactory base;
+    private GroupByNotKeyedRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private SimpleMapValue value;
     private final VirtualRecord virtualRecordA;
     private ObjList<GroupByNotKeyedSharedCursor> sharedCursors;
 
@@ -216,20 +216,27 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, value);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final GroupByNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final ObjList<GroupByNotKeyedSharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, value);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
-        try {
-            GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
-            }
-        }
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(cleanupFailure);

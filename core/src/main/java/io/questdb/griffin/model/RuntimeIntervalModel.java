@@ -193,18 +193,36 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
             switch (dynamicFunction) {
                 case null -> {
-                    // copy 4 longs to output and apply the operation
-                    outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
-                    IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
-                    // Apply day filter if specified
-                    if (dayFilterMask != 0) {
-                        // Check if the interval's lo timestamp matches the day filter
-                        long lo = outIntervals.getQuick(divider);
-                        int dayOfWeek = timestampDriver.getDayOfWeek(lo);
-                        if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
-                            // Day doesn't match filter - remove this interval
-                            outIntervals.setPos(divider);
-                            continue;
+                    if (operation == IntervalOperation.INTERSECT_INTERVALS) {
+                        // A static interval union uses one encoded slot per range. The first slot
+                        // carries the range count so the evaluator can append the complete union
+                        // before applying one atomic intersection with the preceding expression.
+                        final int intervalCount = IntervalUtils.decodePeriod(intervals, i);
+                        assert intervalCount > 0;
+                        assert i + intervalCount * STATIC_LONGS_PER_DYNAMIC_INTERVAL <= size;
+                        for (int k = 0; k < intervalCount; k++) {
+                            final int intervalIndex = i + k * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+                            outIntervals.add(
+                                    IntervalUtils.decodeIntervalLo(intervals, intervalIndex),
+                                    IntervalUtils.decodeIntervalHi(intervals, intervalIndex)
+                            );
+                        }
+                        i += (intervalCount - 1) * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+                        dynamicIndex += intervalCount - 1;
+                    } else {
+                        // copy 4 longs to output and apply the operation
+                        outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+                        IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
+                        // Apply day filter if specified
+                        if (dayFilterMask != 0) {
+                            // Check if the interval's lo timestamp matches the day filter
+                            long lo = outIntervals.getQuick(divider);
+                            int dayOfWeek = timestampDriver.getDayOfWeek(lo);
+                            if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
+                                // Day doesn't match filter - remove this interval
+                                outIntervals.setPos(divider);
+                                continue;
+                            }
                         }
                     }
                 }

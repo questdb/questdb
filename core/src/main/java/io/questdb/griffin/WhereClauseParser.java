@@ -556,6 +556,13 @@ public final class WhereClauseParser implements Mutable {
                 reader
         );
 
+        if (predicate.intrinsicValue == IntrinsicModel.FALSE
+                || tempModel.intrinsicValue == IntrinsicModel.FALSE) {
+            model.intersectEmpty();
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
         if (extracted || tempModel.hasIntervalFilters()) {
             // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
             // This applies the offset to each interval boundary using the timestamp driver's add method,

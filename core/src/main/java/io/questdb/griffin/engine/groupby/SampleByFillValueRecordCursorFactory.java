@@ -58,7 +58,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final SampleByFillValueRecordCursor cursor;
+    private SampleByFillValueRecordCursor cursor;
 
     public SampleByFillValueRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -225,6 +225,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             }
         }
         return placeholderFunctions;
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillValueRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

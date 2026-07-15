@@ -66,25 +66,25 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final RecordCursorFactory base;
-    private final SampleByInterpolateRecordCursor cursor;
+    protected RecordCursorFactory base;
+    private SampleByInterpolateRecordCursor cursor;
     private final int groupByFunctionCount;
-    private final ObjList<GroupByFunction> groupByFunctions;
+    private ObjList<GroupByFunction> groupByFunctions;
     private final int groupByScalarFunctionCount;
-    private final ObjList<GroupByFunction> groupByScalarFunctions;
+    private ObjList<GroupByFunction> groupByScalarFunctions;
     private final int groupByTwoPointFunctionCount;
-    private final ObjList<GroupByFunction> groupByTwoPointFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
+    private ObjList<GroupByFunction> groupByTwoPointFunctions;
+    private ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
     private final RecordSink mapSink;
-    private final Function offsetFunc;
-    private final Function sampleFromFunc;
-    private final Function sampleToFunc;
-    private final Function timezoneNameFunc;
+    private Function offsetFunc;
+    private Function sampleFromFunc;
+    private Function sampleToFunc;
+    private Function timezoneNameFunc;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
-    private final ObjList<Function> recordFunctions;
+    private ObjList<Function> recordFunctions;
     private final TimestampSampler sampler;
-    private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
+    private ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final int timestampIndex;
     private final int yDataSize;
     private long yData;
@@ -251,17 +251,39 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         return base.usesIndex();
     }
 
-    private void freeYData() {
+    private void freeYData(long yData) {
         if (yData != 0) {
-            yData = Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
+            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 
     @Override
     protected void _close() {
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SampleByInterpolateRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        this.groupByFunctions = null;
+        this.groupByScalarFunctions = null;
+        this.groupByTwoPointFunctions = null;
+        this.interpolatorFunctions = null;
+        final Function offsetFunc = this.offsetFunc;
+        this.offsetFunc = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final Function sampleFromFunc = this.sampleFromFunc;
+        this.sampleFromFunc = null;
+        final Function sampleToFunc = this.sampleToFunc;
+        this.sampleToFunc = null;
+        this.storeYFunctions = null;
+        final Function timezoneNameFunc = this.timezoneNameFunc;
+        this.timezoneNameFunc = null;
+        final long yData = this.yData;
+        this.yData = 0;
+
         Throwable failure = Misc.freeObjListBestEffort(null, recordFunctions);
         try {
-            freeYData();
+            freeYData(yData);
         } catch (Throwable th) {
             if (failure == null) {
                 failure = th;
@@ -276,9 +298,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         // factory. The generator accepts runtime-constant expressions here, which may own child
         // functions, so they must be closed exactly once.
         failure = Misc.freeBestEffort(failure, timezoneNameFunc);
-        failure = Misc.freeBestEffort(failure, offsetFunc);
-        failure = Misc.freeBestEffort(failure, sampleFromFunc);
-        failure = Misc.freeBestEffort(failure, sampleToFunc);
+        if (offsetFunc != timezoneNameFunc) {
+            failure = Misc.freeBestEffort(failure, offsetFunc);
+        }
+        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
+            failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        }
+        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
+            failure = Misc.freeBestEffort(failure, sampleToFunc);
+        }
         CairoException.rethrowCleanupFailure(failure);
     }
 

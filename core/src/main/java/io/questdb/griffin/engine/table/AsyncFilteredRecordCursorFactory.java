@@ -62,16 +62,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
-    private final RecordCursorFactory base;
+    private RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncFilteredRecordCursor cursor;
-    private final Function filter;
+    private AsyncFilteredRecordCursor cursor;
+    private Function filter;
     private final ExpressionNode filterExpr;
-    private final PageFrameSequence<AsyncFilterAtom> frameSequence;
+    private PageFrameSequence<AsyncFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
     private final int maxNegativeLimit;
-    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
+    private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final int workerCount;
     private DirectLongList negativeLimitRows;
 
@@ -345,7 +345,16 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             RecordFreer cursor,
             RecordFreer negativeLimitCursor
     ) {
-        Throwable cleanupFailure = Misc.freeBestEffort(null, frameSequence);
+        CairoException.rethrowCleanupFailure(halfCloseBestEffort(null, frameSequence, cursor, negativeLimitCursor));
+    }
+
+    private static Throwable halfCloseBestEffort(
+            Throwable cleanupFailure,
+            Closeable frameSequence,
+            RecordFreer cursor,
+            RecordFreer negativeLimitCursor
+    ) {
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
         try {
             cursor.freeRecords();
         } catch (Throwable th) {
@@ -364,7 +373,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 cleanupFailure.addSuppressed(th);
             }
         }
-        CairoException.rethrowCleanupFailure(cleanupFailure);
+        return cleanupFailure;
     }
 
     /**
@@ -378,18 +387,22 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncFilteredRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final PageFrameSequence<AsyncFilterAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = this.negativeLimitCursor;
+        this.negativeLimitCursor = null;
+        final DirectLongList negativeLimitRows = this.negativeLimitRows;
+        this.negativeLimitRows = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, negativeLimitRows);
-        try {
-            halfClose();
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
-            }
-        }
+        cleanupFailure = halfCloseBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }

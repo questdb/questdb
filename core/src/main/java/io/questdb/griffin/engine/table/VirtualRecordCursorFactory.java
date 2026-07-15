@@ -44,9 +44,9 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final VirtualFunctionRecordCursor cursor;
-    private final ObjList<Function> functions;
+    private RecordCursorFactory base;
+    private VirtualFunctionRecordCursor cursor;
+    private ObjList<Function> functions;
     private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
     private final PriorityMetadata priorityMetadata;
     private final boolean supportsRandomAccess;
@@ -226,8 +226,13 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure;
-        cleanupFailure = Misc.freeObjListBestEffort(null, functions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        this.cursor = null;
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+
+        Throwable cleanupFailure = Misc.freeObjListBestEffort(null, functions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }

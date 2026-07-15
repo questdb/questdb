@@ -78,13 +78,13 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * through the slave. Requires the master cursor to support random access.
  */
 public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final HorizonJoinRecordCursor cursor;
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final ObjList<Function> keyFunctions;
-    private final RecordCursorFactory masterFactory;
+    private HorizonJoinRecordCursor cursor;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private ObjList<Function> keyFunctions;
+    private RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final ObjList<Function> recordFunctions;
-    private final RecordCursorFactory slaveFactory;
+    private ObjList<Function> recordFunctions;
+    private RecordCursorFactory slaveFactory;
 
     public HorizonJoinRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -201,11 +201,25 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        final HorizonJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final ObjList<Function> keyFunctions = this.keyFunctions;
+        this.keyFunctions = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, cursor);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        if (slaveFactory != masterFactory) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         // recordFunctions includes groupByFunctions (same object references)
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions);

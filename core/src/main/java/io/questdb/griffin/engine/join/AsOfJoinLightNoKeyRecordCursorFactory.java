@@ -102,14 +102,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Throwable failure = null;
-        try {
-            Misc.freeIfCloseable(getMetadata());
-        } catch (Throwable th) {
-            failure = th;
-        }
-        failure = Misc.freeBestEffort(failure, masterFactory);
-        failure = Misc.freeBestEffort(failure, slaveFactory);
+        final Throwable failure = closeJoinOwnersBestEffort();
         CairoException.rethrowCleanupFailure(failure);
     }
 

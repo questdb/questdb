@@ -68,10 +68,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
-    private final RecordCursorFactory base;
-    private final RegisteredRecordCursor cursor;
+    private RecordCursorFactory base;
+    private RegisteredRecordCursor cursor;
     private final boolean jit;
-    private final RegisteredPageFrameCursor pageFrameCursor;
+    private RegisteredPageFrameCursor pageFrameCursor;
     private final QueryTrace queryTrace = new QueryTrace();
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
@@ -476,6 +476,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     protected void _close() {
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final RegisteredRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final RegisteredPageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+
         Throwable failure = Misc.freeBestEffort(null, cursor);
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, pageFrameCursor);

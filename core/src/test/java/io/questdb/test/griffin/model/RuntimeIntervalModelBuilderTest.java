@@ -44,6 +44,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,7 +54,7 @@ import org.junit.Test;
  * that {@link RuntimeIntervalModelBuilder#build()} transfers ownership to, or by the builder
  * itself on rollback/no-op paths that never adopt the function.
  */
-public class RuntimeIntervalModelBuilderTest {
+public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenDynamicAdoptionIsAtomicUnderAllocationFailure() {
@@ -837,6 +838,32 @@ public class RuntimeIntervalModelBuilderTest {
         builder.setBetweenBoundary(1_000_000L);
         builder.freeAndClear();
         Assert.assertEquals(1, lo.closeCount);
+    }
+
+    @Test
+    public void testMergeWithAddMethodIntersectsAfterDynamicUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            final IntrinsicModel destination = new IntrinsicModel();
+            destination.of(ColumnType.TIMESTAMP, PartitionBy.DAY, engine.getConfiguration());
+            destination.intersectIntervals(10, 10);
+            destination.unionRuntimeTimestamp(new CloseCountingFunction(), 0);
+
+            final IntrinsicModel source = new IntrinsicModel();
+            source.of(ColumnType.TIMESTAMP, PartitionBy.DAY, engine.getConfiguration());
+            source.intersectIntervals(20, 30);
+            source.unionIntervals(50, 60);
+            destination.mergeIntervalModelWithAddMethod(
+                    source,
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getAddMethod('h'),
+                    0
+            );
+
+            try (RuntimeIntrinsicIntervalModel model = destination.buildIntervalModel()) {
+                destination.clear();
+                source.clear();
+                Assert.assertEquals(0, model.calculateIntervals(sqlExecutionContext).size());
+            }
+        });
     }
 
     @Test

@@ -58,14 +58,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final GroupByRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<Function> keyFunctions;
+    private RecordCursorFactory base;
+    private GroupByRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private ObjList<Function> keyFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
-    private final ObjList<Function> recordFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private ObjList<Function> recordFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private ObjList<GroupBySharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
@@ -99,7 +99,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     public static void freeSharedRecordFunctions(@Nullable ObjList<ObjList<Function>> sharedRecordFunctions) {
-        Throwable cleanupFailure = null;
+        CairoException.rethrowCleanupFailure(freeSharedRecordFunctionsBestEffort(null, sharedRecordFunctions));
+    }
+
+    public static Throwable freeSharedRecordFunctionsBestEffort(
+            Throwable cleanupFailure,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
+    ) {
         if (sharedRecordFunctions != null) {
             for (int i = 0, n = sharedRecordFunctions.size(); i < n; i++) {
                 final ObjList<Function> functions = sharedRecordFunctions.getQuick(i);
@@ -107,7 +113,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, functions);
             }
         }
-        CairoException.rethrowCleanupFailure(cleanupFailure);
+        return cleanupFailure;
     }
 
     public static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
@@ -202,18 +208,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions); // groupByFunctions are included in recordFunctions
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final GroupByRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        this.groupByFunctions = null; // groupByFunctions are included in recordFunctions
+        final ObjList<Function> keyFunctions = this.keyFunctions;
+        this.keyFunctions = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final ObjList<GroupBySharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeObjListBestEffort(null, recordFunctions);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
-        try {
-            freeSharedRecordFunctions(sharedRecordFunctions);
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
-            }
-        }
+        cleanupFailure = freeSharedRecordFunctionsBestEffort(cleanupFailure, sharedRecordFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         // Shared cursors hold no native memory; primary state freed above covers it.

@@ -78,15 +78,15 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncMultiHorizonJoinRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncMultiHorizonJoinRecordCursorFactory::reduce;
-    private final AsyncMultiHorizonJoinRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence;
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private AsyncMultiHorizonJoinRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final ObjList<Function> recordFunctions;
-    private final AsyncHorizonJoinResources resources;
-    private final ObjList<RecordCursorFactory> slaveFactories;
-    private final ObjList<HorizonJoinSlaveState> slaveStates;
+    private ObjList<Function> recordFunctions;
+    private AsyncHorizonJoinResources resources;
+    private ObjList<RecordCursorFactory> slaveFactories;
+    private ObjList<HorizonJoinSlaveState> slaveStates;
     private final int workerCount;
 
     public AsyncMultiHorizonJoinRecordCursorFactory(
@@ -553,6 +553,23 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
 
     @Override
     protected void _close() {
+        final AsyncMultiHorizonJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final AsyncHorizonJoinResources resources = this.resources;
+        this.resources = null;
+        final ObjList<RecordCursorFactory> slaveFactories = this.slaveFactories;
+        this.slaveFactories = null;
+        final ObjList<HorizonJoinSlaveState> slaveStates = this.slaveStates;
+        this.slaveStates = null;
+
         Throwable cleanupFailure = null;
         // Free cursor before frameSequence: a cursor left half-open by a failed
         // getCursor() still references frameSequence and reset()s it on close().

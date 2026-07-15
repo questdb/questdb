@@ -73,11 +73,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private static final UnorderedPageFrameReducer AGGREGATE_VECT = AsyncGroupByNotKeyedRecordCursorFactory::aggregateVect;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
 
-    private final RecordCursorFactory base;
-    private final AsyncGroupByNotKeyedRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private RecordCursorFactory base;
+    private AsyncGroupByNotKeyedRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final boolean vectorized;
     private final int workerCount;
     private ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors;
@@ -537,20 +537,27 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
      */
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncGroupByNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
-        try {
-            GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
-            }
-        }
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
         CairoException.rethrowCleanupFailure(cleanupFailure);

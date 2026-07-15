@@ -468,6 +468,79 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     }
 
     @Test
+    public void testInterpolateCloseClosesAliasedTemporalFunctionsOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final Fixture fixture = new Fixture();
+            final ThrowingCloseFunction first = new ThrowingCloseFunction("first temporal cleanup failure");
+            final ThrowingCloseFunction second = new ThrowingCloseFunction("second temporal cleanup failure");
+            final ThrowingCloseFunction third = new ThrowingCloseFunction("third temporal cleanup failure");
+            final SampleByInterpolateRecordCursorFactory factory = new SampleByInterpolateRecordCursorFactory(
+                    new BytecodeAssembler(),
+                    configuration,
+                    fixture.base(),
+                    fixture.groupByMetadata,
+                    new ObjList<>(),
+                    fixture.recordFunctions,
+                    fixture.sampler(),
+                    QueryModel.FACTORY.newInstance(),
+                    fixture.listColumnFilter,
+                    fixture.keyTypes,
+                    fixture.valueTypes,
+                    new EntityColumnFilter(),
+                    new IntList(),
+                    1,
+                    ColumnType.TIMESTAMP,
+                    first,
+                    0,
+                    second,
+                    0,
+                    first,
+                    third
+            );
+
+            final Throwable e = Assert.assertThrows(Throwable.class, factory::close);
+            Assert.assertSame(first.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{second.failure, third.failure}, e.getSuppressed());
+            Assert.assertEquals(1, first.closeCount);
+            Assert.assertEquals(1, second.closeCount);
+            Assert.assertEquals(1, third.closeCount);
+
+            factory.close();
+            Assert.assertEquals(1, first.closeCount);
+            Assert.assertEquals(1, second.closeCount);
+            Assert.assertEquals(1, third.closeCount);
+
+            final Fixture aliasedFixture = new Fixture();
+            final ThrowingCloseFunction aliased = new ThrowingCloseFunction("aliased temporal cleanup failure");
+            final SampleByInterpolateRecordCursorFactory aliasedFactory = new SampleByInterpolateRecordCursorFactory(
+                    new BytecodeAssembler(),
+                    configuration,
+                    aliasedFixture.base(),
+                    aliasedFixture.groupByMetadata,
+                    new ObjList<>(),
+                    aliasedFixture.recordFunctions,
+                    aliasedFixture.sampler(),
+                    QueryModel.FACTORY.newInstance(),
+                    aliasedFixture.listColumnFilter,
+                    aliasedFixture.keyTypes,
+                    aliasedFixture.valueTypes,
+                    new EntityColumnFilter(),
+                    new IntList(),
+                    1,
+                    ColumnType.TIMESTAMP,
+                    aliased,
+                    0,
+                    aliased,
+                    0,
+                    aliased,
+                    aliased
+            );
+            Assert.assertSame(aliased.failure, Assert.assertThrows(Throwable.class, aliasedFactory::close));
+            Assert.assertEquals(1, aliased.closeCount);
+        });
+    }
+
+    @Test
     public void testInterpolateConstructorFailureClosesAdoptedResources() throws Exception {
         // fill(linear): the record-sink generation is the last fallible step before the cursor
         // is constructed; the catch must free the adopted record and temporal functions
@@ -526,6 +599,97 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0
                 )
         );
+    }
+
+    @Test
+    public void testUnifiedFillCloseClosesAliasedTemporalFunctionsOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("value", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            metadata.setTimestampIndex(1);
+            final ThrowingCloseFunction first = new ThrowingCloseFunction("first temporal cleanup failure");
+            final ThrowingCloseFunction second = new ThrowingCloseFunction("second temporal cleanup failure");
+            final ThrowingCloseFunction third = new ThrowingCloseFunction("third temporal cleanup failure");
+            final IntList fillModes = new IntList();
+            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+            final ObjList<Function> constantFills = new ObjList<>();
+            constantFills.add(null);
+            constantFills.add(null);
+            final SampleByFillRecordCursorFactory factory = new SampleByFillRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    new CloseCountingBaseFactory(metadata),
+                    first,
+                    second,
+                    0,
+                    1,
+                    'h',
+                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP),
+                    fillModes,
+                    constantFills,
+                    1,
+                    ColumnType.TIMESTAMP,
+                    null,
+                    new ArrayColumnTypes(),
+                    new ArrayColumnTypes(),
+                    new IntList(),
+                    new IntList(),
+                    first,
+                    0,
+                    third,
+                    0,
+                    new IntList(),
+                    new IntList(),
+                    new IntList(),
+                    false
+            );
+
+            final Throwable e = Assert.assertThrows(Throwable.class, factory::close);
+            Assert.assertSame(first.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{second.failure, third.failure}, e.getSuppressed());
+            Assert.assertEquals(1, first.closeCount);
+            Assert.assertEquals(1, second.closeCount);
+            Assert.assertEquals(1, third.closeCount);
+
+            factory.close();
+            Assert.assertEquals(1, first.closeCount);
+            Assert.assertEquals(1, second.closeCount);
+            Assert.assertEquals(1, third.closeCount);
+
+            final ThrowingCloseFunction aliased = new ThrowingCloseFunction("aliased temporal cleanup failure");
+            final SampleByFillRecordCursorFactory aliasedFactory = new SampleByFillRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    new CloseCountingBaseFactory(metadata),
+                    aliased,
+                    aliased,
+                    0,
+                    1,
+                    'h',
+                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP),
+                    new IntList(fillModes),
+                    new ObjList<>(constantFills),
+                    1,
+                    ColumnType.TIMESTAMP,
+                    null,
+                    new ArrayColumnTypes(),
+                    new ArrayColumnTypes(),
+                    new IntList(),
+                    new IntList(),
+                    aliased,
+                    0,
+                    aliased,
+                    0,
+                    new IntList(),
+                    new IntList(),
+                    new IntList(),
+                    false
+            );
+            Assert.assertSame(aliased.failure, Assert.assertThrows(Throwable.class, aliasedFactory::close));
+            Assert.assertEquals(1, aliased.closeCount);
+        });
     }
 
     @Test
@@ -886,16 +1050,16 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     }
 
     private static class ThrowingCloseFunction extends CloseCountingFunction {
-        private final String message;
+        private final RuntimeException failure;
 
         private ThrowingCloseFunction(String message) {
-            this.message = message;
+            this.failure = new RuntimeException(message);
         }
 
         @Override
         public void close() {
             super.close();
-            throw new RuntimeException(message);
+            throw failure;
         }
     }
 

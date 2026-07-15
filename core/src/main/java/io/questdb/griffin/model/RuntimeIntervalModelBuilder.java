@@ -830,6 +830,23 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    private void appendStaticIntervalsIntersection() {
+        final int intervalCount = parsedIntervals.size() / 2;
+        reserveEncodedIntervals(intervalCount, 0);
+        for (int i = 0; i < intervalCount; i++) {
+            IntervalUtils.encodeInterval(
+                    parsedIntervals.getQuick(i * 2),
+                    parsedIntervals.getQuick(i * 2 + 1),
+                    i == 0 ? intervalCount : 0,
+                    PeriodType.NONE,
+                    1,
+                    i == 0 ? IntervalOperation.INTERSECT_INTERVALS : IntervalOperation.NONE,
+                    staticIntervals
+            );
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
     private Throwable freeAndClearBestEffort() {
         isOwnershipTransferred = false;
         // Detach the pending endpoint and every adopted slot before invoking user close methods.
@@ -948,7 +965,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
-     * Merges intervals from another builder with calendar-aware offset adjustment.
+     * Merges a static interval union from another builder with calendar-aware offset adjustment.
      * This avoids allocating an intermediate RuntimeIntervalModel.
      *
      * @param other     the builder to merge from
@@ -960,12 +977,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
             return;
         }
-        LongList otherIntervals = other.staticIntervals;
-        if (otherIntervals.size() > 0) {
-            int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            TimestampDriver otherDriver = other.timestampDriver;
+        if (other.dynamicRangeList.size() > 0) {
+            // The optimizer keeps runtime-bound predicates above the virtual record. Do not use a
+            // partial static prefix as pruning: a later runtime UNION may expand beyond that prefix.
+            return;
+        }
 
-            for (int i = 0; i < dynamicStart; i += 2) {
+        final LongList otherIntervals = other.staticIntervals;
+        if (otherIntervals.size() == 0) {
+            intersectEmpty();
+            return;
+        }
+
+        final TimestampDriver otherDriver = other.timestampDriver;
+        try {
+            parsedIntervals.clear();
+            for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
                 long lo = otherIntervals.getQuick(i);
                 if (lo != Numbers.LONG_NULL && lo != Long.MAX_VALUE) {
                     lo = timestampDriver.from(lo, otherDriver.getTimestampType());
@@ -978,10 +1005,40 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 }
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                     return;
+                }
+                if (lo > hi) {
+                    continue;
+                }
+
+                // Offset the complete source union before intersecting it with this builder.
+                // Calendar shifts remain monotonic but may collapse adjacent dates, so coalesce.
+                if (parsedIntervals.size() > 0 && lo <= parsedIntervals.getLast()) {
+                    if (hi > parsedIntervals.getLast()) {
+                        parsedIntervals.setQuick(parsedIntervals.size() - 1, hi);
+                    }
                 } else {
-                    intersect(lo, hi);
+                    parsedIntervals.add(lo, hi);
                 }
             }
+
+            if (parsedIntervals.size() == 0) {
+                intersectEmpty();
+            } else if (dynamicRangeList.size() > 0) {
+                // Keep the complete existing expression in evaluation order and intersect the
+                // shifted union once at the end. In particular, a preceding runtime UNION must
+                // not run after this outer constraint and add excluded timestamps back.
+                appendStaticIntervalsIntersection();
+            } else {
+                final int divider = staticIntervals.size();
+                staticIntervals.add(parsedIntervals);
+                if (intervalApplied) {
+                    IntervalUtils.intersectInPlace(staticIntervals, divider);
+                } else {
+                    intervalApplied = true;
+                }
+            }
+        } finally {
+            parsedIntervals.clear();
         }
     }
 }

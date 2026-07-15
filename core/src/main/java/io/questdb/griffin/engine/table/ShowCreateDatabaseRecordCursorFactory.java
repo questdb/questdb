@@ -103,8 +103,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private static final Comparator<TableToken> TABLE_NAME_COMPARATOR =
             (a, b) -> a.getTableName().compareTo(b.getTableName());
     protected final int includeMask;
-    private final ShowCreateDatabaseCursor cursor = new ShowCreateDatabaseCursor();
     private final TableTokenCollector tableTokenCollector = new TableTokenCollector();
+    private ShowCreateDatabaseCursor cursor = new ShowCreateDatabaseCursor();
 
     public ShowCreateDatabaseRecordCursorFactory(int includeMask) {
         super(METADATA);
@@ -128,8 +128,16 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateDatabaseCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     // emitted after the object DDL; no-op in OSS, overridden in ent to add GRANT/ADD USER/ASSUME
