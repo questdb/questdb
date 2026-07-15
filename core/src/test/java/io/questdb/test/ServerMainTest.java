@@ -658,6 +658,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS\t300000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.retention.count\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT\t8\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.retention.max.bytes\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES\t67108864\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.retention.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +
