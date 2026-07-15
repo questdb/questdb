@@ -28,6 +28,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.BiFunction;
@@ -51,17 +52,25 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
     // overload exists precisely to take `this` as a parameter instead.
     private static final BiFunction<CharSequence, Object, SecurityContext> NEW_PRINCIPAL_CONTEXT =
             (principal, self) -> ((AbstractPrincipalAwareSecurityContext) self).newCheckedPrincipalContext(principal);
+    private static final long PRINCIPAL_CONTEXT_CACHE_OFFSET =
+            Unsafe.getFieldOffset(AbstractPrincipalAwareSecurityContext.class, "principalContextCache");
 
     protected final boolean settingsReadOnly;
 
     // the reported principal; the singletons seed it with Constants.USER_NAME ("admin"), which is also
     // the value forPrincipal treats as the default/anonymous case (it returns the shared singleton)
     private final CharSequence principal;
-    // contexts derived for non-default principals, keyed by principal. These contexts model identity only
+    // Contexts derived for non-default principals, keyed by principal. These contexts model identity only
     // (pure functions of the principal), so caching one per distinct principal lets concurrently active
     // principals coexist instead of evicting each other. Reads are lock-free and hash the incoming
     // @Transient flyweight by content, so a hit allocates nothing.
-    private final ConcurrentHashMap<SecurityContext> principalContextCache = new ConcurrentHashMap<>();
+    //
+    // Lazily allocated by principalContextCache(): only a context that actually SERVES forPrincipal (a shared
+    // singleton) ever needs one. A derived per-principal context and a validation context never call
+    // forPrincipal, so leaving this null on them avoids allocating a ConcurrentHashMap -- plus the CarrierLocal
+    // and process-global counter bump its constructor does -- once per derivation and, for the validation
+    // context, once per /validate request.
+    private volatile ConcurrentHashMap<SecurityContext> principalContextCache;
 
     protected AbstractPrincipalAwareSecurityContext(boolean settingsReadOnly, CharSequence principal) {
         this.settingsReadOnly = settingsReadOnly;
@@ -99,19 +108,22 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
         if (principal == null || principal.isEmpty() || Chars.equalsNc(principal, getPrincipal())) {
             return this;
         }
+        final ConcurrentHashMap<SecurityContext> cache = principalContextCache();
         // lock-free, and get() hashes the incoming flyweight by content, so a hit allocates nothing
-        final SecurityContext hit = principalContextCache.get(principal);
+        final SecurityContext hit = cache.get(principal);
         if (hit != null) {
             return hit;
         }
-        if (principalContextCache.size() >= MAX_CACHED_PRINCIPALS) {
+        if (cache.size() >= MAX_CACHED_PRINCIPALS) {
             // saturated: derive and hand back without caching, rather than retaining contexts without bound
             return newCheckedPrincipalContext(Chars.toString(principal));
         }
-        // Copy the principal before it is stored: the parameter is @Transient, and the map only clones keys
-        // that are CloneableMutable, so a flyweight over a reused request buffer would be retained as-is.
-        // Racing first-derivations of the same principal converge on one instance inside computeIfAbsent.
-        return principalContextCache.computeIfAbsent(Chars.toString(principal), this, NEW_PRINCIPAL_CONTEXT);
+        // Copy the principal before it is stored: the parameter is @Transient (a flyweight over a reused
+        // request buffer), and ConcurrentHashMap.computeIfAbsent does NOT clone the key on every insert path,
+        // so the copy is required rather than defensive -- without it a stored key could later alias the next
+        // request's buffer. Racing first-derivations of the same principal converge on one instance inside
+        // computeIfAbsent.
+        return cache.computeIfAbsent(Chars.toString(principal), this, NEW_PRINCIPAL_CONTEXT);
     }
 
     @Override
@@ -135,6 +147,26 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
                 + "silently downgrade it to " + context.getClass().getName()
                 + ", dropping its authorize*/identity overrides";
         return context;
+    }
+
+    /**
+     * Returns the per-principal cache, allocating it on first use. Only a context that actually serves
+     * {@code forPrincipal} (a shared singleton) reaches this; a derived or validation context never does, so
+     * it keeps a null cache and allocates no map. Lock-free: a racing first call may build a throwaway map,
+     * but the CAS publishes exactly one and every racer converges on it. It must not take the instance
+     * monitor -- that monitor belongs to a process-wide singleton, so serialising on it would be a
+     * scalability cliff (both properties are pinned by the concurrency tests).
+     */
+    private ConcurrentHashMap<SecurityContext> principalContextCache() {
+        final ConcurrentHashMap<SecurityContext> existing = principalContextCache;
+        if (existing != null) {
+            return existing;
+        }
+        final ConcurrentHashMap<SecurityContext> created = new ConcurrentHashMap<>();
+        if (Unsafe.cas(this, PRINCIPAL_CONTEXT_CACHE_OFFSET, null, created)) {
+            return created;
+        }
+        return principalContextCache;
     }
 
     /**
