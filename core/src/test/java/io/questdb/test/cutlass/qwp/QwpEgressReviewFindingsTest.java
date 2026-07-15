@@ -25,6 +25,9 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
@@ -55,6 +58,59 @@ import java.util.Arrays;
  * keeps them useful as regression guards.
  */
 public class QwpEgressReviewFindingsTest {
+
+    @Test
+    public void testDynamicSymbolUsesTextWithoutMaterializingKeys() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+
+            final SymbolTable dynamicSymbolTable = new SymbolTable() {
+                @Override
+                public CharSequence valueBOf(int key) {
+                    throw new AssertionError("dynamic symbol table key path must not be used");
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    throw new AssertionError("dynamic symbol table key path must not be used");
+                }
+            };
+            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return dynamicSymbolTable;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return dynamicSymbolTable;
+                }
+            };
+            final Record record = new Record() {
+                @Override
+                public int getInt(int col) {
+                    throw new AssertionError("dynamic symbol must be read through getSymA");
+                }
+
+                @Override
+                public CharSequence getSymA(int col) {
+                    return "dynamic_value";
+                }
+            };
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, symbolTableSource, dict);
+                batch.appendRow(record);
+                batch.appendRow(record);
+                Assert.assertEquals(2, batch.getRowCount());
+                Assert.assertEquals("the connection dictionary still deduplicates text values", 1, dict.size());
+            }
+        });
+    }
 
     @Test
     public void testComputeDeltaSizeMatchesEmitDeltaSection() throws Exception {

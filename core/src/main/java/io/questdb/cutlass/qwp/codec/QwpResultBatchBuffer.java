@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
@@ -323,7 +324,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * append new UTF-8 bytes to it on first sight per native key and emit the
      * returned conn-id straight into the wire. When {@code symbolTables} is null or
      * doesn't expose a table for a given column, {@code appendRow} falls back to
-     * {@code record.getSymA} without per-column dedup.
+     * {@code record.getSymA} and the connection dictionary's bytes-keyed dedup.
      */
     public void beginBatch(
             ObjList<QwpEgressColumnDef> columns,
@@ -360,6 +361,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             if (symbolTables != null && wireTypesArr[i] == QwpConstants.TYPE_SYMBOL) {
                 try {
                     st = symbolTables.getSymbolTable(i);
+                    // A dynamic symbol table may have to materialize a dictionary merely
+                    // to turn its text into a temporary key. QWP ultimately needs the text,
+                    // so reserve the native-key fast path for genuine static dictionaries.
+                    if (!(st instanceof StaticSymbolTable)) {
+                        st = null;
+                    }
                 } catch (UnsupportedOperationException ignored) {
                     // Cursor doesn't expose symbol tables (rare) - fall back to getSymA.
                 }
@@ -881,10 +888,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         scratch.appendSymbolConnId(connId);
                     }
                 } else {
-                    // No SymbolTable exposed by the cursor -- rare path (synthetic records).
-                    // Fall back to getSymA + bytes-keyed dedup via the connection dict. This
-                    // ships each value once per occurrence (no dedup) to keep the common path
-                    // above branch-free.
+                    // No static SymbolTable is exposed by the cursor. Read text directly so
+                    // dynamic symbols do not build a redundant key dictionary; addEntry()
+                    // performs bytes-keyed dedup in the connection dictionary.
                     CharSequence cs = record.getSymA(ci);
                     if (cs == null) {
                         scratch.appendNull();

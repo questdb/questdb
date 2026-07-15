@@ -24,11 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -38,47 +43,102 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
     // (getInt/valueOf). getSymbol()/getSymbolB() are pure pass-throughs: the wire
     // serializers, ORDER BY and the non-static GROUP BY key sink all read the column
     // through getSymbol on every row, so interning there is dead work that grows an
-    // unbounded, unaccounted on-heap dictionary for values no consumer ever looks up by
-    // key. This pins the contract: a value seen only through getSymbol consumes no symbol
-    // key, so the first value routed through getInt is assigned key 0.
+    // unnecessary cardinality-dependent dictionary for values no consumer ever looks up
+    // by key. This pins the contract: a value seen only through getSymbol consumes no
+    // symbol key, so the first value routed through getInt is assigned key 0.
     @Test
     public void testGetSymbolIsPassThroughAndConsumesNoSymbolKey() {
         final FeedFunction arg = new FeedFunction();
         final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
+        try {
 
-        // getSymbol reads the A-slot and getSymbolB the B-slot; both pass their argument
-        // through verbatim without touching the dictionary. Distinct A/B feed values prove
-        // getSymbolB reads getStrB, not getStrA.
-        arg.valueA = "a_via_getSymbol";
-        arg.valueB = "b_via_getSymbolB";
-        Assert.assertEquals("a_via_getSymbol", func.getSymbol(null));
-        Assert.assertEquals("b_via_getSymbolB", func.getSymbolB(null));
-        arg.valueA = null;
-        Assert.assertNull(func.getSymbol(null));
+            // getSymbol reads the A-slot and getSymbolB the B-slot; both pass their argument
+            // through verbatim without touching the dictionary. Distinct A/B feed values prove
+            // getSymbolB reads getStrB, not getStrA.
+            arg.valueA = "a_via_getSymbol";
+            arg.valueB = "b_via_getSymbolB";
+            Assert.assertEquals("a_via_getSymbol", func.getSymbol(null));
+            Assert.assertEquals("b_via_getSymbolB", func.getSymbolB(null));
+            arg.valueA = null;
+            Assert.assertNull(func.getSymbol(null));
 
-        // Those getSymbol calls must have consumed no symbol keys, so the first value
-        // routed through getInt is assigned key 0.
-        arg.valueA = "seen_via_getInt";
-        Assert.assertEquals(0, func.getInt(null));
-        arg.valueA = "second_via_getInt";
-        Assert.assertEquals(1, func.getInt(null));
+            // Those getSymbol calls must have consumed no symbol keys, so the first value
+            // routed through getInt is assigned key 0.
+            arg.valueA = "seen_via_getInt";
+            Assert.assertEquals(0, func.getInt(null));
+            arg.valueA = "second_via_getInt";
+            Assert.assertEquals(1, func.getInt(null));
+            final SymbolTable symbolTableView = func.newSymbolTable();
 
-        // getInt/valueOf round-trip, and a repeated value reuses its key.
-        Assert.assertEquals("seen_via_getInt", func.valueOf(0));
-        Assert.assertEquals("second_via_getInt", func.valueOf(1));
-        arg.valueA = "seen_via_getInt";
-        Assert.assertEquals(0, func.getInt(null));
+            // Exercise directory and text-arena growth, then verify that every key still
+            // resolves after several rehashes/reallocations. A separately requested symbol
+            // table view must follow the live dictionary without owning a native copy.
+            for (int i = 2; i < 100; i++) {
+                arg.valueA = "value_" + i;
+                Assert.assertEquals(i, func.getInt(null));
+            }
+            TestUtils.assertEquals("seen_via_getInt", func.valueOf(0));
+            TestUtils.assertEquals("second_via_getInt", func.valueBOf(1));
+            TestUtils.assertEquals("seen_via_getInt", symbolTableView.valueOf(0));
+            TestUtils.assertEquals("second_via_getInt", symbolTableView.valueBOf(1));
+            for (int i = 2; i < 100; i++) {
+                Assert.assertEquals("value_" + i, func.valueOf(i).toString());
+            }
+            arg.valueA = "seen_via_getInt";
+            Assert.assertEquals(0, func.getInt(null));
 
-        // NULL maps to the null sentinel and resolves back to null.
-        arg.valueA = null;
-        Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));
-        Assert.assertNull(func.valueOf(SymbolTable.VALUE_IS_NULL));
+            // NULL maps to the null sentinel and resolves back to null.
+            arg.valueA = null;
+            Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));
+            Assert.assertNull(func.valueOf(SymbolTable.VALUE_IS_NULL));
 
-        // A cached factory may outlive the cursor. Closing the cursor must drop the
-        // dictionary, so the next use starts from key 0 even before another init call.
-        func.cursorClosed();
-        arg.valueA = "after_cursor_close";
-        Assert.assertEquals(0, func.getInt(null));
+            // A cached factory may outlive the cursor. Closing the cursor must drop the
+            // dictionary, so the next use starts from key 0 even before another init call.
+            func.cursorClosed();
+            arg.valueA = "after_cursor_close";
+            Assert.assertEquals(0, func.getInt(null));
+        } finally {
+            func.close();
+        }
+    }
+
+    @Test
+    public void testKeyDictionaryIsBoundedByQueryMemoryTracker() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512L);
+            final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                    sqlExecutionContext.getSecurityContext(),
+                    1L,
+                    MemoryTrackerWorkload.QUERY
+            );
+            final FeedFunction arg = new FeedFunction();
+            final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
+            sqlExecutionContext.setMemoryTracker(tracker);
+            try {
+                func.init(null, sqlExecutionContext);
+                try {
+                    for (int i = 0; i < 10_000; i++) {
+                        arg.valueA = "dynamic_symbol_" + i;
+                        func.getInt(null);
+                    }
+                    Assert.fail("expected the dynamic symbol dictionary to reach the query memory limit");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+                Assert.assertTrue("dictionary allocation must be charged to the query", tracker.getUsed() > 0);
+            } finally {
+                try {
+                    func.cursorClosed();
+                    Assert.assertEquals("cursor close must release the dictionary charge", 0, tracker.getUsed());
+                    func.close();
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(null);
+                    tracker.close();
+                }
+            }
+        });
     }
 
     private static class FeedFunction extends StrFunction {
