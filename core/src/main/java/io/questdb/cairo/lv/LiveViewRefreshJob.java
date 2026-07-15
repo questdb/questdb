@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoColumn;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
@@ -151,14 +152,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
-    // Retained-checkpoint ring bounds. A later step replaces these with
-    // cairo.live.view.checkpoint.retention.* config knobs; until then the ring is
-    // capped by a fixed count and a total-bytes budget. The event-time horizon
-    // stays disabled (LONG_NULL passed to pruneRetainedCheckpoints) - count and
-    // bytes bind first, since near-head checkpoint spacing already covers many
-    // times the observed base lateness.
-    private static final int RETAINED_CHECKPOINT_MAX_COUNT = 8;
-    private static final long RETAINED_CHECKPOINT_MAX_TOTAL_BYTES = 64L * 1024 * 1024;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
@@ -3948,10 +3941,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             evictedCheckpoints.clear();
             instance.invalidateRetainedCheckpointsFrom(batchMaxTs, evictedCheckpoints);
             instance.addRetainedCheckpoint(lvSeqTxn, batchMaxTs, baseSeqTxn, instance.getLvRowsTotal(), stateBytes);
+            // Count and bytes are the primary retention bounds. The event-time
+            // horizon is a loose upper safety, disabled by default: when
+            // enabled, an entry older than retentionMicros below the fresh head
+            // (batchMaxTs) is pruned. At real ingest rates count/bytes bind
+            // first (near-head checkpoint spacing covers many times the observed
+            // base lateness); a retentionMicros <= 0 (the default) disables the
+            // horizon so low-rate views keep their older, event-time-distant
+            // anchors instead of collapsing the ring to a single entry.
+            // pruneRetainedCheckpoints always keeps the newest entry.
+            final CairoConfiguration configuration = engine.getConfiguration();
+            final long retentionMicros = configuration.getLiveViewCheckpointRetentionMicros();
+            final long minRetainedMaxTs = retentionMicros > 0 ? batchMaxTs - retentionMicros : Numbers.LONG_NULL;
             instance.pruneRetainedCheckpoints(
-                    RETAINED_CHECKPOINT_MAX_COUNT,
-                    RETAINED_CHECKPOINT_MAX_TOTAL_BYTES,
-                    Numbers.LONG_NULL,
+                    configuration.getLiveViewCheckpointRetentionCount(),
+                    configuration.getLiveViewCheckpointRetentionMaxBytes(),
+                    minRetainedMaxTs,
                     evictedCheckpoints
             );
             unlinkCheckpointFiles(instance, evictedCheckpoints);

@@ -489,6 +489,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewCheckpointRetentionCount() {
+        return getDelegate().getLiveViewCheckpointRetentionCount();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRetentionMaxBytes() {
+        return getDelegate().getLiveViewCheckpointRetentionMaxBytes();
+    }
+
+    @Override
+    public long getLiveViewCheckpointRetentionMicros() {
+        return getDelegate().getLiveViewCheckpointRetentionMicros();
+    }
+
+    @Override
     public long getLiveViewCheckpointRows() {
         return getDelegate().getLiveViewCheckpointRows();
     }
