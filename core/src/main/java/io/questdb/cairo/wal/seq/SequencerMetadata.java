@@ -177,6 +177,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
 
+        // G5: these two structural writes (the view / mat-view DEFINITION block files) use the raw
+        // configured commitMode DELIBERATELY — they are intentionally NOT routed through
+        // LocalDurabilityPolicy.resolveCommitMode() the way the adaptive apply-side sites are. A view
+        // definition is structural DDL, not the lazily-applied column data the durable epoch protects, so it
+        // must stay durable under commitMode != NOSYNC regardless of role (matching CommitMode's
+        // structural-sync principle and DatabaseCheckpointAgent). This is reachable on a replica via
+        // `ALTER TABLE ... REBASE WAL INTO` on a mat view — a rare operator-invoked recovery op whose
+        // definition is LOCAL truth (not re-downloaded from the object store), so forcing it durable is
+        // correct: an fsync of over-durability here, never under-durability.
         if (writeInitialMetadata && tableStruct.isView()) {
             assert tableStruct.getViewDefinition() != null;
             try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
