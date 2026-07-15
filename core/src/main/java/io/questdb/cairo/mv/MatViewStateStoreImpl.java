@@ -249,6 +249,12 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
+    public void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros) {
+        final MatViewTimerTask timerTask = tlTimerTask.get();
+        timerTaskQueue.enqueue(timerTask.ofRetry(matViewToken, retryAfterMicros));
+    }
+
+    @Override
     public void reenqueueRefreshTask(MatViewRefreshTask task) {
         taskQueue.enqueue(task);
     }

@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
@@ -34,6 +35,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
 
@@ -166,6 +169,112 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testClearCancelSentinelClearsStaleCancel() throws Exception {
+        // A guarded "if (!isTimerSet()) resetTimer()" cannot clear the sentinel because isTimerSet()
+        // is true for MIN_VALUE. clearCancelSentinel() is the unconditional per-query clear that bounds
+        // the sentinel to a single query.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                // A guarded reset does NOT clear the sentinel (the breaker still reports the cancel):
+                if (!cb.isTimerSet()) {
+                    cb.resetTimer();
+                }
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+
+                // The connection's per-query entry clears the stale sentinel:
+                cb.clearCancelSentinel();
+                // Now a guarded reset arms a fresh timer, and the breaker is OK:
+                if (!cb.isTimerSet()) {
+                    cb.resetTimer();
+                }
+                cb.statefulThrowExceptionIfTripped(); // must not throw
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, cb.getState());
+            }
+        });
+    }
+
+    @Test
+    public void testClearCancelSentinelKeepsRunningTimer() throws Exception {
+        // clearCancelSentinel() must not disturb a legitimately running timer (e.g. a named portal
+        // paginated across Sync); it clears only the cancel sentinel.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.clearCancelSentinel(); // no-op: powerUpTime is a real timer, not the sentinel
+                Assert.assertTrue(cb.isTimerSet());
+                cb.statefulThrowExceptionIfTripped(); // must not throw
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, cb.getState());
+            }
+        });
+    }
+
+    @Test
+    public void testSentinelCancelReportedByGetState() throws Exception {
+        // A cancel that lands before QueryRegistry binds the per-query flag leaves only the
+        // powerUpTime == MIN_VALUE sentinel. getState() must report it as cancelled instead of
+        // mislabelling the sentinel as a timeout.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, cb.getState());
+            }
+        });
+    }
+
+    @Test
+    public void testSentinelCancelThrowsWhenFlagAttachedFalseAfterwards() throws Exception {
+        // Exact production race: cancel() runs before QueryRegistry.register() binds the per-query
+        // flag, so it only sets the sentinel; register() then binds a fresh flag whose value is
+        // false. The sentinel must still win, so the stateful throw path aborts as cancelled.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                cb.setCancelledFlag(new AtomicBoolean(false));
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+            }
+        });
+    }
+
+    @Test
+    public void testSentinelCancelThrowsWhenNoFlagAttached() throws Exception {
+        // cancel() arriving while cancelledFlag is still null sets only the sentinel. The stateful
+        // throw path used by virtually all query execution must honour it and abort as cancelled,
+        // even though testTimeout()'s now - MIN_VALUE arithmetic overflows and never trips.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+            }
+        });
+    }
+
+    @Test
+    public void testSentinelClearedByResetTimer() throws Exception {
+        // The cancel sentinel must not leak across queries. Once a sentinel-only cancel has been
+        // honoured, the next query's resetTimer() overwrites powerUpTime with a fresh value, so the
+        // fresh query neither throws nor reports cancelled. This pins the no-false-positive property
+        // that the sentinel check relies on for cross-query safety.
+        assertMemoryLeak(() -> {
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                cb.resetTimer();
+                cb.cancel();
+                // The sentinel is honoured for the cancelled query.
+                expectQueryCancelled(cb::statefulThrowExceptionIfTripped);
+
+                // A fresh query starts: resetTimer() clears the stale sentinel, so the breaker is OK.
+                cb.resetTimer();
+                cb.statefulThrowExceptionIfTripped(); // must not throw
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, cb.getState());
+            }
+        });
+    }
+
     private static void expectCairoFailure(Runnable op, String expectedMessage) {
         try {
             op.run();
@@ -174,6 +283,21 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "unexpected message: " + e.getFlyweightMessage(),
                     e.getFlyweightMessage().toString().contains(expectedMessage)
+            );
+        }
+    }
+
+    private static void expectQueryCancelled(Runnable op) {
+        try {
+            op.run();
+            Assert.fail("expected a CairoException signalling query cancellation, but nothing was thrown");
+        } catch (CairoException e) {
+            // queryCancelled() sets the cancellation flag while queryTimedOut() only sets
+            // interruption, so isCancellation() proves the breaker aborted as a cancel, not a timeout.
+            Assert.assertTrue("expected a cancellation, got: " + e.getFlyweightMessage(), e.isCancellation());
+            Assert.assertTrue(
+                    "expected 'cancelled by user', got: " + e.getFlyweightMessage(),
+                    e.getFlyweightMessage().toString().contains("cancelled by user")
             );
         }
     }

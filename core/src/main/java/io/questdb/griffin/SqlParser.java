@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
+import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
@@ -476,8 +477,10 @@ public class SqlParser {
             // minutes
             // hours
             // days
+            // weeks
             // months
-            case 'n', 'U', 'T', 's', 'm', 'h', 'd', 'M', 'y' -> true;
+            // years
+            case 'n', 'U', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y' -> true;
             default -> false;
         };
     }
@@ -2598,8 +2601,11 @@ public class SqlParser {
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_VIEW;
+                    } else if (tok != null && isDatabaseKeyword(tok)) {
+                        showKind = IQueryModel.SHOW_CREATE_DATABASE;
+                        model.setShowCreateDatabaseInclude(parseShowCreateDatabaseInclude(lexer));
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
@@ -4479,7 +4485,28 @@ public class SqlParser {
                 do {
                     CharSequence colNameTok = tok(lexer, "column name");
                     assertNameIsQuotedOrNotAKeyword(colNameTok, lexer.lastTokenPosition());
-                    CharSequence colName = GenericLexer.immutableOf(unquote(colNameTok));
+                    // A dotted name keeps its dots as content, not a table.column separator (matches
+                    // the SELECT-alias convention). Normalize to the protective DOUBLE-quote form
+                    // regardless of the user's quote style: only double quotes are recognized
+                    // downstream (Chars.indexOfLastUnquoted / SqlUtil.isQuoteProtectedAlias handle '"'
+                    // only), so a retained single quote or backtick would leave the dot to mis-split
+                    // into a spurious table.column reference and fail to resolve at compile time.
+                    final CharSequence unquotedColName = unquote(colNameTok);
+                    final CharSequence colName;
+                    if (Chars.indexOf(unquotedColName, '.') == -1) {
+                        colName = GenericLexer.immutableOf(unquotedColName);
+                    } else {
+                        // A dotted name is re-wrapped in double quotes to keep its dots as content; an
+                        // embedded double quote would break that quote parity (isQuoteProtectedAlias and
+                        // Chars.indexOfLastUnquoted toggle on '"'), leaking a malformed name or, for a JSON
+                        // COLUMNS key, silently matching nothing. Reject it cleanly instead.
+                        if (Chars.indexOf(unquotedColName, '"') != -1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "dotted UNNEST column name cannot contain a double quote");
+                        }
+                        final CharacterStoreEntry colNameEntry = characterStore.newEntry();
+                        colNameEntry.put('"').put(unquotedColName).put('"');
+                        colName = colNameEntry.toImmutable();
+                    }
                     CharSequence typeName = tok(lexer, "column type");
                     int type = ColumnType.typeOf(typeName);
                     if (type == -1) {
@@ -4551,7 +4578,24 @@ public class SqlParser {
                 tok = tok(lexer, "column alias");
                 int aliasPos = lexer.lastTokenPosition();
                 assertNameIsQuotedOrNotAKeyword(tok, aliasPos);
-                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(unquote(tok)));
+                // A dotted alias keeps its dots as content (see the COLUMNS field-name note above):
+                // normalize any quote style to the protective double-quote form so downstream lookups
+                // treat the dots as content instead of a table.column separator.
+                final CharSequence unquotedAlias = unquote(tok);
+                final CharSequence aliasName;
+                if (Chars.indexOf(unquotedAlias, '.') == -1) {
+                    aliasName = GenericLexer.immutableOf(unquotedAlias);
+                } else {
+                    // see the COLUMNS field-name note: an embedded double quote breaks the protective
+                    // re-wrap, so reject a dotted alias that carries one rather than leak a malformed name.
+                    if (Chars.indexOf(unquotedAlias, '"') != -1) {
+                        throw SqlException.$(aliasPos, "dotted UNNEST column alias cannot contain a double quote");
+                    }
+                    final CharacterStoreEntry aliasEntry = characterStore.newEntry();
+                    aliasEntry.put('"').put(unquotedAlias).put('"');
+                    aliasName = aliasEntry.toImmutable();
+                }
+                unnestModel.getUnnestColumnAliases().add(aliasName);
                 if (firstExcessAliasPos == -1
                         && unnestModel.getUnnestColumnAliases().size() > maxAliases) {
                     firstExcessAliasPos = aliasPos;
@@ -5201,6 +5245,75 @@ public class SqlParser {
             return parseDecimalColumnType(lexer);
         }
         return columnType;
+    }
+
+    private int parseShowCreateDatabaseInclude(GenericLexer lexer) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok == null) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        final boolean exclude;
+        if (isIncludeKeyword(tok)) {
+            exclude = false;
+        } else if (isExcludeKeyword(tok)) {
+            exclude = true;
+        } else {
+            // no INCLUDE/EXCLUDE clause; leave the token for the trailing-token check
+            lexer.unparseLast();
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        tok = tok(lexer, "'ALL' or '('");
+        if (isAllKeyword(tok)) {
+            return exclude ? 0 : ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'ALL' or '(' expected");
+        }
+        int mask = 0;
+        do {
+            tok = tok(lexer, "category");
+            mask |= showCreateDatabaseCategory(lexer, tok);
+            tok = tok(lexer, "',' or ')'");
+        } while (Chars.equals(tok, ','));
+        if (!Chars.equals(tok, ')')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("',' or ')' expected");
+        }
+        return exclude ? (ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL & ~mask) : mask;
+    }
+
+    private int showCreateDatabaseCategory(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (Chars.equalsIgnoreCase(tok, "tables")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_TABLES;
+        }
+        if (Chars.equalsIgnoreCase(tok, "views")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_VIEWS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "materialized_views")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_MATERIALIZED_VIEWS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "users")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_USERS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "groups")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_GROUPS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "service_accounts")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_SERVICE_ACCOUNTS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "permissions")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_PERMISSIONS;
+        }
+        if (Chars.equalsIgnoreCase(tok, "schema")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_SCHEMA;
+        }
+        if (Chars.equalsIgnoreCase(tok, "acl")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ACL;
+        }
+        if (isAllKeyword(tok)) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
+        }
+        throw SqlException.position(lexer.lastTokenPosition()).put("unexpected category [category=").put(tok)
+                .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
