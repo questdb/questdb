@@ -534,7 +534,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // its WAL floor even under a NOSYNC instance default, while a NOSYNC sibling purges freely.
         // resolveEffectiveCommitMode falls back to reading _meta when the tracker has not been published
         // yet, so an adaptive table is recognized even before its first writer/commit publishes the mode.
-        if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(tableToken) == CommitMode.ADAPTIVE) {
+        // The epoch floor is a LOCAL-durability (primary) concern: it exists only because this node's disk
+        // holds not-yet-uploaded truth that adaptive crash-recovery re-applies from the WAL. On a replica
+        // (LocalDurabilityPolicy.REPLICA_SKIP) the epoch is never advanced — durableEpochSeqTxn stays 0 and
+        // recovery is re-download + re-apply — so the floor must NOT apply, or it pins the purge floor at 0
+        // and WAL accumulates unboundedly. resolveCommitMode downgrades ADAPTIVE->NOSYNC in exactly that
+        // case, mirroring the epoch producer's own policy gate in ApplyWal2TableJob.maybeAdvanceDurableEpoch.
+        final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(
+                engine.getTableSequencerAPI().resolveEffectiveCommitMode(tableToken),
+                engine.getLocalDurabilityPolicy());
+        if (purgeFloorMode == CommitMode.ADAPTIVE) {
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
             safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
         }

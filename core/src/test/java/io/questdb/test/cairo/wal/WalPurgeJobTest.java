@@ -1620,6 +1620,62 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * G1 coexistence fix: on a replica (LocalDurabilityPolicy.REPLICA_SKIP) the adaptive apply-side durable
+     * epoch is never advanced (durableEpochSeqTxn stays 0), so the epoch-based WAL-purge floor must NOT
+     * apply. Otherwise the floor is permanently pinned at 0 and WAL segments accumulate forever on the
+     * replica — the standard cluster-uniform ADAPTIVE deployment. The floor is a local-durability (primary)
+     * concern; a replica's retention is governed by the upload/download/apply floors instead.
+     */
+    @Test
+    public void testReplicaSkipIgnoresDurableEpochPurgeFloor() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Epoch eligible on every apply batch, so the ONLY thing keeping durableEpochSeqTxn at 0 is the
+        // REPLICA_SKIP policy gate (mirrors a live replica), not a disabled cadence.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+
+            // Model a replica: install REPLICA_SKIP before applying so the apply-side epoch is skipped.
+            engine.setLocalDurabilityPolicy(io.questdb.cairo.wal.LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+                execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z')");
+                execute("insert into " + tableName + " values (3, '2022-02-24T00:00:02.000000Z')");
+
+                // Apply all WAL txns; under REPLICA_SKIP the durable-epoch frontier must stay pinned at 0.
+                drainWalQueue();
+
+                final TableToken tableToken = engine.verifyTableName(tableName);
+                final io.questdb.cairo.wal.seq.SeqTxnTracker tracker =
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                Assert.assertEquals("REPLICA_SKIP must leave durableEpochSeqTxn pinned at 0",
+                        0, tracker.getDurableEpochSeqTxn());
+
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+
+                engine.releaseInactive();
+
+                // All txns are applied and this node is a replica, so the fully-applied WAL segment is
+                // reclaimable: the epoch floor (pinned at 0) must NOT retain it. RED before the fix
+                // (WalPurgeJob clamps to durableEpochSeqTxn=0 whenever effective mode == ADAPTIVE).
+                drainPurgeJob();
+
+                assertSegmentExistence(false, tableName, 1, 0);
+                assertWalExistence(false, tableName, 1);
+            } finally {
+                engine.setLocalDurabilityPolicy(io.questdb.cairo.wal.LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
     private static void addColumnAndRow(WalWriter writer, String columnName) {
         TestUtils.unchecked(() -> {
             addColumn(writer, columnName);
