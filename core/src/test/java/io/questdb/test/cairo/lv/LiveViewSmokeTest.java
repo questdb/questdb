@@ -17825,6 +17825,87 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testO3CorruptNonHeadAnchorIsEvictedAndNotRetried() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1); Path cpPath = new Path()) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                final long oldestLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
+                final long corruptLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
+                Assert.assertNotEquals(corruptLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
+
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(lv.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, corruptLvSeqTxn);
+                overwriteByteInFile(engine.getConfiguration(), cpPath, LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8, (byte) 0xAB);
+
+                // A late row at 25 selects the non-head anchor at 20. The trigger
+                // retires the unsealed head, then restore evicts the corrupt anchor
+                // without advancing the watermark.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                drainWalQueue();
+                Assert.assertTrue(job.run());
+
+                Assert.assertFalse("corrupt anchor file must be unlinked", engine.getConfiguration().getFilesFacade().exists(cpPath.$()));
+                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(oldestLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
+                Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t3\n");
+
+                // The same trigger re-fires and resumes from the surviving anchor.
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                        "2026-11-01T00:00:25.000000Z\t25\t3\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t4\n");
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(oldestLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+                Assert.assertNotEquals(corruptLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
+
+                // A later O3 remains correct and cannot resurrect the removed anchor.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:27.000000Z', 27)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                        "2026-11-01T00:00:25.000000Z\t25\t3\n" +
+                        "2026-11-01T00:00:27.000000Z\t27\t4\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t5\n");
+                for (int i = 0, n = lv.getRetainedCheckpointCount(); i < n; i++) {
+                    Assert.assertNotEquals(corruptLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(i));
+                }
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3BoundedMissUnderApplyAheadReanchorsBelowAheadMinimum() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
