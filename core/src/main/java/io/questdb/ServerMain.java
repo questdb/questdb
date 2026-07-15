@@ -24,8 +24,6 @@
 
 package io.questdb;
 
-// Dummy comment change to trigger CI for java-questdb-client testing; revert before merge.
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
