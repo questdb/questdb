@@ -15065,6 +15065,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("SELECT fun(col BETWEEN (0 AND 1, col), col;", 42, "dangling literal");
     }
 
+    @Test
+    public void testUnclosedParenthesisIssue6010() throws Exception {
+        // https://github.com/questdb/questdb/issues/6010
+        // A function argument list left open when the projection list ends at
+        // FROM must point at the unclosed '(', not at FROM (which is only where
+        // the parser first notices the problem).
+        assertSyntaxError(
+                "select abs(1000*rnd_double(), timestamp_sequence('2022-07-01', 1000000) from long_sequence(1000000)",
+                10,
+                "unbalanced ("
+        );
+        // A stray 'from' inside a balanced pair is a different problem: the
+        // paren is closed later, so this stays a dangling literal at 'from'.
+        assertSyntaxError("select something(null from x)", 22, "dangling literal");
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }
