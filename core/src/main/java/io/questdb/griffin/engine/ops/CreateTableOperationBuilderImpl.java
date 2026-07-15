@@ -205,11 +205,16 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
      */
     private PartitionSpec resolvePartitionSpec() throws SqlException {
         int dimCount = partitionDimensionExprs.size();
-        if (dimCount > 0 && getPartitionByFromExpr() == PartitionBy.NONE) {
-            throw SqlException.$(
-                    partitionDimensionExprs.getQuick(0).position,
-                    "composite partition dimensions require time partitioning"
-            );
+        int clusterCount = clusterExprs.size();
+        // A spec is composite (PartitionSpec.isComposite()) when it has dimensions OR cluster
+        // columns; PARTITION BY NONE is unpartitioned, so either alone is an ill-defined
+        // combination on an unpartitioned table and must be rejected here, not just the
+        // dimensions case.
+        if ((dimCount > 0 || clusterCount > 0) && getPartitionByFromExpr() == PartitionBy.NONE) {
+            int pos = dimCount > 0
+                    ? partitionDimensionExprs.getQuick(0).position
+                    : clusterExprs.getQuick(0).position;
+            throw SqlException.$(pos, "composite partitioning requires time partitioning");
         }
 
         PartitionSpec spec = new PartitionSpec();
@@ -236,7 +241,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             }
         }
 
-        int clusterCount = clusterExprs.size();
         for (int i = 0; i < clusterCount; i++) {
             ExpressionNode node = clusterExprs.getQuick(i);
             int idx = columnNameIndexMap.get(node.token);

@@ -78,6 +78,18 @@ public class CompositePartitionValidateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClusterColumnResolvesToColumnIndex() throws Exception {
+        // Column declaration order: ts=0, exchange=1, price=2. ORDER BY resolves the cluster
+        // column's name to its declaration index via columnNameIndexMap, independent of (and
+        // after) the dimension list.
+        PartitionSpec s = compilePartitionSpec(
+                "create table t (ts timestamp, exchange symbol, price double) " +
+                        "timestamp(ts) partition by day, exchange order by price wal");
+        Assert.assertEquals(1, s.getClusterColumnCount());
+        Assert.assertEquals(2, s.getClusterColumn(0));
+    }
+
+    @Test
     public void testCompositeDimensionsRequireTimePartitioning() throws Exception {
         // NONE isn't partitioned, so WAL would reject first; omit WAL so this actually reaches
         // the build()-time composite-dimensions-require-time-partitioning check. Timestamp is
@@ -85,7 +97,20 @@ public class CompositePartitionValidateTest extends AbstractCairoTest {
         // timestamps" parse-time check doesn't fire first either.
         assertException(
                 "create table t (ts timestamp, s symbol) timestamp(ts) partition by none, s",
-                /*pos of s*/ 73, "composite partition dimensions require time partitioning");
+                /*pos of s*/ 73, "composite partitioning requires time partitioning");
+    }
+
+    @Test
+    public void testNoneRejectsClusterOnlyColumns() throws Exception {
+        // NONE isn't partitioned, so WAL would reject first; omit WAL so this actually reaches
+        // the build()-time guard. Timestamp is designated so the earlier "partitioning is
+        // possible only on tables with designated timestamps" parse-time check doesn't fire
+        // first either. No dimensions here, only a cluster/ORDER BY column: PartitionSpec.isComposite()
+        // is true whenever there are cluster columns too, so PARTITION BY NONE + ORDER BY must be
+        // rejected the same way as PARTITION BY NONE + dimensions is.
+        assertException(
+                "create table t (ts timestamp, s symbol) timestamp(ts) partition by none order by s",
+                /*pos of s (the cluster column)*/ 81, "composite partitioning requires time partitioning");
     }
 
     @Test
@@ -94,6 +119,19 @@ public class CompositePartitionValidateTest extends AbstractCairoTest {
                 "create table t (ts timestamp, exchange symbol) timestamp(ts) " +
                         "partition by day, exchange order by nope wal",
                 /*pos of nope*/ 97, "Invalid column: nope");
+    }
+
+    @Test
+    public void testAsSelectRejectsCompositeDimensions() throws Exception {
+        // CREATE TABLE AS SELECT's columns aren't known until the select executes, so composite
+        // dimensions can't be resolved at build() time (no column-type/index info to drive the
+        // SYMBOL resolver); the AS-SELECT branch of build() rejects them outright rather than
+        // misreport columns as non-existent. This binding constraint previously had zero test
+        // coverage; behavior is already correct, so this is a regression guard, not a fix.
+        execute("create table src (ts timestamp, exchange symbol) timestamp(ts) partition by day wal");
+        assertException(
+                "create table t as (select * from src) timestamp(ts) partition by day, exchange",
+                /*pos of exchange*/ 70, "composite partitioning is not yet supported with CREATE TABLE AS SELECT");
     }
 
     /**
