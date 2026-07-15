@@ -318,21 +318,22 @@ git commit -m "feat(metrics): wal_adaptive_recovery_events counter (recovery det
     @Test
     public void testWalTablesExposesLocalDurableAndLastEpochTs() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, "0"); // cut an epoch every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values (0, 1)");
             drainWalQueue();
-            // Both columns exist and localDurableSeqTxn is positive for an adaptive table post-apply.
+
+            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("x"));
+            assertTrue("adaptive frontier should advance", tracker.getLocalDurableSeqTxn() > 0);
+
+            // Both new columns expose the tracker's values verbatim. lastEpochTs is a TIMESTAMP (micros),
+            // populated from the tracker's wall-clock-MILLIS value * 1000; cast back to long to assert exactly.
             assertSql(
-                    "hasLocalDurable\n" +
-                            "true\n",
-                    "select localDurableSeqTxn > 0 as hasLocalDurable from wal_tables() where name = 'x'"
-            );
-            // lastEpochTs column is selectable as a TIMESTAMP (no error).
-            assertSql(
-                    "count\n" +
-                            "1\n",
-                    "select count() as count from wal_tables() where name = 'x' and lastEpochTs is not null or name = 'x'"
+                    "localDurableSeqTxn\tepochMicros\n" +
+                            tracker.getLocalDurableSeqTxn() + "\t" + (tracker.getLastEpochTs() * 1000) + "\n",
+                    "select localDurableSeqTxn, cast(lastEpochTs as long) as epochMicros " +
+                            "from wal_tables() where name = 'x'"
             );
         });
     }
@@ -367,7 +368,8 @@ Expected: FAIL — `Invalid column: localDurableSeqTxn`.
 (d) In `switchTo`, initialised branch (after `recoveryIncarnation = ...`, ~line 305):
 ```java
                             localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
-                            lastEpochTs = seqTxnTracker.getLastEpochTs();
+                            // getLastEpochTs() is wall-clock MILLIS; the column is TIMESTAMP (MICROS), so scale.
+                            lastEpochTs = seqTxnTracker.getLastEpochTs() * 1000;
 ```
 and the not-initialised default branch (after `recoveryIncarnation = 0;`, ~line 321):
 ```java
