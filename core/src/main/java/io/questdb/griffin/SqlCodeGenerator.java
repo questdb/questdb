@@ -530,6 +530,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    @Nullable
+    private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -580,6 +582,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return expected;
+    }
+
+    @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
+        this.unionSymbolProjectionTestHook = hook;
     }
 
     public static int getUnionCastType(int typeA, int typeB) throws SqlException {
@@ -11039,6 +11046,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
         ObjList<Function> functions = null;
         try {
+            if (unionSymbolProjectionTestHook != null) {
+                unionSymbolProjectionTestHook.onProjectionConstruction();
+            }
             // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
             // thread-safe. That is safe only because a union base is serial: it supports neither page
             // frames, filter stealing nor time frames, so no parallel operator (async filter, parallel
@@ -11057,12 +11067,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // only free what the list already holds. When the wrapper is built it takes ownership
                 // of baseColumn (UnaryFunction.close closes its arg), so swap it into the slot rather
                 // than adding it, to avoid freeing baseColumn twice.
-                final Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
+                Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
+                final boolean isSymbolCastRequired = symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING;
                 functions.add(baseColumn);
+                if (isSymbolCastRequired && unionSymbolProjectionTestHook != null) {
+                    baseColumn = unionSymbolProjectionTestHook.wrapFunction(
+                            baseColumn,
+                            UnionSymbolProjectionTestHook.BASE_COLUMN
+                    );
+                    functions.setQuick(i, baseColumn);
+                }
                 final TableColumnMetadata m;
-                if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
-                    final Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                if (isSymbolCastRequired) {
+                    if (unionSymbolProjectionTestHook != null) {
+                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.BASE_COLUMN);
+                    }
+                    Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    if (unionSymbolProjectionTestHook != null) {
+                        function = unionSymbolProjectionTestHook.wrapFunction(
+                                function,
+                                UnionSymbolProjectionTestHook.SYMBOL_FUNCTION
+                        );
+                    }
                     functions.setQuick(i, function);
+                    if (unionSymbolProjectionTestHook != null) {
+                        unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.SYMBOL_FUNCTION);
+                    }
                     // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
                     m = new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata());
                 } else {
@@ -11077,6 +11107,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(unionFactory);
             throw e;
         }
+    }
+
+    @TestOnly
+    public interface UnionSymbolProjectionTestHook {
+        int BASE_COLUMN = 0;
+        int SYMBOL_FUNCTION = 1;
+        int PROJECTION = 2;
+
+        void onFunctionRegistered(int functionKind) throws SqlException;
+
+        void onProjectionConstruction() throws SqlException;
+
+        Function wrapFunction(Function function, int functionKind);
     }
 
     private RecordCursorFactory generateUnnest(
