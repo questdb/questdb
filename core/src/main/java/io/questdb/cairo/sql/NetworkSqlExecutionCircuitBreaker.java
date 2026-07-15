@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,20 +35,20 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable, Mutable {
-    private final int bufferSize;
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
     private final long connectionCheckThrottle;
     private final long defaultMaxTime;
     private final CairoEngine engine;
-    private final int memoryTag;
     private final NetworkFacade nf;
     private final int throttle;
-    private long buffer;
     private volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
+    private boolean isClosed;
     // Wall-clock time (millis) of the last heavy connection probe; gates the throttled probes in
     // statefulThrowExceptionIfTrippedTimeThrottled(), checkIfTripped(long, long) and getState(long, long).
+    // Written without synchronization: consults of a shared instance must stay on the query-owner
+    // thread; worker threads operate on per-worker wrapper copies.
     private long lastConnectionCheckTime;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -61,9 +60,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.nf = configuration.getNetworkFacade();
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.connectionCheckThrottle = configuration.getCircuitBreakerConnectionCheckThrottle();
-        this.bufferSize = configuration.getBufferSize();
-        this.memoryTag = memoryTag;
-        this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
         long timeout = configuration.getQueryTimeout();
         if (timeout > 0) {
@@ -101,11 +97,20 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             return true;
         }
-        if (now - lastConnectionCheckTime >= connectionCheckThrottle) {
-            lastConnectionCheckTime = now;
-            return testConnection(fd);
+        return testConnectionTimeThrottled(now, fd);
+    }
+
+    @Override
+    public boolean checkIfTrippedNoThrottle() {
+        final long now = clock.getTicks();
+        if (now - timeout > powerUpTime) {
+            return true;
         }
-        return false;
+        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
+            return true;
+        }
+        lastConnectionCheckTime = now;
+        return testConnection(fd);
     }
 
     public void clear() {
@@ -127,7 +132,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void close() {
-        buffer = Unsafe.free(buffer, bufferSize, memoryTag);
+        isClosed = true;
         fd = -1;
     }
 
@@ -174,11 +179,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             return STATE_CANCELLED;
         }
-        if (now - lastConnectionCheckTime >= connectionCheckThrottle) {
-            lastConnectionCheckTime = now;
-            if (testConnection(fd)) {
-                return STATE_BROKEN_CONNECTION;
-            }
+        if (testConnectionTimeThrottled(now, fd)) {
+            return STATE_BROKEN_CONNECTION;
         }
         return STATE_OK;
     }
@@ -199,11 +201,21 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     public NetworkSqlExecutionCircuitBreaker of(long fd) {
-        assert buffer != 0;
+        assert !isClosed;
         testCount = 0;
-        lastConnectionCheckTime = 0;
+        if (this.fd != fd) {
+            lastConnectionCheckTime = 0;
+        }
         this.fd = fd;
         return this;
+    }
+
+    // Re-arms the timeout timer without zeroing the connection-check window. Used by
+    // SqlExecutionCircuitBreakerWrapper.init(), which runs once per reduce task: the full
+    // resetTimer() would let the first probe after every task bypass the throttle.
+    public void rearmTimer() {
+        powerUpTime = clock.getTicks();
+        testCount = 0;
     }
 
     public void resetMaxTimeToDefault() {
@@ -269,15 +281,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         // promptly cancellable even at a per-frame, nested-loop-re-scanned call site.
         testTimeout(now);
         testCancelled();
-        // Throttle only the heavy connection probe (a recv(MSG_PEEK) syscall) by elapsed wall-clock time.
+        // Throttle only the heavy connection probe (a hangup-poll syscall) by elapsed wall-clock time.
         // The state lives on this breaker, which the execution context shares across every cursor in the
         // query, so the probe fires at most once per window for the whole query - a big CROSS JOIN small
         // that re-scans the slave once per master row can no longer turn into one syscall per master row.
-        if (now - lastConnectionCheckTime >= connectionCheckThrottle) {
-            lastConnectionCheckTime = now;
-            if (testConnection(fd)) {
-                throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
-            }
+        if (testConnectionTimeThrottled(now, fd)) {
+            throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }
 
@@ -301,6 +310,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         }
     }
 
+    private boolean testConnectionTimeThrottled(long now, long fd) {
+        if (now - lastConnectionCheckTime >= connectionCheckThrottle) {
+            lastConnectionCheckTime = now;
+            return testConnection(fd);
+        }
+        return false;
+    }
+
     private void testTimeout() {
         testTimeout(clock.getTicks());
     }
@@ -320,6 +337,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (fd == -1 || !configuration.checkConnection()) {
             return false;
         }
-        return nf.testConnection(fd, buffer, bufferSize);
+        return nf.testConnection(fd, 0, 0);
     }
 }

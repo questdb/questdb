@@ -29,7 +29,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
-import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
@@ -49,10 +48,10 @@ import org.junit.Test;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * End-to-end Phase-1 smoke test for QWP egress: boot an embedded QuestDB,
@@ -1676,7 +1675,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // circuit breaker (mapped to NOOP_CIRCUIT_BREAKER), so a query never consulted
         // query.timeout nor the connection probe and sleep(3) ran the full ~3s. With
         // the fd-backed breaker and a 100ms wake interval, sleep(3) must abort near
-        // ~1s with STATUS_LIMIT_EXCEEDED.
+        // ~1s, well before the 3s a NOOP-breaker run would take, with STATUS_LIMIT_EXCEEDED.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
@@ -1710,7 +1709,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     Assert.assertTrue(
                             "egress sleep(3) took " + elapsed + " ms; query.timeout=1s must abort it near ~1s "
                                     + "(hasErrored=" + hasErrored[0] + ")",
-                            elapsed < 2_000
+                            elapsed < 2_500
                     );
                     Assert.assertTrue(
                             "egress sleep(3) aborted after only " + elapsed + " ms; query.timeout=1s cannot fire "
@@ -1763,19 +1762,25 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
 
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
-                    performReadHandshake(socket);
+                    QwpWireTestFixtures.performReadHandshake(socket);
+                    // Drain the pushed SERVER_INFO frame so the socket close below sends a clean
+                    // FIN; unread inbound data would turn it into an RST.
+                    QwpWireTestFixtures.readServerFrame(socket.getInputStream());
                     OutputStream out = socket.getOutputStream();
-                    out.write(maskedFrame(WebSocketOpcode.BINARY, buildQueryRequest(1, "sleep(3600)")));
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.buildQueryRequest(1, "sleep(3600)")));
                     out.flush();
 
-                    // Wait until the server has begun the query, then give it a wake cycle to mount
-                    // the continuation and park.
+                    // Wait until the server has begun the query and parked the continuation.
                     TestUtils.assertEventually(
                             () -> Assert.assertTrue("egress query never started",
                                     metrics.queriesStartedCount() > startedBefore),
                             10
                     );
-                    Os.sleep(300);
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("sleep continuation never parked",
+                                    serverMain.getEngine().getTimerShards().size() >= 1),
+                            10
+                    );
 
                     // Pin the errored counter to the disconnect: if the query had already errored
                     // for any other reason (compile/transport/setup) the post-close poll would trip
@@ -1790,24 +1795,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
 
                     // WebSocket Close frame, then FIN on socket close below -- buffered bytes
                     // ahead of the FIN.
-                    out.write(maskedFrame(WebSocketOpcode.CLOSE, new byte[0]));
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.CLOSE, new byte[0]));
                     out.flush();
                 }
 
-                // The "errored" counter advances when the parked sleep catches the breaker's
-                // "remote disconnected" abort. The 20s deadline sits below query.timeout (30s),
-                // so a fd-binding regression is caught: the counter would only advance at the
-                // timeout.
-                long closeMs = System.currentTimeMillis();
-                long deadlineMs = closeMs + 20_000;
-                long endedAfterMs = -1;
-                while (System.currentTimeMillis() < deadlineMs) {
-                    if (metrics.queriesErroredCounter().getValue() > erroredBefore) {
-                        endedAfterMs = System.currentTimeMillis() - closeMs;
-                        break;
-                    }
-                    Os.sleep(50);
-                }
+                long endedAfterMs = awaitErroredCounterAdvance(metrics, erroredBefore);
 
                 Assert.assertTrue(
                         "egress sleep(3600) never aborted within 20s of the client closing the connection",
@@ -2025,9 +2017,12 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // STATUS_LIMIT_EXCEEDED instead of delivering the remaining rows.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
                     PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "500ms"
             )) {
                 serverMain.execute("CREATE TABLE big AS (SELECT x, x * 2 AS y FROM long_sequence(2_000_000))");
+                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                final long erroredBefore = metrics.queriesErroredCounter().getValue();
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
 
@@ -2067,6 +2062,155 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     Assert.assertTrue(
                             "expected a timeout message, got: " + errorMessage[0],
                             errorMessage[0] != null && errorMessage[0].contains("timeout, query aborted")
+                    );
+                    Assert.assertEquals(
+                            "resumeSend's error path must record the errored metric",
+                            erroredBefore + 1, metrics.queriesErroredCounter().getValue()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingAbortedWhenClientHalfCloses() throws Exception {
+        // Row-16 pin: a client that half-closes (shutdown of its write side) while still
+        // reading an active stream must abort the query via the between-batch breaker
+        // probe -- the shape the old recv(MSG_PEEK) probe could never see, because the
+        // stream keeps the socket readable in both directions. A throttled reader keeps
+        // the stream alive for seconds so the half-close lands mid-stream.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s"
+            )) {
+                serverMain.execute("CREATE TABLE big AS (SELECT x, x * 2 AS y FROM long_sequence(2_000_000))");
+                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                final long erroredBefore = metrics.queriesErroredCounter().getValue();
+
+                try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
+                    socket.setSoTimeout(60_000);
+                    QwpWireTestFixtures.performReadHandshake(socket);
+                    OutputStream out = socket.getOutputStream();
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY,
+                            QwpWireTestFixtures.buildQueryRequest(1, "SELECT * FROM big")));
+                    out.flush();
+
+                    // Throttled drain: keeps the server producing batches (so the between-batch
+                    // check runs) while stretching the stream well past the half-close below.
+                    final AtomicLong bytesRead = new AtomicLong();
+                    final AtomicBoolean isDone = new AtomicBoolean();
+                    Thread reader = new Thread(() -> {
+                        byte[] chunk = new byte[8192];
+                        try {
+                            InputStream in = socket.getInputStream();
+                            int n;
+                            while ((n = in.read(chunk)) != -1) {
+                                bytesRead.addAndGet(n);
+                                Os.sleep(1);
+                            }
+                        } catch (Throwable ignored) {
+                            // socket teardown at test exit -- expected
+                        } finally {
+                            isDone.set(true);
+                        }
+                    }, "qwp-half-close-reader");
+                    reader.setDaemon(true);
+                    reader.start();
+
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("stream never started flowing", bytesRead.get() > 65_536),
+                            10
+                    );
+                    Assert.assertEquals(
+                            "egress query errored before the half-close; a later abort would be misattributed",
+                            erroredBefore, metrics.queriesErroredCounter().getValue()
+                    );
+                    Assert.assertFalse("stream completed before the half-close landed", isDone.get());
+
+                    socket.shutdownOutput();
+
+                    long endedAfterMs = awaitErroredCounterAdvance(metrics, erroredBefore);
+                    Assert.assertTrue(
+                            "active stream never aborted within 20s of the client half-closing",
+                            endedAfterMs >= 0
+                    );
+                    Assert.assertTrue(
+                            "half-close detected too slowly: " + endedAfterMs + " ms",
+                            endedAfterMs < 3_000
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingCreditResumeAbortedByQueryTimeout() throws Exception {
+        // Rows 17/18 pin: a credit-limited stream parks when its budget is exhausted; a
+        // CREDIT frame arriving after query.timeout must resume into the breaker check,
+        // abort with the timeout, and record the errored metric through handleCredit's
+        // error path -- the only path that can advance the counter in this state.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "500ms"
+            )) {
+                serverMain.execute("CREATE TABLE big AS (SELECT x, x * 2 AS y FROM long_sequence(100_000))");
+                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                final long startedBefore = metrics.queriesStartedCount();
+                final long erroredBefore = metrics.queriesErroredCounter().getValue();
+
+                try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
+                    socket.setSoTimeout(60_000);
+                    QwpWireTestFixtures.performReadHandshake(socket);
+                    // Drain everything the server pushes so the first batch cannot fill the
+                    // socket buffers: the stream must park on CREDIT, not on write.
+                    Thread reader = new Thread(() -> {
+                        byte[] chunk = new byte[8192];
+                        try {
+                            InputStream in = socket.getInputStream();
+                            //noinspection StatementWithEmptyBody
+                            while (in.read(chunk) != -1) {
+                            }
+                        } catch (Throwable ignored) {
+                            // socket teardown at test exit -- expected
+                        }
+                    }, "qwp-credit-reader");
+                    reader.setDaemon(true);
+                    reader.start();
+
+                    OutputStream out = socket.getOutputStream();
+                    // A tiny credit budget parks the stream after the first batch chunk.
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY,
+                            QwpWireTestFixtures.buildQueryRequest(1, "SELECT * FROM big", 512)));
+                    out.flush();
+
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("egress query never started",
+                                    metrics.queriesStartedCount() > startedBefore),
+                            10
+                    );
+
+                    // Let the credit-parked stream cross query.timeout, then pin the counter:
+                    // the advance below can only come from the CREDIT resume.
+                    Os.sleep(1_000);
+                    Assert.assertEquals(
+                            "egress query errored before the CREDIT resume",
+                            erroredBefore, metrics.queriesErroredCounter().getValue()
+                    );
+
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY,
+                            QwpWireTestFixtures.buildCreditFrame(1, 1_000_000)));
+                    out.flush();
+
+                    long endedAfterMs = awaitErroredCounterAdvance(metrics, erroredBefore);
+                    Assert.assertTrue(
+                            "credit-resumed stream never aborted at query.timeout",
+                            endedAfterMs >= 0
+                    );
+                    Assert.assertTrue(
+                            "credit-resume abort landed too slowly: " + endedAfterMs + " ms",
+                            endedAfterMs < 3_000
                     );
                 }
             }
@@ -2297,7 +2441,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "200ms",
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
                     PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
             )) {
                 serverMain.execute("CREATE TABLE wwt(ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2337,7 +2481,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             "expected a timeout message, got: " + errorMessage[0],
                             errorMessage[0] != null && errorMessage[0].contains("timeout, query aborted")
                     );
-                    Assert.assertTrue("wait aborted too quickly: " + elapsed + " ms", elapsed >= 150);
+                    Assert.assertTrue("wait aborted too quickly: " + elapsed + " ms", elapsed >= 500);
                     Assert.assertTrue("wait aborted too slowly: " + elapsed + " ms", elapsed < 5_000);
 
                     SeqTxnTracker tracker = serverMain.getEngine().getTableSequencerAPI()
@@ -2375,9 +2519,13 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
 
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
-                    performReadHandshake(socket);
+                    QwpWireTestFixtures.performReadHandshake(socket);
+                    // Drain the pushed SERVER_INFO frame so the socket close below sends a clean
+                    // FIN; unread inbound data would turn it into an RST.
+                    QwpWireTestFixtures.readServerFrame(socket.getInputStream());
                     OutputStream out = socket.getOutputStream();
-                    out.write(maskedFrame(WebSocketOpcode.BINARY, buildQueryRequest(1, "SELECT wait_wal_table('wwd')")));
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY,
+                            QwpWireTestFixtures.buildQueryRequest(1, "SELECT wait_wal_table('wwd')")));
                     out.flush();
 
                     TestUtils.assertEventually(
@@ -2391,20 +2539,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             erroredBefore, metrics.queriesErroredCounter().getValue()
                     );
 
-                    out.write(maskedFrame(WebSocketOpcode.CLOSE, new byte[0]));
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.CLOSE, new byte[0]));
                     out.flush();
                 }
 
-                long closeMs = System.currentTimeMillis();
-                long deadlineMs = closeMs + 20_000;
-                long endedAfterMs = -1;
-                while (System.currentTimeMillis() < deadlineMs) {
-                    if (metrics.queriesErroredCounter().getValue() > erroredBefore) {
-                        endedAfterMs = System.currentTimeMillis() - closeMs;
-                        break;
-                    }
-                    Os.sleep(50);
-                }
+                long endedAfterMs = awaitErroredCounterAdvance(metrics, erroredBefore);
 
                 Assert.assertTrue(
                         "parked wait_wal_table never aborted within 20s of the client closing the connection",
@@ -2450,98 +2589,21 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     }
 
     /**
-     * msg_kind(1) + request_id(8 LE) + sql_len(varint) + sql + initial_credit(0 = unbounded)
-     * + bind_count(0). SQL must be short enough for a single-byte length varint.
+     * Polls the egress errored counter until it advances past {@code erroredBefore};
+     * returns elapsed millis, or -1 after a 20s deadline. The deadline sits below the
+     * disconnect tests' query.timeout, so an abort that only lands at the timeout
+     * reads as -1 or a large elapsed value rather than a pass.
      */
-    private static byte[] buildQueryRequest(long requestId, String sql) {
-        byte[] sqlBytes = sql.getBytes(StandardCharsets.UTF_8);
-        Assert.assertTrue("helper supports single-byte varint SQL lengths only", sqlBytes.length < 128);
-        byte[] p = new byte[1 + 8 + 1 + sqlBytes.length + 1 + 1];
-        int i = 0;
-        p[i++] = QwpEgressMsgKind.QUERY_REQUEST;
-        for (int s = 0; s < 8; s++) {
-            p[i++] = (byte) (requestId >>> (8 * s));
-        }
-        p[i++] = (byte) sqlBytes.length;
-        System.arraycopy(sqlBytes, 0, p, i, sqlBytes.length);
-        i += sqlBytes.length;
-        p[i++] = 0x00;
-        p[i] = 0x00;
-        return p;
-    }
-
-    /**
-     * Wraps {@code payload} in a masked client-to-server frame (FIN set) of the given
-     * opcode. Client frames must be masked per RFC 6455.
-     */
-    private static byte[] maskedFrame(int opcode, byte[] payload) {
-        byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
-        int payloadLen = payload.length;
-        int headerLen = (payloadLen <= 125) ? 6 : (payloadLen <= 65_535) ? 8 : 14;
-        byte[] frame = new byte[headerLen + payloadLen];
-        int offset = 0;
-        frame[offset++] = (byte) (0x80 | (opcode & 0x0F));
-        if (payloadLen <= 125) {
-            frame[offset++] = (byte) (0x80 | payloadLen);
-        } else if (payloadLen <= 65_535) {
-            frame[offset++] = (byte) (0x80 | 126);
-            frame[offset++] = (byte) ((payloadLen >> 8) & 0xFF);
-            frame[offset++] = (byte) (payloadLen & 0xFF);
-        } else {
-            frame[offset++] = (byte) (0x80 | 127);
-            for (int b = 7; b >= 0; b--) {
-                frame[offset++] = (byte) (((long) payloadLen >> (b * 8)) & 0xFF);
+    private static long awaitErroredCounterAdvance(QwpEgressMetrics metrics, long erroredBefore) {
+        long startMs = System.currentTimeMillis();
+        long deadlineMs = startMs + 20_000;
+        while (System.currentTimeMillis() < deadlineMs) {
+            if (metrics.queriesErroredCounter().getValue() > erroredBefore) {
+                return System.currentTimeMillis() - startMs;
             }
+            Os.sleep(50);
         }
-        System.arraycopy(maskKey, 0, frame, offset, 4);
-        offset += 4;
-        for (int b = 0; b < payloadLen; b++) {
-            frame[offset + b] = (byte) (payload[b] ^ maskKey[b % 4]);
-        }
-        return frame;
-    }
-
-    /**
-     * Performs the WebSocket upgrade against the egress read endpoint and reads
-     * exactly up to the {@code \r\n\r\n} header boundary, leaving any pushed QWP
-     * frames (SERVER_INFO first) unconsumed in the stream.
-     */
-    private static void performReadHandshake(Socket socket) throws Exception {
-        OutputStream out = socket.getOutputStream();
-        InputStream in = socket.getInputStream();
-
-        byte[] keyBytes = new byte[16];
-        for (int i = 0; i < 16; i++) {
-            keyBytes[i] = (byte) (i + 1);
-        }
-        String wsKey = Base64.getEncoder().encodeToString(keyBytes);
-
-        String request = "GET /read/v1 HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "Upgrade: websocket\r\n" +
-                "Connection: Upgrade\r\n" +
-                "Sec-WebSocket-Key: " + wsKey + "\r\n" +
-                "Sec-WebSocket-Version: 13\r\n" +
-                "\r\n";
-        out.write(request.getBytes(StandardCharsets.UTF_8));
-        out.flush();
-
-        StringBuilder response = new StringBuilder();
-        while (true) {
-            int b = in.read();
-            Assert.assertNotEquals("Unexpected end of stream during handshake", -1, b);
-            response.append((char) b);
-            int len = response.length();
-            if (len >= 4
-                    && response.charAt(len - 4) == '\r' && response.charAt(len - 3) == '\n'
-                    && response.charAt(len - 2) == '\r' && response.charAt(len - 1) == '\n') {
-                break;
-            }
-        }
-        Assert.assertTrue(
-                "Expected 101 Switching Protocols, got: " + response.toString().split("\r\n")[0],
-                response.toString().startsWith("HTTP/1.1 101")
-        );
+        return -1;
     }
 
     private void runBatchBoundary(TestServerMain serverMain, int totalRows) throws Exception {

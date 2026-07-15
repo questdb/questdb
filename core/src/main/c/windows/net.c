@@ -310,6 +310,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
     pfd.events = POLLRDNORM;
     pfd.revents = 0;
     const int n = WSAPoll(&pfd, 1, 0);
+    if (n == SOCKET_ERROR) {
+        // WSAPoll rejects an invalid handle with WSAENOTSOCK instead of reporting POLLNVAL.
+        return (jboolean) (WSAGetLastError() == WSAENOTSOCK);
+    }
     return (jboolean) (n > 0 && (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0);
 }
 

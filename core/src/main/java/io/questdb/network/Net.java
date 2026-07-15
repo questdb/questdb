@@ -252,7 +252,7 @@ public final class Net {
     }
 
     public static boolean isPeerDisconnected(long fd) {
-        return isPeerDisconnected(toOsFd(fd));
+        return fd == -1 || isPeerDisconnected(toOsFd(fd));
     }
 
     public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {

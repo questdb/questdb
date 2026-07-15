@@ -155,7 +155,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             clearExportResources();
             copyExportContext.updateStatus(
                     phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                    circuitBreaker.checkIfTrippedNoThrottle() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                     null,
                     Numbers.INT_NULL,
                     message,

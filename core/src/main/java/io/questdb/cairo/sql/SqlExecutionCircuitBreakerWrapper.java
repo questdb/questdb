@@ -62,6 +62,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public boolean checkIfTrippedNoThrottle() {
+        return delegate.checkIfTrippedNoThrottle();
+    }
+
+    @Override
     public void close() {
         networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
         delegate = null;
@@ -112,7 +117,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         } else {
             networkSqlExecutionCircuitBreaker.of(executionContextCircuitBreaker.getFd());
             networkSqlExecutionCircuitBreaker.setTimeout(executionContextCircuitBreaker.getTimeout());
-            networkSqlExecutionCircuitBreaker.resetTimer();
+            networkSqlExecutionCircuitBreaker.rearmTimer();
             networkSqlExecutionCircuitBreaker.setCancelledFlag(executionContextCircuitBreaker.getCancelledFlag());
             delegate = networkSqlExecutionCircuitBreaker;
         }

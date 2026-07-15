@@ -33,6 +33,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "net.h"
@@ -253,6 +254,9 @@ static void close_peer_probe_kq(void *value) {
 static void make_peer_probe_kq_key(void) {
     if (pthread_key_create(&peer_probe_kq_key, close_peer_probe_kq) == 0) {
         peer_probe_kq_key_ready = 1;
+    } else {
+        // One-time, process-wide: every peer-disconnect probe fails open from here on.
+        fprintf(stderr, "questdb: pthread_key_create failed, peer disconnect detection disabled\n");
     }
 }
 #endif
@@ -314,13 +318,15 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
     RESTARTABLE(poll(&pfd, 1, 0), n);
     return (jboolean) (n > 0 && (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR | POLLNVAL)) != 0);
 #else
+    // Peek-quality fallback for unsupported platforms: cannot see a FIN behind buffered data
+    // and blocks on a blocking socket. Ports must add a poll-style branch above instead.
     char c;
     ssize_t n;
     RESTARTABLE(recv((int) fd, &c, 1, MSG_PEEK), n);
     if (n == 0) {
         return JNI_TRUE;
     }
-    return (jboolean) (n < 0 && errno != EWOULDBLOCK);
+    return (jboolean) (n < 0 && errno != EWOULDBLOCK && errno != EAGAIN);
 #endif
 }
 

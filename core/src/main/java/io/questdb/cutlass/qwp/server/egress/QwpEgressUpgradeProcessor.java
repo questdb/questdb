@@ -607,12 +607,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // error. Mirrors the catch in {@link #handleQueryRequest}.
             state.getBatchBuffer().rollbackCurrentBatch();
             state.endStreaming();
-            byte status = mapErrorStatus(t);
-            if (status == QwpConstants.STATUS_CANCELLED) {
-                metrics.markQueryCancelled();
-            } else {
-                metrics.markQueryErrored();
-            }
+            byte status = mapErrorStatusAndMark(t);
             try {
                 sendQueryError(context, state, failedRequestId, status,
                         t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
@@ -1095,15 +1090,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // client's next delta symbol section fails to decode.
                 state.getBatchBuffer().rollbackCurrentBatch();
                 state.endStreaming();
-                byte status = mapErrorStatus(t);
-                if (status == QwpConstants.STATUS_CANCELLED) {
-                    metrics.markQueryCancelled();
-                } else {
-                    metrics.markQueryErrored();
-                }
+                byte status = mapErrorStatusAndMark(t);
                 try {
                     sendQueryError(context, state, targetRequestId, status,
                             t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+                } catch (PeerDisconnectedException | PeerIsSlowToReadException sendFail) {
+                    throw sendFail;
                 } catch (Throwable ignored) {
                 }
             }
@@ -1198,9 +1190,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     circuitBreaker.of(context.getFd())
             );
             sqlCtx.initNow();
-            // The breaker is reused per connection. Egress has no per-statement timeout, so reset
-            // to the default up front, matching JsonQueryProcessor, so a per-statement timeout can
-            // never leak from an earlier query onto this one if egress ever wires one.
+            // The breaker is shared with the plain-HTTP processors that may have served this
+            // connection before the upgrade; /exec and /exp set per-statement timeouts on it,
+            // so reset to the default, matching JsonQueryProcessor.
             circuitBreaker.resetMaxTimeToDefault();
 
             // Bounded retry loop: a factory returned by the compile cache may have a
@@ -1347,12 +1339,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 Misc.free(pageFrameCursor);
                 Misc.free(factory);
             }
-            byte status = mapErrorStatus(e);
-            if (status == QwpConstants.STATUS_CANCELLED) {
-                metrics.markQueryCancelled();
-            } else {
-                metrics.markQueryErrored();
-            }
+            byte status = mapErrorStatusAndMark(e);
             try {
                 sendQueryError(context, state, requestId, status,
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
@@ -1396,6 +1383,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             default -> LOG.debug().$("Egress unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
+    }
+
+    private byte mapErrorStatusAndMark(Throwable e) {
+        byte status = mapErrorStatus(e);
+        if (status == QwpConstants.STATUS_CANCELLED) {
+            metrics.markQueryCancelled();
+        } else {
+            metrics.markQueryErrored();
+        }
+        return status;
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {

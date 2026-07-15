@@ -139,6 +139,11 @@ public class NetTest {
                 serverFd = Net.accept(acceptFd);
                 Net.configureNonBlocking(serverFd);
                 Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+                // Probe-resource churn: a regression to one kqueue()/close() per call would
+                // exhaust the fd table long before 12k iterations (macOS default ulimit 10240).
+                for (int i = 0; i < 12_000; i++) {
+                    Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+                }
                 clientFd = closeFd(clientFd);
                 serverFd = closeFd(serverFd);
 

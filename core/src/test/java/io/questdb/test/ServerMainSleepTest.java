@@ -160,10 +160,16 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                             10
                     );
                     final long queryId = sleepQueryId.get();
-                    // Give the server a wake cycle to mount the cont and park.
-                    Thread.sleep(300);
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("sleep continuation never parked",
+                                    serverMain.getEngine().getTimerShards().size() >= 1),
+                            10
+                    );
+                    // Pin against a vacuous pass: a breaker false-positive that killed the
+                    // healthy query before the disconnect would make awaitQueryEnded return
+                    // ~0ms below and satisfy the prompt-abort assertion.
+                    Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
 
-                    // Cleanly close the client connection while the sleep is parked.
                     connRef.get().close();
 
                     // Measure how long the server keeps the parked sleep alive after the
@@ -233,8 +239,12 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                                 10
                         );
                         final long queryId = sleepQueryId.get();
-                        // Give the server a wake cycle to mount the cont and park.
-                        Thread.sleep(300);
+                        TestUtils.assertEventually(
+                                () -> Assert.assertTrue("sleep continuation never parked",
+                                        serverMain.getEngine().getTimerShards().size() >= 1),
+                                10
+                        );
+                        Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
 
                         // Bare FIN: the server has not written a response yet, so the
                         // client's receive buffer is empty and close() sends a graceful
@@ -791,13 +801,13 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         });
     }
 
-    private static long awaitQueryEnded(QueryRegistry registry, long queryId, long closeMs) throws InterruptedException {
+    private static long awaitQueryEnded(QueryRegistry registry, long queryId, long closeMs) {
         long deadlineMs = closeMs + 20_000;
         while (System.currentTimeMillis() < deadlineMs) {
             if (registry.getEntry(queryId) == null) {
                 return System.currentTimeMillis() - closeMs;
             }
-            Thread.sleep(50);
+            Os.sleep(50);
         }
         return -1;
     }

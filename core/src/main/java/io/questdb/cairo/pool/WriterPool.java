@@ -785,7 +785,8 @@ public class WriterPool extends AbstractPool {
         }
 
         public TableToken getTableToken() {
-            return writer != null ? writer.getTableToken() : null;
+            final TableWriter w = writer;
+            return w != null ? w.getTableToken() : null;
         }
 
         public TableWriter goodbye() {
