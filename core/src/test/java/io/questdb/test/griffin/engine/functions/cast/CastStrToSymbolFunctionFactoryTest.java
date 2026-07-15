@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
@@ -32,10 +33,13 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.management.ManagementFactory;
 
 public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
 
@@ -139,6 +143,49 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testUnusedDictionaryDoesNotAllocateAcrossCursorLifecycles() throws Exception {
+        final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+        Assert.assertTrue(threadMXBean.isThreadAllocatedMemorySupported());
+        if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
+            threadMXBean.setThreadAllocatedMemoryEnabled(true);
+        }
+
+        final FeedFunction arg = new FeedFunction();
+        final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
+        arg.valueA = "streamed_a";
+        arg.valueB = "streamed_b";
+        try {
+            // Warm up linkage/JIT before measuring allocations on the test thread.
+            runStreamingCursorLifecycles(func, 1_000);
+
+            final long threadId = Thread.currentThread().threadId();
+            final long allocatedBefore = threadMXBean.getThreadAllocatedBytes(threadId);
+            final long mallocBefore = Unsafe.getMallocCount();
+            final int checksum = runStreamingCursorLifecycles(func, 10_000);
+            final long allocatedBytes = threadMXBean.getThreadAllocatedBytes(threadId) - allocatedBefore;
+
+            Assert.assertEquals(200_000, checksum);
+            Assert.assertEquals("an unused dictionary must not allocate native buffers", mallocBefore, Unsafe.getMallocCount());
+            // Allow a small amount of VM instrumentation noise. The old cursorClosed()
+            // allocated roughly 1 KiB per cycle and exceeds this by several orders of magnitude.
+            Assert.assertTrue("unexpected close-path heap allocation: " + allocatedBytes, allocatedBytes < 16 * 1024);
+        } finally {
+            func.close();
+        }
+    }
+
+    private int runStreamingCursorLifecycles(CastStrToSymbolFunctionFactory.Func func, int count) throws Exception {
+        int checksum = 0;
+        for (int i = 0; i < count; i++) {
+            func.init(null, sqlExecutionContext);
+            checksum += func.getSymbol(null).length();
+            checksum += func.getSymbolB(null).length();
+            func.cursorClosed();
+        }
+        return checksum;
     }
 
     private static class FeedFunction extends StrFunction {
