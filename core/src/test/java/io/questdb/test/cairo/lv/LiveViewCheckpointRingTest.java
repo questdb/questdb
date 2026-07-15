@@ -177,6 +177,58 @@ public class LiveViewCheckpointRingTest {
         Assert.assertEquals(3, instance.getRetainedCheckpointLvSeqTxn(0));
     }
 
+    @Test
+    public void testRemoveRetainedCheckpointAbsentIsNoOp() {
+        LiveViewInstance instance = newStubInstance();
+        instance.addRetainedCheckpoint(1, 10, 100, 1000, 100);
+        instance.addRetainedCheckpoint(2, 20, 200, 2000, 100);
+
+        // An lvSeqTxn not in the ring (restart / seed restore run with an empty
+        // ring, and the head is not always a ring entry) leaves the ring intact.
+        Assert.assertFalse(instance.removeRetainedCheckpoint(99));
+
+        Assert.assertEquals(2, instance.getRetainedCheckpointCount());
+        Assert.assertEquals(1, instance.getRetainedCheckpointLvSeqTxn(0));
+        Assert.assertEquals(2, instance.getRetainedCheckpointLvSeqTxn(1));
+    }
+
+    @Test
+    public void testRemoveRetainedCheckpointMiddle() {
+        LiveViewInstance instance = newStubInstance();
+        instance.addRetainedCheckpoint(1, 10, 100, 1000, 50);
+        instance.addRetainedCheckpoint(2, 20, 200, 2000, 60);
+        instance.addRetainedCheckpoint(3, 30, 300, 3000, 70);
+
+        // Evict a mid-ring anchor (a corrupt .cp found unusable): the newer and
+        // older entries around it survive, maxTs order stays intact, and the
+        // byte total drops by exactly the evicted entry's state bytes.
+        Assert.assertTrue(instance.removeRetainedCheckpoint(2));
+
+        Assert.assertEquals(2, instance.getRetainedCheckpointCount());
+        Assert.assertEquals(1, instance.getRetainedCheckpointLvSeqTxn(0));
+        Assert.assertEquals(10, instance.getRetainedCheckpointMaxTs(0));
+        Assert.assertEquals(3, instance.getRetainedCheckpointLvSeqTxn(1));
+        Assert.assertEquals(30, instance.getRetainedCheckpointMaxTs(1));
+        Assert.assertEquals(50 + 70, instance.getRetainedCheckpointsTotalStateBytes());
+    }
+
+    @Test
+    public void testRemoveRetainedCheckpointNewest() {
+        LiveViewInstance instance = newStubInstance();
+        instance.addRetainedCheckpoint(1, 10, 100, 1000, 50);
+        instance.addRetainedCheckpoint(2, 20, 200, 2000, 60);
+        instance.addRetainedCheckpoint(3, 30, 300, 3000, 70);
+
+        // Evict the newest entry (the head is the newest ring entry): the older
+        // sealed anchors remain available as resume points.
+        Assert.assertTrue(instance.removeRetainedCheckpoint(3));
+
+        Assert.assertEquals(2, instance.getRetainedCheckpointCount());
+        Assert.assertEquals(1, instance.getRetainedCheckpointLvSeqTxn(0));
+        Assert.assertEquals(2, instance.getRetainedCheckpointLvSeqTxn(1));
+        Assert.assertEquals(20, instance.getRetainedCheckpointMaxTs(1));
+    }
+
     private static LiveViewInstance newStubInstance() {
         // A definition-less stub is enough: the ring helpers only touch the LongList,
         // never the definition or any disk-backed state.

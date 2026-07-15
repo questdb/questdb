@@ -2615,7 +2615,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", headMaxTs=").$(headMaxTs).I$();
 
         if (headHitEligible) {
-            o3HeadHitReplay(instance, windowFactory, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
+            // The head is simply the newest ring entry, so a head-hit is a
+            // resume from that newest anchor. The same helper serves a resume
+            // from an older sealed anchor (the bounded-miss path).
+            replayFromAnchor(instance, windowFactory, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
         } else {
             o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
         }
@@ -2637,74 +2640,83 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Head-hit replay: rolls window state back to the head .cp's
-     * snapshot moment (clear per-function maps, then restore from disk),
-     * scans the base table from {@code headMaxTs + 1} forward (never below
-     * {@code viewLowerBoundTimestamp}), and emits a single REPLACE_RANGE
-     * commit covering that same range through positive infinity.
-     * Cheaper than head-miss because the head's state already reflects
-     * everything in {@code [viewLowerBoundTimestamp, headMaxTs]} - the
-     * replay only re-evaluates the small tail.
+     * Resume replay from a sealed checkpoint anchor: rolls window state back to
+     * the anchor {@code .cp}'s snapshot moment (clear per-function maps, then
+     * restore from disk), scans the base table from {@code anchorMaxTs + 1}
+     * forward (never below {@code viewLowerBoundTimestamp}), and emits a single
+     * REPLACE_RANGE commit covering that same range through positive infinity.
+     * Cheaper than the boundary rebuild because the anchor's state already
+     * reflects everything in {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the
+     * replay only re-evaluates the tail above the anchor.
      * <p>
-     * Caller has already verified that the head is hit-eligible (a head
-     * exists and its {@code maxTimestamp <= lateRowTs}). The restoration
-     * itself can still fail at this point (corrupt .cp, unsupported
-     * format version): when that happens, {@code restoreFromHead} unlinks
-     * the .cp + clears head metadata, and this method falls through to
-     * {@code o3HeadMissReplay} so the LV ends in a consistent state.
+     * The head is simply the newest ring entry, so today's head-hit is a resume
+     * from the newest anchor; the bounded-miss path resumes from an older sealed
+     * anchor through this same body. The caller has already verified the anchor is
+     * hit-eligible (it exists and its {@code maxTimestamp < lateRowTs}).
      * <p>
-     * The head .cp is retired after the apply commit succeeds (its state
-     * underwrites the replay we just wrote). The follow-up commit writes
-     * a fresh post-replay head; until then the next refresh cycle's
-     * first-commit cadence trigger picks up the slack. A replay that
-     * produces no row keeps its head - the commit truncates the LV back to
-     * exactly what that head covers.
+     * Restore can still fail here (corrupt {@code .cp}, unsupported format
+     * version). Structural corruption drives {@code restoreFromHead} ->
+     * {@code handleCorruptHeadCheckpoint}, which unlinks the file and evicts the
+     * anchor's ring entry, clearing the head metadata only when the anchor IS the
+     * head - a non-head anchor leaves the newer, still-valid real head in place.
+     * A compatibility break (version mismatch) instead stashes a pending
+     * invalidation reason and neither unlinks nor evicts. Either way this method
+     * abandons the replay without advancing the watermark, so the trigger re-fires
+     * on a later cycle and recovers once a fresh head exists.
+     * <p>
+     * On success the post-replay state is sealed as a fresh head while the anchor
+     * the replay was built on stays in the ring (the late row sat above it, so it
+     * remains a valid resume anchor rather than garbage). A replay that produces no
+     * row keeps its anchor as the head - the commit truncates the LV back to
+     * exactly what that anchor covers.
      */
-    private void o3HeadHitReplay(
+    private void replayFromAnchor(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             TableToken baseToken,
             long advanceTo,
-            long headLvSeqTxn,
-            long headMaxTs
+            long anchorLvSeqTxn,
+            long anchorMaxTs
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
-        // Replay starts strictly above headMaxTs because the head's state
-        // already covers rows up to and including headMaxTs. The same value
+        // Replay starts strictly above anchorMaxTs because the anchor's state
+        // already covers rows up to and including anchorMaxTs. The same value
         // doubles as the REPLACE_RANGE low boundary so the apply step
         // rewrites only the affected partitions.
         //
         // Floored at the START FROM boundary so this path applies the same row
         // predicate as the seed, the forward drain and the head-miss replay -
-        // head-hit is the one applied-base scan that does not start from the
-        // boundary. The clamp is redundant under the head's own invariant (a
-        // head is only ever written from seeded or drained output, which already
-        // applied the boundary, so headMaxTs >= viewLowerBoundTimestamp and
-        // headMaxTs + 1 is strictly above it), but that invariant is implicit
-        // and lives four call sites away. Stating it here costs one Math.max on
-        // a cold path and makes the property local: no head, however it was
-        // written, can pull this scan below the boundary. A head with maxTs
-        // LONG_NULL - the one head that could, since LONG_NULL + 1 admits every
-        // base row - is already refused head-hit eligibility upstream.
+        // the anchor resume is the one applied-base scan that does not start from
+        // the boundary. The clamp is redundant under the anchor's own invariant
+        // (a checkpoint is only ever written from seeded or drained output, which
+        // already applied the boundary, so anchorMaxTs >= viewLowerBoundTimestamp
+        // and anchorMaxTs + 1 is strictly above it), but that invariant is
+        // implicit and lives four call sites away. Stating it here costs one
+        // Math.max on a cold path and makes the property local: no anchor, however
+        // it was written, can pull this scan below the boundary. An anchor with
+        // maxTs LONG_NULL - the one that could, since LONG_NULL + 1 admits every
+        // base row - is already refused hit-eligibility upstream.
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
-        final long replayLowTs = Math.max(headMaxTs + 1, viewLowerBoundTimestamp);
+        final long replayLowTs = Math.max(anchorMaxTs + 1, viewLowerBoundTimestamp);
         TableReader reader = waitForApply(baseToken, advanceTo);
         if (reader.getSeqTxn() != advanceTo) {
             // ApplyWal2TableJob has run ahead of the O3 trigger: the base reader
             // snapshot already reflects seqTxns past advanceTo that the forward
-            // drain has not examined. Head-hit only re-reads base above headMaxTs,
-            // so a back-dated row below headMaxTs sitting in one of those
-            // unexamined seqTxns would be missed - and advancing the watermark to
-            // cover them would lose it permanently. Fall back to head-miss, which
-            // recomputes the whole view from the full snapshot and advances the
-            // watermark to exactly what it materialised. waitForApply guarantees
-            // reader.getSeqTxn() >= advanceTo, so this branch is the strictly-ahead
-            // case; head-hit proceeds only when the snapshot is exactly at the
-            // trigger (no unexamined seqTxns, so no gap and no duplicate).
+            // drain has not examined. The anchor resume only re-reads base above
+            // anchorMaxTs, so a back-dated row below anchorMaxTs sitting in one of
+            // those unexamined seqTxns would be missed - and advancing the
+            // watermark to cover them would lose it permanently. Fall back to
+            // head-miss, which recomputes the whole view from the full snapshot and
+            // advances the watermark to exactly what it materialised. waitForApply
+            // guarantees reader.getSeqTxn() >= advanceTo, so this branch is the
+            // strictly-ahead case; the resume proceeds only when the snapshot is
+            // exactly at the trigger (no unexamined seqTxns, so no gap and no
+            // duplicate).
             reader.close();
-            // Head-hit was eligible, so the trigger row sits above headMaxTs and the
-            // full rebuild's produced minimum stays at or below it: no lateRowTs
-            // extension needed (LONG_NULL keeps the plain replayMinTs boundary).
+            // The anchor was hit-eligible, so the trigger row sits above
+            // anchorMaxTs and the full rebuild's produced minimum stays at or below
+            // it: no lateRowTs extension needed (LONG_NULL keeps the plain
+            // replayMinTs boundary).
             o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, baseToken, advanceTo);
             return;
         }
@@ -2759,15 +2771,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 m.clear();
                             }
                         }
-                        if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
-                            // restoreFromHead retired the corrupt .cp + cleared
-                            // head metadata (or stashed an invalidate reason).
-                            // The O3 replay is abandoned here without advancing
-                            // the watermark, so the same trigger re-fires on a
-                            // later refresh cycle and recovers once a fresh head
-                            // .cp exists (one cycle of stale pre-O3 rows in
-                            // between). try-with-resources closes the cursor on
-                            // return.
+                        if (!restoreFromHead(instance, windowFactory, anchorLvSeqTxn, restoredHeadState)) {
+                            // restoreFromHead either unlinked the corrupt .cp and
+                            // evicted this anchor's ring entry (clearing the head
+                            // metadata only when the anchor IS the head), or stashed
+                            // a version-mismatch invalidate reason. The O3 replay is
+                            // abandoned here without advancing the watermark, so the
+                            // same trigger re-fires on a later refresh cycle and
+                            // recovers once a fresh head .cp exists (one cycle of
+                            // stale pre-O3 rows in between). try-with-resources
+                            // closes the cursor on return.
                             return;
                         }
                         // Snap the lifetime row counter back to the head's
@@ -2837,18 +2850,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             persistState(instance);
         }
         if (lvConsumedPersisted && appendedRows > 0) {
-            // Seal the post-replay state as a fresh head and keep the prior head
-            // the replay was built on in the retained-checkpoint ring: the late
-            // row sat above it, so it stays sealed and serves as a valid resume
-            // anchor rather than garbage. force writes past the cadence gate (the
-            // prior head is not cleared, so firstCp would be false) - an O3
-            // head-hit must always advance the head or the next replay re-scans
-            // from the stale maxTs.
+            // Seal the post-replay state as a fresh head and keep the anchor the
+            // replay was built on in the retained-checkpoint ring: the late row sat
+            // above it, so it stays sealed and serves as a valid resume anchor
+            // rather than garbage. force writes past the cadence gate (the anchor is
+            // not cleared, so firstCp would be false) - an O3 resume must always
+            // advance the head or the next replay re-scans from the stale maxTs.
             //
-            // The zero-row replay keeps its head instead: the truncating commit
-            // above left the LV table holding exactly the rows the head covers,
-            // and the restore left the window state at the head's snapshot
-            // moment, so the head still describes the view. There is nothing to
+            // The zero-row replay keeps its anchor as the head instead: the
+            // truncating commit above left the LV table holding exactly the rows the
+            // anchor covers, and the restore left the window state at the anchor's
+            // snapshot moment, so it still describes the view. There is nothing to
             // seal (replayMaxTs is LONG_NULL).
             maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, appendedRows, true);
         }
@@ -3837,16 +3849,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * block + per-function blocks. Populates {@code out} with the manifest's
      * {@code baseSeqTxn}, {@code maxTimestamp}, and the file's byte length.
      * <p>
-     * Callers (restart restore and the 2a.8 O3 head-hit replay) decide what to
-     * do with the restored watermarks and whether to refresh the head metadata
-     * trio on the instance; this helper restricts itself to state restore +
-     * failure cleanup so both call sites share the same disk read path.
+     * Callers (restart restore and the O3 anchor resume) decide what to do with
+     * the restored watermarks and whether to refresh the head metadata trio on
+     * the instance; this helper restricts itself to state restore + failure
+     * cleanup so both call sites share the same disk read path. The anchor need
+     * not be the head - {@code headLvSeqTxn} names whatever sealed checkpoint the
+     * caller wants restored.
      * <p>
      * Failure handling: any structural error (CRC fail, magic mismatch, missing
-     * function class, anchor type mismatch) is best-effort cleaned up here -
-     * the helper logs critical, unlinks the corrupt {@code .cp}, clears the
-     * head metadata on the instance, and returns {@code false}. The LV is not
-     * invalidated; the caller falls through to the head-miss replay path.
+     * function class, anchor type mismatch) is best-effort cleaned up in
+     * {@link #handleCorruptHeadCheckpoint} - it logs critical, unlinks the corrupt
+     * {@code .cp}, evicts the anchor's retained-ring entry, and clears the head
+     * metadata only when the anchor IS the head, then returns {@code false}. The
+     * LV is not invalidated; the caller falls through to the head-miss replay
+     * path.
      */
     private boolean restoreFromHead(
             LiveViewInstance instance,
@@ -3972,27 +3988,49 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Best-effort cleanup after a checkpoint restore fails on structural
+     * corruption (CRC / magic / truncation / missing function class / anchor type
+     * mismatch - all errno 0, distinct from a version mismatch, which
+     * {@link #restoreFromHead} handles separately by stashing a pending
+     * invalidation reason). Unlinks the corrupt {@code .cp} (unusable regardless of
+     * which anchor it was) and drops the matching entry from the retained-checkpoint
+     * ring so a later resume never re-selects it. Clears the head metadata trio ONLY
+     * when the corrupt anchor IS the current head: a non-head anchor leaves the
+     * newer, still-valid head in place, and clearing it would desync the head
+     * metadata from the ring. Always returns {@code false} so the caller abandons
+     * the restore and falls through to a from-boundary rebuild / trigger re-fire.
+     */
     private boolean handleCorruptHeadCheckpoint(
             LiveViewInstance instance,
-            long headLvSeqTxn,
+            long anchorLvSeqTxn,
             Path path,
             Throwable t
     ) {
-        LOG.critical().$("could not restore live view from head checkpoint [view=")
+        LOG.critical().$("could not restore live view from checkpoint [view=")
                 .$(instance.getDefinition().getViewName())
-                .$(", lvSeqTxn=").$(headLvSeqTxn)
+                .$(", lvSeqTxn=").$(anchorLvSeqTxn)
                 .$(", error=").$(t).I$();
-        // Best-effort: unlink the corrupt .cp and clear head metadata.
-        // The next refresh cycle falls through to the head-miss replay
-        // path (which restarts from viewLowerBoundTimestamp).
+        // Best-effort: unlink the corrupt .cp. It is unusable whether it was the
+        // head or an older ring entry.
         try {
             engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
         } catch (Throwable rmErr) {
-            LOG.error().$("could not unlink corrupt head checkpoint [view=")
+            LOG.error().$("could not unlink corrupt checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(rmErr).I$();
         }
-        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        // Capture head membership BEFORE any head-clear so the eviction cannot
+        // change the answer. removeRetainedCheckpoint is a no-op when the anchor is
+        // not a ring entry (restart / seed restore run with an empty ring), so the
+        // head-only callers behave exactly as before. Clearing the head trio for a
+        // non-head anchor would strand the real head's metadata pointing above a
+        // now-shorter ring.
+        final boolean anchorIsHead = anchorLvSeqTxn == instance.getHeadCheckpointLvSeqTxn();
+        instance.removeRetainedCheckpoint(anchorLvSeqTxn);
+        if (anchorIsHead) {
+            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        }
         return false;
     }
 

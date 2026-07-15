@@ -1266,6 +1266,29 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Removes the single retained checkpoint whose {@code lvSeqTxn} matches,
+     * wherever it sits in the ring, and reports whether one was found. Unlike
+     * {@link #invalidateRetainedCheckpointsFrom(long, LongList)} (which drops the
+     * whole {@code maxTs >= threshold} suffix), this targets exactly one entry,
+     * so a resume anchor found unusable mid-ring (a corrupt {@code .cp}) can be
+     * evicted without disturbing the newer, still-sealed entries above it. The
+     * caller unlinks the matching {@code <lvSeqTxn>.cp}; this method touches only
+     * the in-memory ring. A no-op returning {@code false} when the entry is
+     * absent - restart / seed restore run with an empty ring, and the head is not
+     * always a ring entry. Runs on the refresh worker under the refresh latch.
+     * See {@link #retainedCheckpoints}.
+     */
+    public boolean removeRetainedCheckpoint(long lvSeqTxn) {
+        for (int i = 0, n = getRetainedCheckpointCount(); i < n; i++) {
+            if (getRetainedCheckpointLvSeqTxn(i) == lvSeqTxn) {
+                retainedCheckpoints.removeIndexBlock(i * RETAINED_CHECKPOINT_RECORD_SIZE, RETAINED_CHECKPOINT_RECORD_SIZE);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Re-arms the seed sweep's single-shot resume setup (see
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
      * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
