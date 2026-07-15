@@ -474,7 +474,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * advances asynchronously from replicated WAL. The primary default is a no-op (the primary owns
      * every disk advance, so its lead never trails an external flush); EntLiveViewRefreshJob overrides it.
      */
-    protected void reconcileLeadWithDisk(LiveViewInstance instance) {
+    protected void reconcileLeadWithDisk(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
     }
 
     /**
@@ -5658,7 +5658,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         if (deferReplicaLeadWork(instance, true)) {
                             return;
                         }
-                        if (!isLeadRollbackSupported(instance, getWindowFactory(instance))) {
+                        final WindowRecordCursorFactory leadWindowFactory = getWindowFactory(instance);
+                        if (!isLeadRollbackSupported(instance, leadWindowFactory)) {
                             // The replica cannot safely reconstruct this view's lead: a stalled publish
                             // would leave the window state advanced with no way to roll it back (the
                             // primary flushes such a stall to disk; a read-only replica cannot). Serve
@@ -5671,8 +5672,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // Reconcile the in-RAM lead with the on-disk tier the global apply job
                         // advances asynchronously (as the primary's flushes replicate). Without this,
                         // a lead computed while the applied watermark lagged the base would keep rows
-                        // that later landed on disk, double-counting them in size().
-                        reconcileLeadWithDisk(instance);
+                        // that later landed on disk, double-counting them in size(). The window factory
+                        // lets the reconcile drop and cold re-derive the lead when a replicated flush
+                        // re-sequenced the on-disk symbol id space out from under a kept remainder.
+                        reconcileLeadWithDisk(instance, leadWindowFactory);
                         attempted = true;
                     }
                     long refreshFrom = instance.getRefreshedUpToSeqTxn();
