@@ -4073,7 +4073,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // retirement.
             checkpointWriter.commit(Numbers.LONG_NULL);
 
-            instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
             // Retain the freshly sealed head in the checkpoint ring. A
             // same-timestamp run can leave a prior entry at batchMaxTs, so drop
             // any entry the fresh head supersedes at or above its own maxTs
@@ -4101,6 +4100,51 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     minRetainedMaxTs,
                     evictedCheckpoints
             );
+            // Publish the ring BEFORE the head advances. Every listed entry is
+            // sealed at lvSeqTxn: the fresh one by construction, the survivors
+            // because an O3 cycle already retired whatever this commit unsealed
+            // (design section 6.2) and an in-order one unseals nothing (every
+            // maxTs is below the commit's minTs). Callers reach here only after
+            // the LV's own commit and the _lv.s persist, so lvSeqTxn is also the
+            // applied watermark a restart reconciles against: covered == floor,
+            // which is the trust rule.
+            //
+            // Publishing ahead of the head is load-bearing rather than cosmetic
+            // (design section 6.1). WalPurgeJob min-combines
+            // getHeadCheckpointBaseSeqTxn(), so the head carries the base WAL
+            // purge floor, and restart's replayToApplied re-feeds raw base WAL
+            // from the restored entry's baseSeqTxn. Let the head advance onto an
+            // entry the durable manifest does not list and the floor releases WAL
+            // that a restart trusting the manifest still needs to replay from its
+            // older newest entry. Both the crash window (crash between the .cp
+            // commit and the publish) and a failed publish open exactly that gap,
+            // so the head waits on a successful publication - the ordering covers
+            // the crash, the gate covers the failure.
+            //
+            // The gate reads the flag rather than the return value because the
+            // helper returns false for a disabled ring too: with no manifest to
+            // fall behind, nothing constrains the head and it advances as it did
+            // before this step.
+            //
+            // A failed publish therefore leaves the fresh .cp an orphan with the
+            // head, the floor and the cadence counters all parked on the previous
+            // entry, so the next cycle writes another .cp and re-lists the ring
+            // from memory. The view keeps serving throughout (design section 6.4):
+            // the in-memory ring already holds the fresh entry, so resume anchors
+            // stay available even while the manifest trails.
+            final boolean ringPublished = publishCheckpointRing(instance, lvSeqTxn);
+            if (ringPublished || !configuration.isLiveViewCheckpointRingDurableEnabled()) {
+                instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
+            }
+            // Unlink unconditionally, even when the publish failed and the stale
+            // manifest still lists these files. Holding them back would keep that
+            // manifest self-consistent, but a pinned head also pins the cadence
+            // counters setHeadCheckpoint resets, so an unwritable _ring makes
+            // every subsequent cycle seal another .cp - retaining every eviction
+            // grows the directory without bound until the next restart. Bounded
+            // disk wins: a manifest naming a missing .cp fails the referenced-file
+            // check on restart and falls back to the highest .cp, which is the
+            // outcome a run that never published one gets anyway.
             unlinkCheckpointFiles(instance, evictedCheckpoints);
         } catch (Throwable t) {
             LOG.critical().$("could not write live view head checkpoint [view=")
