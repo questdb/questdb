@@ -1987,6 +1987,65 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsPropagatesWhenEvictingStaleTudWithBufferedRows() throws Exception {
+        // C1 regression: a stale (DROPped) cached TUD that still holds
+        // uncommitted rows must not be evicted silently. Freeing a TUD built
+        // with commitOnClose=false rolls its buffered rows back; in the QWP
+        // deferred-ack path a later group-closing commit would then clear the
+        // uncommitted-deferred-rows clamp and let the cumulative durable-ack
+        // cover rows that this eviction discarded -- a phantom ack and silent
+        // data loss. The dropped table is gone, so the rows cannot be re-homed;
+        // evicting such a TUD must propagate so the caller cannot acknowledge
+        // discarded rows (the UDP receiver, which never acks, simply drops the
+        // datagram and heals on the next one).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c1_evict (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("c1_evict"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Buffer an uncommitted row so the stale writer holds pending data.
+                tud.getWriter().newRow(0L).append();
+                Assert.assertFalse(tud.isFirstRow());
+
+                // Drop the table so the cached TUD becomes stale (its token
+                // resolves by neither name nor directory).
+                execute("DROP TABLE c1_evict");
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("c1_evict"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("evicting a stale TUD with buffered rows must propagate");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
+                }
+
+                // The stale TUD was evicted; the cache no longer retains it.
+                Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsRejectsInvalidDeferredArrayColumnName() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =

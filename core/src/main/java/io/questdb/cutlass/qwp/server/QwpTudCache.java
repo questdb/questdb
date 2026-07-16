@@ -348,9 +348,29 @@ public class QwpTudCache implements QuietCloseable {
                 return tud;
             }
 
+            // The cached TUD is stale: its token resolves by neither name nor
+            // directory, i.e. the table was DROPped. A pure rename keeps the
+            // directory and is not reported stale here, so its buffered rows
+            // still commit through the same writer -- only a drop reaches this
+            // branch. Freeing a TUD built with commitOnClose=false rolls its
+            // buffered rows back, so a stale writer that still holds
+            // uncommitted rows cannot be evicted silently: in the QWP
+            // deferred-ack path a later group-closing commit would clear the
+            // uncommitted-deferred-rows clamp and let the cumulative durable-ack
+            // cover rows this eviction discarded (a phantom ack -> silent data
+            // loss). The dropped table is gone, so the rows cannot be re-homed;
+            // evict them but propagate the loss so the QWP layer rejects
+            // instead of acknowledging discarded rows. The UDP receiver has no
+            // ack: it drops the datagram and heals on the next one.
+            final boolean hadBufferedRows = !tud.isFirstRow();
             tableUpdateDetails.removeAt(key);
             cachedTableCount = tableUpdateDetails.size();
             Misc.free(tud);
+            if (hadBufferedRows) {
+                throw CairoException.nonCritical()
+                        .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                        .put(tableNameUtf8);
+            }
             key = tableUpdateDetails.keyIndex(tableNameUtf8);
         }
 
