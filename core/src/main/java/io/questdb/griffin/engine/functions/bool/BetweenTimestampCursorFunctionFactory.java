@@ -147,7 +147,8 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         final int columnType = metadata.getColumnType(0);
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.TIMESTAMP, ColumnType.NULL, ColumnType.STRING, ColumnType.VARCHAR -> columnType;
-            default -> throw SqlException.$(position, "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(columnType));
+            default ->
+                    throw SqlException.$(position, "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(columnType));
         };
     }
 
