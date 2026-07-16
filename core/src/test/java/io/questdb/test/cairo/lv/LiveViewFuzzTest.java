@@ -28,8 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -232,6 +234,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // one; over a unique-ts total order they collapse to a per-bucket sequence,
     // which the (sym, bucket)-partitioned oracle recomputes exactly.
     private static final int ANCHORED_VARIANT_COUNT = 7;
+    // runLeadOrderingFuzz's cycle group: flush, in-order, in-order, late-arrival.
+    private static final int CYCLES_PER_GROUP = 4;
+    private static final int LATE_COMMIT_PHASE = 3;
     private static final int MAX_FRAME = 20;
     // START FROM modes a run draws from. The mode decides only HOW the view resolves its
     // event-time boundary at CREATE - every refresh path reads the resolved boundary and none
@@ -460,6 +465,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 runFuzz(rnd, v, 120 + rnd.nextInt(160), true, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
             }
         });
+    }
+
+    @Test
+    public void testFuzzLeadOrderingUnderO3() throws Exception {
+        // Pins down the lead-ordering invariant: min(lead ts) >= max(disk ts)
+        // whenever the seqTxn fence holds. Non-strict; see assertLeadAboveDisk for
+        // why the tie is legitimate.
+        //
+        // The invariant is what would let a reader serve the lead as a band sitting
+        // on top of the disk scan - notably in reverse, for ORDER BY ts DESC - so a
+        // regression here is silently mis-ordered output rather than a crash.
+        // Nothing in production asserts it: it emerges from the refresh job's O3
+        // diversion, which sends a below-frontier commit to replay/rebuild instead
+        // of appending it into the lead.
+        //
+        // The existing arms cannot cover it. Their refreshCycle advances the clock
+        // past FLUSH EVERY, so every drain refreshes AND flushes and the lead is
+        // always empty at the observation point. This arm holds the flush off on
+        // most cycles so an un-flushed lead is genuinely resident while late rows
+        // land on it - the only shape that could drive a below-disk row into a lead.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> runLeadOrderingFuzz(rnd));
     }
 
     @Test
@@ -868,6 +896,65 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         row.append();
     }
 
+    // Asserts the lead-ordering invariant on a view's published slot: no un-flushed
+    // lead row may carry a timestamp BELOW the on-disk maximum, i.e.
+    // min(lead ts) >= max(disk ts). Returns true if the compare actually ran, so a
+    // caller can prove the check is not vacuous.
+    //
+    // The bound is NON-strict - equality is reachable and by design. An additive
+    // commit whose min ts equals the frontier is not diverted to O3 (the
+    // cross-commit compare in LiveViewRefreshJob's drain is a strict
+    // txnMinTs < latestSeen), so its rows append into the lead at exactly the
+    // on-disk max ts. Asserting a strict > here would fail on that legitimate tie;
+    // LiveViewRecordCursor.hasNext's leadStart == 0 branch exists for the same
+    // reason.
+    //
+    // Only meaningful while the seqTxn fence holds: leadStart partitions the slot
+    // against the slot's OWN lvSeqTxn, so a disk snapshot at a different version
+    // says nothing about where this slot's lead begins. Mirrors the production
+    // fence in LiveViewRecordCursor.diskReaderSeqTxn (reader.getSeqTxn() vs
+    // slot.lvSeqTxn()).
+    private static boolean assertLeadAboveDisk(LiveViewInstance instance) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        if (tier == null) {
+            return false;
+        }
+        final int slotIdx = tier.acquireRead();
+        if (slotIdx < 0) {
+            return false; // tier closed (DROP / invalidate); nothing published to check
+        }
+        try {
+            final LiveViewInMemoryBuffer slot = tier.getSlot(slotIdx);
+            final long leadRowCount = slot.leadRowCount();
+            final long slotSeqTxn = slot.lvSeqTxn();
+            final int tsCol = slot.getTimestampColumnIndex();
+            if (leadRowCount == 0 || slotSeqTxn == Numbers.LONG_NULL || tsCol < 0) {
+                // No lead resident (an O3 cycle rebuilds the tier off disk and
+                // zeroes it; a flush cycle empties it), an unstamped slot the fence
+                // can never engage on, or a ts-less output schema.
+                return false;
+            }
+            try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+                if (reader.getSeqTxn() != slotSeqTxn || reader.size() == 0) {
+                    // Fence off (the slot and this snapshot are different LV
+                    // versions), or disk is empty so the lead sits above nothing.
+                    return false;
+                }
+                final long diskMaxTs = reader.getMaxTimestamp();
+                final long leadMinTs = slot.getLong(slot.rowCount() - leadRowCount, tsCol);
+                if (leadMinTs < diskMaxTs) {
+                    Assert.fail("lead ts below disk max for view " + instance.getLiveViewToken().getTableName()
+                            + ": leadMinTs=" + leadMinTs + ", diskMaxTs=" + diskMaxTs
+                            + ", lvSeqTxn=" + slotSeqTxn + ", rowCount=" + slot.rowCount()
+                            + ", leadRowCount=" + leadRowCount);
+                }
+                return true;
+            }
+        } finally {
+            tier.releaseRead(slotIdx);
+        }
+    }
+
     // Mode A read-back cross-check: with a known un-flushed lead resident, the
     // tier-on read must serve exactly the lead and equal the from-scratch
     // recompute, while the forced disk-only fallback serves only the applied
@@ -1126,6 +1213,60 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     "ts, sym, i, first_value(i) IGNORE NULLS OVER (" + frame + ") AS v";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
+    }
+
+    // Builds the emission order for runLeadOrderingFuzz and fills boundsOut with the
+    // commits+1 offsets splitting it into commits. Each commit's rows are ascending
+    // except on the LATE_COMMIT_PHASE cycles, which also carry rows held back from
+    // earlier chunks - genuine below-frontier arrivals.
+    //
+    // The phase assignment is deliberate, not drawn. segmentOrder(o3=true) is the
+    // wrong generator here: a full shuffle puts nearly every commit below the
+    // frontier, so nearly every cycle diverts to O3 replay, which rebuilds the tier
+    // off disk and zeroes the lead - leaving nothing to compare on any cycle. Row-
+    // level randomness has the same failure mode more subtly: on an unlucky seed
+    // every pinned commit draws a late row and the arm silently goes vacuous. So the
+    // phase within each 4-cycle group is fixed (see runLeadOrderingFuzz): the
+    // in-order pinned cycles guarantee a resident lead to check, and the late commit
+    // lands ON that lead.
+    private static int[] lateRowEmissionOrder(Rnd rnd, int rowCount, int commits, IntList boundsOut) {
+        final int[] order = new int[rowCount];
+        final IntList deferred = new IntList();
+        int emitted = 0;
+        boundsOut.clear();
+        boundsOut.add(0);
+        for (int c = 0; c < commits; c++) {
+            final int from = (int) ((long) c * rowCount / commits);
+            final int to = (int) ((long) (c + 1) * rowCount / commits);
+            for (int k = from; k < to; k++) {
+                // Hold back a minority of rows, but never from the last group - they
+                // would have no later commit to arrive on.
+                if (c < commits - 1 && rnd.nextInt(8) == 0) {
+                    deferred.add(k);
+                    continue;
+                }
+                order[emitted++] = k;
+            }
+            if (c % CYCLES_PER_GROUP == LATE_COMMIT_PHASE) {
+                // Release every row held back so far: each sits below the frontier
+                // the preceding in-order commits advanced, so this commit is O3 both
+                // across commits and (since they trail this chunk's own ascending
+                // rows) within itself.
+                for (int i = 0, n = deferred.size(); i < n; i++) {
+                    order[emitted++] = deferred.getQuick(i);
+                }
+                deferred.clear();
+            }
+            boundsOut.add(emitted);
+        }
+        // Anything still held back (the tail group defers nothing, but a short run
+        // can leave the last release empty) trails the final commit.
+        for (int i = 0, n = deferred.size(); i < n; i++) {
+            order[emitted++] = deferred.getQuick(i);
+        }
+        boundsOut.setQuick(commits, emitted);
+        Assert.assertEquals(rowCount, emitted);
+        return order;
     }
 
     // A random ASCII string of length [minLen, maxLen], drawn from [a-zA-Z0-9]
@@ -1744,6 +1885,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 Path.clearThreadLocals();
             }
         }, "lv-rvr-reader");
+    }
+
+    // One refresh cycle with the flush held off, then the lead-ordering check;
+    // returns true if the check actually compared (see assertLeadAboveDisk).
+    // Pinning lastFlushTimeUs to now makes flushDue false for this drain (the same
+    // lever buildLeadForReadBack uses), so the cycle refreshes into the tier
+    // without writing through to disk and its rows stay resident as an un-flushed
+    // lead. The pin only delays the flush - a later unpinned cycle, or the closing
+    // driveRefreshToQuiescence, still writes those rows through.
+    private boolean pinnedRefreshCycle(LiveViewRefreshJob job) {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        instance.setLastFlushTimeUs(currentMicros);
+        drainJob(job);
+        drainWalQueue();
+        return assertLeadAboveDisk(instance);
     }
 
     // One refresh cycle past the FLUSH EVERY rate-limit: advances the clock so
@@ -3045,6 +3203,105 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+    }
+
+    // Drives late-arriving commits against a live view while an un-flushed lead is
+    // held resident, asserting min(lead ts) >= max(disk ts) after every such cycle.
+    //
+    // Most cycles are pinned - the flush is held off, so the cycle's rows stay in
+    // the tier as lead; the rest flush, moving disk forward so the next pinned cycle
+    // builds a fresh lead on top of a longer disk prefix. The emission order is
+    // mostly ascending with rows released late (see lateRowEmissionOrder), so a
+    // below-frontier commit routinely lands with a lead already resident.
+    private void runLeadOrderingFuzz(Rnd rnd) throws Exception {
+        if (currentMicros < 0) {
+            setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
+        }
+        final int rowCount = 120 + rnd.nextInt(160);
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        final boolean[] xNull = new boolean[rowCount];
+        final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
+        // Keep the whole run's ts span far inside the IN MEMORY window below: an
+        // un-flushed lead only stays resident if the tier can actually hold it. A
+        // window narrower than the lead's own ts span stalls the publish and the
+        // worker emergency-flushes the lead to disk, which zeroes leadRowCount and
+        // makes the compare vacuous. ~280 rows * 1s max step is under 5 minutes of
+        // data against the 1h window.
+        final int baseStepMax = 1_000_000;
+        long ts = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
+        for (int k = 0; k < rowCount; k++) {
+            ts += 1 + rnd.nextInt(baseStepMax); // keeps ts strictly increasing
+            tsv[k] = ts;
+            symIdx[k] = rnd.nextInt(20) == 0 ? -1 : rnd.nextInt(symCount); // -1 => NULL symbol
+            iv[k] = rnd.nextInt(20) == 0 ? Numbers.LONG_NULL : rnd.nextInt(2000) - 1000;
+            xNull[k] = rnd.nextInt(20) == 0;
+            xv[k] = xNull[k] ? Double.NaN : rnd.nextDouble() * 1000;
+        }
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A fixed-width identity output, so the tier can store every column and the
+        // lead is genuinely resident. IN MEMORY 1h dwarfs the run's span, so the
+        // tier holds the whole output and eviction never touches the lead band.
+        final String viewSql = "SELECT ts, sym, i, row_number() OVER () AS rn FROM base";
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM BEGINNING AS " + viewSql);
+
+        LOG.info().$("LV lead-ordering fuzz: rows=").$(rowCount).$(", symCount=").$(symCount).$();
+
+        final StringSink sink = new StringSink();
+        final IntList bounds = new IntList();
+        LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        long leadChecks = 0;
+        try {
+            // A fixed 16-way split rather than commitBounds' random 2..10: the check
+            // only runs on a pinned cycle carrying a resident lead, and a 2-commit
+            // run leaves too few of those to be worth the setup.
+            final int commits = 4 * CYCLES_PER_GROUP;
+            final int[] order = lateRowEmissionOrder(rnd, rowCount, commits, bounds);
+            for (int c = 0; c < commits; c++) {
+                insertCommit(sink, order, bounds.getQuick(c), bounds.getQuick(c + 1),
+                        tsv, symIdx, iv, xv, xNull, null);
+                drainWalQueue();
+                // Each 4-cycle group runs: flush, in-order, in-order, late. The
+                // flush leaves disk non-empty and the lead at 0; the two in-order
+                // pinned cycles rebuild a lead and are where the compare actually
+                // runs; the late commit then lands on that resident lead (and, being
+                // O3, usually rebuilds the tier and empties it again - hence the
+                // in-order cycles carrying the check).
+                if (c % CYCLES_PER_GROUP == 0) {
+                    refreshCycle(job);
+                } else if (pinnedRefreshCycle(job)) {
+                    leadChecks++;
+                }
+            }
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        // Prove the run was not vacuous. Every early return in assertLeadAboveDisk
+        // (no lead resident, fence off, empty disk) is a legitimate skip, so a
+        // mis-tuned harness can quietly reduce this arm to a no-op that still
+        // reports green - an IN MEMORY window narrower than the lead's ts span, for
+        // one, makes the worker emergency-flush and leadRowCount is then always 0.
+        // Fail loudly instead.
+        Assert.assertTrue("the lead-ordering compare never ran - this arm is vacuous", leadChecks > 0);
+
+        // The lead must not merely be well-ordered - it must also be right. The
+        // usual oracle: the view equals its own recompute over the base.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
     }
 
     // Multiple live views over one base (see testFuzzMultipleLiveViews). K views
