@@ -365,6 +365,45 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    // Pins the exact posting-row selectivity boundary in AdaptiveSymbolPatternRecordCursorFactory:
+    // the cost cutoff is `matchedRows > maxIndexRows` with maxIndexRows = max(1, totalRows / 4).
+    // At the boundary (matchedRows == maxIndexRows) the estimate is still selective and must use the
+    // index; one matched row past it must fall back to scan. A regression flipping `>` to `>=` would
+    // route the boundary case to the scan and this test would fail. Single matched key keeps the probe
+    // count at one, so the default probe budget (100) is never the deciding factor here.
+    @Test
+    public void testSelectivityBoundaryAtQuarterUsesIndexThenScan() throws Exception {
+        assertMemoryLeak(() -> {
+            // 16 rows total -> maxIndexRows = 4. Key 'A' has exactly 4 rows == the boundary.
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(4)");
+            execute("INSERT INTO t SELECT 'B', x, timestamp_sequence(4, 1) FROM long_sequence(12)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            select("SELECT sym, v FROM t WHERE sym LIKE 'A%' ORDER BY v");
+            Assert.assertEquals(
+                    "matchedRows == maxIndexRows is still selective and must use the index",
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get()
+            );
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
+
+            // 16 rows total -> maxIndexRows = 4. Key 'A' has 5 rows, one past the boundary -> scan.
+            execute("CREATE TABLE t2 (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(5)");
+            execute("INSERT INTO t2 SELECT 'B', x, timestamp_sequence(5, 1) FROM long_sequence(11)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            select("SELECT sym, v FROM t2 WHERE sym LIKE 'A%' ORDER BY v");
+            Assert.assertEquals(
+                    "matchedRows one past maxIndexRows must fall back to scan",
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+            );
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+        });
+    }
+
     // Regression: at the DEFAULT threshold (100), a pattern that matches MORE than 100 distinct symbol keys
     // routes to the > threshold full-scan fallback inside SymbolPatternIndexRecordCursorFactory. That fallback
     // must still apply the pattern predicate. Before the fix the fallback returned the plain, UNFILTERED full
