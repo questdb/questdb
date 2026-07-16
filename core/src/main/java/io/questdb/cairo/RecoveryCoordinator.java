@@ -109,10 +109,15 @@ public class RecoveryCoordinator {
                 if (!token.isWal() || token.isView()) {
                     continue;
                 }
-                if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {
-                    continue;
-                }
                 try {
+                    // resolveEffectiveCommitMode is INSIDE the try: on a cold boot the tracker's mode is
+                    // UNSET, so this reads the table's _meta (getTableMetadata re-throws for WAL tables on
+                    // an I/O error) — the same failure class as the restore below, and equally capable of
+                    // stranding siblings / bricking boot if it escaped. A table whose _meta is unreadable
+                    // is suspended rather than allowed to abort recovery for everyone else.
+                    if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {
+                        continue;
+                    }
                     recoverTable(token, src, dst, dir);
                 } catch (CairoException | CairoError e) {
                     // A genuine I/O error while physically restoring this table's durable cut
@@ -233,6 +238,15 @@ public class RecoveryCoordinator {
         // while _cv is still at the (newer) frontier -> _txn behind _cv, the SAFE skew (the older _txn
         // never references column versions beyond it). The reverse would briefly leave _txn at the frontier
         // over an epoch _cv (a dangling reference). Recovery re-runs on the next boot and completes the pair.
+        //
+        // NOTE (SP-B / known limitation): ff.copy() creat()-truncates its destination before writing, so a
+        // restore that fails mid-transfer (e.g. ENOSPC) leaves the live file torn. Because recover() now
+        // SUSPENDS such a table rather than aborting boot (so healthy siblings still recover), a read of the
+        // torn table then fails LOUD (a CairoException / SIGBUS-InternalError off the torn _cv) until the
+        // operator resolves the I/O condition and restarts — never a silent wrong-data read (_txn/_cv are
+        // A/B-checksummed). A temp-copy + atomic-rename restore would avoid even that loud window, but it is
+        // incompatible with the path-keyed fd cache (FdCache.rename does not invalidate the live path's
+        // cached descriptor, so a rename-swapped inode is read stale); left as a follow-up.
         restoreFile(token, src, dst, TableUtils.TXN_FILE_NAME);
         restoreFile(token, src, dst, TableUtils.COLUMN_VERSION_FILE_NAME);
 

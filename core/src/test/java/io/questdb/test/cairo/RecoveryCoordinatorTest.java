@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -463,42 +464,134 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         try {
             // Two adaptive tables, each with a durable epoch + a lazy gap (live _txn ahead of the epoch),
             // so recover() attempts a real restore on both.
-            final long okEpochSeqTxn = buildAdaptiveLazyGapTable("t_ok");
-            buildAdaptiveLazyGapTable("t_fail");
-            final TableToken ttOk = engine.verifyTableName("t_ok");
-            final TableToken ttFail = engine.verifyTableName("t_fail");
+            final long epochA = buildAdaptiveLazyGapTable("iso_a");
+            final long epochB = buildAdaptiveLazyGapTable("iso_b");
+            final TableToken ttA = engine.verifyTableName("iso_a");
+            final TableToken ttB = engine.verifyTableName("iso_b");
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            // Arm the fault on t_fail's _txn restore and inject the facade for the recover() pass only.
-            failDirName.set(ttFail.getDirName());
+            // Fail the FIRST of our two tables in recover()'s actual (hash-based) iteration order, so the
+            // other is GUARANTEED to be visited AFTER the failure — proving recover() continues past a
+            // failed table, not merely that an earlier table was already recovered. recover() enumerates
+            // via the same engine.getTableTokens(), so this ordering matches its own.
+            final ObjHashSet<TableToken> order = new ObjHashSet<>();
+            engine.getTableTokens(order, false);
+            TableToken failTarget = null;
+            for (int i = 0, n = order.size(); i < n; i++) {
+                final TableToken t = order.get(i);
+                if (t.equals(ttA) || t.equals(ttB)) {
+                    failTarget = t;
+                    break;
+                }
+            }
+            Assert.assertNotNull("expected one of our tables in the iteration order", failTarget);
+            final TableToken sibling = failTarget.equals(ttA) ? ttB : ttA;
+            final long siblingEpoch = failTarget.equals(ttA) ? epochB : epochA;
+
+            // Arm the fault on the fail target's _txn restore and inject the facade for the recover() pass.
+            failDirName.set(failTarget.getDirName());
             AbstractCairoTest.ff = failingFf;
 
             // ACT: recover() must NOT throw (pre-fix, the failed copy's CairoException propagates here).
             new RecoveryCoordinator(engine).recover();
             AbstractCairoTest.ff = ffBefore;
 
-            // The failing table is suspended with the errno-derived tag + a message, and was NOT rolled
-            // forward (its incarnation stays 0).
-            assertTrue("t_fail must be suspended after a restore I/O error",
-                    engine.getTableSequencerAPI().isSuspended(ttFail));
+            // The first-iterated table failed its restore -> suspended with the errno-derived tag + a
+            // message, and was NOT rolled forward (its incarnation stays 0).
+            assertTrue("the failed table must be suspended after a restore I/O error",
+                    engine.getTableSequencerAPI().isSuspended(failTarget));
             Assert.assertEquals("suspend tag must be derived from the restore errno",
                     ErrorTag.resolveTag(simErrno),
-                    engine.getTableSequencerAPI().getTxnTracker(ttFail).getErrorTag());
+                    engine.getTableSequencerAPI().getTxnTracker(failTarget).getErrorTag());
             Assert.assertFalse("the suspend error message must be populated",
-                    engine.getTableSequencerAPI().getTxnTracker(ttFail).getErrorMessage().isEmpty());
+                    engine.getTableSequencerAPI().getTxnTracker(failTarget).getErrorMessage().isEmpty());
             Assert.assertEquals("a table that failed to roll forward must not bump recoveryIncarnation",
-                    0L, engine.getTableSequencerAPI().getTxnTracker(ttFail).getRecoveryIncarnation());
+                    0L, engine.getTableSequencerAPI().getTxnTracker(failTarget).getRecoveryIncarnation());
 
-            // The healthy sibling was recovered regardless of iteration order: not suspended, rewound to
-            // exactly its durable epoch cut, incarnation bumped once.
-            Assert.assertFalse("t_ok must not be suspended by a sibling's failure",
-                    engine.getTableSequencerAPI().isSuspended(ttOk));
-            Assert.assertEquals("t_ok's recoveryIncarnation must be bumped by its successful restore",
-                    1L, engine.getTableSequencerAPI().getTxnTracker(ttOk).getRecoveryIncarnation());
-            Assert.assertEquals("t_ok must be rewound to exactly its durable epoch cut",
-                    okEpochSeqTxn, readTxnSeqTxn(ttOk));
+            // The sibling, visited AFTER the failure, still recovered: not suspended, rewound to its cut,
+            // incarnation bumped once — proving recover() continued past the failed table.
+            Assert.assertFalse("the sibling must not be suspended by the earlier failure",
+                    engine.getTableSequencerAPI().isSuspended(sibling));
+            Assert.assertEquals("the sibling's recoveryIncarnation must be bumped by its successful restore",
+                    1L, engine.getTableSequencerAPI().getTxnTracker(sibling).getRecoveryIncarnation());
+            Assert.assertEquals("the sibling must be rewound to exactly its durable epoch cut",
+                    siblingEpoch, readTxnSeqTxn(sibling));
+        } finally {
+            AbstractCairoTest.ff = ffBefore;
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
+    /**
+     * SP-B / C2 (known limitation, documented in RecoveryCoordinator.recoverTable): ff.copy()
+     * creat()-truncates its destination, so a restore that fails mid-transfer leaves the LIVE file torn.
+     * Because recover() now SUSPENDS such a table instead of aborting boot (so healthy siblings still
+     * recover), a read of the torn table must fail LOUD — it must NEVER silently serve wrong data. The
+     * _txn/_cv A/B checksums + mmap bounds guarantee a loud CairoException / SIGBUS-InternalError, not a
+     * plausible-but-wrong result. This test proves the suspend + fail-loud contract. (A future temp-copy +
+     * atomic-rename restore would remove even the loud window, but is blocked today by the path-keyed fd
+     * cache — see the recoverTable NOTE.)
+     */
+    @Test
+    public void testRestoreCvFailureSuspendsTableAndFailsLoud() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        final int simErrno = 28;
+        final AtomicBoolean justFailed = new AtomicBoolean(false);
+        final AtomicReference<String> failDirName = new AtomicReference<>();
+        final FilesFacade failingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                final String dir = failDirName.get();
+                if (dir != null
+                        && Utf8s.containsAscii(to, dir)
+                        && Utf8s.containsAscii(to, TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                    // Replicate the real ff.copy: creat(to) O_TRUNCs the live dest to 0 before the transfer
+                    // that then fails, leaving the live _cv torn (the C2 scenario).
+                    final long fd = super.openCleanRW(to, 0);
+                    if (fd != -1) {
+                        super.close(fd);
+                    }
+                    justFailed.set(true);
+                    return -1;
+                }
+                return super.copy(from, to);
+            }
+
+            @Override
+            public int errno() {
+                return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
+            }
+        };
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
+        try {
+            buildAdaptiveLazyGapTable("cvtorn");
+            final TableToken tt = engine.verifyTableName("cvtorn");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            failDirName.set(tt.getDirName());
+            AbstractCairoTest.ff = failingFf;
+            new RecoveryCoordinator(engine).recover();
+            AbstractCairoTest.ff = ffBefore;
+
+            // The _cv restore failed -> the table is suspended with the errno-derived tag; recover() did
+            // NOT throw (boot is not bricked; healthy siblings would still recover).
+            assertTrue("cvtorn must be suspended after the torn _cv restore",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertEquals(ErrorTag.resolveTag(simErrno),
+                    engine.getTableSequencerAPI().getTxnTracker(tt).getErrorTag());
+
+            // Fail-loud contract: a read off the torn _cv must throw, never silently return wrong data.
+            boolean threwLoud = false;
+            try {
+                printSql("select v from cvtorn");
+            } catch (Throwable t) {
+                threwLoud = true;
+            }
+            assertTrue("a read off the torn _cv must fail loud, never silently serve wrong data", threwLoud);
         } finally {
             AbstractCairoTest.ff = ffBefore;
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");

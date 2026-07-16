@@ -82,12 +82,31 @@ Facts that make this correct (each confirmed in the source):
 
 Suspend state is **in-memory only** (not persisted). The intended recovery action is a **restart**: on
 the next boot `recover()` re-runs, and because the `.epoch` copies are immutable the restore is idempotent
-— it completes cleanly once the I/O condition is resolved, or re-suspends the table if it is not. A
-partial restore (`_txn` restored, `_cv` restore then failed) leaves the documented "safe skew" (`_txn`
-behind `_cv`, no dangling column-version reference — `RecoveryCoordinator.java:193–197`) that next-boot
-recovery completes. In the current session the table is suspended, so it is never served or applied with
-an inconsistent cut. (`RESUME WAL` without a restart is not the intended recovery path for this condition;
-note it in operator guidance.)
+— it completes cleanly once the I/O condition is resolved, or re-suspends the table if it is not.
+
+Two distinct failure timings have different live-file outcomes:
+
+- **Failure BETWEEN the two `restoreFile` calls** (`_txn` copy completed, process dies before `_cv`):
+  both live files are individually intact, just at different epochs — the documented **safe skew** (`_txn`
+  behind `_cv`, no dangling column-version reference — `RecoveryCoordinator.java:236–240`). Next-boot
+  recovery re-copies both and completes the pair. Benign; the table reads a consistent (older) cut.
+- **I/O failure DURING a `restoreFile` copy** (e.g. ENOSPC mid-`_cv`): `ff.copy()` `creat()`-truncates
+  its destination *in place* before the transfer, so a mid-copy failure leaves the **live file torn**
+  (0-byte / partial) — this is NOT safe skew. The table is suspended, so it is never *applied* with an
+  inconsistent cut; but a **read** attempted before the operator restarts hits the torn file and fails
+  **LOUD** — a `CairoException` off the `_txn`/`_cv` A/B checksum, or a `SIGBUS`→`InternalError` off the
+  mmap bound (empirically verified). It is **never** a silent wrong-data read. Next-boot recovery re-copies
+  the immutable, still-valid `.epoch` over the torn file and heals.
+
+Either way no data is lost (the durable WAL is the floor) and nothing is ever served silently wrong. This
+is strictly better than the pre-SP-B behaviour, where the same I/O error propagated out of `recover()` and
+**bricked the whole boot**, stranding healthy siblings. A temp-copy + atomic-rename restore would remove
+even the loud read window (the live file would only ever be swapped for a complete copy), but it is
+**blocked today** by the path-keyed fd cache: `FdCache.rename` does not invalidate the live path's cached
+descriptor, so a rename-swapped inode is read stale (proved in testing — a rewound table kept reading its
+pre-rewind frontier). Tracked as an SP-B follow-up. `RESUME WAL` without a restart is **not** the intended
+recovery path for the torn-file condition (only the boot-time `recover()` re-copy heals it); note it in
+operator guidance.
 
 ## Safety argument
 
