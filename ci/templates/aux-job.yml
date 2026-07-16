@@ -30,6 +30,9 @@ jobs:
         displayName: "Activate JDK 25 (openjdk amd64)"
       - template: detect-local-client.yml
 
+      - bash: python3 ci/test_configure_hetzner_apt_mirrors.py
+        displayName: "Test Hetzner APT mirror configuration"
+
       - template: java-lint.yml
 
       # Rust lint and test

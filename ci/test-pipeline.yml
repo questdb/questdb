@@ -211,6 +211,9 @@ stages:
             lfs: false
             submodules: false
             persistCredentials: true
+          - template: templates/use-hetzner-apt-mirrors.yml
+            parameters:
+              shouldRun: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'))
           - bash: |
               sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven
               JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
