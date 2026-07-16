@@ -1,23 +1,23 @@
+parameters:
+  - name: isCheckoutEnabled
+    type: boolean
+    default: true
+  - name: isHetznerAptMirrorEnabled
+    type: boolean
+    default: true
+
 steps:
-  - bash: |
-      # Apply only to Hetzner self-hosted agents. AGENT_MACHINENAME is the
-      # agent's self-configured name (e.g. "hetzner-incus-12"), distinct
-      # from the OS hostname and from the timeline's workerName.
-      if [[ "${AGENT_MACHINENAME:-}" != hetzner-incus-* ]]; then
-        echo "Skipping on ${AGENT_MACHINENAME:-unknown}; only applied to hetzner-incus-* agents"
-        exit 0
-      fi
-      # Abort any git HTTP transfer that averages below 100 KiB/s for 120s
-      # so Azure's checkout retry picks a fresh TCP connection instead of
-      # crawling for 30-60 min. Mitigates the per-flow upstream-network
-      # stalls observed on the FSN1 dedicated-server boxes.
-      git config --global http.lowSpeedLimit 102400
-      git config --global http.lowSpeedTime 120
-    displayName: "Set git low-speed abort thresholds"
-  - checkout: self
-    fetchDepth: 1
-    lfs: false
-    submodules: false
+  - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
+      - template: checkout-source.yml
+  - ${{ if eq(parameters.isHetznerAptMirrorEnabled, true) }}:
+      - template: use-hetzner-apt-mirrors.yml
+        parameters:
+          shouldRun: |
+            and(
+              succeeded(),
+              eq(variables['os'], 'Linux'),
+              startsWith(variables['poolName'], 'hetzner-')
+            )
   - template: detect-local-client.yml
   - bash: |
       if curl -sf --connect-timeout 2 http://maven.internal:8081/ > /dev/null 2>&1; then

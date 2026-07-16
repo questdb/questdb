@@ -31,10 +31,20 @@ import io.questdb.cairo.sql.RecordMetadata;
  * Abstract base class for record cursor factory implementations.
  */
 public abstract class AbstractRecordCursorFactory implements RecordCursorFactory {
+    // Guards _close() against repeated invocation: factory ownership chains close the same
+    // instance from more than one owner on error paths (a failing factory constructor closes
+    // its adopted base factory, and the generator catch then frees its own reference to it),
+    // and _close() implementations free adopted functions and native resources that must not
+    // be freed twice. close() deliberately sets the flag before _close() runs: were it set
+    // after, a throwing _close() would let a second owner re-enter and double-free whatever
+    // the first attempt did release. The flip side is that _close() runs at most once, so
+    // implementations owning several resources must detach all owned references before the
+    // first callback, attempt every close, and rethrow the first failure with later ones suppressed.
+    private boolean closed;
     /**
      * The record metadata.
      */
-    private final RecordMetadata metadata;
+    private RecordMetadata metadata;
 
     /**
      * Constructs a new record cursor factory.
@@ -47,7 +57,16 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
 
     @Override
     public final void close() {
-        _close();
+        if (!closed) {
+            closed = true;
+            _close();
+        }
+    }
+
+    protected final RecordMetadata detachMetadata() {
+        final RecordMetadata metadata = this.metadata;
+        this.metadata = null;
+        return metadata;
     }
 
     @Override
