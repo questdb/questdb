@@ -92,7 +92,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             @Override
             protected long apply(DeleteOperation operation, TableWriterAPI writerAPI) {
                 try {
-                    return writerAPI.apply(operation);
+                    writerAPI.apply(operation);
+                    // WAL apply computes the exact count later. Do not expose the submission seqTxn as rows.
+                    return 0;
                 } finally {
                     operation.clearSecurityContext();
                 }

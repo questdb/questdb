@@ -116,6 +116,14 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         return tableVersion;
     }
 
+    /**
+     * Whether writer contention may route this operation through the physical TableWriter command queue.
+     * Operations that can only be externalized through another transactional path must return false.
+     */
+    public boolean isAsyncWriterCommandSupported() {
+        return true;
+    }
+
     public boolean isForceWalBypass() {
         return false;
     }

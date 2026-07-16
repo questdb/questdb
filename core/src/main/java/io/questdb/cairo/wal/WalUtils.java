@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -49,11 +50,18 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
 public class WalUtils {
+    @TestOnly
+    private static volatile LongConsumer deleteWindowObserver;
+    @TestOnly
+    private static volatile LongConsumer deleteWindowPartitionScanObserver;
     public static final String CONVERT_FILE_NAME = "_convert";
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WAL_ID = -2;
@@ -244,6 +252,76 @@ public class WalUtils {
         } finally {
             txnSeqDirPath.trimTo(rootLen);
         }
+    }
+
+    /**
+     * Returns the exclusive high for one atomic survivor-replace window. The row-density high is rounded up
+     * to a logical partition boundary so consecutive windows never rewrite the same physical partition under
+     * one in-progress table transaction. Logical alignment also keeps every sibling of a split partition in
+     * one window. If calendar ceiling arithmetic overflows, the final window safely consumes the remainder.
+     */
+    public static long deleteAtomicWindowHiExcl(long wLo, long step, long maxTs, int timestampType, int partitionBy) {
+        final long windowHiExcl = deleteWindowHiExcl(wLo, step, maxTs);
+        if (windowHiExcl > maxTs || !PartitionBy.isPartitioned(partitionBy)) {
+            return windowHiExcl;
+        }
+
+        final long partitionHiExcl = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy).ceil(windowHiExcl - 1);
+        return partitionHiExcl >= windowHiExcl ? Math.min(partitionHiExcl, maxTs + 1) : maxTs + 1;
+    }
+
+    static void observeDeleteWindow(long windowIndex) {
+        final LongConsumer observer = deleteWindowObserver;
+        if (observer != null) {
+            observer.accept(windowIndex);
+        }
+    }
+
+    static void observeDeleteWindowPartitionScan(long partitionsVisited) {
+        final LongConsumer observer = deleteWindowPartitionScanObserver;
+        if (observer != null) {
+            observer.accept(partitionsVisited);
+        }
+    }
+
+    @TestOnly
+    public static void setDeleteWindowObserver(LongConsumer observer) {
+        deleteWindowObserver = observer;
+    }
+
+    @TestOnly
+    public static void setDeleteWindowPartitionScanObserver(LongConsumer observer) {
+        deleteWindowPartitionScanObserver = observer;
+    }
+
+    /**
+     * Returns the overflow-safe exclusive high for a timestamp window starting at {@code wLo}. The final
+     * window caps at {@code maxTs + 1} without subtracting the potentially wider-than-{@link Long#MAX_VALUE}
+     * remaining timestamp span.
+     */
+    public static long deleteWindowHiExcl(long wLo, long step, long maxTs) {
+        assert maxTs < Long.MAX_VALUE;
+        assert step > 0;
+        if (wLo > Long.MAX_VALUE - step) {
+            return maxTs + 1;
+        }
+        final long candidate = wLo + step;
+        return candidate > maxTs ? maxTs + 1 : candidate;
+    }
+
+    /**
+     * Returns a timestamp width that spans roughly {@code rowsPerStep} rows across
+     * {@code [minTs, maxTs]}. Double arithmetic represents the complete signed timestamp-domain width
+     * without overflowing a {@code long}; the result remains an approximate density-based target. An empty
+     * table returns one effective window.
+     */
+    public static long deleteWindowStep(long minTs, long maxTs, long tableRows, long rowsPerStep) {
+        if (tableRows <= 0) {
+            return Long.MAX_VALUE;
+        }
+        final long safeRowsPerStep = Math.max(1, rowsPerStep);
+        final double span = (double) maxTs - (double) minTs + 1.0;
+        return Math.max(1, (long) (span * safeRowsPerStep / tableRows));
     }
 
     /**

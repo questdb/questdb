@@ -1110,6 +1110,11 @@ public class PropServerConfigurationTest {
         properties.setProperty("telemetry.db.size.estimate.timeout", "2000");
         env.put("QDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT", "3000");
 
+        properties.setProperty("cairo.wal.delete.disk.bounded", "false");
+        env.put("QDB_CAIRO_WAL_DELETE_DISK_BOUNDED", "true");
+        properties.setProperty("cairo.wal.delete.rows.per.step", "2");
+        env.put("QDB_CAIRO_WAL_DELETE_ROWS_PER_STEP", "3");
+
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
@@ -1126,6 +1131,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
         Assert.assertEquals(3000, configuration.getCairoConfiguration().getTelemetryConfiguration().getDbSizeEstimateTimeout());
+        Assert.assertTrue(configuration.getCairoConfiguration().getWalDeleteDiskBounded());
+        Assert.assertEquals(3, configuration.getCairoConfiguration().getWalDeleteRowsPerStep());
     }
 
     @Test
@@ -1401,15 +1408,25 @@ public class PropServerConfigurationTest {
         }
     }
 
-    // cairo.wal.delete.rows.per.step < 1 must be rejected at startup: a value <= 0 makes the windowed-DELETE
-    // survivor-replace window-sizing estimate floor the ts-window to 1, exploding the window count to the whole
-    // timestamp span = an effectively permanent WAL-apply hang. See OperationExecutor.deleteWindowStep.
+    // cairo.wal.delete.rows.per.step is a positive target by contract; reject invalid values at startup.
     @Test
     public void testInvalidWalDeleteRowsPerStepNegative() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.wal.delete.rows.per.step", "-1");
         try {
             newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.wal.delete.rows.per.step must be >= 1");
+        }
+    }
+
+    @Test
+    public void testInvalidWalDeleteRowsPerStepEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_WAL_DELETE_ROWS_PER_STEP", "0");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "cairo.wal.delete.rows.per.step must be >= 1");

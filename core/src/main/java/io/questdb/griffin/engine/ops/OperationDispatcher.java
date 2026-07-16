@@ -123,13 +123,13 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             isDone = true;
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
-            // For non-WAL tables, when another thread holds the writer, this code enqueues the operation
-            // on the TableWriter's async queue. The writer processes enqueued operations when it becomes free.
+            // For operations that support physical-writer commands, writer contention may enqueue the operation
+            // on the TableWriter's async queue. WAL-only DELETE explicitly rejects that path: it must be retried
+            // through WAL submission rather than applied directly without a sequencer transaction.
             // The operation does not require re-authorization when executed from the async queue, because the
-            // caller already authorized it before enqueuing.
-            // The caller blocks on the returned future until the writer executes the operation or the timeout
-            // expires.
-            if (eventSubSeq == null) {
+            // caller already authorized it before enqueuing. The caller blocks on the returned future until the
+            // writer executes the operation or the timeout expires.
+            if (eventSubSeq == null || !operation.isAsyncWriterCommandSupported()) {
                 throw busyException;
             }
             fireAsyncEnqueueObserver();
@@ -138,9 +138,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
             // no replicated sequencer txn for a WAL table, so on a demoting node the change is
             // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
-            // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
-            // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
-            // role-switch-independent robustness gap is left for a dedicated fix.)
+            // enqueuing so a demote that flipped the flag refuses cleanly instead.
             //
             // The eager check below is a fast-refuse optimization; the authoritative re-check runs
             // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the

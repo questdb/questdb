@@ -48,6 +48,38 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testDeleteReportsUnavailableCount() throws Exception {
+        createDummyConfiguration();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain main = startWithEnvVariables(PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true");
+                    TestHttpClient httpClient = new TestHttpClient()
+            ) {
+                TestUtils.executeSQLViaPostgres(
+                        main.getConfiguration().getPGWireConfiguration().getDefaultUsername(),
+                        main.getConfiguration().getPGWireConfiguration().getDefaultPassword(),
+                        main.getPgWireServerPort(),
+                        "CREATE TABLE http_delete(ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                );
+                dml(httpClient, main, "INSERT INTO http_delete VALUES (0, 1), (1000000, 2), (2000000, 3)");
+                exec(
+                        httpClient,
+                        main,
+                        "{\"dml\":\"OK\",\"updated\":0}",
+                        "DELETE FROM http_delete WHERE x < 3"
+                );
+                main.awaitTable("http_delete");
+                exec(
+                        httpClient,
+                        main,
+                        "{\"query\":\"SELECT x FROM http_delete\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[3]],\"count\":1}",
+                        "SELECT x FROM http_delete"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testVacuumRerunOnWindows() throws Exception {
         createDummyConfiguration();
         assertMemoryLeak(() -> {

@@ -109,6 +109,8 @@ public interface CompiledQuery {
     @Transient
     AlterOperation getAlterOperation();
 
+    DeleteOperation getDeleteOperation();
+
     Operation getOperation();
 
     RecordCursorFactory getRecordCursorFactory();
@@ -125,8 +127,6 @@ public interface CompiledQuery {
     short getType();
 
     UpdateOperation getUpdateOperation();
-
-    DeleteOperation getDeleteOperation();
 
     boolean isCacheable();
 

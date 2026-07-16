@@ -189,6 +189,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    @TestOnly
+    private static volatile Runnable replaceRangePostCommitObserver;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -1483,35 +1485,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * partition reopen if the last partition was converted). Empty batch is a no-op. The
      * pending list is cleared regardless of outcome.
      * <p>
-     * This is <b>not</b> a final commit. {@code txWriter.commit} below persists {@code _txn},
-     * but the new native column files written by {@link #produceNativeFromParquet} were closed
-     * without fsync and are not part of the writer's active column set, so no data fsync is
-     * issued here. Real durability is established by the column-conversion final commit
-     * ({@link #commit00}) that the caller (typically
-     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) runs after the column
-     * type-conversion phase: that commit's {@code syncColumns} fsyncs both the just-reopened
-     * native partition data and the new column-conversion output before publishing the next
-     * {@code _txn}.
+     * Before this method publishes {@code _txn}, the conversion syncs the reconstructed native
+     * column and index files, plus the partition directory, whenever commit mode requires it.
+     * The caller (typically {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) still
+     * performs its final {@link #commit00} after the column type-conversion phase.
      * <p>
-     * Consequence for error handling: any failure here (the {@code txWriter.commit} itself,
-     * the metadata cache update, or the per-partition close/rmdir/reopen housekeeping) means
-     * the surrounding ALTER as a whole has not completed - the column-conversion phase will
-     * not run, the final commit will not happen, and on crash no part of the operation is
-     * durable. Sub-failures must therefore propagate as ordinary errors, not as the
-     * "data persisted, housekeeping failed" signal of {@link #handleHousekeepingException}:
-     * no data has been persisted in the durable sense at this point.
-     * <p>
-     * <b>Caller-specific note (DELETE).</b> The "not durable at this point" reasoning above is
-     * specific to the <b>ALTER</b> caller, whose later {@link #commit00} supersedes this
-     * {@code _txn} and is where durability is established. The <b>DELETE</b> caller
-     * ({@code OperationExecutor.convertParquetPartitionsForDelete}) uses this method differently:
-     * here the {@code commitTxWriter} above <b>is</b> the durability point for the format change -
-     * it is commit&nbsp;#1 at seqTxn S-1, run before {@code setSeqTxn(S)}. So a housekeeping throw
-     * <i>after</i> that {@code commitTxWriter} leaves the parquet-&gt;native conversion durably applied;
-     * crash-recovery re-reads the now-native partitions and skips the convert when it re-applies the
-     * delete's own txn&nbsp;S - which is exactly why DELETE re-apply is idempotent and crash-safe. (The
-     * reconstructed native column <i>data</i> is still written without fsync; under SYNC commit mode
-     * that is a separate, documented power-loss residual - see the DELETE design spec &sect;14.)
+     * A failure before {@code commitTxWriter} leaves the on-disk transaction unchanged. A failure
+     * afterward leaves the format conversion durable even if metadata-cache or old-directory
+     * housekeeping has not completed. Callers propagate that failure and a retry observes the native
+     * partition, making the conversion pre-commit idempotent for both ALTER and DELETE.
      */
     public void commitPendingParquetToNativeConversions() {
         if (pendingParquetToNativeConversions.size() == 0) {
@@ -1780,16 +1762,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * When {@code doCommit} is false, performs the partition rewrite and updates in-memory
      * {@code txWriter} state, but does not commit and does not run post-commit housekeeping.
-     * The new native column files are written and closed without fsync. The caller must
-     * invoke {@link #commitPendingParquetToNativeConversions()} once after the batch to
-     * push {@code _txn} to disk and run the deferred housekeeping. Even after that
-     * pre-commit, the new data files are not yet fsynced - the real durability fence is
-     * the caller's subsequent {@link #commit00} (or equivalent {@code syncColumns} +
-     * {@code txWriter.commit}) at the end of the surrounding operation, typically the
-     * column-conversion final commit driven by
-     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}. If the caller fails
-     * before either of those, the in-memory updates are discarded along with the
-     * (subsequently distressed) writer, leaving the on-disk state unchanged.
+     * The caller must invoke {@link #commitPendingParquetToNativeConversions()} once after
+     * the batch to push {@code _txn} to disk and run the deferred housekeeping. Before that
+     * publication, the conversion syncs native column and index files when commit mode requires
+     * it. If the caller fails before the pre-commit, the in-memory updates are discarded along
+     * with the (subsequently distressed) writer, leaving the on-disk state unchanged.
      */
     public boolean convertPartitionParquetToNative(long partitionTimestamp, boolean doCommit) {
         assert metadata.getTimestampIndex() > -1;
@@ -1842,6 +1819,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("rebuilding index files after parquet decode [path=").$substr(pathRootSize, other).I$();
             rebuildPartitionIndexFiles(partitionTimestamp, newPartitionDirLen, parquetRowCount);
+            if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
+                final long dirFd = TableUtils.openRONoCache(ff, other.trimTo(newPartitionDirLen).$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            }
 
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -2919,6 +2902,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @TestOnly
+    public static void setReplaceRangePostCommitObserver(Runnable observer) {
+        replaceRangePostCommitObserver = observer;
+    }
+
+    @TestOnly
     public void publishDeferredPostingSealPurgesOnFullQueueForTesting() {
         publishDeferredPostingSealPurges(txWriter.getTxn(), true);
     }
@@ -3089,24 +3077,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * outside the range within boundary partitions are kept, fully-covered partitions are dropped, and a
      * range covering all data truncates the table. Returns the number of rows removed.
      * <p>
-     * SPIKE DECISION (tasks 1.8 + 1.9): option (a) - DIRECT EXPOSURE. We drive the existing
-     * {@code WAL_DEDUP_MODE_REPLACE_RANGE} apply machinery directly on the writer via
-     * {@link #processWalCommitFinishApply}, with the replace range carried in the tx lag min/max exactly as
-     * {@link #processWalCommitDedupReplace} does, bracketed by the standalone-commit pattern
-     * {@link #removePartition} uses (commit up front to flush pending rows; persist + housekeep afterward so
-     * a reader sees the change and dropped-partition dirs are reclaimed).
-     * <ul>
-     *   <li><b>Empty range</b> ({@code survivorCursor == null} or an empty cursor): an empty O3 batch, as in
-     *   {@code processWalCommitDedupReplace}'s {@code rowLo >= rowHi} branch - the range alone drops/trims.</li>
-     *   <li><b>Survivor rows</b>: staged into O3 memory through the ordinary O3 row API
-     *   ({@link #newRow}/{@code copier.copy}/{@link Row#append}, as {@code MatViewRefreshJob.insertAsSelect}
-     *   does), then sorted (o3Commit's sort/dispatch/swap) and fed as the non-empty O3 batch - the
-     *   TableWriter analogue of {@code processWalCommitDedupReplace}'s {@code rowLo < rowHi} branch, whose
-     *   row source is a WAL segment. Option (b) (staging survivors to a throwaway WAL segment) was rejected
-     *   as pure re-serialization overhead over filling O3 memory directly.</li>
-     * </ul>
-     * All O3 surgery - partition drop/trim/split, symbol maps, index rebuild, first/last recompute,
-     * truncate-when-empty, and the radix sort of unordered survivors - is reused unchanged.
+     * Survivor rows are staged through the ordinary O3 row API and applied with the existing replace-range
+     * machinery. The method owns its transaction boundary: a failure before transaction publication aborts and
+     * rolls back uncommitted state. A failure in post-commit housekeeping is propagated but the published change
+     * remains durable; the writer is marked distressed so its next acquisition rebuilds clean state.
      *
      * @param replaceRangeLoTs     inclusive low timestamp of the range to replace
      * @param replaceRangeHiExclTs exclusive high timestamp of the range to replace
@@ -3137,13 +3111,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return 0;
         }
         beginReplaceRange();
+        final long txnBeforeReplace = txWriter.getTxn();
         try {
             applyReplaceRangeWindow(replaceRangeLoTs, replaceRangeHiExclTs, survivorCursor, copier, timestampCursorIndex, executionContext);
+            return finishReplaceRange();
         } catch (Throwable th) {
-            abortReplaceRange();
+            if (txWriter.getTxn() == txnBeforeReplace) {
+                abortReplaceRange();
+                try {
+                    rollback();
+                } catch (Throwable rollbackFailure) {
+                    th.addSuppressed(rollbackFailure);
+                }
+            } else {
+                markDistressed();
+            }
             throw th;
         }
-        return finishReplaceRange();
     }
 
     /**
@@ -3160,8 +3144,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@code finishReplaceRange} leaves the durable txn at its pre-begin value; the already-applied windows'
      * on-disk partition data is uncommitted and discarded/overwritten on re-apply, which - because each
      * finished window then contains only survivor rows - re-applies as a no-op, so a re-run reaches the same
-     * final state (idempotent). Disjoint windows touch disjoint partitions, so their surgeries accumulate in
-     * {@code txWriter} without interfering before the single commit.
+     * final state (idempotent). Each physical partition may appear in at most one window: O3 names every new
+     * partition version with the transaction number that remains fixed until {@code finishReplaceRange}, so a
+     * second rewrite of that partition would alias its source and destination directory. Callers must align
+     * adjacent windows accordingly; disjoint timestamp ranges alone do not establish this invariant.
      */
     public void beginReplaceRange() {
         checkDistressed();
@@ -3185,10 +3171,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Applies one window of an open windowed replace (see {@link #beginReplaceRange}): replaces every row in
      * {@code [loTs, hiExclTs)} with the survivor rows from {@code survivorCursor}, or - when the cursor is
      * {@code null}/empty - empties that range in place. Stages ONLY this window's survivors into O3 memory and
-     * releases them before returning ({@code finishO3Append}), bounding peak O3 memory to a single window
-     * regardless of table size. Does NOT commit: the surgery accumulates in-memory into the transaction opened
-     * by {@code beginReplaceRange} and is persisted once by {@link #finishReplaceRange}. Windows must be
-     * disjoint and applied in ascending timestamp order.
+     * releases them before returning ({@code finishO3Append}), bounding peak O3 memory to one caller-selected
+     * window. Does NOT commit: the surgery accumulates in-memory into the transaction opened by
+     * {@code beginReplaceRange} and is persisted once by {@link #finishReplaceRange}. Windows must be disjoint,
+     * applied in ascending timestamp order, and must not touch the same physical partition more than once.
      *
      * @param loTs                 inclusive low timestamp of the window to replace
      * @param hiExclTs             exclusive high timestamp of the window to replace
@@ -3222,14 +3208,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             populateDenseIndexerList();
         }
 
-        // SPIKE DECISION (task 1.9): option (a) - DIRECT EXPOSURE, extended to the cursor path. Survivor
-        // rows are produced through TableWriter's ordinary O3 row API (newRow / copier.copy / row.append),
-        // exactly as MatViewRefreshJob.insertAsSelect produces a REPLACE_RANGE batch, and then the
-        // empty-path's direct drive of processWalCommitFinishApply is reused - only now over a non-empty,
-        // sorted O3 batch. This is the TableWriter analogue of processWalCommitDedupReplace's non-empty
-        // branch: its row source is a mmap'd WAL segment, ours is the O3 memory we fill here. Option (b)
-        // (staging survivors into a throwaway WAL segment) was rejected - it would re-serialize the rows
-        // through a segment only for the apply to re-read them, pure overhead over filling O3 memory direct.
+        // Produce survivor rows through the ordinary O3 row API and drive the same replace-range machinery
+        // used by WAL apply, avoiding an intermediate WAL-segment serialization.
         //
         // The replace RANGE is always [lo, hiExcl), carried (as in the empty path) in the tx lag min/max -
         // NOT the survivors' own min/max. This is load-bearing: the ordinary o3Commit() passes the DATA's
@@ -3345,9 +3325,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Persist and make the change visible; housekeep reclaims fully-dropped partition directories via
         // processPartitionRemoveCandidates (mirrors the WAL replace apply's post-commit sequence).
         commit00();
-        // F-G defensive invariant: at this drain point NO accumulated removal candidate may collide with a
-        // currently-LIVE attached partition. This enforces the safety proven for the unguarded split-partition
-        // removal sites (:8740/:8795 and the split-removal sites) - see replaceRemoveCandidatesDisjointFromLivePartitions.
+        final Runnable observer = replaceRangePostCommitObserver;
+        if (observer != null) {
+            observer.run();
+        }
+        // No accumulated removal candidate may collide with a currently live attached partition.
         assert replaceRemoveCandidatesDisjointFromLivePartitions()
                 : "windowed-replace drain: a partition-removal candidate collides with a live attached partition";
         // Reclaim partition directories superseded across ALL windows in one drain, AFTER the single commit00
@@ -3379,19 +3361,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         replaceRangeRemoveCandidates.clear();
     }
 
-    // F-G defensive invariant for the windowed survivor-replace drain. The split-partition removal sites in
-    // o3ConsumePartitionUpdateSink (the two guarded sites at :8740/:8795 and the parent line-split sites) can,
-    // during a multi-window replace over a table with pre-existing split partitions, queue removal candidates
-    // whose nameTxn == txWriter.txn (the frozen bracket txn). A verification PROVED this does NOT lose rows:
-    // every such frozen-txn candidate is an already-detached partition at a timestamp disjoint from the
-    // survivors, so the post-commit00 drain never unlinks a directory that still backs a live partition. This
-    // assert locks that safety in: iterating the accumulated (partitionTimestamp, nameTxn) candidates, NONE may
-    // match a currently-live ATTACHED partition (same partition timestamp, same nameTxn, size > 0). A naive
-    // post-delete result oracle CANNOT catch a violation - an unlinked-but-still-open partition dir stays
-    // readable in-process - but this in-memory drain-collision check can (with the load-bearing :8740/:8795
-    // guard defeated it fires here). Checked off the accumulator (inherently the windowed-replace drain), NOT
-    // gated on isCommitReplaceMode() - dedupMode was already reset to DEFAULT at the top of finishReplaceRange.
-    // Runs only under -ea (tests); assert compiles out in production, so zero prod cost. Not a behavior change.
+    // Verifies that a post-commit replace-range drain cannot unlink a directory still backing a live attached
+    // partition. This is assertion-only and therefore has no production-path cost.
     private boolean replaceRemoveCandidatesDisjointFromLivePartitions() {
         for (int i = 0, n = replaceRangeRemoveCandidates.size(); i < n; i += 2) {
             final long candidateTs = replaceRangeRemoveCandidates.getQuick(i);
@@ -3540,6 +3511,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void rollback() {
         checkDistressed();
+        // Rollback restores _txn/_cv, making the old Parquet directories live again. Never let deferred cleanup
+        // from an abandoned conversion batch run during a later, unrelated batch.
+        pendingParquetToNativeConversions.clear();
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
@@ -11778,6 +11752,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                for (long i = 0, n = columnFdAndDataSize.size() / 3; i < n; i++) {
+                    final long dstAuxFd = columnFdAndDataSize.get(3L * i);
+                    if (dstAuxFd > -1) {
+                        ff.fsync(dstAuxFd);
+                    }
+                    final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                    if (dstDataFd > -1) {
+                        ff.fsync(dstDataFd);
+                    }
+                }
+            }
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to native [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -12460,8 +12446,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Map data file for reading
                     final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
                     final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
+                    IndexWriter indexWriter = null;
                     try {
+                        // Construct inside the mmap's ownership scope: unsupported/corrupt index metadata or an
+                        // allocation failure in the writer constructor must not strand dataAddr.
+                        indexWriter = IndexFactory.createWriter(indexType, configuration);
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
                         // rebuildPartitionIndexFiles runs during parquet->native
                         // conversion before txWriter.commit; tag the chain
@@ -12472,10 +12461,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
+                        indexWriter.commit();
                         indexWriter.seal();
                     } finally {
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                        Misc.free(indexWriter);
+                        try {
+                            Misc.free(indexWriter);
+                        } finally {
+                            ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        }
                     }
                 }
             }

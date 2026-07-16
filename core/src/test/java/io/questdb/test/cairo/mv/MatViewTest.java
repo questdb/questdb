@@ -8307,6 +8307,44 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidateRetriesAfterConcurrentRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("mv", "SELECT ts, count() cnt FROM base SAMPLE BY 1h");
+            execute("INSERT INTO base VALUES (1.0, '2024-09-10T12:00')");
+            drainQueues();
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertTrue(state.tryLock());
+            try {
+                store.enqueueInvalidate(viewToken, "concurrent refresh test");
+                try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                    job.run();
+                }
+                Assert.assertTrue(state.isPendingInvalidation());
+                Assert.assertFalse(state.isInvalid());
+            } finally {
+                state.unlock();
+            }
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+            Assert.assertFalse(state.isPendingInvalidation());
+            Assert.assertTrue(state.isInvalid());
+            drainWalQueue();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views WHERE view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\tconcurrent refresh test\n");
+        });
+    }
+
+    @Test
     public void testTimerPeriodMatView() throws Exception {
         testPeriodRefresh("every 1h deferred", null, true);
     }

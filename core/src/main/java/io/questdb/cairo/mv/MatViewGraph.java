@@ -27,6 +27,8 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.view.ViewDependencyList;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -34,7 +36,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -47,6 +48,13 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    public static final long DEPENDENT_VIEWS_PRESENT = -1;
+
+    @FunctionalInterface
+    public interface NoDependentViewsAction {
+        long run() throws SqlException;
+    }
+
     private static final CarrierLocal<MatViewDefinition> tlDefinitionTask = new CarrierLocal<>();
     private static final CarrierLocal<LowerCaseCharSequenceHashSet> tlSeen = new CarrierLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final CarrierLocal<ArrayDeque<CharSequence>> tlStack = new CarrierLocal<>(ArrayDeque::new);
@@ -85,6 +93,21 @@ public class MatViewGraph implements Mutable {
             }
         }
         return true;
+    }
+
+    /**
+     * Runs {@code action} while holding the base table's dependency-list read lock when that list is empty.
+     *
+     * @return the action result, or {@link #DEPENDENT_VIEWS_PRESENT} when at least one dependent view exists
+     */
+    public long applyIfNoDependentViews(TableToken baseTableToken, NoDependentViewsAction action) throws SqlException {
+        final ViewDependencyList dependentViews = getOrCreateDependentViews(baseTableToken.getTableName());
+        final ReadOnlyObjList<TableToken> dependentViewList = dependentViews.lockForRead();
+        try {
+            return dependentViewList.size() == 0 ? action.run() : DEPENDENT_VIEWS_PRESENT;
+        } finally {
+            dependentViews.unlockAfterRead();
+        }
     }
 
     @TestOnly

@@ -31,7 +31,9 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -39,6 +41,7 @@ import io.questdb.griffin.ReadOnlyStatementGate;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -128,6 +131,36 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     assertReadOnlyRefusal(e);
                 }
+            }
+        });
+    }
+
+    /**
+     * DELETE is WAL-only and its operation cannot apply against a physical TableWriter. A busy WAL-writer
+     * acquire must therefore remain synchronous even when the protocol supplies an event sequence; routing
+     * it through the generic async-writer fallback would either fail later or bypass WAL replication.
+     */
+    @Test
+    public void testDeleteDoesNotUseAsyncWriterQueueWhenWalWriterBusy() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean asyncBranchEntered = new AtomicBoolean();
+            OperationDispatcher.setAsyncEnqueueObserver(() -> asyncBranchEntered.set(true));
+            try (CairoEngine busyEngine = poolExhaustedWritableEngine()) {
+                OperationDispatcher<AbstractOperation> dispatcher = new OperationDispatcher<>(busyEngine, "matrix delete") {
+                    @Override
+                    protected long apply(AbstractOperation operation, TableWriterAPI writerFronted) {
+                        return 0;
+                    }
+                };
+                try {
+                    dispatcher.execute(deleteProbeOperation(), TestUtils.createSqlExecutionCtx(busyEngine), new SCSequence(), false);
+                    Assert.fail("busy WAL DELETE must preserve the retryable writer-busy exception");
+                } catch (EntryUnavailableException expected) {
+                    // Expected: the caller retries the WAL submission instead of using the physical-writer queue.
+                }
+                Assert.assertFalse("DELETE must not enter the physical-writer async branch", asyncBranchEntered.get());
+            } finally {
+                OperationDispatcher.setAsyncEnqueueObserver(null);
             }
         });
     }
@@ -649,6 +682,11 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         return out;
     }
 
+    private static DeleteOperation deleteProbeOperation() {
+        final TableToken token = new TableToken("matrix_del", "matrix_del~1", null, 1, true, false, false);
+        return new DeleteOperation(token, 1, 0, 0, null, true, true, 0, 1, -1, -1);
+    }
+
     private static Operation dropOperation(String tableName) {
         return new GenericDropOperation(OperationCodes.DROP_TABLE, null, tableName, 0, false);
     }
@@ -746,6 +784,22 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
             @Override
             public boolean isReadOnlyMode() {
                 return true;
+            }
+        };
+    }
+
+    private CairoEngine poolExhaustedWritableEngine() throws Exception {
+        String dir = temp.newFolder().getAbsolutePath();
+        CairoConfiguration cfg = new DefaultCairoConfiguration(dir);
+        return new CairoEngine(cfg, false) {
+            @Override
+            public TableWriterAPI getTableWriterAPI(TableToken tableToken, String lockReason) {
+                throw EntryUnavailableException.instance("pool size exceeded");
+            }
+
+            @Override
+            public TableWriter getWriterOrPublishCommand(TableToken tableToken, AsyncWriterCommand asyncWriterCommand) {
+                throw new AssertionError("DELETE reached the physical-writer async queue");
             }
         };
     }

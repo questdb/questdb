@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -46,6 +47,24 @@ public class DeleteTest extends AbstractCairoTest {
                 Assert.assertEquals(CompiledQuery.DELETE, cc.getType());
                 Assert.assertNotNull(cc.getDeleteOperation());
             }
+        });
+    }
+
+    @Test
+    public void testDeleteReportsUnavailableAffectedRowCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (0, 1), (1000000, 2), (2000000, 3)");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery query = compiler.compile("DELETE FROM t WHERE x < 3", sqlExecutionContext);
+                try (OperationFuture future = query.execute(sqlExecutionContext, null, false)) {
+                    future.await();
+                    Assert.assertEquals("WAL DELETE must not expose seqTxn as affected rows", 0, future.getAffectedRowsCount());
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT x FROM t").expectSize().returns("x\n3\n");
         });
     }
 
@@ -840,6 +859,71 @@ public class DeleteTest extends AbstractCairoTest {
             assertQuery("select x from t").expectSize().returns("""
                     x
                     2
+                    """);
+        });
+    }
+
+    @Test
+    public void testDeleteFormerInternalNamedBindsAllowIncompatibleTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('1970-01-01T00:00:01.000000Z', 1, 'one'),
+                        ('1970-01-01T00:00:02.000000Z', 2, 'two'),
+                        ('1970-01-01T00:00:03.000000Z', 3, 'three'),
+                        ('1970-01-01T00:00:04.000000Z', 4, 'four'),
+                        ('1970-01-01T00:00:05.000000Z', 5, 'five')
+                    """);
+            drainWalQueue();
+
+            sqlExecutionContext.getBindVariableService().setInt(0, 3);
+            sqlExecutionContext.getBindVariableService().setInt("__del_win_lo", 4);
+            sqlExecutionContext.getBindVariableService().setStr("__del_win_hi", "five");
+            execute("DELETE FROM t WHERE x = $1 OR x = :__del_win_lo OR s = :__del_win_hi");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT x, s FROM t").expectSize().returns("""
+                    x\ts
+                    1\tone
+                    2\ttwo
+                    """);
+        });
+    }
+
+    @Test
+    public void testDeleteFormerInternalNamedTimestampBindsPreserveValuesAndTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('1970-01-01T00:00:00.000000001Z', 1),
+                        ('1970-01-01T00:00:00.000000002Z', 2),
+                        ('1970-01-01T00:00:00.000000003Z', 3),
+                        ('1970-01-01T00:00:00.000000004Z', 4),
+                        ('1970-01-01T00:00:00.000000005Z', 5)
+                    """);
+            drainWalQueue();
+
+            sqlExecutionContext.getBindVariableService().setTimestampNano("__del_win_lo", 2);
+            sqlExecutionContext.getBindVariableService().setTimestampNano("__del_win_hi", 4);
+            execute("""
+                    DELETE FROM t
+                    WHERE (ts = :__del_win_lo OR ts = :__del_win_hi)
+                      AND typeOf(:__del_win_lo) = 'TIMESTAMP_NS'
+                      AND typeOf(:__del_win_hi) = 'TIMESTAMP_NS'
+                    """);
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT ts, x FROM t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T00:00:00.000000001Z\t1
+                    1970-01-01T00:00:00.000000003Z\t3
+                    1970-01-01T00:00:00.000000005Z\t5
                     """);
         });
     }

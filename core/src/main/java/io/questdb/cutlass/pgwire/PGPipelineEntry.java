@@ -1820,13 +1820,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 // Delete implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
                                 fireParkedUpdateMintObserver();
                                 tableWriterAPI.commit();
-                                // On a WAL table apply() defers the DELETE (writes a CMD_DELETE_TABLE SQL txn) and
-                                // returns the sequencer txn, NOT the affected-row count -- the true count is not
-                                // known until ApplyWal2TableJob runs the delete later. So the PG command tag on
-                                // this parked-writer path reports the seqTxn, matching the sibling parked-writer
-                                // UPDATE path above; the exact count is only surfaced on the async completion path
-                                // (fut.getAffectedRowsCount()). Pre-existing WAL behaviour, kept consistent here.
-                                sqlAffectedRowCount = tableWriterAPI.apply(deleteOperation);
+                                // WAL apply computes the exact DELETE count later. Acknowledge submission with
+                                // the same unavailable-count placeholder as the regular DELETE dispatcher rather
+                                // than exposing the sequencer transaction as a PostgreSQL affected-row count.
+                                tableWriterAPI.apply(deleteOperation);
+                                sqlAffectedRowCount = 0;
                             } finally {
                                 lock.unlock();
                             }
