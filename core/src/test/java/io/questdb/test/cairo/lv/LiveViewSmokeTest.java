@@ -18059,6 +18059,216 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingManifestPublishedOnO3RetirementPath() throws Exception {
+        // An O3 replay retires the entries its late row unsealed and publishes
+        // the survivors durably, off the same retireThreshold that drives the
+        // in-memory drop. The cycle therefore publishes twice - once ahead of
+        // the REPLACE_RANGE commit with the survivors, once after it with the
+        // fresh head - and the poisoned entries are gone from _ring either way.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                final long survivorLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
+                final long retiredLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
+                final long retiredHeadLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(2);
+                final long genBeforeO3 = lv.getLastPublishedRingGeneration();
+
+                // A late row at 15 sits above the entry at 10 and below the two
+                // at 20 / 30, so it resumes from 10 and unseals the rest.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Two publications: the write-ahead retirement and the fresh
+                // head the post-replay .cp write adds.
+                Assert.assertEquals(genBeforeO3 + 2, lv.getLastPublishedRingGeneration());
+                Assert.assertFalse(lv.isCheckpointRingDirty());
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(survivorLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
+
+                readRingManifest(lv, manifest);
+                Assert.assertEquals(2, manifest.getEntryCount());
+                Assert.assertEquals(genBeforeO3 + 2, manifest.getGeneration());
+                Assert.assertEquals(survivorLvSeqTxn, manifest.getEntryLvSeqTxn(0));
+                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
+                Assert.assertEquals(
+                        lv.getHeadCheckpointLvSeqTxn(),
+                        manifest.getEntryLvSeqTxn(manifest.getEntryCount() - 1)
+                );
+                // The unsealed entries are gone: an anchor the late row invalidated
+                // must never be listed, or a restart could resume from it.
+                for (int i = 0; i < manifest.getEntryCount(); i++) {
+                    Assert.assertNotEquals(retiredLvSeqTxn, manifest.getEntryLvSeqTxn(i));
+                    Assert.assertNotEquals(retiredHeadLvSeqTxn, manifest.getEntryLvSeqTxn(i));
+                }
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingPublishFailureDoesNotAbandonO3Replay() throws Exception {
+        // Publication failure must never block a replay. With _ring unwritable
+        // for the whole run the view keeps serving correct output through an O3
+        // and its watermark still advances - the manifest is derived state, so
+        // it can trail without gating the cycle that produces it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertTrue(lv.isCheckpointRingDirty());
+                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
+
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The replay ran to completion: the late row landed in order and
+                // the row numbers are gapless against a from-scratch recompute.
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
+                // The in-memory ring still retired the unsealed entries, so
+                // resume anchors stay correct while the manifest trails.
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                Assert.assertTrue(lv.isCheckpointRingDirty());
+                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingRetirementPublishPrecedesReplayCommit() throws Exception {
+        // The retirement publication runs ahead of the commit it names, so it
+        // stands on its own: failing the post-replay .cp write suppresses the
+        // add-path publication and leaves _ring holding exactly what the
+        // write-ahead publish wrote - the survivors, at the replay's commit
+        // point, with the unsealed entries already gone.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failCheckpointWrite.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                final long survivorLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
+                final long genBeforeO3 = lv.getLastPublishedRingGeneration();
+
+                failCheckpointWrite.set(true);
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Exactly one publication landed - the write-ahead retirement.
+                // The post-replay .cp never committed, so the add path threw
+                // before it could publish the fresh entry.
+                Assert.assertEquals(genBeforeO3 + 1, lv.getLastPublishedRingGeneration());
+                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(survivorLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
+                // The retire cleared the head and no fresh .cp replaced it.
+                Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                readRingManifest(lv, manifest);
+                Assert.assertEquals(1, manifest.getEntryCount());
+                Assert.assertEquals(genBeforeO3 + 1, manifest.getGeneration());
+                Assert.assertEquals(survivorLvSeqTxn, manifest.getEntryLvSeqTxn(0));
+                // covered is the replay's commit point, which the commit then
+                // reached - the equality a restart's trust rule looks for.
+                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t4\n");
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3CorruptNonHeadAnchorIsEvictedAndNotRetried() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {

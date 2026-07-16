@@ -2389,8 +2389,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * yet ({@code removeQuiet} is idempotent, so a double unlink is harmless). The
      * in-memory drop is unconditional even if an unlink fails - a failed unlink
      * must never leave a live anchor.
+     * <p>
+     * The retire also publishes the survivors to {@code _ring} at
+     * {@code coveredBaseSeqTxn} - the cycle's commit point - before it unlinks
+     * anything, so the in-memory drop and its durable record stay one unit off
+     * one {@code triggerLowTs}. The publication runs <em>ahead</em> of the commit
+     * it names: the retire above has just proved that no row in the trigger
+     * commit or the ahead range sits at or below any survivor's {@code maxTs},
+     * which is exactly "sealed at {@code coveredBaseSeqTxn}", and that stays true
+     * whether or not the replay below then succeeds (design section 6.2).
+     * <p>
+     * Publishing before the unlink is what keeps a crash in between cheap: the
+     * manifest is an allow-list, so a file it does not list is garbage whether or
+     * not its unlink lands, whereas unlinking first would leave the prior
+     * manifest naming files that no longer exist and a restart would reject it
+     * whole over the referenced-file check. Failure never blocks the replay
+     * (design section 6.4) - the helper logs and returns false, and the
+     * in-memory ring the resume anchors come from is already correct.
      */
-    private void invalidateRetainedCheckpointsOnO3(LiveViewInstance instance, long triggerLowTs) {
+    private void invalidateRetainedCheckpointsOnO3(LiveViewInstance instance, long triggerLowTs, long coveredBaseSeqTxn) {
         evictedCheckpoints.clear();
         instance.invalidateRetainedCheckpointsFrom(triggerLowTs, evictedCheckpoints);
         final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
@@ -2400,6 +2417,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (headUnsealed) {
             evictedCheckpoints.add(headLvSeqTxn);
         }
+        publishCheckpointRing(instance, coveredBaseSeqTxn);
         unlinkCheckpointFiles(instance, evictedCheckpoints);
         if (headUnsealed) {
             instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
@@ -2893,7 +2911,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // (anchorMaxTs < retireThreshold), and for a head-hit nothing is unsealed
         // so this is a no-op. Mirrors o3HeadMissReplay's retire; the apply-ahead
         // rebuild fallback above routes through it too.
-        invalidateRetainedCheckpointsOnO3(instance, retireThreshold);
+        //
+        // The retire also publishes the survivors durably at commitSeqTxn, ahead
+        // of the REPLACE_RANGE commit below: the same retireThreshold drives the
+        // in-memory drop and the manifest, so the two can never disagree about
+        // what this O3 unsealed. A publication failure does not abandon the
+        // replay - covered only advances on success, so the manifest left on disk
+        // is one a restart either trusts (its covered still equals the reconciled
+        // floor, meaning this commit never landed and the survivors really are
+        // still sealed there) or ignores.
+        invalidateRetainedCheckpointsOnO3(instance, retireThreshold, commitSeqTxn);
         // Effectively-final snapshot of the commit / watermark point for the commit
         // lambda and the bookkeeping below (commitSeqTxn is reassigned above).
         final long committedSeqTxn = commitSeqTxn;
@@ -3159,7 +3186,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     ? Numbers.LONG_NULL
                     : Math.min(triggerLowTs, minAheadTs);
         }
-        invalidateRetainedCheckpointsOnO3(instance, retireLowTs);
+        // The retire publishes the survivors durably at effectiveSeqTxn - this
+        // rebuild's commit point - before the commit below, off the same
+        // retireLowTs that drives the in-memory drop. A non-DATA / recovery
+        // trigger empties the ring, so its publication is an empty manifest and a
+        // crash mid-rebuild leaves no anchor to select (design section 6.5).
+        invalidateRetainedCheckpointsOnO3(instance, retireLowTs, effectiveSeqTxn);
         boolean readerAttached = false;
         long appendedRows = 0;
         // True when the zero-surviving-row path issued a pure-delete
