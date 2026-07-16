@@ -717,7 +717,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
         switch (dim.getKind()) {
             case PartitionDimension.KIND_IDENTITY:
-                return getSymbolMapReader(dim.getColumnIndex()).keyOf(value);
+                return getSymbolMapReader(denseIndexOfDimensionSource(dim)).keyOf(value);
             case PartitionDimension.KIND_HASH:
                 return CompositeDimensionTransform.hashBucket(value, dim.getParam());
             case PartitionDimension.KIND_TRUNCATE:
@@ -830,7 +830,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
         switch (dim.getKind()) {
             case PartitionDimension.KIND_IDENTITY:
-                return getSymbolMapReader(dim.getColumnIndex()).valueOf(key);
+                return getSymbolMapReader(denseIndexOfDimensionSource(dim)).valueOf(key);
             case PartitionDimension.KIND_TRUNCATE:
                 return getCompositeDictionaries().dictReaderFor(dimIndex).valueOf(key);
             case PartitionDimension.KIND_HASH:
@@ -838,6 +838,34 @@ public class TableReader implements Closeable, SymbolTableSource {
             default:
                 throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
         }
+    }
+
+    /**
+     * Resolves a composite dimension's stable WRITER index ({@link PartitionDimension#getColumnIndex()})
+     * to the reader's current DENSE column index. {@code getSymbolMapReader}/{@code getColumnType} etc.
+     * are all dense-indexed, but {@code TableReaderMetadata} compacts tombstoned columns out of its
+     * dense list on reload ({@code readFromMem}/{@code applyTransition0} both skip {@code writerIndex < 0}
+     * entries and assign dense position by insertion order), so writer index and dense index diverge
+     * once a lower-writer-index column has been dropped (whole-branch review finding I2) -- unlike
+     * {@code TableWriterMetadata}, which only tombstones in place and never renumbers, so the writer
+     * side ({@link TableWriter#internDimensionValue}) needs no analogous translation. Mirrors the
+     * linear-scan idiom already used for the same writer-to-dense translation in {@code
+     * AbstractPostingIndexReader.denseIndexFromWriter} / {@code IndexBuilder}'s covering-column
+     * resolution.
+     * <p>
+     * DDL guards reject dropping a dimension's own source column, so the "not found" branch should be
+     * unreachable in practice; it is guarded defensively here rather than left to surface as a bare
+     * AIOOBE out of {@code getSymbolMapReader}.
+     */
+    private int denseIndexOfDimensionSource(PartitionDimension dim) {
+        int writerIndex = dim.getColumnIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        throw CairoException.critical(0)
+                .put("composite dimension source column not found [writerIndex=").put(writerIndex).put(']');
     }
 
     private static int getColumnBits(int columnCount) {

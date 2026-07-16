@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CompositeDictionaries;
 import io.questdb.cairo.CompositeInternerLayout;
 import io.questdb.cairo.PartitionDimension;
 import io.questdb.cairo.PartitionSpec;
@@ -234,6 +235,53 @@ public class CompositeDictPersistenceTest extends AbstractCairoTest {
     }
 
     /**
+     * Whole-branch review finding I2: {@link TableReader#keyOfDimensionValue(int, CharSequence)} and
+     * {@link TableReader#valueOfDimensionKey(int, int)}'s {@code KIND_IDENTITY} branch call
+     * {@code getSymbolMapReader(dim.getColumnIndex())}, where {@link PartitionDimension#getColumnIndex()}
+     * is documented (see its {@code ColumnNameResolver} javadoc) as the dimension source's stable
+     * WRITER index. {@code TableReaderMetadata} compacts tombstoned columns out of its dense column
+     * list on reload ({@code readFromMem}/{@code applyTransition0} both skip {@code writerIndex < 0}
+     * entries and assign dense position by {@code columnMetadata.size()}), so writer index and dense
+     * position diverge once a LOWER-writer-index column is dropped -- exactly the divergence
+     * {@link CompositeDictionariesTest#testDropDimensionSourceColumnRejected()} proves does NOT happen
+     * on the writer side (tombstone-in-place, never renumbered).
+     * <p>
+     * Here {@code filler} (writer idx 1, non-dimension) sits below {@code exchange} (writer idx 2, the
+     * IDENTITY dimension's source). Dropping {@code filler} is allowed (not a dimension source), and
+     * shifts {@code exchange}'s READER-side dense index down to 1 while its writer index stays 2. The
+     * expected key is cross-checked directly against the post-drop symbol reader for {@code exchange}
+     * (resolved by name, i.e. by current dense index) so the test does not simply assume what the
+     * "correct" key ought to be.
+     */
+    @Test
+    public void testIdentityDimAfterDroppingLowerIndexColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, filler double, exchange symbol) " +
+                    "timestamp(ts) partition by day, exchange wal");
+            try (TableWriter w = getWriter("t")) {
+                TableWriter.Row row = w.newRow(0);
+                row.putSym(2, "NYSE");
+                row.append();
+                w.commit();
+            }
+            // filler (writer idx 1) is not a dimension source -> DROP is allowed; this is what shifts
+            // exchange's (writer idx 2) dense reader-side index down to 1 once TableReaderMetadata
+            // compacts the tombstoned column out on reload.
+            execute("alter table t drop column filler");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableReader r = getReader("t")) {
+                int exchangeDenseIdx = r.getMetadata().getColumnIndexQuiet("exchange");
+                Assert.assertEquals("exchange should now be dense index 1 (ts=0, exchange=1)", 1, exchangeDenseIdx);
+                int expectedKey = r.getSymbolMapReader(exchangeDenseIdx).keyOf("NYSE");
+                Assert.assertEquals(expectedKey, r.keyOfDimensionValue(0, "NYSE"));
+                TestUtils.assertEquals("NYSE", r.valueOfDimensionKey(0, expectedKey));
+            }
+        });
+    }
+
+    /**
      * Companion to {@link #testUncommittedInternsDiscardedOnReopen()}: this time a real row is
      * appended alongside the {@code internCell} call, so {@link TableWriter#inTransaction()} is true
      * and {@link TableWriter#rollback()} actually engages (rather than being a no-op over an empty
@@ -255,6 +303,61 @@ public class CompositeDictPersistenceTest extends AbstractCairoTest {
                 row.append();
                 w.rollback();                                        // discard the whole transaction (row + interns)
                 Assert.assertEquals(0, w.getCompositeDictionaries().cellRegistry().size());  // registry truncated to _txn count 0
+            }
+        });
+    }
+
+    /**
+     * Whole-branch review finding I4: dropping a NON-dimension SYMBOL column (one that is neither a
+     * dimension source nor an ORDER BY/cluster column, e.g. {@code tag} below) is allowed by the DDL
+     * guards ({@link CompositeDictionariesTest#testDropDimensionSourceColumnRejected()} only rejects
+     * dimension-source/cluster columns). {@code tag} sits at a lower writer index than the composite
+     * dimensions' source columns, so dropping it exercises the exact writer-vs-dense shift this class's
+     * {@link #testIdentityDimAfterDroppingLowerIndexColumn()} fixes (I2) for a second, independent
+     * symbol column -- proving that fix, plus the registry/dedicated-dict machinery, stays consistent
+     * across an ordinary non-dimension SYMBOL drop rather than merely for the single-dimension repro
+     * shape. Covers both the registry directly (size unchanged, tuple round-trips) and both dimension
+     * kinds present (IDENTITY via the just-fixed dense-index translation, TRUNCATE via its dedicated
+     * dict, unaffected by I2 since it never indexed through the source column's symbol map).
+     */
+    @Test
+    public void testDropNonDimensionSymbolColumnPreservesInternerState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, tag symbol, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            int ord;
+            int truncKey;
+            try (TableWriter w = getWriter("t")) {
+                ord = w.getCompositeDictionaries().cellRegistry().internCell(new int[]{5, 6}, 2);
+                truncKey = w.internDimensionValue(1, "BTCUSDT");          // truncate(symbol,3) dim idx 1 -> "BTC"
+                TableWriter.Row row = w.newRow(0);
+                row.putSym(1, "sometag");
+                row.putSym(2, "NYSE");
+                row.putSym(3, "BTCUSDT");
+                row.append();
+                w.commit();
+                Assert.assertEquals(1, w.getCompositeDictionaries().cellRegistry().size());
+            }
+
+            // tag (writer idx 1) is a non-dimension SYMBOL column -> DROP is allowed (unlike exchange/
+            // symbol, the dimension sources, which testDropDimensionSourceColumnRejected proves reject).
+            execute("alter table t drop column tag");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableReader r = getReader("t")) {
+                CompositeDictionaries d = r.getCompositeDictionaries();
+                Assert.assertNotNull(d);
+                Assert.assertEquals(1, d.cellRegistry().size());     // unchanged (== committed count)
+                int[] out = new int[2];
+                d.cellRegistry().getTuple(ord, out);
+                Assert.assertArrayEquals(new int[]{5, 6}, out);
+
+                // dimension round-trips still consistent post-drop
+                Assert.assertEquals(0, r.keyOfDimensionValue(0, "NYSE"));          // identity(exchange) -> first & only key
+                TestUtils.assertEquals("NYSE", r.valueOfDimensionKey(0, 0));
+                Assert.assertEquals(truncKey, r.keyOfDimensionValue(1, "BTCZZZ")); // truncate(symbol,3): same "BTC" prefix
+                TestUtils.assertEquals("BTC", r.valueOfDimensionKey(1, truncKey));
             }
         });
     }
