@@ -107,6 +107,40 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return cachedColumnVersionList;
     }
 
+    /**
+     * Packs a composite-partitioning cell key into the spare high 32 bits of the {@code
+     * COLUMN_INDEX_OFFSET} slot, alongside the (low 32 bit) column index. {@link #BLOCK_SIZE} does not
+     * change for {@code _cv} -- unlike the {@code _txn} attached-partition record (which widens its
+     * stride for a composite table), {@code _cv} keeps its 4-long record and repurposes spare bits of
+     * the existing column-index slot instead.
+     * <p>
+     * For a plain table {@code cellKey} is always 0, so {@code packColIndex(0, columnIndex) ==
+     * columnIndex} exactly -- the packed value, and therefore the on-disk bytes, are byte-identical to
+     * the pre-composite-partitioning layout.
+     *
+     * @param cellKey     dense per-(timePartition, dimension-tuple) cell ordinal; 0 for plain tables
+     *                    and for the dormant cellKey-0 write path (multi-cell routing is Plan 4)
+     * @param columnIndex writer column index
+     * @return the packed value to store at {@code COLUMN_INDEX_OFFSET}
+     */
+    public static long packColIndex(int cellKey, int columnIndex) {
+        return ((long) cellKey << 32) | (columnIndex & 0xFFFF_FFFFL);
+    }
+
+    /**
+     * Recovers the column index from a value packed by {@link #packColIndex(int, int)}.
+     */
+    public static int unpackColumnIndex(long packedColumnIndex) {
+        return (int) packedColumnIndex;
+    }
+
+    /**
+     * Recovers the cell key from a value packed by {@link #packColIndex(int, int)}.
+     */
+    public static int unpackCellKey(long packedColumnIndex) {
+        return (int) (packedColumnIndex >>> 32);
+    }
+
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
         int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
@@ -181,6 +215,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public long getMaxPartitionVersion(long partitionTimestamp) {
+        return getMaxPartitionVersion(partitionTimestamp, 0);
+    }
+
+    /**
+     * Plan 3 Task 5: {@code cellKey}-aware counterpart of {@link #getMaxPartitionVersion(long)}. A
+     * partition "version" (max column name txn at a timestamp) is scoped per {@code (ts, cellKey)} --
+     * the plain/dormant overload above delegates here with {@code cellKey = 0}.
+     */
+    public long getMaxPartitionVersion(long partitionTimestamp, int cellKey) {
         long maxVersion = -1;
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1) {
@@ -190,29 +233,48 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 if (thisTimestamp != partitionTimestamp) {
                     break;
                 }
-                final long columnVersion = cachedColumnVersionList.getQuick(index + COLUMN_NAME_TXN_OFFSET);
-                maxVersion = Math.max(maxVersion, columnVersion);
+                final int thisCellKey = unpackCellKey(cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET));
+                if (thisCellKey == cellKey) {
+                    final long columnVersion = cachedColumnVersionList.getQuick(index + COLUMN_NAME_TXN_OFFSET);
+                    maxVersion = Math.max(maxVersion, columnVersion);
+                } else if (thisCellKey > cellKey) {
+                    // packed values are ascending within a ts run (cellKey is the high-order term),
+                    // so no later record in this run can match cellKey either.
+                    break;
+                }
             }
         }
         return maxVersion;
     }
 
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
+        return getRecordIndex(partitionTimestamp, 0, columnIndex);
+    }
+
+    /**
+     * Plan 3 Task 5: {@code cellKey}-aware counterpart of {@link #getRecordIndex(long, int)}. The ts
+     * binary search is unchanged (timestamp remains the primary sort key, independent of the cellKey
+     * packed into the column-index slot); within that ts run, the scan compares the FULL packed
+     * {@code (cellKey, columnIndex)} value, so a lookup can only match a record with the SAME cellKey
+     * -- it cannot alias a same-column record belonging to a different cell.
+     */
+    public int getRecordIndex(long partitionTimestamp, int cellKey, int columnIndex) {
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1) {
+            final long packedColumnIndex = packColIndex(cellKey, columnIndex);
             final int sz = cachedColumnVersionList.size();
             for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
-                final long thisIndex = cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET);
+                final long thisPacked = cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET);
                 final long thisTimestamp = cachedColumnVersionList.getQuick(index);
                 if (thisTimestamp != partitionTimestamp) {
                     break;
                 }
 
-                if (thisIndex == columnIndex) {
+                if (thisPacked == packedColumnIndex) {
                     return index;
                 }
 
-                if (thisIndex > columnIndex) {
+                if (thisPacked > packedColumnIndex) {
                     break;
                 }
             }

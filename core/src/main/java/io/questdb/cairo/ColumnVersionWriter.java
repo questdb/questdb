@@ -123,6 +123,61 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void removePartition(long partitionTimestamp) {
+        removePartition(partitionTimestamp, 0);
+    }
+
+    /**
+     * Plan 3 Task 5: {@code cellKey}-aware counterpart of {@link #removePartition(long)}. Within the
+     * {@code partitionTimestamp} block, records are ordered by the packed {@code (cellKey,
+     * columnIndex)} key -- cellKey occupies the HIGH bits, so every row belonging to one cell forms a
+     * single contiguous sub-run inside that ts block. This removes exactly that sub-run, not the whole
+     * timestamp block.
+     * <p>
+     * The plain/dormant {@link #removePartition(long)} overload delegates here with {@code cellKey =
+     * 0}; for a plain (or dormant) table every row at a timestamp has cellKey 0, so it removes the
+     * identical row set as the pre-composite-partitioning code -- the byte-identity guarantee for the
+     * remove path.
+     */
+    public void removePartition(long partitionTimestamp, int cellKey) {
+        int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (from > -1) {
+            final int sz = cachedColumnVersionList.size();
+
+            // Find the start of this cellKey's contiguous sub-run (first record whose cellKey >= target).
+            int start = from;
+            while (start < sz
+                    && cachedColumnVersionList.getQuick(start) == partitionTimestamp
+                    && unpackCellKey(cachedColumnVersionList.getQuick(start + COLUMN_INDEX_OFFSET)) < cellKey) {
+                start += BLOCK_SIZE;
+            }
+
+            // Find the end of the sub-run (first record after start whose cellKey != target).
+            int end = start;
+            while (end < sz
+                    && cachedColumnVersionList.getQuick(end) == partitionTimestamp
+                    && unpackCellKey(cachedColumnVersionList.getQuick(end + COLUMN_INDEX_OFFSET)) == cellKey) {
+                end += BLOCK_SIZE;
+            }
+
+            if (end > start) {
+                cachedColumnVersionList.removeIndexBlock(start, end - start);
+                hasChanges = true;
+            }
+        }
+    }
+
+    /**
+     * Removes every row at {@code partitionTimestamp} regardless of cellKey -- i.e. the whole
+     * timestamp block, which is what the public {@link #removePartition(long)} overload did before
+     * Plan 3 Task 5 narrowed it to a single cell. Used internally by {@link #copyColumnVersions(long,
+     * long)} and {@link #squashPartition(long, long)}, both of which relocate or discard an entire
+     * timestamp's record family -- potentially spanning multiple cells -- as one atomic unit, not a
+     * single cell's rows. Deliberately NOT delegated to {@link #removePartition(long, int)} for any
+     * fixed cellKey: doing so would silently leave other cells' stale records behind once multi-cell
+     * routing activates (Plan 4), even though it is a no-op difference today (Plan 3 dormancy: only
+     * cellKey 0 ever exists in production).
+     */
+    private void removeAllCellsAtTimestamp(long partitionTimestamp) {
         int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (from > -1) {
             int to = cachedColumnVersionList.binarySearchBlock(from, BLOCK_SIZE_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_DOWN);
@@ -174,7 +229,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
-        removePartition(sourcePartitionTimestamp);
+        // Discards the entire source partition (every cell, not just cellKey 0) -- see
+        // removeAllCellsAtTimestamp's javadoc.
+        removeAllCellsAtTimestamp(sourcePartitionTimestamp);
         // Remove all default partitions that point to the targetPartitionTimestamp
         for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
             long partitionTimestamp = cachedColumnVersionList.getQuick(i);
@@ -239,15 +296,34 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * @param columnTop   column top
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
+        upsert(timestamp, 0, columnIndex, txn, columnTop);
+    }
+
+    /**
+     * Plan 3 Task 5: {@code cellKey}-aware counterpart of {@link #upsert(long, int, long, long)}.
+     * Finds or inserts by the FULL packed {@code (cellKey, columnIndex)} key, and inserts in packed
+     * order so {@link #getRecordIndex(long, int, int)}'s binary-search-then-scan invariant continues
+     * to hold. For a plain table ({@code cellKey == 0}) the packed key equals the bare column index,
+     * so insertion order -- and the on-disk bytes -- are unchanged from the pre-composite-partitioning
+     * layout.
+     *
+     * @param timestamp   partition timestamp
+     * @param cellKey     dense per-(timePartition, dimension-tuple) cell ordinal; 0 for plain/dormant
+     * @param columnIndex column index
+     * @param txn         column file txn name
+     * @param columnTop   column top
+     */
+    public void upsert(long timestamp, int cellKey, int columnIndex, long txn, long columnTop) {
+        final long packedColumnIndex = packColIndex(cellKey, columnIndex);
         final int sz = cachedColumnVersionList.size();
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         boolean insert = true;
         if (index > -1) {
             // brute force columns for this timestamp
             while (index < sz && cachedColumnVersionList.getQuick(index) == timestamp) {
-                final long thisIndex = cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET);
+                final long thisPacked = cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET);
 
-                if (thisIndex == columnIndex) {
+                if (thisPacked == packedColumnIndex) {
                     if (txn > -1) {
                         cachedColumnVersionList.setQuick(index + COLUMN_NAME_TXN_OFFSET, txn);
                     }
@@ -256,7 +332,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     break;
                 }
 
-                if (thisIndex > columnIndex) {
+                if (thisPacked > packedColumnIndex) {
                     break;
                 }
 
@@ -273,7 +349,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 cachedColumnVersionList.setPos(Math.max(index + BLOCK_SIZE, sz + BLOCK_SIZE));
             }
             cachedColumnVersionList.setQuick(index, timestamp);
-            cachedColumnVersionList.setQuick(index + COLUMN_INDEX_OFFSET, columnIndex);
+            cachedColumnVersionList.setQuick(index + COLUMN_INDEX_OFFSET, packedColumnIndex);
             cachedColumnVersionList.setQuick(index + COLUMN_NAME_TXN_OFFSET, txn);
             cachedColumnVersionList.setQuick(index + COLUMN_TOP_OFFSET, columnTop);
         }
@@ -346,8 +422,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1L) {
-            // Wipe out all the information about this partition to replace with the new one.
-            removePartition(dstTimestamp);
+            // Wipe out all the information about this partition (every cell, not just cellKey 0) to
+            // replace with the new one -- see removeAllCellsAtTimestamp's javadoc.
+            removeAllCellsAtTimestamp(dstTimestamp);
             index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, dstTimestamp, Vect.BIN_SEARCH_SCAN_UP);
         }
 
