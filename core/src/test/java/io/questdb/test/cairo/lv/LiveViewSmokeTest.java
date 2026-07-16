@@ -18413,6 +18413,156 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingUnwritableForWholeRunNeverStallsView() throws Exception {
+        // The availability property, over a whole run rather than the single
+        // cycle testCheckpointRingPublishFailureDoesNotAbandonO3Replay covers.
+        // _ring is unwritable from CREATE through the restart, so every
+        // publication on every path fails and the head stays pinned at
+        // LONG_NULL by the add path's gate. The manifest is derived state, so
+        // losing it must cost the durable ring and some .cp churn - never
+        // availability, and never correctness.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 3);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+
+                // Nine in-order cycles - three times the retention budget, so the
+                // ring prunes and evicts throughout rather than only growing.
+                long priorWatermark = lv.getAppliedWatermark();
+                for (int seconds = 10; seconds <= 50; seconds += 5) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+
+                    // Never stalls: the cycle commits and the floor moves, even
+                    // though the publication that should have preceded it failed.
+                    Assert.assertFalse(lv.isInvalid());
+                    Assert.assertTrue(
+                            "the applied watermark must advance on every cycle",
+                            lv.getAppliedWatermark() > priorWatermark
+                    );
+                    priorWatermark = lv.getAppliedWatermark();
+
+                    // Nothing published, on any path, at any point in the run.
+                    Assert.assertTrue(lv.isCheckpointRingDirty());
+                    Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
+                    Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                    // The pinned head pins the cadence counters setHeadCheckpoint
+                    // resets, so every cycle seals another .cp - the pathological
+                    // cost of the head gate is I/O, not a stall. Bounded disk is
+                    // what pays for it: the ring prunes to the budget and its
+                    // evictions are unlinked unconditionally, so _checkpoints/
+                    // tracks the ring rather than the run's length.
+                    Assert.assertTrue(lv.getRetainedCheckpointCount() <= 3);
+                    Assert.assertEquals(lv.getRetainedCheckpointCount(), countCheckpointFiles(lv));
+                }
+
+                // An O3 inside ring coverage: above the maxTs=40 and maxTs=45
+                // survivors, below the maxTs=50 entry it unseals. The in-memory
+                // ring never went anywhere, so the resume anchor is still there
+                // to be found - an unwritable _ring costs the NEXT restart its
+                // anchors, not this process.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:47.000000Z', 47)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertFalse(lv.isInvalid());
+                Assert.assertTrue(
+                        "an in-retention O3 must still resume from an in-memory anchor",
+                        lv.getO3ResumeReplayRows() > 0
+                );
+                Assert.assertEquals(
+                        "an in-retention O3 must not rebuild from the view's lower bound",
+                        0,
+                        lv.getO3BoundaryReplayRows()
+                );
+
+                // An O3 below the whole ring: the accepted rebuild, reached for
+                // retention reasons rather than the manifest's. It serves too.
+                setCurrentMicros(2_200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:12.000000Z', 12)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertFalse(lv.isInvalid());
+                Assert.assertTrue(lv.getO3BoundaryReplayRows() > 0);
+                Assert.assertTrue(lv.isCheckpointRingDirty());
+                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
+
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                                "2026-11-01T00:00:12.000000Z\t12\t2\n" +
+                                "2026-11-01T00:00:15.000000Z\t15\t3\n" +
+                                "2026-11-01T00:00:20.000000Z\t20\t4\n" +
+                                "2026-11-01T00:00:25.000000Z\t25\t5\n" +
+                                "2026-11-01T00:00:30.000000Z\t30\t6\n" +
+                                "2026-11-01T00:00:35.000000Z\t35\t7\n" +
+                                "2026-11-01T00:00:40.000000Z\t40\t8\n" +
+                                "2026-11-01T00:00:45.000000Z\t45\t9\n" +
+                                "2026-11-01T00:00:47.000000Z\t47\t10\n" +
+                                "2026-11-01T00:00:50.000000Z\t50\t11\n");
+            }
+
+            // A run that never published one restarts on the conservative
+            // fallback - the outcome a legacy view gets - and keeps serving.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(2_400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:55.000000Z', 55)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertFalse("a run that never published must still restart", lv.isInvalid());
+            Assert.assertEquals(1, lv.getCheckpointRingRecoveryFallbackCount());
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                            "2026-11-01T00:00:12.000000Z\t12\t2\n" +
+                            "2026-11-01T00:00:15.000000Z\t15\t3\n" +
+                            "2026-11-01T00:00:20.000000Z\t20\t4\n" +
+                            "2026-11-01T00:00:25.000000Z\t25\t5\n" +
+                            "2026-11-01T00:00:30.000000Z\t30\t6\n" +
+                            "2026-11-01T00:00:35.000000Z\t35\t7\n" +
+                            "2026-11-01T00:00:40.000000Z\t40\t8\n" +
+                            "2026-11-01T00:00:45.000000Z\t45\t9\n" +
+                            "2026-11-01T00:00:47.000000Z\t47\t10\n" +
+                            "2026-11-01T00:00:50.000000Z\t50\t11\n" +
+                            "2026-11-01T00:00:55.000000Z\t55\t12\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCheckpointRingClearedHeadHoldsWalPurgeFloorWithDurableRingOff() throws Exception {
         // The same cleared-head divergence, with the durable ring DISABLED - so
         // it costs a permanently INVALID view rather than a full scan, and it
