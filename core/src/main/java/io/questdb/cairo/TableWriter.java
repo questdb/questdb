@@ -2645,7 +2645,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             case PartitionDimension.KIND_HASH:
                 return CompositeDimensionTransform.hashBucket(value, dim.getParam());
             case PartitionDimension.KIND_TRUNCATE:
-                return getCompositeDictionaries().dedicatedDictFor(dimIndex).put(
+                CompositeDictionaries dicts = getCompositeDictionaries();
+                MapWriter dedicatedDict = dicts != null ? dicts.dedicatedDictFor(dimIndex) : null;
+                if (dedicatedDict == null) {
+                    // Should not happen for a real TRUNCATE dimension (a composite table always
+                    // provisions one), but guard explicitly rather than let a wrong-kind/stale
+                    // dimIndex surface as a bare NPE here.
+                    throw CairoException.nonCritical()
+                            .put("no dedicated dictionary for composite dimension [dimIndex=").put(dimIndex).put(']');
+                }
+                return dedicatedDict.put(
                         CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), compositeDimSink)
                 );
             default:
