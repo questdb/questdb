@@ -123,6 +123,46 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyWalBatchStampsInvalidationWithBatchEndTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final MatViewState state = fixture.state();
+
+            // Hold the latch so the INVALIDATE publishes its marker and loses the lock: the marker
+            // stays observable instead of being consumed by the invalid mint.
+            Assert.assertTrue(state.tryLock());
+            try {
+                // Three commits form ONE apply batch. The sticky task operation collapses them into a
+                // single INVALIDATE whose txn stamp must be the batch-end frontier (the trailing
+                // INSERT), not the mid-batch UPDATE that triggered the invalidation: a FULL with a
+                // snapshot at the UPDATE txn must not consume a marker that also stands for the
+                // trailing INSERT.
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T16:00')");
+                execute("update base_price set price = 1.111 where sym = 'gbpusd'");
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.321, '2024-09-10T17:00')");
+                drainWalQueue();
+                drainMatViewQueue(engine);
+
+                final TableToken baseToken = engine.getTableTokenIfExists("base_price");
+                Assert.assertNotNull(baseToken);
+                final long batchEndTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+
+                Assert.assertTrue("the losing INVALIDATE must leave its marker", state.isPendingInvalidation());
+                Assert.assertEquals(baseToken, state.getPendingInvalidationBaseTableTokenForTesting());
+                Assert.assertEquals(
+                        "the marker must carry the batch-end txn, not the invalidating txn",
+                        batchEndTxn,
+                        state.getPendingInvalidationBaseTxnForTesting()
+                );
+                state.clearPendingInvalidationForTesting();
+            } finally {
+                state.unlock();
+            }
+        });
+    }
+
+    @Test
     public void testClosedStateLeavesDeferredInvalidationUntouched() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
