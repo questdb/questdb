@@ -27,17 +27,32 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.Misc;
 
 public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final JoinContext joinContext;
-    protected final RecordCursorFactory masterFactory;
-    protected final RecordCursorFactory slaveFactory;
+    protected RecordCursorFactory masterFactory;
+    protected RecordCursorFactory slaveFactory;
 
     public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         super(metadata);
         this.joinContext = joinContext;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
+    }
+
+    protected final Throwable closeJoinOwnersBestEffort() {
+        final RecordMetadata metadata = detachMetadata();
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        return failure;
     }
 }

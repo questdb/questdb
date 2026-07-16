@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
@@ -44,8 +45,8 @@ import org.jetbrains.annotations.NotNull;
  * and returns all row pairs matching filter plus all unmatched rows from master factory.
  */
 public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final NestedLoopLeftRecordCursor cursor;
-    private final Function filter;
+    private NestedLoopLeftRecordCursor cursor;
+    private Function filter;
 
     public NestedLoopLeftJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -106,11 +107,14 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final NestedLoopLeftRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
