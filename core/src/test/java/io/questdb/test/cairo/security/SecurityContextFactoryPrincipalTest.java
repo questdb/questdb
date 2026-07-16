@@ -128,7 +128,8 @@ public class SecurityContextFactoryPrincipalTest {
     @Test
     public void testDenyAllForPrincipalStaysDenyAll() {
         // forPrincipal must never downgrade a deny-all context to a read-allowing one
-        SecurityContext context = DenyAllSecurityContext.INSTANCE.forPrincipal("foo");
+        final ReadOnlySecurityContext legacyReadOnlyContext = DenyAllSecurityContext.INSTANCE;
+        SecurityContext context = legacyReadOnlyContext.forPrincipal("foo");
         Assert.assertSame(DenyAllSecurityContext.INSTANCE, context);
         try {
             context.authorizeHttp();
@@ -346,7 +347,8 @@ public class SecurityContextFactoryPrincipalTest {
                     Thread.currentThread().interrupt();
                 }
             }
-        });
+        }, "security-context-monitor-holder");
+        holder.setDaemon(true);
         holder.start();
 
         final ObjList<Thread> derivers = new ObjList<>();
@@ -360,10 +362,12 @@ public class SecurityContextFactoryPrincipalTest {
                     "an over-cap derivation must not block on the instance monitor");
         } finally {
             releaseMonitor.countDown();
-            holder.join();
+            final Thread[] threads = new Thread[derivers.size() + 1];
+            threads[0] = holder;
             for (int i = 0, n = derivers.size(); i < n; i++) {
-                derivers.getQuick(i).join();
+                threads[i + 1] = derivers.getQuick(i);
             }
+            TestUtils.joinThreads(threads);
         }
     }
 
@@ -607,14 +611,22 @@ public class SecurityContextFactoryPrincipalTest {
             String message
     ) throws Exception {
         final AtomicReference<SecurityContext> derived = new AtomicReference<>();
+        final AtomicReference<Throwable> firstError = new AtomicReference<>();
         final CountDownLatch done = new CountDownLatch(1);
         final Thread deriver = new Thread(() -> {
-            derived.set(root.forPrincipal(principal));
-            done.countDown();
-        });
+            try {
+                derived.set(root.forPrincipal(principal));
+            } catch (Throwable th) {
+                firstError.compareAndSet(null, th);
+            } finally {
+                done.countDown();
+            }
+        }, "principal-deriver-" + principal);
+        deriver.setDaemon(true);
         derivers.add(deriver);
         deriver.start();
         Assert.assertTrue(message, done.await(5, TimeUnit.SECONDS));
+        TestUtils.rethrowFirst(firstError);
         TestUtils.assertEquals(principal, derived.get().getPrincipal());
     }
 

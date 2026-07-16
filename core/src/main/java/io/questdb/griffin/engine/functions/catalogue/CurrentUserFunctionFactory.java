@@ -93,6 +93,11 @@ public class CurrentUserFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }

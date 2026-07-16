@@ -33,6 +33,9 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class TestUtilsTest extends AbstractCairoTest {
 
@@ -45,6 +48,32 @@ public final class TestUtilsTest extends AbstractCairoTest {
         TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "789\n456\n123\n");
         TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n56\n1234\n");
         TestUtils.assertReverseLinesEqual(null, "1234\n", "1234\n");
+    }
+
+    @Test
+    public void testJoinThreadsInterruptsTimedOutWorker() throws Exception {
+        final CountDownLatch started = new CountDownLatch(1);
+        final AtomicBoolean interrupted = new AtomicBoolean();
+        final Thread worker = new Thread(() -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+                Thread.currentThread().interrupt();
+            }
+        }, "timed-out-test-worker");
+        worker.setDaemon(true);
+        worker.start();
+        Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.joinThreads(50, worker)
+        );
+        Assert.assertTrue(error.getMessage().contains("did not finish within"));
+        Assert.assertTrue(interrupted.get());
+        Assert.assertFalse(worker.isAlive());
     }
 
     @Test
@@ -78,6 +107,20 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
             Assert.assertNotEquals(mapX, mapY);
         });
+    }
+
+    @Test
+    public void testRunConcurrentlyRethrowsWorkerFailure() {
+        final AssertionError error = Assert.assertThrows(
+                AssertionError.class,
+                () -> TestUtils.runConcurrently(2, worker -> {
+                    if (worker == 1) {
+                        throw new IllegalStateException("worker failure");
+                    }
+                })
+        );
+        Assert.assertTrue(error.getCause() instanceof IllegalStateException);
+        Assert.assertEquals("worker failure", error.getCause().getMessage());
     }
 
     private static void addAllRecordsToMap(String query, Map<String, Integer> map) throws SqlException {

@@ -160,6 +160,8 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    private static final long THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS = 1_000;
+    private static final long THREAD_JOIN_TIMEOUT_MILLIS = 20_000;
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -2090,7 +2092,7 @@ public final class TestUtils {
      * <p>
      * Exposed for the shape {@code runConcurrently} cannot express: readers that spin until told to stop while
      * the calling thread drives a disturbance. Collect into an {@link AtomicReference} with
-     * {@code compareAndSet(null, th)}, join the workers, then call this.
+     * {@code compareAndSet(null, th)}, join the workers with {@link #joinThreads}, then call this.
      */
     public static void rethrowFirst(AtomicReference<Throwable> firstError) {
         final Throwable error = firstError.get();
@@ -2121,7 +2123,7 @@ public final class TestUtils {
     public static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
         final AtomicReference<Throwable> firstError = new AtomicReference<>();
-        final ObjList<Thread> threads = new ObjList<>();
+        final Thread[] threads = new Thread[threadCount];
         for (int t = 0; t < threadCount; t++) {
             final int index = t;
             final Thread thread = new Thread(() -> {
@@ -2131,14 +2133,65 @@ public final class TestUtils {
                 } catch (Throwable th) {
                     firstError.compareAndSet(null, th);
                 }
-            });
-            threads.add(thread);
+            }, "concurrent-test-worker-" + t);
+            thread.setDaemon(true);
+            threads[t] = thread;
             thread.start();
         }
-        for (int t = 0; t < threadCount; t++) {
-            threads.getQuick(t).join();
-        }
+        joinThreads(threads);
         rethrowFirst(firstError);
+    }
+
+    /**
+     * Joins all workers against one bounded deadline. Workers still alive at the deadline are interrupted and
+     * given a short bounded cleanup window before the method fails.
+     */
+    public static void joinThreads(Thread... threads) throws InterruptedException {
+        joinThreads(THREAD_JOIN_TIMEOUT_MILLIS, threads);
+    }
+
+    static void joinThreads(long timeoutMillis, Thread... threads) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        boolean timedOut = false;
+        try {
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                final long remainingNanos = deadline - System.nanoTime();
+                if (thread.isAlive() && remainingNanos > 0) {
+                    joinNanos(thread, remainingNanos);
+                }
+                timedOut |= thread.isAlive();
+            }
+        } finally {
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                if (thread.isAlive()) {
+                    thread.interrupt();
+                }
+            }
+
+            final long cleanupDeadline = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS);
+            for (int i = 0, n = threads.length; i < n; i++) {
+                final Thread thread = threads[i];
+                final long remainingNanos = cleanupDeadline - System.nanoTime();
+                if (thread.isAlive() && remainingNanos > 0) {
+                    joinNanos(thread, remainingNanos);
+                }
+            }
+        }
+
+        for (int i = 0, n = threads.length; i < n; i++) {
+            final Thread thread = threads[i];
+            Assert.assertFalse("worker thread did not terminate after interruption: " + thread.getName(), thread.isAlive());
+        }
+        Assert.assertFalse("worker threads did not finish within " + timeoutMillis + "ms", timedOut);
+    }
+
+    private static void joinNanos(Thread thread, long timeoutNanos) throws InterruptedException {
+        final long timeoutMillis = TimeUnit.NANOSECONDS.toMillis(timeoutNanos);
+        final int remainderNanos = (int) (timeoutNanos - TimeUnit.MILLISECONDS.toNanos(timeoutMillis));
+        thread.join(timeoutMillis, remainderNanos);
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

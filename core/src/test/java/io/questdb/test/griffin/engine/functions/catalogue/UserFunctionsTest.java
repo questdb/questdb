@@ -30,7 +30,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,7 +42,65 @@ import org.junit.Test;
 
 public class UserFunctionsTest extends AbstractCairoTest {
 
+    private static final Log LOG = LogFactory.getLog(UserFunctionsTest.class);
     private static final String SQL = "SELECT current_user(), session_user() FROM long_sequence(";
+
+    @Test
+    public void testUserFunctionsAreSharedAcrossParallelWorkers() throws Exception {
+        final WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, executionContext) -> {
+                    engine.execute("CREATE TABLE users AS (SELECT x FROM long_sequence(1000))", executionContext);
+
+                    final CountingSecurityContext securityContext = new CountingSecurityContext("alice");
+                    ((SqlExecutionContextImpl) executionContext).with(securityContext);
+
+                    final String filterQuery = "SELECT x FROM users "
+                            + "WHERE current_user() = 'alice' AND session_user() = 'alice'";
+                    assertQuery(filterQuery)
+                            .withEngine(engine)
+                            .withContext(executionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async");
+
+                    try (RecordCursorFactory factory = compiler.compile(filterQuery, executionContext).getRecordCursorFactory()) {
+                        securityContext.resetCounts();
+                        try (RecordCursor cursor = getBaseCursor(factory, executionContext)) {
+                            int rowCount = 0;
+                            while (cursor.hasNext()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(1000, rowCount);
+                        }
+                    }
+                    assertIdentityReadCounts(securityContext, "parallel filter", 1, 1);
+
+                    final String groupByQuery = "SELECT current_user(), session_user(), count() FROM users "
+                            + "GROUP BY current_user(), session_user()";
+                    assertQuery(groupByQuery)
+                            .withEngine(engine)
+                            .withContext(executionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async");
+
+                    try (RecordCursorFactory factory = compiler.compile(groupByQuery, executionContext).getRecordCursorFactory()) {
+                        securityContext.resetCounts();
+                        try (RecordCursor cursor = getBaseCursor(factory, executionContext)) {
+                            final Record record = cursor.getRecord();
+                            Assert.assertTrue(cursor.hasNext());
+                            TestUtils.assertEquals("alice", record.getStrA(0));
+                            TestUtils.assertEquals("alice", record.getStrA(1));
+                            Assert.assertEquals(1000, record.getLong(2));
+                            Assert.assertFalse(cursor.hasNext());
+                        }
+                    }
+                    assertIdentityReadCounts(securityContext, "parallel group by", 1, 2);
+                },
+                configuration,
+                LOG
+        );
+    }
 
     @Test
     public void testUserFunctionsResolveOncePerCursorNotPerRow() throws Exception {
@@ -48,20 +110,14 @@ public class UserFunctionsTest extends AbstractCairoTest {
         // dispatching proxy each read routes through a cached delegate: an atomic load, a volatile load and a
         // virtual call, per row, for a value that cannot change mid-traversal.
         //
-        // Assert the shape rather than a magic number: the number of times the query reads the security
-        // context must not grow with the row count. Before the fix, a 1000-row projection made 1000 reads.
+        // Pin the exact cursor-initialization contract. Before the snapshot fix this grew with row count;
+        // without the thread-safety declaration it grows with the parallel worker count instead.
         assertMemoryLeak(() -> {
             final CountingSecurityContext small = readPrincipalsOver(10);
             final CountingSecurityContext large = readPrincipalsOver(10_000);
 
-            Assert.assertEquals("current_user() must resolve once per cursor, not once per row",
-                    small.principalCalls, large.principalCalls);
-            Assert.assertEquals("session_user() must resolve once per cursor, not once per row",
-                    small.sessionPrincipalCalls, large.sessionPrincipalCalls);
-
-            // and it is genuinely resolved -- zero reads would mean the projection never asked at all
-            Assert.assertTrue(large.principalCalls > 0);
-            Assert.assertTrue(large.sessionPrincipalCalls > 0);
+            assertIdentityReadCounts(small, "small projection", 1, 1);
+            assertIdentityReadCounts(large, "large projection", 1, 1);
         });
     }
 
@@ -92,21 +148,44 @@ public class UserFunctionsTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertIdentityReadCounts(
+            CountingSecurityContext securityContext,
+            String queryShape,
+            int expectedPrincipalCalls,
+            int expectedSessionPrincipalCalls
+    ) {
+        Assert.assertEquals(queryShape + " must resolve current_user() exactly once per function instance",
+                expectedPrincipalCalls, securityContext.principalCalls);
+        Assert.assertEquals(queryShape + " must resolve session_user() exactly once per function instance",
+                expectedSessionPrincipalCalls, securityContext.sessionPrincipalCalls);
+    }
+
+    private static RecordCursor getBaseCursor(
+            RecordCursorFactory factory,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // QueryProgress reads the principal for registry/log metadata. Bypass that outer wrapper so the
+        // counters isolate the user functions initialized by the execution factory.
+        final RecordCursorFactory baseFactory = factory.getBaseFactory();
+        Assert.assertNotNull(baseFactory);
+        return baseFactory.getCursor(executionContext);
+    }
+
     private CountingSecurityContext readPrincipalsOver(int rowCount) throws SqlException {
         final CountingSecurityContext securityContext = new CountingSecurityContext("bob");
         ((SqlExecutionContextImpl) sqlExecutionContext).with(securityContext);
-        try (
-                RecordCursorFactory factory = select(SQL + rowCount + ")");
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            final Record record = cursor.getRecord();
-            int rows = 0;
-            while (cursor.hasNext()) {
-                TestUtils.assertEquals("bob", record.getStrA(0));
-                TestUtils.assertEquals("bob", record.getStrA(1));
-                rows++;
+        try (RecordCursorFactory factory = select(SQL + rowCount + ")")) {
+            securityContext.resetCounts();
+            try (RecordCursor cursor = getBaseCursor(factory, sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    TestUtils.assertEquals("bob", record.getStrA(0));
+                    TestUtils.assertEquals("bob", record.getStrA(1));
+                    rows++;
+                }
+                Assert.assertEquals(rowCount, rows);
             }
-            Assert.assertEquals(rowCount, rows);
         }
         return securityContext;
     }
@@ -135,6 +214,11 @@ public class UserFunctionsTest extends AbstractCairoTest {
         @Override
         protected SecurityContext newPrincipalContext(CharSequence principal) {
             return this;
+        }
+
+        void resetCounts() {
+            principalCalls = 0;
+            sessionPrincipalCalls = 0;
         }
     }
 }
