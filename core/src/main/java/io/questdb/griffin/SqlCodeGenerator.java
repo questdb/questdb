@@ -8858,18 +8858,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        // Catch-visible owners of the assembled group-by/projection functions and the per-worker
-        // clones compiled for the parallel path. The transfer blocks before the adopting factory
-        // constructors null them out; until then the catch frees them. groupByFunctions and the
-        // extracted key functions are intentionally not freed in the catch - their entries are
-        // aliased in the projection lists.
-        ObjList<GroupByFunction> groupByFunctions;
-        ObjList<Function> innerProjectionFunctions = null;
-        ObjList<Function> outerProjectionFunctions = null;
-        ObjList<ObjList<Function>> sharedOuterProjectionFunctions = null;
-        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
-        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
-        ObjList<Function> perWorkerFilters = null;
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
             // SAMPLE BY manages its own designated timestamp and does not tolerate a relabeling wrap
@@ -8883,6 +8871,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy0(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        // Catch-visible owners of the assembled group-by/projection functions and the per-worker
+        // clones compiled for the parallel path. The transfer blocks before the adopting factory
+        // constructors null them out; until then the catch frees them. groupByFunctions and the
+        // extracted key functions are intentionally not freed in the catch - their entries are
+        // aliased in the projection lists.
+        ObjList<GroupByFunction> groupByFunctions;
+        ObjList<Function> innerProjectionFunctions = null;
+        ObjList<Function> outerProjectionFunctions = null;
+        ObjList<ObjList<Function>> sharedOuterProjectionFunctions = null;
+        ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
+        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
+        ObjList<Function> perWorkerFilters = null;
         RecordCursorFactory factory = null;
         try {
             ObjList<QueryColumn> columns;
