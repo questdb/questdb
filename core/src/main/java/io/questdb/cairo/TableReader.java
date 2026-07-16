@@ -1373,7 +1373,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo;
     }
 
-    private void insertPartition(int partitionIndex, long timestamp) {
+    /**
+     * Plan 3 Task 7 (T7-a): {@code cellKey} MUST be the inserted partition's own cellKey (0 for
+     * plain/dormant-composite tables), sourced by the caller from {@code txFile.getPartitionCellKey(...)}
+     * for the tx-side partition this insert represents. {@code LongList.insert} arraycopy-shifts the
+     * array up WITHOUT zeroing the newly-opened region -- {@code openPartitionInfo.insert} below reveals
+     * slot 6 still holding whatever a sibling record's bytes left there -- so every slot the fresh-open
+     * {@code initOpenPartitionInfo} sets must be set here too, cellKey included, or the inserted
+     * partition silently reads back a stale/wrong cellKey instead of its own.
+     */
+    private void insertPartition(int partitionIndex, long timestamp, int cellKey) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
 
@@ -1397,6 +1406,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_CELL_KEY, cellKey);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
@@ -1808,7 +1818,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     partitionIndex++;
                 }
                 for (; partitionIndex < txPartitionCount; partitionIndex++) {
-                    insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+                    insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex), txFile.getPartitionCellKey(partitionIndex));
                 }
                 reloadSymbolMapCounts();
             }
@@ -1825,20 +1835,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
+            final int txPartCellKey = txFile.getPartitionCellKey(txPartitionIndex);
             final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
+            final int openPartitionCellKey = (int) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_CELL_KEY);
 
-            if (openPartitionTimestamp < txPartTs) {
+            // Plan 3 Task 7: sorted-unique-key two-pointer merge on the total order (ts, cellKey) --
+            // ts primary, cellKey secondary -- NOT ts alone, or two cells sharing a timestamp
+            // misclassify one as a "refresh" of the other's physical partition. Plain/dormant tables
+            // have cellKey 0 on both sides everywhere, so this reduces exactly to the old ts-only
+            // comparison (byte-identical classification, byte-identical behaviour).
+            final int cmp = openPartitionTimestamp != txPartTs
+                    ? Long.compare(openPartitionTimestamp, txPartTs)
+                    : Integer.compare(openPartitionCellKey, txPartCellKey);
+
+            if (cmp < 0) {
                 // Deleted partitions
                 // This will decrement partitionCount
                 closeDeletedPartition(partitionIndex);
-            } else if (openPartitionTimestamp > txPartTs) {
+            } else if (cmp > 0) {
                 // Insert partition
-                insertPartition(partitionIndex, txPartTs);
+                insertPartition(partitionIndex, txPartTs, txPartCellKey);
                 changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
             } else {
-                // Refresh partition
+                // Refresh partition -- (ts, cellKey) both match, so this is genuinely the same physical
+                // partition on both sides, not merely a same-timestamp coincidence.
                 final long txPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                 final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
@@ -1846,7 +1868,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
 
                 if (!forceTruncate) {
-                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
+                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs, txPartCellKey)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same.
                         // But in case of dedup, the row count can be same, but the data can be overwritten by splitting and squashing the partition back
                         // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
@@ -1895,7 +1917,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // if while finished on partitionIndex == partitionCount condition
         // inserts new partitions at the end
         for (; partitionIndex < txPartitionCount; partitionIndex++) {
-            insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+            insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex), txFile.getPartitionCellKey(partitionIndex));
             changed = true;
         }
 
