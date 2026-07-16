@@ -29,7 +29,10 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
@@ -62,6 +65,48 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         super.setUp();
         // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testCachedPlanInvalidatedAcrossSetAndDropExpire() throws Exception {
+        // A cached/prepared SELECT factory compiled before a policy exists must not keep returning expired
+        // rows after SET EXPIRE: the metadata-version bump invalidates it, so the next execution throws
+        // TableReferenceOutOfDateException and the caller recompiles with the read filter applied. DROP EXPIRE
+        // invalidates it again, restoring the unfiltered plan. Mirrors the pgwire/http prepared-statement cache
+        // recompile-on-stale contract across policy transitions.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
+                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            try (RecordCursorFactory factory = select("select k, v from mv order by k")) {
+                // Before any policy: the cached plan sees every row.
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("k\tv\nA\t1.0\nB\t2.0\nC\t3.0\n", cursor, factory.getMetadata(), true);
+                }
+
+                // SET a policy: the metadata version bumps, so the cached plan is now stale and must not run.
+                execute("alter materialized view mv set expire rows when v < 2.0");
+                drainWalAndMatViewQueues();
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    org.junit.Assert.fail("cached plan must be invalidated by SET EXPIRE");
+                } catch (TableReferenceOutOfDateException expected) {
+                    // expected -- the caller must recompile
+                }
+            }
+
+            // A recompiled read applies the filter: v < 2.0 is expired, so A is hidden; B and C remain.
+            assertQuery("select k, v from mv order by k").noLeakCheck().returns("k\tv\nB\t2.0\nC\t3.0\n");
+
+            // DROP the policy: the cached plan is invalidated again; a recompiled read is unfiltered.
+            execute("alter materialized view mv drop expire");
+            drainWalAndMatViewQueues();
+            assertQuery("select k, v from mv order by k").sizeMayVary().noLeakCheck().returns("k\tv\nA\t1.0\nB\t2.0\nC\t3.0\n");
+        });
     }
 
     @Test

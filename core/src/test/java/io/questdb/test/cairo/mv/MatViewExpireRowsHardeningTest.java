@@ -281,6 +281,50 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitBreachThenRecoveryReclaimsAndBalances() throws Exception {
+        // (C12) The breach path must defer WITHOUT mutating the WAL; then, under a sufficient budget, cleanup
+        // must SUCCEED and physically reclaim. Success on the same engine after a breach also proves the pooled
+        // MAT_VIEW_REFRESH tracker was left balanced -- leaked bytes would re-breach here instead of completing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // expired (A max=9)
+                    "('B', 8.0, '2024-01-01T00:00:00.000000Z')," +   // B max -> survives in d1
+                    "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A max=9)
+                    "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s");
+            drainWalAndMatViewQueues();
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                predicate = m.getExpiryPredicate();
+            }
+
+            // Breach: a 1-byte budget must DEFER, leaving every partition physically intact.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1L);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+            }
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
+
+            // Recovery: a sufficient budget must SUCCEED -- d1 compacted (B survives), d2 wiped, active d3
+            // untouched -> 2 partitions / 2 rows. Reaching this reclaimed state after a breach also proves the
+            // pooled tracker was left balanced (a leak would re-breach and leave the partitions at 3/4).
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256L * 1024 * 1024);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertTrue(job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns("k\tv\nA\t9.0\nB\t8.0\n");
+        });
+    }
+
+    @Test
     public void testNonMonotonicFuturePredicateCleanupSkippedAndRowsSurvive() throws Exception {
         // A non-monotonic policy "ts > now()" expires FUTURE rows; as now() advances past them they un-expire.
         // Cleanup must NOT physically delete them (the gate skips reclamation), so when now() advances they
