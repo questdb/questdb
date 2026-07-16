@@ -2284,6 +2284,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testFastJoinWithJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
+            final boolean isMixedTimestampPrecision = leftTableTimestampType.getTimestampType() != rightTableTimestampType.getTimestampType();
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, avg(p.price) window_price " +
                         "from trades t " +
@@ -2537,7 +2538,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "1970-01-01T00:00:00.001001Z" : "1970-01-01T00:00:00.000001001Z") + "\",\"MAX\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            (includePrevailing ? "            Frame forward scan on: prices\n" :
+                            (includePrevailing || isMixedTimestampPrecision ? "            Frame forward scan on: prices\n" :
                                     "            Interval forward scan on: prices\n" +
                                     "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
                                                                        : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"))
@@ -3320,6 +3321,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testMasterHasIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
+            final boolean isMixedTimestampPrecision = leftTableTimestampType.getTimestampType() != rightTableTimestampType.getTimestampType();
             if (!includePrevailing) {
                 printSql("select t.sym, t.price, t.ts, sum(p.price) window_price " +
                         "from (select * from trades where ts <= '2023-01-01T09:04:00.000000Z') t " +
@@ -3369,8 +3371,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"MIN\",\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z") + "\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Interval forward scan on: prices\n" +
-                            "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n")
+                            (isMixedTimestampPrecision
+                                    ? "            Frame forward scan on: prices\n"
+                                    : "            Interval forward scan on: prices\n" +
+                                      "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n"))
                     .timestamp("ts")
                     .returns(sink);
 
@@ -3394,8 +3398,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"MIN\",\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z") + "\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            "            Interval forward scan on: prices\n" +
-                            "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n")
+                            (isMixedTimestampPrecision
+                                    ? "            Frame forward scan on: prices\n"
+                                    : "            Interval forward scan on: prices\n" +
+                                      "              intervals: [(\"MIN\",\"" + (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:05:00.000000Z" : "2023-01-01T09:05:00.000000000Z") + "\")]\n"))
                     .timestamp("ts")
                     .returns(sink);
 
@@ -3448,7 +3454,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "              intervals: [(\"2023-01-01T09:04:00." + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000001Z" : "000000001Z") + "\",\"MAX\")]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
-                            (includePrevailing ?
+                            (includePrevailing || isMixedTimestampPrecision ?
                                     "            Frame forward scan on: prices\n"
                                     : "            Interval forward scan on: prices\n" +
                                       "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
@@ -5881,7 +5887,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             String nanoZeros = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "" : "000";
             boolean isLeftMicroTs = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType());
             boolean isRightMicroTs = ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType());
-            String planFragment = includePrevailing
+            String planFragment = includePrevailing || isLeftMicroTs != isRightMicroTs
                     ? "Frame forward scan on: prices"
                     : String.format("""
                             Interval forward scan on: prices

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -38,10 +39,10 @@ import io.questdb.std.Misc;
  */
 public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean ascending;
-    private final RecordCursorFactory base;
     private final int columnIndex;
-    private final LongTopKRecordCursor cursor;
     private final int lo;
+    private RecordCursorFactory base;
+    private LongTopKRecordCursor cursor;
 
     public LongTopKRecordCursorFactory(
             RecordMetadata metadata,
@@ -120,7 +121,12 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final LongTopKRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }
