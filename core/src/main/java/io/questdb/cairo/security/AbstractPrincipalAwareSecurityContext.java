@@ -115,6 +115,13 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
             return hit;
         }
         if (cache.size() >= MAX_CACHED_PRINCIPALS) {
+            // Another caller may have filled the final slot with this same principal after our first get().
+            // Recheck before taking the uncached overflow path so callers racing for that slot still converge
+            // on the admitted context rather than some of them receiving throwaway duplicates.
+            final SecurityContext lastAdmission = cache.get(principal);
+            if (lastAdmission != null) {
+                return lastAdmission;
+            }
             // saturated: derive and hand back without caching, rather than retaining contexts without bound
             return newCheckedPrincipalContext(Chars.toString(principal));
         }

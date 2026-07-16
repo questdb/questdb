@@ -140,6 +140,19 @@ public class SecurityContextFactoryPrincipalTest {
     }
 
     @Test
+    public void testForPrincipalCachesExactLastAdmission() {
+        final AllowAllSecurityContext root = freshAllowAll();
+        SecurityContext last = null;
+        for (int i = 0; i < CACHE_CAP; i++) {
+            last = root.forPrincipal("p" + i);
+        }
+
+        Assert.assertNotNull(last);
+        Assert.assertSame("the exact cache-capacity admission must remain cached",
+                last, root.forPrincipal("p" + (CACHE_CAP - 1)));
+    }
+
+    @Test
     public void testForPrincipalCapCopiesTransientPrincipal() {
         // The over-cap leg has its own Chars.toString, and nothing pinned it: deleting the copy from the
         // saturated branch left the whole suite green. testForPrincipalCopiesTransientPrincipal only covers
@@ -238,6 +251,26 @@ public class SecurityContextFactoryPrincipalTest {
         }
         // the converged instance is the one now cached
         Assert.assertSame(results[0], root.forPrincipal(principal));
+    }
+
+    @Test
+    public void testForPrincipalConcurrentLastAdmissionConverges() throws Exception {
+        final AllowAllSecurityContext root = freshAllowAll();
+        for (int i = 0; i < CACHE_CAP - 1; i++) {
+            root.forPrincipal("p" + i);
+        }
+
+        final int threadCount = 8;
+        final String principal = "last-admission";
+        final SecurityContext[] results = new SecurityContext[threadCount];
+        TestUtils.runConcurrently(threadCount, t -> results[t] = root.forPrincipal(principal));
+
+        for (int t = 0; t < threadCount; t++) {
+            Assert.assertSame("all callers racing for the last cache slot must converge",
+                    results[0], results[t]);
+        }
+        Assert.assertSame("the concurrent last-slot winner must remain cached",
+                results[0], root.forPrincipal(principal));
     }
 
     @Test
@@ -496,6 +529,22 @@ public class SecurityContextFactoryPrincipalTest {
         try {
             alice.authorizeInsert(null);
             Assert.fail("expected write to be denied");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
+        }
+    }
+
+    @Test
+    public void testReadOnlyUsersAwareFactoryGlobalPgWireReadOnlyReportsConfiguredPrincipal() {
+        final ReadOnlyUsersAwareSecurityContextFactory factory =
+                new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
+        final SecurityContext context = factory.getInstance(principal("alice"), SecurityContextFactory.PGWIRE);
+
+        TestUtils.assertEquals("alice", context.getPrincipal());
+        Assert.assertNotSame(ReadOnlySecurityContext.INSTANCE, context);
+        try {
+            context.authorizeInsert(null);
+            Assert.fail("expected globally read-only PGWire context to deny writes");
         } catch (CairoException e) {
             Assert.assertTrue(e.getFlyweightMessage().toString().contains("Write permission denied"));
         }

@@ -103,6 +103,23 @@ public class UserFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUserFunctionsDriveRuntimeConstantOptimizerPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE timezone_events (ts TIMESTAMP) TIMESTAMP(ts)");
+            final String queryPrefix = "SELECT count(), ts FROM timezone_events "
+                    + "SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE ";
+
+            ((SqlExecutionContextImpl) sqlExecutionContext).with(new CountingSecurityContext("UTC"));
+            assertQuery(queryPrefix + "current_user()")
+                    .noLeakCheck()
+                    .assertsPlanContaining("timestamp_floor_utc('1h',ts,null,'00:00',current_user())");
+            assertQuery(queryPrefix + "session_user()")
+                    .noLeakCheck()
+                    .assertsPlanContaining("timestamp_floor_utc('1h',ts,null,'00:00',session_user())");
+        });
+    }
+
+    @Test
     public void testUserFunctionsResolveOncePerCursorNotPerRow() throws Exception {
         // current_user() and session_user() do not depend on the record -- which is exactly what their
         // factories have always declared through isRuntimeConstant(). The functions themselves did not, so
