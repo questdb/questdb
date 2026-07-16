@@ -43,7 +43,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 /**
- * Plan 3 (composite partitioning), Tasks 6-7: {@link TableReader}'s fresh-open path ({@code
+ * Plan 3 (composite partitioning), Tasks 6-8: {@link TableReader}'s fresh-open path ({@code
  * initOpenPartitionInfo}) must carry each partition's {@code cellKey} in {@code openPartitionInfo}
  * (the previously-padding slot 6), and every {@code columnVersionReader.getMaxPartitionVersion(ts)}
  * call made while resolving a partition's column-version must pass that partition's own {@code
@@ -66,6 +66,13 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * reader.reload()} directly, to exercise {@code reconcileOpenPartitions0} (the reload-diff path) itself
  * -- the first test above only exercises the initial, straight per-physical-index load ({@code
  * initOpenPartitionInfo}), never a reload of an already-open reader.
+ * <p>
+ * {@link #testCloseRewrittenPartitionFilesResolvesByCellNotBareTimestamp} below is Task 8: the
+ * partition-open path itself ({@code openPartition0}, {@code pathGenNativePartition},
+ * {@code formatNativePartitionDirName}) was already fully index-based (Task 6); the one place found
+ * still resolving by bare timestamp was {@code closeRewrittenPartitionFiles}, a pre-existing (not
+ * Plan-3-authored) helper reached only from the ADD/DROP/RENAME-COLUMN reshuffle path, fixed here to
+ * key on {@code (ts, cellKey)} instead.
  */
 public class CompositeReaderCellTest extends AbstractCairoTest {
 
@@ -429,6 +436,108 @@ public class CompositeReaderCellTest extends AbstractCairoTest {
                 // (day1,cell0)'s stale state, and (day2,cell0) is untouched.
                 Assert.assertEquals(210, reader.getPartitionColumnVersion(0));
                 Assert.assertEquals(310, reader.getPartitionColumnVersion(1));
+            }
+        });
+    }
+
+    /**
+     * Plan 3 Task 8: {@code closeRewrittenPartitionFiles} -- called by {@code reshuffleColumns} /
+     * {@code createNewColumnList} while reloading an ADD/DROP/RENAME COLUMN metadata change, to decide
+     * whether an already-open partition's mapped files are still current -- must re-resolve a
+     * partition's CURRENT nameTxn/size by its own {@code (ts, cellKey)} identity, not by re-searching
+     * {@code txFile} for "the" partition at a bare timestamp. A bare-timestamp search ({@code
+     * TxReader#findAttachedPartitionRawIndexByLoTimestamp}, a thin {@code cellKey=0} wrapper) always
+     * resolves to cellKey 0's record, so asking it about a non-zero-cellKey partition silently
+     * substitutes a sibling cell's nameTxn/size for its own.
+     * <p>
+     * This calls {@link TableReader#testCloseRewrittenPartitionFiles(int)} directly (the private
+     * method under test has no on-disk-file precondition of its own -- see its Javadoc -- so, unlike
+     * {@link #testOpenPartitionInfoCarriesCellKeyAndResolvesColumnVersionPerCell}'s column-version
+     * assertions, no backing partition directory is needed here) for both cells, immediately after a
+     * fresh open, with NO reload() and NO second surgery pass: each cell's cached nameTxn (loaded
+     * per-index at open time, already proven correct above) is its own real, unchanged value, so a
+     * correct resolution must report each cell's OWN size back, unmodified.
+     * <ul>
+     *     <li>cell0 (cellKey 0): a bare-timestamp search happens to answer correctly here too --
+     *     cell0 IS the cellKey-0 record -- so this is a sanity check that both mechanisms agree on it,
+     *     not evidence of the bug.</li>
+     *     <li>cell1 (cellKey 1): a bare-timestamp search always answers with cell0's nameTxn (900),
+     *     never cell1's (901) -- different from cell1's correct cache purely because it is the WRONG
+     *     record, not because cell1 actually changed -- so it wrongly concludes cell1's files are
+     *     stale, closes them, and returns -1: a false invalidation manufactured entirely by cell0's
+     *     unrelated existence at the same timestamp. A {@code (ts, cellKey)}-keyed resolution answers
+     *     with cell1's own nameTxn (901), matching the cache, and correctly returns cell1's own size
+     *     (20) -- not cell0's (10), and not a false invalidation.</li>
+     * </ul>
+     */
+    @Test
+    public void testCloseRewrittenPartitionFilesResolvesByCellNotBareTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+            final int col = 3;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+
+            long cvVersion;
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter cvWriter = new ColumnVersionWriter(
+                            configuration,
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME).$(),
+                            true
+                    )
+            ) {
+                cvWriter.upsert(day1, 0, col, 100, 0);
+                cvWriter.upsert(day1, 1, col, 200, 0);
+                cvWriter.commit();
+                cvVersion = cvWriter.getVersion();
+            }
+
+            // cell0 and cell1 at day1, DISTINCT nameTxn (900 / 901) and DISTINCT size (10 / 20) -- the
+            // two values a bare-timestamp lookup could only ever get right for ONE of them (cell0's).
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    final int symbolColumnCount = txWriter.getSymbolColumnCount();
+                    ObjList<SymbolCountProvider> symbolCountProviders = new ObjList<>();
+                    for (int i = 0; i < symbolColumnCount; i++) {
+                        final int count = txWriter.getSymbolValueCount(i);
+                        symbolCountProviders.add(() -> count);
+                    }
+
+                    txWriter.appendPartitionForTest(day1, 10L, 900L, 0);
+                    txWriter.appendPartitionForTest(day1, 20L, 901L, 1);
+                    txWriter.updateMaxTimestamp(day1 + 1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.setColumnVersion(cvVersion);
+                    txWriter.commit(symbolCountProviders);
+                }
+            }
+
+            try (TableReader reader = getReader("c")) {
+                Assert.assertEquals(2, reader.getPartitionCount());
+                Assert.assertEquals(0, reader.getPartitionCellKey(0));
+                Assert.assertEquals(1, reader.getPartitionCellKey(1));
+
+                Assert.assertEquals(
+                        "cell0 is unchanged; a bare-timestamp search happens to agree here too since " +
+                                "cell0 IS the cellKey-0 record -- this is a sanity check, not the bug",
+                        10, reader.testCloseRewrittenPartitionFiles(0)
+                );
+                Assert.assertEquals(
+                        "cell1 is unchanged and must resolve its OWN size (20), not be falsely " +
+                                "invalidated (-1) by cell0's unrelated nameTxn at the same timestamp",
+                        20, reader.testCloseRewrittenPartitionFiles(1)
+                );
             }
         });
     }

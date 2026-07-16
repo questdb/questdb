@@ -509,6 +509,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
     }
 
+    /**
+     * Test-only: exercises {@link #closeRewrittenPartitionFiles(int, int)} directly -- the same call
+     * {@code reshuffleColumns}/{@code createNewColumnList} make, for each already-open partition, to
+     * decide whether its currently-mapped files are still current before rebuilding the column list on
+     * an ADD/DROP/RENAME COLUMN reload. Plan 3 Task 8 lock: this must resolve the partition's own
+     * current nameTxn/size by its (ts, cellKey) identity, never by re-searching txFile for "the"
+     * partition at this partition's bare timestamp (which, for a composite table with more than one
+     * cell sharing that timestamp, silently returns cellKey 0's record instead of this partition's own).
+     */
+    @TestOnly
+    public long testCloseRewrittenPartitionFiles(int partitionIndex) {
+        return closeRewrittenPartitionFiles(partitionIndex, getColumnBase(partitionIndex));
+    }
+
     public int getPartitionCount() {
         return partitionCount;
     }
@@ -1098,8 +1112,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
         long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-        long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
-        long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
+        // Plan 3 Task 8: re-locate this partition by its stable (ts, cellKey) identity, not a bare
+        // timestamp. This method's only callers (reshuffleColumns/createNewColumnList) run inside
+        // reloadSlow, BEFORE reconcileOpenPartitions has resynced partitionCount/openPartitionInfo to
+        // the just-loaded txFile -- so `partitionIndex` cannot be trusted as a raw txFile offset (an
+        // earlier sibling partition insert/delete may already have shifted it there); a plain
+        // by-timestamp scan is shift-safe but would additionally collapse onto cellKey 0's record
+        // whenever more than one cell shares partitionTs. (ts, cellKey) is the same stable total-order
+        // key reconcileOpenPartitions0 merges on, so this is both shift-safe and cell-safe.
+        final int cellKey = (int) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_CELL_KEY);
+        final int rawIndex = txFile.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+        long newNameTxn = rawIndex > -1 ? txFile.getPartitionNameTxnByRawIndex(rawIndex) : -1;
+        long newSize = rawIndex > -1 ? txFile.getPartitionSizeByRawIndex(rawIndex) : -1;
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
             LOG.debug().$("close outdated partition files [table=").$(tableToken).$(", ts=")
                     .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
