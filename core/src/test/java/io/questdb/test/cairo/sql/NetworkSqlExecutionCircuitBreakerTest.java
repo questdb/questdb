@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -250,7 +249,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         int probeCount;
 
         ProbeCountingCircuitBreaker(CairoEngine engine, SqlExecutionCircuitBreakerConfiguration configuration) {
-            super(engine, configuration, MemoryTag.NATIVE_CB5);
+            super(engine, configuration);
         }
 
         @Override

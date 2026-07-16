@@ -299,8 +299,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (httpCircuitBreaker == null) {
             httpCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     engine,
-                    engine.getConfiguration().getCircuitBreakerConfiguration(),
-                    MemoryTag.NATIVE_CB3
+                    engine.getConfiguration().getCircuitBreakerConfiguration()
             );
         }
         return httpCircuitBreaker;

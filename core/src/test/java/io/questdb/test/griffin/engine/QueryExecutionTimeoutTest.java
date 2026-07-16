@@ -78,7 +78,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 return NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;
@@ -94,10 +94,11 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testDisconnectAbortsParallelGroupBy() throws Exception {
-        // End-to-end pin for the reduce-path connection probe: a client that sends a byte
-        // and closes mid-scan (FIN behind unread data, the shape a peek probe cannot see)
-        // must abort a parallel GROUP BY well before any timeout. The breaker uses the
-        // real NetworkFacade against a real socket pair.
+        // End-to-end pin for the parallel connection probe: a client that sends a byte and
+        // closes mid-scan (FIN behind unread data, the shape a peek probe cannot see) must
+        // abort a parallel GROUP BY well before any timeout. Either the owner-thread Phase-2
+        // check or the per-worker reduce-path check may detect it first; both run the real
+        // NetworkFacade probe against a real socket pair.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
         Misc.free(circuitBreaker);
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
@@ -112,8 +113,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     public long getQueryTimeout() {
                         return 600_000;
                     }
-                },
-                MemoryTag.NATIVE_CB5
+                }
         );
         executeWithPool(4, 16, (engine, compiler, sqlExecutionContext) -> {
             final long acceptFd = Net.socketTcp(true);

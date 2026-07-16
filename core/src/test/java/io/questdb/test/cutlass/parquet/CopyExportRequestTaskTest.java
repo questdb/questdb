@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -105,7 +104,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
         boolean isConnectionBroken;
 
         ConnectionAwareCircuitBreaker(CairoEngine engine, SqlExecutionCircuitBreakerConfiguration configuration) {
-            super(engine, configuration, MemoryTag.NATIVE_CB5);
+            super(engine, configuration);
         }
 
         @Override

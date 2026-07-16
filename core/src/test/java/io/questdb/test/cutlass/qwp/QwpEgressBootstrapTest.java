@@ -1610,9 +1610,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     public void testSleepAbortedByQueryTimeout() throws Exception {
         // Regression guard: egress used to build the execution context with a null
         // circuit breaker (mapped to NOOP_CIRCUIT_BREAKER), so a query never consulted
-        // query.timeout nor the connection probe and sleep(3) ran the full ~3s. With
-        // the fd-backed breaker and a 100ms wake interval, sleep(3) must abort near
-        // ~1s, well before the 3s a NOOP-breaker run would take, with STATUS_LIMIT_EXCEEDED.
+        // query.timeout nor the connection probe and sleep(10) ran the full ~10s. With
+        // the fd-backed breaker and a 100ms wake interval, sleep(10) must abort near
+        // ~1s, far below the 10s a NOOP-breaker run would take, with STATUS_LIMIT_EXCEEDED.
+        // The wide gap between the ~1s abort and the 10s no-op run keeps the upper bound
+        // robust against a slow CI box while still catching a regression.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
@@ -1625,7 +1627,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     final byte[] errorStatus = {0};
                     final String[] errorMessage = {null};
                     final long t0 = System.currentTimeMillis();
-                    client.execute("sleep(3)", new QwpColumnBatchHandler() {
+                    client.execute("sleep(10)", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
                         }
@@ -1644,17 +1646,17 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     final long elapsed = System.currentTimeMillis() - t0;
 
                     Assert.assertTrue(
-                            "egress sleep(3) took " + elapsed + " ms; query.timeout=1s must abort it near ~1s "
-                                    + "(hasErrored=" + hasErrored[0] + ")",
-                            elapsed < 2_500
+                            "egress sleep(10) took " + elapsed + " ms; query.timeout=1s must abort it near ~1s, "
+                                    + "well below the 10s a NOOP-breaker run would take (hasErrored=" + hasErrored[0] + ")",
+                            elapsed < 5_000
                     );
                     Assert.assertTrue(
-                            "egress sleep(3) aborted after only " + elapsed + " ms; query.timeout=1s cannot fire "
+                            "egress sleep(10) aborted after only " + elapsed + " ms; query.timeout=1s cannot fire "
                                     + "before ~1s, so an earlier abort came from a different failure, not the timeout",
                             elapsed > 500
                     );
                     Assert.assertTrue(
-                            "egress sleep(3) completed without an error; query.timeout must surface as a query error",
+                            "egress sleep(10) completed without an error; query.timeout must surface as a query error",
                             hasErrored[0]
                     );
                     Assert.assertEquals(QwpConstants.STATUS_LIMIT_EXCEEDED, errorStatus[0]);

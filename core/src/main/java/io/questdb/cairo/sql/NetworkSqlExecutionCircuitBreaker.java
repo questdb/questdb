@@ -55,7 +55,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private int testCount;
     private long timeout;
 
-    public NetworkSqlExecutionCircuitBreaker(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
+    public NetworkSqlExecutionCircuitBreaker(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.throttle = configuration.getCircuitBreakerThrottle();
