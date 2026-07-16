@@ -68,12 +68,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
     private static final RecordMetadata METADATA_TIMESTAMP;
     private static final RecordMetadata METADATA_TIMESTAMP_NS;
-    private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
-    private final Path path = new Path();
     private final TableToken tableToken;
     private CairoConfiguration cairoConfig;
+    private ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private SqlExecutionContext executionContext;
     private FilesFacade ff;
+    private Path path = new Path();
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType) {
         super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
@@ -100,11 +100,16 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        Misc.free(path);
-        Misc.free(cursor);
+        final ShowPartitionsRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Path path = this.path;
+        this.path = null;
         executionContext = null;
         cairoConfig = null;
         ff = null;
+        Throwable failure = Misc.freeBestEffort(null, path);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private enum Column {

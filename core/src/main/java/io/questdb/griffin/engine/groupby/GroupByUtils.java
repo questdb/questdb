@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -38,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -382,33 +384,21 @@ public class GroupByUtils {
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable th) {
-            // The first loop adds each parsed Function to both lists, so they share
-            // references. The timestamp column appends null to outer but skips inner,
-            // so subsequent entries sit at outer[i] and inner[i-1]. The third loop
-            // may also replace outer entries with column-ref Functions, leaving the
-            // original parsed Function reachable only via inner. Free outer first
-            // (Misc.free is null-safe), keeping the list as a reference-identity
-            // index, then walk inner and free only references not already in outer.
-            // Closing the same Function twice would underflow allocator counters.
-            for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
-                Misc.free(outerProjectionFunctions.getQuick(i));
-            }
-            for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
-                Function f = innerProjectionFunctions.getQuick(i);
-                if (f != null && !containsIdentity(outerProjectionFunctions, f)) {
-                    Misc.free(f);
-                }
-            }
-            outerProjectionFunctions.clear();
-            innerProjectionFunctions.clear();
+            // Best-effort cleanup: attach close() failures to the primary assembly exception
+            // as suppressed instead of letting them mask it or skip the cleanup below.
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions, th);
             // Every group-by function was also added to outerProjectionFunctions (same
-            // instance) and freed by the loop above. Clear the list so callers that free
+            // instance) and freed by the call above. Clear the list so callers that free
             // it on their own error path (the JOIN callsites call
             // Misc.freeObjList(groupByFunctions)) don't close the same instance twice.
             outGroupByFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
                 for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
-                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(i));
+                    final ObjList<Function> extra = extraOuterProjectionFunctions.getQuick(i);
+                    if (extra != null) {
+                        Misc.freeObjList(extra, th);
+                        extra.clear();
+                    }
                 }
                 extraOuterProjectionFunctions.clear();
             }
@@ -547,6 +537,104 @@ public class GroupByUtils {
         return -1;
     }
 
+    /**
+     * Builds a borrowed list of the non-group-by entries of {@code recordFunctions}. Cursors
+     * call this once at construction, so every subsequent cached execution initializes the
+     * non-group-by functions with a plain Theta(V) walk instead of re-classifying all
+     * P record functions with instanceof checks. Ownership stays with {@code recordFunctions}:
+     * callers must never close the returned list's entries.
+     */
+    public static ObjList<Function> extractNonGroupByFunctions(ObjList<Function> recordFunctions) {
+        final ObjList<Function> nonGroupByFunctions = new ObjList<>(recordFunctions.size());
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            final Function function = recordFunctions.getQuick(i);
+            if (!(function instanceof GroupByFunction)) {
+                nonGroupByFunctions.add(function);
+            }
+        }
+        return nonGroupByFunctions;
+    }
+
+    /**
+     * Frees the projection functions produced by {@link #assembleGroupByFunctions} exactly once
+     * when generation fails after assembly, in Theta(outer + inner) time and constant space by
+     * walking the producer's positional correspondence. The first assembly loop adds each parsed
+     * Function to both lists, so paired slots share references; the timestamp column appends null
+     * to outer and nothing to inner, so a null outer slot consumes no inner slot; the key-rewrite
+     * loop may replace an outer entry with a column-ref Function, leaving the original parsed
+     * Function reachable only through its paired inner slot; a mid-assembly failure can leave
+     * the last non-null outer entry without an inner counterpart, never the reverse. Every
+     * non-null outer entry is freed, and a paired inner entry is freed only when it is not the
+     * same reference. Closing the same Function twice would underflow allocator counters, so
+     * callers must not additionally free the group-by function list - its entries are aliased in
+     * the outer list and are already closed by this call.
+     * <p>
+     * The walk is best-effort: a throwing close() does not stop it. Every function still sees
+     * exactly one close attempt, both lists end up cleared, and the first failure rethrows once
+     * the walk completes, with later failures attached to it as suppressed. Callers already
+     * holding a primary exception must catch the rethrown failure and suppress it themselves.
+     */
+    public static void freeAssembledProjectionFunctions(
+            @Nullable ObjList<Function> outerProjectionFunctions,
+            @Nullable ObjList<Function> innerProjectionFunctions
+    ) {
+        if (outerProjectionFunctions == null) {
+            if (innerProjectionFunctions != null) {
+                final Throwable failure = Misc.freeObjListBestEffort(null, innerProjectionFunctions);
+                innerProjectionFunctions.clear();
+                CairoException.rethrowCleanupFailure(failure);
+            }
+            return;
+        }
+        final int innerSize = innerProjectionFunctions != null ? innerProjectionFunctions.size() : 0;
+        Throwable failure = null;
+        int j = 0;
+        for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+            final Function outerFunc = outerProjectionFunctions.getQuick(i);
+            if (outerFunc == null) {
+                // timestamp placeholder: assembly added no inner counterpart
+                continue;
+            }
+            failure = Misc.freeBestEffort(failure, outerFunc);
+            if (j < innerSize) {
+                final Function innerFunc = innerProjectionFunctions.getQuick(j);
+                if (innerFunc != outerFunc) {
+                    // the key rewrite replaced the outer entry; the parsed original is
+                    // reachable only through this inner slot
+                    failure = Misc.freeBestEffort(failure, innerFunc);
+                }
+                j++;
+            }
+        }
+        // Full assembly pairs every inner entry; a mid-assembly failure leaves at most the last
+        // non-null outer entry unpaired. Either way the walk must consume the whole inner list.
+        assert j == innerSize;
+        if (innerProjectionFunctions != null) {
+            innerProjectionFunctions.clear();
+        }
+        outerProjectionFunctions.clear();
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Variant of {@link #freeAssembledProjectionFunctions(ObjList, ObjList)} for cleanup paths
+     * that already hold a primary exception: it attaches any failure from the best-effort walk
+     * to the primary as suppressed instead of letting the failure propagate and mask it.
+     */
+    public static void freeAssembledProjectionFunctions(
+            @Nullable ObjList<Function> outerProjectionFunctions,
+            @Nullable ObjList<Function> innerProjectionFunctions,
+            @NotNull Throwable primary
+    ) {
+        try {
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions);
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -565,59 +653,23 @@ public class GroupByUtils {
         return true;
     }
 
-    // assembleGroupByFunctions must be called before this call to get the idea of how many map values
-    // we will have. Map value count is needed to calculate offsets for map key columns.
-    public static void prepareWorkerGroupByFunctions(
-            @NotNull IQueryModel model,
-            @NotNull RecordMetadata metadata,
-            @NotNull FunctionParser functionParser,
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<GroupByFunction> workerGroupByFunctions
-    ) throws SqlException {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                // this can fail
-                final Function function = functionParser.parseFunction(
-                        node,
-                        metadata,
-                        executionContext
-                );
-
-                if (function instanceof GroupByFunction func) {
-                    // configure map value columns for group-by functions
-                    // some functions may need more than one column in values,
-                    // so we have them do all the work
-                    workerGroupByFunctions.add(func);
-                } else {
-                    // it's a key function; we don't need it
-                    Misc.free(function);
-                }
-            }
-        }
-
-        assert groupByFunctions.size() == workerGroupByFunctions.size();
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
-            final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex());
-        }
-    }
-
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).setAllocator(allocator);
+        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
+            // The list tracks worker-owned clones positionally, so iterate the owned bits
+            // directly instead of scanning every retained function: the common fully borrowed
+            // per-worker list costs a single probe instead of one probe per function.
+            for (int i = perWorkerFunctions.nextOwned(0); i > -1; i = perWorkerFunctions.nextOwned(i + 1)) {
+                functions.getQuick(i).setAllocator(allocator);
+            }
+        } else {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                functions.getQuick(i).setAllocator(allocator);
+            }
         }
     }
 
     public static void toTop(ObjList<? extends Function> args) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).toTop();
-        }
+        PerWorkerFunctionList.toTop(args);
     }
 
     public static void validateGroupByColumns(
@@ -768,15 +820,6 @@ public class GroupByUtils {
             }
         }
 
-        return false;
-    }
-
-    private static boolean containsIdentity(ObjList<Function> list, Function target) {
-        for (int i = 0, n = list.size(); i < n; i++) {
-            if (list.getQuick(i) == target) {
-                return true;
-            }
-        }
         return false;
     }
 

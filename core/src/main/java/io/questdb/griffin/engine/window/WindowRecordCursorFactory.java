@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -45,12 +46,12 @@ import io.questdb.std.ObjList;
  * - all functions and their framing clause do support stream-ed processing (single pass)
  */
 public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final WindowRecordCursor cursor;
-    private final ObjList<Function> functions;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
+    private RecordCursorFactory base;
     private boolean closed = false;
+    private WindowRecordCursor cursor;
+    private ObjList<Function> functions;
 
     public WindowRecordCursorFactory(
             RecordCursorFactory base,
@@ -138,10 +139,17 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         if (closed) {
             return;
         }
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.freeObjList(functions);
         closed = true;
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final WindowRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, functions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     class WindowRecordCursor extends AbstractVirtualFunctionRecordCursor {
