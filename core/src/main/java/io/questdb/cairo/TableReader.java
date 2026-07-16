@@ -55,6 +55,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -104,6 +105,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     // Non-owning, dual-mode lookup facade over compositeInternerReaders; null for a plain/cluster-only
     // table (no composite interners). Never closed here -- see compositeInternerReaders for ownership.
     private CompositeDictionaries compositeDicts;
+    // reused across keyOfDimensionValue() calls to avoid an allocation per TRUNCATE-dimension lookup
+    private final StringSink compositeDimSink = new StringSink();
     private boolean hasActiveColumns;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
@@ -702,6 +705,30 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tempMem8b != 0;
     }
 
+    /**
+     * Maps a raw dimension value to its dense interned key on the read side -- the mirror of
+     * {@link TableWriter#internDimensionValue(int, CharSequence)}, dispatching on the same
+     * {@link PartitionDimension#getKind()}. Returns
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND} when {@code value} was never interned
+     * ({@code IDENTITY}/{@code TRUNCATE} delegate to {@code keyOf}, which already returns it).
+     * {@code EXPRESSION} dimensions are not supported here (Plan 4).
+     */
+    public int keyOfDimensionValue(int dimIndex, CharSequence value) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                return getSymbolMapReader(dim.getColumnIndex()).keyOf(value);
+            case PartitionDimension.KIND_HASH:
+                return CompositeDimensionTransform.hashBucket(value, dim.getParam());
+            case PartitionDimension.KIND_TRUNCATE:
+                return getCompositeDictionaries().dictReaderFor(dimIndex).keyOf(
+                        CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), compositeDimSink)
+                );
+            default:
+                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+        }
+    }
+
     @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
@@ -790,6 +817,27 @@ public class TableReader implements Closeable, SymbolTableSource {
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
+    }
+
+    /**
+     * Reverse-looks-up dense interned key {@code key} for dimension {@code dimIndex} back to its
+     * value -- the read-only half {@code TableWriter} has no counterpart for. {@code IDENTITY} and
+     * {@code TRUNCATE} look the key up in their respective symbol map; {@code HASH} has no reverse (a
+     * bucket cannot be un-hashed), so this returns {@code null}. {@code EXPRESSION} dimensions are
+     * not supported here (Plan 4).
+     */
+    public CharSequence valueOfDimensionKey(int dimIndex, int key) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                return getSymbolMapReader(dim.getColumnIndex()).valueOf(key);
+            case PartitionDimension.KIND_TRUNCATE:
+                return getCompositeDictionaries().dictReaderFor(dimIndex).valueOf(key);
+            case PartitionDimension.KIND_HASH:
+                return null;
+            default:
+                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+        }
     }
 
     private static int getColumnBits(int columnCount) {

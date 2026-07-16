@@ -341,6 +341,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // in denseSymbolMapWriters and are freed there (freeSymbolMapWriters); this reference is merely
     // dropped on teardown -- never closed here, which would double-free.
     private CompositeDictionaries compositeDicts;
+    // reused across internDimensionValue() calls to avoid an allocation per TRUNCATE-dimension intern
+    private final StringSink compositeDimSink = new StringSink();
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -2624,6 +2626,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void ic() {
         commit(metadata.getO3MaxLag());
+    }
+
+    /**
+     * Maps a raw dimension value to its dense interned key on the write side, dispatching on the
+     * dimension's transform kind (see {@link PartitionDimension#getKind()}): {@code IDENTITY} reuses
+     * the source column's own symbol map ({@link #getSymbolMapWriter(int)}), {@code HASH} computes a
+     * pure hash bucket with no dictionary involved (see {@link CompositeDimensionTransform#hashBucket}),
+     * and {@code TRUNCATE} interns the first-{@code N}-char prefix into the dimension's dedicated
+     * dictionary ({@link #getCompositeDictionaries()}; a composite table always has one for a
+     * TRUNCATE dimension). {@code EXPRESSION} dimensions are not supported here (Plan 4).
+     */
+    public int internDimensionValue(int dimIndex, CharSequence value) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                return getSymbolMapWriter(dim.getColumnIndex()).put(value);
+            case PartitionDimension.KIND_HASH:
+                return CompositeDimensionTransform.hashBucket(value, dim.getParam());
+            case PartitionDimension.KIND_TRUNCATE:
+                return getCompositeDictionaries().dedicatedDictFor(dimIndex).put(
+                        CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), compositeDimSink)
+                );
+            default:
+                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+        }
     }
 
     public boolean inTransaction() {

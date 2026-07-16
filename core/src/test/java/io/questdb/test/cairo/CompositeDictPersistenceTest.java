@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -169,6 +170,39 @@ public class CompositeDictPersistenceTest extends AbstractCairoTest {
             execute("create table p (ts timestamp, s symbol) timestamp(ts) partition by day wal");
             try (TableReader r = getReader("p")) {
                 Assert.assertNull(r.getCompositeDictionaries());
+            }
+        });
+    }
+
+    /**
+     * Task 7 (Plan 2): read-side dimension value interning for a {@code TRUNCATE} dimension. Two
+     * different values sharing the same {@code N}-char prefix must intern to the same dense key on
+     * the write side, and that key must survive a writer-to-reader round trip after reopen -- both
+     * looking a fresh value up by its prefix ({@code keyOfDimensionValue}) and reversing a key back
+     * to its interned prefix ({@code valueOfDimensionKey}).
+     * <p>
+     * Mirrors {@link #testReaderReadsRegistryAndDictAfterReopen()}'s row-append-to-persist idiom: a
+     * real row is appended so {@code commit()} is non-empty and actually flushes the dedicated dict's
+     * symbol count (see that test's Javadoc for why an isolated intern alone would not persist).
+     */
+    @Test
+    public void testTruncateDimInternsPrefixAndReaderKeyOf() throws Exception {     // truncate + reader round-trip
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, symbol symbol) " +
+                    "timestamp(ts) partition by day, truncate(symbol, 3) wal");
+            int key;
+            try (TableWriter w = getWriter("t")) {
+                key = w.internDimensionValue(0, "BTCUSDT");              // truncate dim0 -> prefix "BTC"
+                Assert.assertEquals(key, w.internDimensionValue(0, "BTCETH")); // same prefix -> same key
+                TableWriter.Row row = w.newRow(0);                       // a real row so commit() persists (see Task 6 nuance)
+                row.putSym(1, "BTCUSDT");
+                row.append();
+                w.commit();
+            }
+            engine.releaseInactive();
+            try (TableReader r = getReader("t")) {
+                Assert.assertEquals(key, r.keyOfDimensionValue(0, "BTCZZZ")); // "BTC" prefix -> same key
+                TestUtils.assertEquals("BTC", r.valueOfDimensionKey(0, key));
             }
         });
     }

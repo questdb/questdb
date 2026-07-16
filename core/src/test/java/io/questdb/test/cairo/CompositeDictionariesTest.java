@@ -133,4 +133,25 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Task 7 (Plan 2): write-side dimension value interning. {@code IDENTITY} must reuse the source
+     * column's own symbol map (same ordinal as calling {@code put} on the column directly, not a
+     * separate dict), and {@code HASH} must produce a pure bucket in {@code [0, param)} with no
+     * dictionary involved.
+     */
+    @Test
+    public void testInternDimensionValueIdentityReuseAndHash() throws Exception {   // writer
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 8) wal");
+            try (TableWriter w = getWriter("t")) {
+                int viaCol = w.getSymbolMapWriter(1).put("NYSE");         // exchange col idx 1
+                int viaDim = w.internDimensionValue(0, "NYSE");           // identity(exchange)
+                Assert.assertEquals(viaCol, viaDim);                     // identity reuses the column dict
+                int h = w.internDimensionValue(1, "BTC");                // hash(symbol, 8)
+                Assert.assertTrue(h >= 0 && h < 8);
+            }
+        });
+    }
 }
