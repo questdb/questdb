@@ -427,52 +427,102 @@ public void testTruncateDimInternsPrefixAndReaderKeyOf() throws Exception {     
 
 ---
 
-### Task 8: Crash-safety, rollback, and plain-table byte-identity guard
+### Task 8: Crash-safety, plain-table byte-identity, and DROP-source-column guard
 
 **Files:**
-- Test only: `core/src/test/java/io/questdb/test/cairo/CompositeDictPersistenceTest.java` (add cases); minimal writer guard only if a test reveals a gap.
+- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java` — in `removeColumn(...)`, reject dropping a symbol column that a composite dimension is defined over (dangling-dimension guard; mirrors the Task-5 ADD-SYMBOL guard).
+- Test: `core/src/test/java/io/questdb/test/cairo/CompositeDictPersistenceTest.java` (crash-safety + DROP guard) and `CompositeDictionariesTest.java` (plain byte-identity).
 
-**Interfaces:** Consumes everything above.
+**Interfaces:** Consumes everything above. Note (from Task 6): `TableWriter.commit()` short-circuits when `!inTransaction()`, so an isolated `internCell()` with no row append is never committed — the crash-safety tests exploit exactly this (uncommitted interns must not survive a reopen).
 
-- [ ] **Step 1: Write the failing/guard tests**
+- [ ] **Step 1: Crash-safety tests** (the core "trust `_txn`, not files" guarantee)
 ```java
 @Test
-public void testUncommittedInternsRolledBackOnReopen() throws Exception {
+public void testUncommittedInternsDiscardedOnReopen() throws Exception {
     assertMemoryLeak(() -> {
         execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                 "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
         try (TableWriter w = getWriter("t")) {
             w.getCompositeDictionaries().cellRegistry().internCell(new int[]{1, 2}, 2);
-            w.rollback();                                        // discard without commit
-            Assert.assertEquals(0, w.getCompositeDictionaries().cellRegistry().size());
-        }
+        }                                                        // writer closed WITHOUT commit
         engine.releaseInactive();
         try (TableReader r = getReader("t")) {
-            Assert.assertEquals(0, r.getCompositeDictionaries().cellRegistry().size()); // reopen sees nothing
+            // _txn registry count was never advanced -> reopen sees zero (uncommitted intern gone)
+            Assert.assertEquals(0, r.getCompositeDictionaries().cellRegistry().size());
         }
     });
 }
 @Test
-public void testPlainTableTxnByteIdenticalToPreFeature() throws Exception {
-    // A plain table provisions no dedicated interners: its dense symbol map count and _txn symbol
-    // region are exactly as a pre-feature table. Assert dense symbol map count == number of SYMBOL cols.
+public void testRollbackDiscardsInterns() throws Exception {
     assertMemoryLeak(() -> {
-        execute("create table p (ts timestamp, a symbol, b symbol) timestamp(ts) partition by day wal");
-        try (TableWriter w = getWriter("p")) {
-            Assert.assertEquals(2, w.getDenseSymbolMapCount());  // exactly the 2 SYMBOL columns
-            Assert.assertFalse(w.getCompositeDictionaries().isComposite());
+        execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+        try (TableWriter w = getWriter("t")) {
+            w.getCompositeDictionaries().cellRegistry().internCell(new int[]{1, 2}, 2);
+            TableWriter.Row row = w.newRow(0);                   // a real row -> inTransaction() true, so rollback engages
+            row.putSym(1, "AAA");
+            row.putSym(2, "BBB");
+            row.append();
+            w.rollback();                                        // discard the whole transaction (row + interns)
+            Assert.assertEquals(0, w.getCompositeDictionaries().cellRegistry().size());  // registry truncated to _txn count 0
         }
     });
 }
 ```
 
-- [ ] **Step 2: Run** — `testUncommittedInternsRolledBackOnReopen` should PASS if crash-safety is correctly inherited from `_txn` (writer `rollback()` iterates `denseSymbolMapWriters` including the registry — Agent A confirmed `rollbackSymbolTables` is columnIndex-agnostic). `testPlainTableTxnByteIdenticalToPreFeature` should PASS (no dedicated interners for plain).
+- [ ] **Step 2: Plain-table byte-identity test** (`CompositeDictionariesTest`)
+```java
+@Test
+public void testPlainTableNoInternersTxnByteIdentical() throws Exception {
+    assertMemoryLeak(() -> {
+        execute("create table p (ts timestamp, a symbol, b symbol) timestamp(ts) partition by day wal");
+        try (TableWriter w = getWriter("p")) {
+            Assert.assertNull(w.getCompositeDictionaries());      // no interners for a plain table
+            Assert.assertEquals(2, w.getDenseSymbolMapCount());   // exactly the 2 SYMBOL columns
+        }
+        try (TableReader r = getReader("p")) {
+            Assert.assertNull(r.getCompositeDictionaries());
+            Assert.assertEquals(2, r.getTxFile().getSymbolColumnCount()); // _txn symbol region unchanged vs pre-feature
+        }
+    });
+}
+```
 
-- [ ] **Step 3: If either fails**, add the minimal guard: ensure the dedicated interners are appended to `denseSymbolMapWriters` (so rollback/truncate reach them) and that the layout returns empty for non-composite tables (so plain tables allocate nothing).
+- [ ] **Step 3: DROP-source-column guard + test.** A composite dimension is defined over a source SYMBOL column (`dimension.getColumnIndex()` = that column's WRITER index). Dropping it would leave the dimension dangling. In `TableWriter.removeColumn(...)`, after the column is resolved, reject when its writer index equals any `metadata.getPartitionSpec().getDimension(i).getColumnIndex()`:
+```java
+// in removeColumn, before mutating:
+final PartitionSpec spec = metadata.getPartitionSpec();
+final int droppedWriterIndex = metadata.getWriterIndex(/* the dense/logical index removeColumn resolved */);
+for (int i = 0, n = spec.getDimensionCount(); i < n; i++) {
+    if (spec.getDimension(i).getColumnIndex() == droppedWriterIndex) {
+        throw CairoException.nonCritical()
+                .put("cannot drop column '").put(name)
+                .put("' referenced by a composite partition dimension");
+    }
+}
+```
+(Find how `removeColumn` currently resolves the column's index and mirror it for `droppedWriterIndex`; `dimension.getColumnIndex()` is a WRITER index, stable across other drops.) Test:
+```java
+@Test
+public void testDropDimensionSourceColumnRejected() throws Exception {
+    assertMemoryLeak(() -> {
+        execute("create table t (ts timestamp, exchange symbol, symbol symbol, price double) " +
+                "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+        try (TableWriter w = getWriter("t")) {
+            try { w.removeColumn("symbol"); Assert.fail(); }     // truncate dim source
+            catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
+            try { w.removeColumn("exchange"); Assert.fail(); }   // identity dim source
+            catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
+            w.removeColumn("price");                             // non-dimension column -> allowed
+            Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("price") < 0);
+        }
+    });
+}
+```
 
-- [ ] **Step 4: Re-run** — PASS.
+- [ ] **Step 4: Run** — `mvn -q -pl core test -Dtest=CompositeDictPersistenceTest,CompositeDictionariesTest` all green.
 
-- [ ] **Step 5: Commit** — `test(cairo): composite interner crash-safety + plain-table _txn byte-identity`
+- [ ] **Step 5: Commit** — `feat(cairo): composite interner crash-safety tests + reject DROP of a dimension source column`
 
 ---
 
