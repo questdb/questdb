@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -1852,6 +1853,80 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("cnt\n50\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testLimitOverPushdownPrunedScanWithConstantFoldedFilter() throws Exception {
+        // BYTE carries no null sentinel, so EqByteFunctionFactory folds "val IS NOT NULL"
+        // to constant TRUE and the code generator drops the filter. PushdownFilterExtractor
+        // reads the expression node before the compiler folds it, so the scan still reports
+        // active pushdown while carrying no filter of its own. That pairing is what reaches
+        // PageFrameRecordCursorImpl.skipRows()'s pushdown slow path with the decode clamp
+        // armed: a WHERE that survives folding keeps a residual filter, and the clamp then
+        // stays off because canClamp requires filter == null.
+        //
+        // The nested LIMIT drives the skip. Under active pushdown the scan reports
+        // size() == -1, so the outer LimitRecordCursor cannot learn its base size and sizes
+        // itself through base.skipRows(counter, 0) instead. Applying that 0 to the walk let
+        // the first hasNext() find the budget already spent and report exhaustion, so the
+        // skip skipped nothing and calculateSize() reported 0 rows for a cursor yielding 16.
+        // assertQuery().returns() cross-checks calculateSize() against the materialized
+        // rows, which is what fails this test without the fix.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT (x % 100)::BYTE, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(500)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("INSERT INTO x VALUES (99, '2024-01-02T02:00:00.000000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Keep the regression coverage honest. Both halves of the broken pairing must
+            // hold, or the assertion below still passes while testing nothing: landing on
+            // the page-frame factory (rather than a filter wrapper) proves the WHERE folded
+            // away, and size() == -1 on an entity cursor proves pushdown is active, which is
+            // what denies the outer LIMIT a base size and routes it into skipRows().
+            try (RecordCursorFactory factory = select("SELECT * FROM x WHERE val IS NOT NULL")) {
+                RecordCursorFactory scanFactory = factory;
+                if (scanFactory instanceof QueryProgress) {
+                    scanFactory = scanFactory.getBaseFactory();
+                }
+                Assert.assertTrue(
+                        "the folded WHERE must leave the page-frame factory unwrapped [factory="
+                                + scanFactory.getClass().getSimpleName() + ']',
+                        scanFactory instanceof PageFrameRecordCursorFactory
+                );
+                try (RecordCursor cursor = scanFactory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(-1, cursor.size());
+                }
+            }
+
+            assertQuery("WITH cte0 AS (SELECT * FROM x WHERE val IS NOT NULL LIMIT 16) SELECT * FROM cte0 LIMIT 40")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T00:01:00.000000Z
+                            3\t2024-01-01T00:02:00.000000Z
+                            4\t2024-01-01T00:03:00.000000Z
+                            5\t2024-01-01T00:04:00.000000Z
+                            6\t2024-01-01T00:05:00.000000Z
+                            7\t2024-01-01T00:06:00.000000Z
+                            8\t2024-01-01T00:07:00.000000Z
+                            9\t2024-01-01T00:08:00.000000Z
+                            10\t2024-01-01T00:09:00.000000Z
+                            11\t2024-01-01T00:10:00.000000Z
+                            12\t2024-01-01T00:11:00.000000Z
+                            13\t2024-01-01T00:12:00.000000Z
+                            14\t2024-01-01T00:13:00.000000Z
+                            15\t2024-01-01T00:14:00.000000Z
+                            16\t2024-01-01T00:15:00.000000Z
+                            """);
         });
     }
 
