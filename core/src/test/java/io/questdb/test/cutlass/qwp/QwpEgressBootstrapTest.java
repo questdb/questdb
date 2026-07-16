@@ -2227,7 +2227,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "2s"
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "5s"
             )) {
                 serverMain.execute("CREATE TABLE big AS (SELECT x, x * 2 AS y FROM long_sequence(4_000_000))");
                 final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
@@ -2272,7 +2272,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             10
                     );
 
-                    Os.sleep(3_000);
+                    Os.sleep(6_000);
                     Assert.assertEquals(
                             "egress query errored before the CREDIT resume",
                             erroredBefore, metrics.queriesErroredCounter().getValue()

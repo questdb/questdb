@@ -303,6 +303,13 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
     return (jboolean) (recv((SOCKET) fd, (char *) &c, 1, 0) < 1);
 }
 
+// Windows reports a peer FIN via WSAPoll's POLLHUP even behind still-buffered data -- a property of
+// the AFD disconnect-state bit, not of documented WSAPoll wording (which implies a graceful FIN
+// arrives as POLLRDNORM). It is therefore validated empirically: NetTest.testIsPeerDisconnected and
+// the PGWire/QWP disconnect tests run on Windows CI (no OS skip) against a FIN-behind-a-buffered-byte
+// close. POLLRDNORM stays out of the mask by design, so a merely-readable socket (e.g. a pipelined
+// request) never reads as a hangup -- do not reintroduce it. Fail-safe: if POLLHUP ever stops
+// firing, the probe reads "connected" and detection falls back to query.timeout, never a false abort.
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         (JNIEnv *e, jclass cl, jint fd) {
     WSAPOLLFD pfd;
