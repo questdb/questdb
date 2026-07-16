@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.BinaryTypeDriver;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.TableUtils;
@@ -713,6 +714,52 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringBinaryRefillAfterResetPreservesValues() throws Exception {
+        // reset() rewinds the STRING / BINARY aux cursor to 0, dropping the leading
+        // terminator the layout is built on, so it has to put it back before the refill
+        // appends over it. Nothing else catches a dropped seed: a first fill is fine
+        // (construction seeds it) and the extents alone look plausible either way.
+        //
+        // Without the re-seed the refill's row 0 writes its END offset at entry 0, shifting
+        // the vector down one entry, and aux[row] stops being row's start: every read then
+        // resolves the PREVIOUS row's payload, and row 0 reads from wherever entry 0's
+        // stale bytes point. Refill with values that differ per row - and shorter ones than
+        // the first fill, so a mis-resolved read lands on live bytes rather than tripping a
+        // bound and failing for the wrong reason.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                VarSizeRecord rec = new VarSizeRecord();
+                final int firstRows = 5;
+                for (int r = 0; r < firstRows; r++) {
+                    rec.of((r + 1) * 1_000_000L, "first-fill-" + r + repeat('p', 32), new TestBinarySequence().of(bytesOf(r, 64)));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(firstRows);
+
+                buf.reset();
+                assertEmptyExtents(buf, types); // the terminator is back, the fill is gone
+
+                final int rows = 4;
+                for (int r = 0; r < rows; r++) {
+                    rec.of((r + 1) * 2_000_000L, "b" + r, new TestBinarySequence().of(bytesOf(r + 3, r + 1)));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                for (int r = 0; r < rows; r++) {
+                    TestUtils.assertEquals("b" + r, buf.getStrA(r, 1));
+                    assertBinEquals(bytesOf(r + 3, r + 1), buf.getBin(r, 2));
+                }
+                // The refilled vector is the native one again, sized to the refill's rows
+                // rather than carrying the first fill's entries.
+                Assert.assertEquals(StringTypeDriver.INSTANCE.getAuxVectorSize(rows), buf.auxSize(1));
+                Assert.assertEquals(BinaryTypeDriver.INSTANCE.getAuxVectorSize(rows), buf.auxSize(2));
+            }
+        });
+    }
+
+    @Test
     public void testStringBinaryRoundTripThroughTier() throws Exception {
         // Write STRING + BINARY rows (including NULL and a real, empty value) into
         // a slot, publish, then read them back through the buffer getters after a
@@ -1324,20 +1371,25 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testRegionExtentsCollapseWhenEmptyAndAfterReset() throws Exception {
-        // An unfilled region reports a 0 extent (and a 0 address, since nothing is
-        // allocated yet), and reset() must take a filled buffer back to both. reset()
+        // An unfilled region reports a 0 data extent (and a 0 data address, since nothing
+        // is allocated yet), and reset() must take a filled buffer back to both. reset()
         // retains the allocated pages and rewinds only the var-size append cursors, so a
         // dataSize that reported the allocation rather than the written extent - or one
         // that ignored rowCount for a fixed-width column - would keep reporting the old
         // fill and hand a Phase 3 frame rows the slot no longer holds.
+        //
+        // The aux side of "empty" is type dependent: a STRING / BINARY column carries the
+        // native layout's leading terminator, seeded at construction and re-seeded by
+        // reset(), so its empty extent is one entry rather than zero and its region is
+        // allocated from the start.
         assertMemoryLeak(() -> {
             IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
             try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                assertEmptyExtents(buf, types);
+                // Nothing is allocated up front except the STRING / BINARY aux regions the
+                // seed writes into (which assertEmptyExtents covers).
                 for (int c = 0, n = types.size(); c < n; c++) {
-                    Assert.assertEquals("empty data size, col " + c, 0, buf.dataSize(c));
-                    Assert.assertEquals("empty aux size, col " + c, 0, buf.auxSize(c));
                     Assert.assertEquals("empty data address, col " + c, 0, buf.dataAddress(c));
-                    Assert.assertEquals("empty aux address, col " + c, 0, buf.auxAddress(c));
                 }
 
                 VarSizeRecord rec = new VarSizeRecord();
@@ -1348,15 +1400,15 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 }
                 buf.setRowCount(rows);
                 Assert.assertTrue(buf.dataSize(1) > 0);
-                Assert.assertTrue(buf.auxSize(1) > 0);
+                Assert.assertEquals((long) (rows + 1) * Long.BYTES, buf.auxSize(1));
 
+                // A reset buffer reports exactly the extents a fresh one does - including a
+                // STRING / BINARY column back at its bare terminator rather than at an empty
+                // vector, since reset() rewinds the aux cursor to 0 and must re-seed.
                 buf.reset();
-                for (int c = 0, n = types.size(); c < n; c++) {
-                    Assert.assertEquals("reset data size, col " + c, 0, buf.dataSize(c));
-                    Assert.assertEquals("reset aux size, col " + c, 0, buf.auxSize(c));
-                }
+                assertEmptyExtents(buf, types);
                 // The pages survive reset() (the next refill reuses them), so the regions
-                // stay allocated even though their extents collapsed to 0.
+                // stay allocated even though the extents collapsed.
                 Assert.assertNotEquals(0, buf.dataAddress(1));
                 Assert.assertNotEquals(0, buf.auxAddress(1));
             }
@@ -1364,21 +1416,15 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringBinaryAuxRegionOmitsNativeTerminator() throws Exception {
-        // The buffer's STRING / BINARY aux vector holds exactly one 8-byte start offset per
-        // row, one entry short of the on-disk N+1 model StringTypeDriver reads - and
-        // BinaryTypeDriver with it, since it extends StringTypeDriver.
+    public void testStringBinaryAuxRegionMatchesNativeLayout() throws Exception {
+        // The buffer's STRING / BINARY aux vector is the drivers' own N+1 model: a leading
+        // 0, then one 8-byte END offset per row. So it matches getAuxVectorSize entry for
+        // entry - and BinaryTypeDriver's with it, since it extends StringTypeDriver - which
+        // is what makes every column here driver-readable and lets a Phase 3 frame cursor
+        // size a data page through getDataVectorSizeAt like it would anywhere else.
         //
-        // This is not a defect, and the gap costs a frame CONSUMER nothing: a page frame
-        // publishes an aux extent of N * 8 for N rows (FwdTableReaderPageFrameCursor), and
-        // every frame-side var read resolves a value from aux[row] plus the payload's own
-        // length prefix, never from aux[row + 1]. The N+1 entry is producer-side state,
-        // which a native cursor reads through getDataVectorSizeAt only because an mmap'd
-        // column file gives it no other way to size the data page.
-        //
-        // Pin the gap so a Phase 3 frame cursor cannot reach for those driver helpers
-        // against this aux: aux[rowCount] is never written, so it must size the data page
-        // from dataSize() instead. That is the one way this layout can bite.
+        // The vector's shape is the contract; auxSize's *extent* is deliberately one entry
+        // wider than the N * 8 a native frame publishes (see testStringBinaryAuxSizeReportsNativeVector).
         assertMemoryLeak(() -> {
             IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
             try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
@@ -1390,32 +1436,70 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 }
                 buf.setRowCount(rows);
 
-                // What the buffer actually stores: N entries, no terminator.
-                Assert.assertEquals((long) rows * Long.BYTES, buf.auxSize(1));
-                Assert.assertEquals((long) rows * Long.BYTES, buf.auxSize(2));
-                // What a native consumer expects: N+1. The gap is exactly one entry, and
-                // it is the last row's payload bound.
-                Assert.assertEquals(
-                        buf.auxSize(1) + Long.BYTES,
-                        StringTypeDriver.INSTANCE.getAuxVectorSize(rows)
-                );
-                Assert.assertEquals(
-                        buf.auxSize(2) + Long.BYTES,
-                        BinaryTypeDriver.INSTANCE.getAuxVectorSize(rows)
-                );
+                // The vector the drivers expect, exactly: N+1 entries for N rows.
+                Assert.assertEquals(StringTypeDriver.INSTANCE.getAuxVectorSize(rows), buf.auxSize(1));
+                Assert.assertEquals(BinaryTypeDriver.INSTANCE.getAuxVectorSize(rows), buf.auxSize(2));
 
-                // Each stored entry is still a real start offset into the data region, in
-                // ascending order and inside the reported extent - the vector is one entry
-                // short, not malformed.
-                final long auxAddr = buf.auxAddress(1);
-                final long dataSize = buf.dataSize(1);
-                long prev = -1;
-                for (int r = 0; r < rows; r++) {
-                    final long off = Unsafe.getUnsafe().getLong(auxAddr + ((long) r << 3));
-                    Assert.assertTrue("offset ascends, row " + r, off > prev);
-                    Assert.assertTrue("offset within data extent, row " + r, off < dataSize);
-                    prev = off;
+                for (int col = 1; col <= 2; col++) {
+                    final long auxAddr = buf.auxAddress(col);
+                    final long dataSize = buf.dataSize(col);
+
+                    // Entry 0 is the seeded terminator: row 0's payload starts at the base.
+                    Assert.assertEquals("leading terminator, col " + col, 0, Unsafe.getUnsafe().getLong(auxAddr));
+                    // Every entry ascends and stays inside the data extent, and the last one
+                    // bounds the final row's payload exactly - the entry the pre-N+1 layout
+                    // did not have at all.
+                    long prev = -1;
+                    for (int r = 0; r <= rows; r++) {
+                        final long off = Unsafe.getUnsafe().getLong(auxAddr + ((long) r << 3));
+                        Assert.assertTrue("offset ascends, col " + col + " entry " + r, off > prev);
+                        Assert.assertTrue("offset within data extent, col " + col + " entry " + r, off <= dataSize);
+                        prev = off;
+                    }
+                    Assert.assertEquals("terminator bounds the payload, col " + col, dataSize, prev);
+
+                    // The driver agrees: sizing the data page off this aux now yields the
+                    // same extent dataSize reports, which is the whole point of aligning.
+                    final ColumnTypeDriver driver = ColumnType.getDriver(types.getQuick(col));
+                    Assert.assertEquals(
+                            "driver-sized data page, col " + col,
+                            dataSize,
+                            driver.getDataVectorSizeAt(auxAddr, rows - 1)
+                    );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testStringBinaryAuxSizeReportsNativeVector() throws Exception {
+        // auxSize means "used extent", so for STRING / BINARY it reports the whole N+1
+        // vector - one entry MORE than the N * 8 a native page frame publishes for the same
+        // rows (FwdTableReaderPageFrameCursor sets a frame's aux extent to (hi - lo) * 8).
+        //
+        // Pin that gap, because a frame is meant to publish this value as-is rather than
+        // re-derive the native extent. It is inert: the extent is consumed only as a bounds
+        // guard (every STRING / BINARY read in PageFrameMemoryRecord is
+        // `if (auxPageLim < auxOffset + 8) throw`), nothing derives a row count from it, and
+        // the frame's row range caps rowIndex at rowCount - 1 regardless. So the extra entry
+        // only loosens the guard by one entry it can never reach.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                VarSizeRecord rec = new VarSizeRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    rec.of((r + 1) * 1_000_000L, "s" + r, new TestBinarySequence().of(bytesOf(r, 4)));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                final long framePublishes = (long) rows * Long.BYTES;
+                Assert.assertEquals(framePublishes + Long.BYTES, buf.auxSize(1));
+                Assert.assertEquals(framePublishes + Long.BYTES, buf.auxSize(2));
+                // VARCHAR / ARRAY carry no terminator, so their extent is the native one
+                // outright - the gap above is STRING / BINARY only.
+                Assert.assertEquals(0, buf.auxSize(0)); // TIMESTAMP: fixed-width, no aux at all
             }
         });
     }
@@ -1504,6 +1588,30 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         Assert.assertEquals("hl", hl, actual.getHl());
         Assert.assertEquals("lh", lh, actual.getLh());
         Assert.assertEquals("ll", ll, actual.getLl());
+    }
+
+    // Asserts the extents of a buffer that holds no rows - whether freshly constructed or
+    // freshly reset(). The data extent is 0 for every column. The aux extent splits by
+    // type: a fixed-width column has no aux vector at all, a VARCHAR / ARRAY column has an
+    // empty one, and a STRING / BINARY column already carries its leading terminator, so
+    // its extent is one entry and that entry reads 0.
+    //
+    // Addresses are deliberately out of scope: they distinguish the two states rather than
+    // share them (a fresh buffer has allocated nothing but the STRING / BINARY aux seed; a
+    // reset one keeps every page it allocated), so the test that cares asserts them itself.
+    private static void assertEmptyExtents(LiveViewInMemoryBuffer buf, IntList types) {
+        for (int c = 0, n = types.size(); c < n; c++) {
+            Assert.assertEquals("empty data size, col " + c, 0, buf.dataSize(c));
+            final int tag = ColumnType.tagOf(types.getQuick(c));
+            if (tag == ColumnType.STRING || tag == ColumnType.BINARY) {
+                Assert.assertEquals("seeded aux size, col " + c, Long.BYTES, buf.auxSize(c));
+                Assert.assertNotEquals("seeded aux address, col " + c, 0, buf.auxAddress(c));
+                Assert.assertEquals("seeded terminator, col " + c, 0, Unsafe.getUnsafe().getLong(buf.auxAddress(c)));
+            } else {
+                Assert.assertEquals("empty aux size, col " + c, 0, buf.auxSize(c));
+                Assert.assertEquals("empty aux address, col " + c, 0, buf.auxAddress(c));
+            }
+        }
     }
 
     private static void assertLong256Equals(long l0, long l1, long l2, long l3, Long256 actual) {

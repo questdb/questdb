@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -68,8 +69,8 @@ import io.questdb.std.str.Utf8SplitString;
  * no further restriction. The gate admits fixed-width / SYMBOL columns (whose
  * {@code auxMem} slot is the stub) and every variable-length type - STRING, BINARY,
  * VARCHAR and ARRAY (whose {@code auxMem} buffer holds the per-row offset/header
- * vector that encoding needs - an 8-byte start offset into the appended
- * {@code dataMem} payload for STRING / BINARY, the 16-byte driver-owned header for
+ * vector that encoding needs - an 8-byte offset into the appended {@code dataMem}
+ * payload for STRING / BINARY, the 16-byte driver-owned header for
  * VARCHAR and ARRAY). STRING / BINARY / VARCHAR reuse the data region's own reusable
  * flyweights on read; ARRAY binds a per-column {@link BorrowedArray} over the
  * {@code (auxMem, dataMem)} pair, exactly as {@code PageFrameMemoryRecord} does over
@@ -78,21 +79,16 @@ import io.questdb.std.str.Utf8SplitString;
  * {@link #dataAddress}, {@link #dataSize}, {@link #auxAddress} and {@link #auxSize}
  * expose each column's region as a raw (address, used-byte-extent) pair - the shape a
  * {@code PageFrame} column address wants, and what a frame over a pinned slot would
- * publish. The extents match the page-frame convention as they stand, STRING / BINARY
- * included: a frame covering N rows publishes an aux extent of {@code N * 8} (see
- * {@code FwdTableReaderPageFrameCursor}), and every frame-side var-size read resolves a
- * value from {@code aux[row]} plus the payload's own length prefix, never from
- * {@code aux[row + 1]}.
+ * publish.
  * <p>
- * What this buffer does <em>not</em> carry is the on-disk N+1 aux model's trailing entry,
- * the one bounding the last row's payload: a STRING / BINARY column here writes exactly
- * one 8-byte start offset per row. That entry is producer-side state - a native frame
- * cursor reads it through {@code ColumnTypeDriver.getDataVectorSizeAt} to size the data
- * page of an mmap'd column file, having no other way to learn the payload extent. A
- * caller building a frame over this buffer knows that extent outright, so it must take it
- * from {@link #dataSize} and must <em>not</em> point the driver's sizing helpers at
- * {@link #auxAddress}: {@code aux[rowCount]} is never written. VARCHAR and ARRAY sidestep
- * the question with a self-describing 16-byte header per row.
+ * Every column's aux vector is byte-for-byte the layout its {@code ColumnTypeDriver}
+ * writes on disk, so any column here is driver-readable: VARCHAR and ARRAY get that for
+ * free by appending through {@link VarcharTypeDriver} / {@link ArrayTypeDriver}, and
+ * STRING / BINARY match the drivers' N+1 model - a leading 0 followed by one 8-byte END
+ * offset per row, so {@code aux[row]} is the row's start and {@code aux[rowCount]} bounds
+ * the last row's payload. The one place the two models still differ is the published
+ * extent, and only for STRING / BINARY: {@link #auxSize} reports the N+1 vector where a
+ * native frame publishes {@code N * 8}. That gap is inert - see {@link #auxSize}.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -201,6 +197,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                             ? new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
                             : NullMemory.INSTANCE
             );
+            seedAuxLeadingOffset(i);
         }
         this.timestampColumnIndex = timestampColumnIndex;
         this.rowCount = 0;
@@ -258,7 +255,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * (see {@link LiveViewSymbolCache}) so the read path resolves it against the disk
      * reader's symbol table (committed values) or the tier's symbol cache (values new
      * to the un-flushed lead); STRING and
-     * BINARY are stored as an appended payload plus a per-row start-offset vector;
+     * BINARY are stored via {@link StringTypeDriver}'s layout (appended payload plus the
+     * drivers' 8-byte-per-row offset vector over a leading 0);
      * VARCHAR is stored via {@link VarcharTypeDriver} (appended payload plus the
      * driver's 16-byte-per-row aux header); ARRAY is stored via
      * {@link ArrayTypeDriver} (appended payload plus the driver's 16-byte-per-row
@@ -330,9 +328,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * can move the base. A reader holding a slot pin sees a frozen region; the refresh
      * worker's fast-path append does not.
      * <p>
-     * A column whose region has not been allocated yet (an empty slot) reports 0 - the
-     * same value a fixed-width column reports. Pair the address with {@link #auxSize},
-     * which is 0 in both cases.
+     * A VARCHAR / ARRAY column whose region has not been allocated yet (an empty slot)
+     * reports 0 - the same value a fixed-width column reports - and pairs with a
+     * {@link #auxSize} of 0. A STRING / BINARY column allocates its region up front for
+     * the leading terminator entry, so it reports a real address even when empty, pairing
+     * with an {@link #auxSize} of 8.
      */
     public long auxAddress(int col) {
         return ColumnType.isVarSize(columnTypes.getQuick(col)) ? auxMem.getQuick(col).addressOf(0) : 0;
@@ -345,11 +345,19 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * reports: {@link MemoryCARWImpl} grows by page, so the allocation rounds up past
      * this bound.
      * <p>
-     * STRING / BINARY report {@code rowCount * 8} (one start offset per row), VARCHAR and
-     * ARRAY {@code rowCount * 16} - in both cases the extent a page frame over these rows
-     * publishes. For STRING / BINARY that is one entry short of the on-disk N+1 aux model,
-     * which costs a frame consumer nothing but does mean the driver sizing helpers cannot
-     * be pointed at this vector; see the class javadoc before sizing anything from it.
+     * VARCHAR and ARRAY report {@code rowCount * 16}, exactly the extent a page frame over
+     * these rows publishes. STRING / BINARY report {@code (rowCount + 1) * 8} - the native
+     * N+1 vector, one entry MORE than the {@code rowCount * 8} a native frame publishes for
+     * the same rows, because this buffer carries the trailing terminator an mmap'd column
+     * file keeps out of the frame's extent. A frame may publish this value as-is: the aux
+     * extent is consumed purely as a bounds guard (every STRING / BINARY read in
+     * {@code PageFrameMemoryRecord} is {@code if (auxPageLim < auxOffset + 8) throw}),
+     * nothing derives a row count from it, and the frame's own row range caps {@code
+     * rowIndex} at {@code rowCount - 1} regardless - so the extra entry only loosens the
+     * guard by one entry.
+     * <p>
+     * A STRING / BINARY column therefore reports 8, not 0, when the slot holds no rows: the
+     * leading terminator entry is written at construction and re-written by {@link #reset()}.
      */
     public long auxSize(int col) {
         return ColumnType.isVarSize(columnTypes.getQuick(col)) ? auxMem.getQuick(col).getAppendOffset() : 0;
@@ -377,35 +385,36 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         ArrayTypeDriver.appendValue(aux, data, value);
     }
 
-    // Appends one BINARY value as the next row of column col: the payload bytes go
-    // to the tail of the dataMem region and the payload's start offset is appended
-    // as the next 8-byte aux entry. putBin handles null (a negative length marker)
-    // and distinguishes it from a real, empty (len == 0) value. The order assert
-    // catches a caller that writes rows out of order: aux is append-only, so its
-    // cursor must sit at dstRow * 8 before this row's offset is appended.
+    // Appends one BINARY value as the next row of column col: the payload bytes go to
+    // the tail of the dataMem region and the payload's END offset is appended as the
+    // next 8-byte aux entry, over the leading 0 seedAuxLeadingOffset put there - the
+    // native N+1 layout. BinaryTypeDriver has no static appendValue to reuse (only the
+    // instance appendNull), so this writes the same shape appendNull does. putBin
+    // handles null (a negative length marker) and distinguishes it from a real, empty
+    // (len == 0) value, and returns the post-write append offset either way. The order
+    // assert catches a caller that writes rows out of order: aux is append-only and the
+    // seed puts its cursor one entry ahead, so it must sit at (dstRow + 1) * 8 before
+    // this row's offset is appended.
     void appendBin(int col, long dstRow, BinarySequence value) {
         final MemoryCARWImpl data = dataMem.getQuick(col);
         final MemoryCARW aux = auxMem.getQuick(col);
-        assert (dstRow << 3) == aux.getAppendOffset();
-        final long off = data.getAppendOffset();
-        data.putBin(value);
-        aux.putLong(off);
+        assert ((dstRow + 1) << 3) == aux.getAppendOffset();
+        aux.putLong(data.putBin(value));
     }
 
-    // Appends one STRING value as the next row of column col: the 4-byte length
-    // prefix + UTF-16 payload goes to the tail of the dataMem region and the
-    // payload's start offset is appended as the next 8-byte aux entry. putStr
+    // Appends one STRING value as the next row of column col via StringTypeDriver: the
+    // driver puts the 4-byte length prefix + UTF-16 payload at the tail of the dataMem
+    // region and appends the payload's END offset as the next 8-byte aux entry, over
+    // the leading 0 seedAuxLeadingOffset put there - the native N+1 layout. putStr
     // stores a null marker for a null value that getStrA reports back as null. The
-    // order assert catches a caller that writes rows out of order: aux is
-    // append-only, so its cursor must sit at dstRow * 8 before this row's offset is
-    // appended.
+    // order assert catches a caller that writes rows out of order: aux is append-only
+    // and the seed puts its cursor one entry ahead, so it must sit at (dstRow + 1) * 8
+    // before this row's offset is appended.
     void appendStr(int col, long dstRow, CharSequence value) {
         final MemoryCARWImpl data = dataMem.getQuick(col);
         final MemoryCARW aux = auxMem.getQuick(col);
-        assert (dstRow << 3) == aux.getAppendOffset();
-        final long off = data.getAppendOffset();
-        data.putStr(value);
-        aux.putLong(off);
+        assert ((dstRow + 1) << 3) == aux.getAppendOffset();
+        StringTypeDriver.appendValue(aux, data, value);
     }
 
     // Appends one VARCHAR value as the next row of column col via VarcharTypeDriver:
@@ -480,6 +489,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     // Rewinds each var-size column's dataMem/auxMem append cursor to the offsets
     // captured by the last markSavepoint(), discarding a partially applied append.
+    // The captured aux offset already includes the leading seed (it is at least one
+    // entry in for a STRING / BINARY column), so a rollback never strips it.
     // rowCount is untouched (it advances only after a fully successful append), so
     // the buffer reflects exactly its pre-append rows.
     private void rollbackToSavepoint() {
@@ -488,6 +499,24 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 dataMem.getQuick(c).jumpTo(varAppendSavepoint[c << 1]);
                 auxMem.getQuick(c).jumpTo(varAppendSavepoint[(c << 1) + 1]);
             }
+        }
+    }
+
+    // Seeds the leading 0 entry of a STRING / BINARY column's aux vector; a no-op for
+    // every other type. The two store their per-row END offset (appendStr / appendBin
+    // append what putStr / putBin return), so the leading 0 is what makes aux[row] the
+    // START offset of row - the native N+1 layout, where start_0 == 0 and
+    // start_r == end_(r-1). TableWriter seeds the same entry via
+    // StringTypeDriver.configureAuxMemMA, which takes a MemoryMA and so cannot be
+    // called against this buffer's MemoryCARW; hence the plain putLong.
+    //
+    // Must run once per fill: at construction, and again from reset(), which rewinds
+    // the aux cursor to 0 and would otherwise drop the seed on every refill. VARCHAR
+    // and ARRAY need no seed - their 16-byte per-row header is self-describing.
+    private void seedAuxLeadingOffset(int col) {
+        final int tag = ColumnType.tagOf(columnTypes.getQuick(col));
+        if (tag == ColumnType.STRING || tag == ColumnType.BINARY) {
+            auxMem.getQuick(col).putLong(0);
         }
     }
 
@@ -633,7 +662,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * those columns with eager-interned, LV-table-consistent ids (see
      * {@link LiveViewSymbolCache}) before the slot is published, so the read path
      * can resolve them. STRING / BINARY columns append the value's payload to
-     * {@code dataMem} and its start offset to {@code auxMem}; VARCHAR appends via
+     * {@code dataMem} and its end offset to {@code auxMem}; VARCHAR appends via
      * {@link VarcharTypeDriver} and ARRAY via {@link ArrayTypeDriver} (payload to
      * {@code dataMem}, 16-byte header to {@code auxMem}). Either way {@code dstRow}
      * must be the next dense append row.
@@ -1198,8 +1227,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * the next refill reuses memory. For var-size columns the append cursors of
      * both the payload ({@code dataMem}) and the offset/header vector
      * ({@code auxMem}) are rewound to zero so the next refill appends from the
-     * start; fixed-width columns need no rewind because they overwrite in place at
-     * an absolute offset (and their aux is the {@link NullMemory} stub, whose
+     * start, and a STRING / BINARY column's leading aux terminator - which the rewind
+     * drops - is re-seeded, so a refilled buffer carries the same layout a freshly
+     * constructed one does; fixed-width columns need no rewind because they overwrite in
+     * place at an absolute offset (and their aux is the {@link NullMemory} stub, whose
      * {@code jumpTo} throws).
      */
     public void reset() {
@@ -1215,6 +1246,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             if (ColumnType.isVarSize(columnTypes.getQuick(c))) {
                 dataMem.getQuick(c).jumpTo(0);
                 auxMem.getQuick(c).jumpTo(0);
+                // The rewind drops the STRING / BINARY leading 0, so put it back before
+                // the next refill appends over it.
+                seedAuxLeadingOffset(c);
             }
         }
     }
