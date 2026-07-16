@@ -606,6 +606,55 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 32) order by symbol wal");
+            assertQuery("show create table trades").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 'trades' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tsymbol SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY, exchange, hash(symbol, 32) ORDER BY symbol WAL;
+                    """);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 32) wal");
+            printSql("SHOW CREATE TABLE trades;");
+            String ddl = sink.toString().replace("ddl\n", "");
+            execute("drop table trades;");
+            execute(ddl);                                   // re-create from emitted DDL
+            printSql("SHOW CREATE TABLE trades;");
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), ddl);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeRoundTripLayoutPlain() throws Exception {
+        // Guards the LAYOUT branch: a non-default (PLAIN) naming mode must be re-emitted
+        // explicitly so the DDL round-trips to the same naming mode (HIVE is the default
+        // and is deliberately omitted; see testShowCreateCompositeRoundTrip above).
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange layout plain wal");
+            printSql("SHOW CREATE TABLE trades;");
+            String ddl = sink.toString().replace("ddl\n", "");
+            TestUtils.assertContains(ddl, " LAYOUT PLAIN");
+            execute("drop table trades;");
+            execute(ddl);                                   // re-create from emitted DDL
+            printSql("SHOW CREATE TABLE trades;");
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), ddl);
+        });
+    }
+
+    @Test
     public void testShowCreateTableUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 ( ts timestamp, s symbol ) timestamp(ts)");

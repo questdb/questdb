@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -393,6 +394,30 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
         protected void putPartitionBy() {
             sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
+            final PartitionSpec partitionSpec = table.getPartitionSpec();
+            if (partitionSpec.isComposite()) {
+                for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+                    sink.putAscii(", ");
+                    partitionSpec.getDimension(i).toSink(sink, this::getColumnName);
+                }
+                final int clusterColumnCount = partitionSpec.getClusterColumnCount();
+                if (clusterColumnCount > 0) {
+                    sink.putAscii(" ORDER BY ");
+                    for (int i = 0; i < clusterColumnCount; i++) {
+                        if (i > 0) {
+                            sink.putAscii(", ");
+                        }
+                        sink.put(getColumnName(partitionSpec.getClusterColumn(i)));
+                    }
+                }
+                if (partitionSpec.getNamingMode() == PartitionSpec.MODE_PLAIN) {
+                    sink.putAscii(" LAYOUT PLAIN");
+                }
+            }
+        }
+
+        private CharSequence getColumnName(int columnIndex) {
+            return table.getColumnQuiet(columnIndex).getName();
         }
 
         protected void putTimestamp() {
@@ -404,6 +429,14 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         protected void putWal() {
             if (!table.isWalEnabled()) {
                 sink.putAscii(" BYPASS");
+                sink.putAscii(" WAL");
+            } else if (table.getPartitionSpec().isComposite()) {
+                // Plain tables rely on WAL-enabled being the silent default when the keyword is
+                // omitted, so it is never re-emitted here. Composite dimensions have no such
+                // default to fall back on (the parser applies the same non-WAL default whether or
+                // not dimensions are present), so leaving this silent would round-trip a composite
+                // WAL table into a non-WAL one on DROP + re-execute. Re-emit explicitly instead;
+                // plain-table output above is untouched.
                 sink.putAscii(" WAL");
             }
         }

@@ -111,6 +111,17 @@ public final class PartitionDimension {
      * dimension's {@link #columnIndex}.
      */
     public void toSink(CharSink<?> sink, RecordMetadata columnNames) {
+        toSink(sink, columnNames::getColumnName);
+    }
+
+    /**
+     * Same as {@link #toSink(CharSink, RecordMetadata)}, but resolves column names through a
+     * minimal accessor instead of a full {@link RecordMetadata}. This lets callers that only have
+     * something like a {@link CairoTable} (which does not implement {@code RecordMetadata}) render a
+     * dimension without building an adapter, while keeping the identity/hash/truncate/expression
+     * formatting single-sourced.
+     */
+    public void toSink(CharSink<?> sink, ColumnNameResolver columnNames) {
         switch (kind) {
             case KIND_IDENTITY:
                 sink.put(columnNames.getColumnName(columnIndex));
@@ -127,5 +138,17 @@ public final class PartitionDimension {
             default:
                 throw new UnsupportedOperationException("Unsupported partition dimension kind: " + kind);
         }
+    }
+
+    /**
+     * Minimal column-name-by-index accessor for {@link #toSink(CharSink, ColumnNameResolver)}.
+     * A {@link RecordMetadata} satisfies this via a method reference (see
+     * {@link #toSink(CharSink, RecordMetadata)}); a {@link CairoTable} satisfies it with a small
+     * lambda (e.g. {@code idx -> table.getColumnQuiet(idx).getName()}) without either type needing
+     * to implement the other.
+     */
+    @FunctionalInterface
+    public interface ColumnNameResolver {
+        CharSequence getColumnName(int columnIndex);
     }
 }
