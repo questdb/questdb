@@ -590,6 +590,42 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (headBaseSeqTxn > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
             }
+            // The head arm above is not enough on its own, because the premise it
+            // rests on - "no head, so recovery rebuilds from the applied base
+            // table" - breaks once the retained-checkpoint ring exists. An O3
+            // retire CLEARS the head while the ring keeps the entries the late
+            // row left sealed, and those survivors' .cp files stay on disk, so
+            // restart resumes from one of them and replays raw base WAL from ITS
+            // base seqTxn - a range a floor released to lvConsumed has purged.
+            // Pin the two entries restart can resume from, and take the lower:
+            //
+            //  - the newest entry the durable _checkpoints/_ring lists, which a
+            //    restart TRUSTING the manifest (covered == reconciled applied
+            //    floor) restores from. LONG_NULL while the durable ring is
+            //    disabled, or when the last publication listed nothing.
+            //  - the newest entry the in-memory ring holds, which a restart
+            //    FALLING BACK restores from, the startup sweep keeping the
+            //    highest surviving .cp as the head.
+            //
+            // Neither substitutes for the other: the manifest is absent entirely
+            // while the durable ring is disabled, and a failed publication leaves
+            // the in-memory ring holding an entry the manifest does not list,
+            // whose base seqTxn is above the one a trusting restart needs. Purge
+            // cannot tell which restart is coming, so it holds both.
+            //
+            // Always the NEWEST entry, never the oldest: the ring spans the whole
+            // retention horizon, and flooring at its oldest entry would pin base
+            // WAL across all of it. The unsynchronised reads are safe - each is a
+            // floor some instant published, and min() of them is at or below
+            // either.
+            final long listedNewestBaseSeqTxn = instance.getLastPublishedRingNewestBaseSeqTxn();
+            if (listedNewestBaseSeqTxn > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, listedNewestBaseSeqTxn);
+            }
+            final long ringNewestBaseSeqTxn = instance.getRingNewestBaseSeqTxn();
+            if (ringNewestBaseSeqTxn > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, ringNewestBaseSeqTxn);
+            }
         }
         return safeToPurgeTxn;
     }

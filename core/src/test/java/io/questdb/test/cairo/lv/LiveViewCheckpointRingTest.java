@@ -275,22 +275,40 @@ public class LiveViewCheckpointRingTest {
         // >= 1) and no covered seqTxn to compare a reconciled floor against.
         Assert.assertEquals(0, instance.getLastPublishedRingGeneration());
         Assert.assertEquals(Numbers.LONG_NULL, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        // No manifest, so nothing to resume from: WalPurgeJob's base WAL floor
+        // stays where the head arm alone puts it.
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getLastPublishedRingNewestBaseSeqTxn());
         Assert.assertFalse(instance.isCheckpointRingDirty());
 
-        instance.recordCheckpointRingPublication(1, 100);
+        instance.recordCheckpointRingPublication(1, 100, 90);
         Assert.assertEquals(1, instance.getLastPublishedRingGeneration());
         Assert.assertEquals(100, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertEquals(90, instance.getLastPublishedRingNewestBaseSeqTxn());
         Assert.assertFalse(instance.isCheckpointRingDirty());
 
-        instance.recordCheckpointRingPublication(2, 140);
+        instance.recordCheckpointRingPublication(2, 140, 130);
         Assert.assertEquals(2, instance.getLastPublishedRingGeneration());
         Assert.assertEquals(140, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertEquals(130, instance.getLastPublishedRingNewestBaseSeqTxn());
+
+        // An O3 retire publishes survivors, so the newest listed entry - and the
+        // floor with it - moves DOWN while covered moves up. The floor has to
+        // follow it down: that survivor is what a trusting restart resumes from.
+        instance.recordCheckpointRingPublication(3, 160, 90);
+        Assert.assertEquals(160, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertEquals(90, instance.getLastPublishedRingNewestBaseSeqTxn());
+
+        // A retire that empties the ring unlinks every .cp with it, so there is
+        // nothing left to resume from and the floor is released.
+        instance.recordCheckpointRingPublication(4, 200, Numbers.LONG_NULL);
+        Assert.assertEquals(200, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getLastPublishedRingNewestBaseSeqTxn());
     }
 
     @Test
     public void testRecordCheckpointRingPublicationFailureHoldsCovered() {
         LiveViewInstance instance = newStubInstance();
-        instance.recordCheckpointRingPublication(1, 100);
+        instance.recordCheckpointRingPublication(1, 100, 90);
 
         // covered describes what is durable, so a failed publication must not
         // advance it: that is exactly what makes the failure safe. A restart here
@@ -300,13 +318,19 @@ public class LiveViewCheckpointRingTest {
         Assert.assertTrue(instance.isCheckpointRingDirty());
         Assert.assertEquals(1, instance.getLastPublishedRingGeneration());
         Assert.assertEquals(100, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        // The floor holds with it, for the same reason and a sharper one: the
+        // in-memory ring may already carry an entry the failed publication never
+        // listed, and letting the floor reach it would release the base WAL the
+        // durable manifest's older newest entry still resumes from.
+        Assert.assertEquals(90, instance.getLastPublishedRingNewestBaseSeqTxn());
 
         // The next success claims the generation the failed attempt did not, and
         // clears the flag.
-        instance.recordCheckpointRingPublication(2, 180);
+        instance.recordCheckpointRingPublication(2, 180, 170);
         Assert.assertFalse(instance.isCheckpointRingDirty());
         Assert.assertEquals(2, instance.getLastPublishedRingGeneration());
         Assert.assertEquals(180, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertEquals(170, instance.getLastPublishedRingNewestBaseSeqTxn());
     }
 
     @Test

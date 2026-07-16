@@ -257,6 +257,23 @@ public class LiveViewInstance implements QuietCloseable {
     // on the refresh worker under the refresh latch; volatile because the
     // catalogue thread reads it off-latch.
     private volatile long lastPublishedRingGeneration;
+    // baseSeqTxn of the newest entry the most recent successful _checkpoints/_ring
+    // publication listed - the entry a restart that trusts the manifest resumes
+    // from. Numbers.LONG_NULL until this process publishes, and back to LONG_NULL
+    // whenever it publishes an empty ring (nothing listed, nothing to resume
+    // from). WalPurgeJob holds the base WAL purge floor here, which the head
+    // checkpoint alone cannot carry: an O3 retire clears the head while the ring
+    // keeps its still-sealed survivors listed, and a floor following the head
+    // would release the raw base WAL that restart's replayToApplied needs to
+    // close the (newest listed entry, applied] gap. The head and this value are
+    // the same entry in every steady state, so pinning here costs nothing there.
+    // Tracks the DURABLE listing rather than the in-memory ring: the two diverge
+    // exactly when a publication fails, and the manifest is what restart reads.
+    // Mutated only on the refresh worker under the refresh latch; volatile
+    // because WalPurgeJob reads it off that thread, and the ring itself is
+    // worker-private and non-volatile so it cannot be read directly. Same write
+    // discipline as lastPublishedRingGeneration.
+    private volatile long lastPublishedRingNewestBaseSeqTxn = Numbers.LONG_NULL;
     // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Maximum base-row timestamp the refresh worker has observed so far, across
@@ -412,6 +429,20 @@ public class LiveViewInstance implements QuietCloseable {
     // headCheckpoint does. The pruned .cp files are unlinked by the caller, not here -
     // this holds only the in-memory descriptors.
     private final LongList retainedCheckpoints = new LongList();
+    // Off-thread mirror of retainedCheckpoints' newest baseSeqTxn, restamped by
+    // mirrorRingNewestBaseSeqTxn() on every mutation of that list;
+    // Numbers.LONG_NULL while the ring is empty. This is the off-thread surface
+    // the field above anticipates - a scalar, so it needs no immutable snapshot.
+    // The companion to lastPublishedRingNewestBaseSeqTxn: that one is what a
+    // restart TRUSTING the manifest resumes from, this one is what a restart
+    // FALLING BACK resumes from, the startup sweep keeping the highest surviving
+    // .cp as the head and the ring governing which .cp files survive. WalPurgeJob
+    // cannot tell which restart it is holding base WAL for, so it pins both and
+    // takes the lower. Load-bearing even with the durable ring disabled, where
+    // nothing publishes and this is the only arm covering the survivors an O3
+    // retire leaves on disk after clearing the head. Mutated only on the refresh
+    // worker under the refresh latch; volatile for WalPurgeJob's thread.
+    private volatile long ringNewestBaseSeqTxn = Numbers.LONG_NULL;
     // Live-view-row count applied since the most recent head-checkpoint commit.
     // The refresh worker compares this against cairo.live.view.checkpoint.rows
     // each cycle to decide whether the row-count trigger has fired. Mutated
@@ -527,6 +558,7 @@ public class LiveViewInstance implements QuietCloseable {
         retainedCheckpoints.add(baseSeqTxn);
         retainedCheckpoints.add(lvRowsTotal);
         retainedCheckpoints.add(stateBytes);
+        mirrorRingNewestBaseSeqTxn();
     }
 
     /**
@@ -877,6 +909,13 @@ public class LiveViewInstance implements QuietCloseable {
         return lastPublishedRingGeneration;
     }
 
+    /**
+     * See {@link #lastPublishedRingNewestBaseSeqTxn}.
+     */
+    public long getLastPublishedRingNewestBaseSeqTxn() {
+        return lastPublishedRingNewestBaseSeqTxn;
+    }
+
     public long getLastRefreshTimeUs() {
         return lastRefreshTimeUs;
     }
@@ -1076,6 +1115,13 @@ public class LiveViewInstance implements QuietCloseable {
         return total;
     }
 
+    /**
+     * See {@link #ringNewestBaseSeqTxn}.
+     */
+    public long getRingNewestBaseSeqTxn() {
+        return ringNewestBaseSeqTxn;
+    }
+
     public long getRowsSinceLastCheckpointWritten() {
         return rowsSinceLastCheckpointWritten;
     }
@@ -1161,6 +1207,7 @@ public class LiveViewInstance implements QuietCloseable {
             retainedCheckpoints.removeIndexBlock((count - 1) * RETAINED_CHECKPOINT_RECORD_SIZE, RETAINED_CHECKPOINT_RECORD_SIZE);
             count--;
         }
+        mirrorRingNewestBaseSeqTxn();
     }
 
     public boolean isDropped() {
@@ -1353,19 +1400,29 @@ public class LiveViewInstance implements QuietCloseable {
             totalBytes -= getRetainedCheckpointStateBytes(0);
             retainedCheckpoints.removeIndexBlock(0, RETAINED_CHECKPOINT_RECORD_SIZE);
         }
+        // The loop only ever drops the oldest and stops at one entry, so the
+        // newest cannot move here. Mirror anyway: every ring mutator calling
+        // this is a rule that stays correct under later edits, where "only the
+        // mutators that can move the tail" is one refactor away from being wrong.
+        mirrorRingNewestBaseSeqTxn();
     }
 
     /**
      * Records a successful {@code _checkpoints/_ring} publication that stamped
-     * {@code generation} and listed every entry as sealed at
-     * {@code coveredBaseSeqTxn}, and clears the dirty flag. The two values only
-     * ever advance together, so the caller must invoke this after the manifest
-     * is durable, never before. Runs on the refresh worker under the refresh
-     * latch. See {@link #lastPublishedRingGeneration}.
+     * {@code generation}, listed every entry as sealed at
+     * {@code coveredBaseSeqTxn} and ended on an entry covering base commit
+     * {@code newestBaseSeqTxn} ({@code LONG_NULL} when it listed nothing), and
+     * clears the dirty flag. The values only ever advance together, so the
+     * caller must invoke this after the manifest is durable, never before -
+     * {@code newestBaseSeqTxn} carries WalPurgeJob's base WAL floor, and a floor
+     * moved ahead of the manifest could release WAL the durable ring still
+     * resumes from. Runs on the refresh worker under the refresh latch. See
+     * {@link #lastPublishedRingGeneration}.
      */
-    public void recordCheckpointRingPublication(long generation, long coveredBaseSeqTxn) {
+    public void recordCheckpointRingPublication(long generation, long coveredBaseSeqTxn, long newestBaseSeqTxn) {
         lastPublishedRingGeneration = generation;
         lastPublishedRingCoveredBaseSeqTxn = coveredBaseSeqTxn;
+        lastPublishedRingNewestBaseSeqTxn = newestBaseSeqTxn;
         checkpointRingDirty = false;
     }
 
@@ -1454,6 +1511,7 @@ public class LiveViewInstance implements QuietCloseable {
         for (int i = 0, n = getRetainedCheckpointCount(); i < n; i++) {
             if (getRetainedCheckpointLvSeqTxn(i) == lvSeqTxn) {
                 retainedCheckpoints.removeIndexBlock(i * RETAINED_CHECKPOINT_RECORD_SIZE, RETAINED_CHECKPOINT_RECORD_SIZE);
+                mirrorRingNewestBaseSeqTxn();
                 return true;
             }
         }
@@ -1909,5 +1967,19 @@ public class LiveViewInstance implements QuietCloseable {
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
         memoryTracker = Misc.free(memoryTracker);
+    }
+
+    /**
+     * Republishes {@link #ringNewestBaseSeqTxn} from the ring's tail. Every
+     * mutator of {@link #retainedCheckpoints} calls this, which is what lets
+     * WalPurgeJob read the newest entry's base commit without touching the
+     * worker-private list. An empty ring leaves nothing on disk to resume from,
+     * so it releases the mirror to {@code LONG_NULL} and the floor with it.
+     */
+    private void mirrorRingNewestBaseSeqTxn() {
+        final int size = retainedCheckpoints.size();
+        ringNewestBaseSeqTxn = size == 0
+                ? Numbers.LONG_NULL
+                : retainedCheckpoints.getQuick(size - RETAINED_CHECKPOINT_RECORD_SIZE + RETAINED_CHECKPOINT_BASE_SEQ_TXN);
     }
 }

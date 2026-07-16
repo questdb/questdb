@@ -4004,7 +4004,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // half-open .cp writer is.
             return false;
         }
-        instance.recordCheckpointRingPublication(generation, coveredBaseSeqTxn);
+        // Read the floor off the snapshot that just reached disk rather than the
+        // live ring: they are the same list here, but the durable one is what
+        // restart resumes from, and a later change re-reading the ring instead
+        // would silently start pinning the floor to entries the manifest does
+        // not list. An empty manifest lists nothing to resume from, so it
+        // releases the floor (LONG_NULL) - the retires that empty the ring
+        // unlink every .cp with it, leaving restart to rebuild from the applied
+        // base, which needs no raw base WAL.
+        final int snapshotSize = ringSnapshot.size();
+        final long newestBaseSeqTxn = snapshotSize == 0
+                ? Numbers.LONG_NULL
+                : ringSnapshot.getQuick(snapshotSize - LiveViewCheckpointRingManifest.ENTRY_SIZE + LiveViewCheckpointRingManifest.ENTRY_BASE_SEQ_TXN);
+        instance.recordCheckpointRingPublication(generation, coveredBaseSeqTxn, newestBaseSeqTxn);
         return true;
     }
 
