@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -71,12 +72,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer FILTER_AND_FIND_TOP_K = AsyncTopKRecordCursorFactory::filterAndFindTopK;
     private static final UnorderedPageFrameReducer FIND_TOP_K = AsyncTopKRecordCursorFactory::findTopK;
-    private final RecordCursorFactory base;
-    private final AsyncTopKRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private final long lo;
     private final ListColumnFilter orderByFilter;
     private final int workerCount;
+    private RecordCursorFactory base;
+    private AsyncTopKRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
 
     public AsyncTopKRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -329,8 +330,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncTopKRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

@@ -66,6 +66,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final CairoConfiguration configuration;
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -89,6 +91,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.configuration = engine.getConfiguration();
         this.messageBus = messageBus;
         this.recordFunctions = recordFunctions;
+        this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
         postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
@@ -388,7 +391,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             atom.reopen();
         }
         this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+        // Skip the group by functions: the atom initializes them in init(), before any frame is
+        // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
+        // here would re-run stateful initialization, such as a cursor comparison re-executing its
+        // scalar sub-query, and could diverge from the state the workers observe. The constructor
+        // pre-filters the non-group-by functions once, so cached re-executions skip the
+        // per-function classification scan.
+        Function.init(nonGroupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
     }
 }

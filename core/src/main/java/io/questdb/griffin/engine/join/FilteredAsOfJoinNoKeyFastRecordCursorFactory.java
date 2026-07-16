@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -56,8 +57,8 @@ import org.jetbrains.annotations.Nullable;
 public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
-    private final Function slaveRecordFilter;
     private final long toleranceInterval;
+    private Function slaveRecordFilter;
 
     /**
      * Creates a new instance with filtered slave record support and optional crossindex projection.
@@ -148,10 +149,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(slaveRecordFilter);
+        final Function slaveRecordFilter = this.slaveRecordFilter;
+        this.slaveRecordFilter = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, slaveRecordFilter);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {

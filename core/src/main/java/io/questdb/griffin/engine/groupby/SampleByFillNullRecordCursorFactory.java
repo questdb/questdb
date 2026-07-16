@@ -46,7 +46,6 @@ import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.BytecodeAssembler;
@@ -57,7 +56,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final SampleByFillValueRecordCursor cursor;
+    private SampleByFillValueRecordCursor cursor;
 
     public SampleByFillNullRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -91,7 +90,11 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions
+                recordFunctions,
+                timezoneNameFunc,
+                offsetFunc,
+                sampleFromFunc,
+                sampleToFunc
         );
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -116,10 +119,22 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     sampleToFuncPos
             );
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            Misc.free(map);
+            // The superclass already adopted the record functions, base factory, map, and
+            // temporal parameter functions; the unreturned partial object would strand them.
+            // close() frees everything except the map, which _close() reaches only through the
+            // cursor - not constructed yet - so free it directly. The record functions are
+            // freed by close() and must not be freed here as well.
+            Misc.free(map, e);
+            Misc.free(this, e);
             throw e;
         }
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillValueRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override

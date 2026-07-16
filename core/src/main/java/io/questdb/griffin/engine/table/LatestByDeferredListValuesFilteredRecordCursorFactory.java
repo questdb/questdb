@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -50,10 +51,10 @@ import org.jetbrains.annotations.Nullable;
  */
 public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final LatestByValueListRecordCursor cursor;
-    private final ObjList<Function> excludedSymbolFuncs;
-    private final Function filter;
-    private final ObjList<Function> includedSymbolFuncs;
+    private LatestByValueListRecordCursor cursor;
+    private ObjList<Function> excludedSymbolFuncs;
+    private Function filter;
+    private ObjList<Function> includedSymbolFuncs;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -144,9 +145,25 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor);
+        final LatestByValueListRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> excludedSymbolFuncs = this.excludedSymbolFuncs;
+        this.excludedSymbolFuncs = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final ObjList<Function> includedSymbolFuncs = this.includedSymbolFuncs;
+        this.includedSymbolFuncs = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, excludedSymbolFuncs);
+        failure = Misc.freeObjListBestEffort(failure, includedSymbolFuncs);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
