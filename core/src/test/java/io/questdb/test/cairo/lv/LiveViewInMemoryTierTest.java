@@ -1365,14 +1365,20 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testStringBinaryAuxRegionOmitsNativeTerminator() throws Exception {
-        // The buffer's STRING / BINARY aux vector holds exactly one 8-byte start offset
-        // per row, whereas the native layout StringTypeDriver reads - and BinaryTypeDriver
-        // with it, since it extends StringTypeDriver - is the N+1 model, whose trailing
-        // entry bounds the last row's payload. The buffer's own getters never notice: they
-        // resolve a value's length from the payload's own prefix, never from aux[r + 1].
-        // A Phase 3 synthetic frame handing these regions to a native consumer would, so
-        // pin the divergence here rather than let it be discovered as a read past the
-        // region's end on the last row.
+        // The buffer's STRING / BINARY aux vector holds exactly one 8-byte start offset per
+        // row, one entry short of the on-disk N+1 model StringTypeDriver reads - and
+        // BinaryTypeDriver with it, since it extends StringTypeDriver.
+        //
+        // This is not a defect, and the gap costs a frame CONSUMER nothing: a page frame
+        // publishes an aux extent of N * 8 for N rows (FwdTableReaderPageFrameCursor), and
+        // every frame-side var read resolves a value from aux[row] plus the payload's own
+        // length prefix, never from aux[row + 1]. The N+1 entry is producer-side state,
+        // which a native cursor reads through getDataVectorSizeAt only because an mmap'd
+        // column file gives it no other way to size the data page.
+        //
+        // Pin the gap so a Phase 3 frame cursor cannot reach for those driver helpers
+        // against this aux: aux[rowCount] is never written, so it must size the data page
+        // from dataSize() instead. That is the one way this layout can bite.
         assertMemoryLeak(() -> {
             IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
             try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {

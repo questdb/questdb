@@ -76,17 +76,23 @@ import io.questdb.std.str.Utf8SplitString;
  * its page addresses.
  * <p>
  * {@link #dataAddress}, {@link #dataSize}, {@link #auxAddress} and {@link #auxSize}
- * expose each column's region as a raw (address, used-byte-extent) pair, the shape a
- * {@code PageFrame} column address wants. The regions resemble the on-disk native
- * layout closely but do <em>not</em> match it for every type: a STRING / BINARY column
- * writes exactly one 8-byte start offset per row, whereas the native layout
- * {@code StringTypeDriver} (and {@code BinaryTypeDriver}, which extends it) reads is the
- * N+1 model, carrying a trailing entry that bounds the last row's payload. The buffer's
- * own getters never need that terminator - they resolve a value's length from the
- * payload's own prefix - so the divergence is invisible here, but a consumer that sizes
- * row {@code r} as {@code aux[r + 1] - aux[r]} would read past {@link #auxSize} on the
- * last row. VARCHAR and ARRAY carry a self-describing 16-byte header per row and need no
- * terminator, so their regions do match the native layout.
+ * expose each column's region as a raw (address, used-byte-extent) pair - the shape a
+ * {@code PageFrame} column address wants, and what a frame over a pinned slot would
+ * publish. The extents match the page-frame convention as they stand, STRING / BINARY
+ * included: a frame covering N rows publishes an aux extent of {@code N * 8} (see
+ * {@code FwdTableReaderPageFrameCursor}), and every frame-side var-size read resolves a
+ * value from {@code aux[row]} plus the payload's own length prefix, never from
+ * {@code aux[row + 1]}.
+ * <p>
+ * What this buffer does <em>not</em> carry is the on-disk N+1 aux model's trailing entry,
+ * the one bounding the last row's payload: a STRING / BINARY column here writes exactly
+ * one 8-byte start offset per row. That entry is producer-side state - a native frame
+ * cursor reads it through {@code ColumnTypeDriver.getDataVectorSizeAt} to size the data
+ * page of an mmap'd column file, having no other way to learn the payload extent. A
+ * caller building a frame over this buffer knows that extent outright, so it must take it
+ * from {@link #dataSize} and must <em>not</em> point the driver's sizing helpers at
+ * {@link #auxAddress}: {@code aux[rowCount]} is never written. VARCHAR and ARRAY sidestep
+ * the question with a self-describing 16-byte header per row.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -339,9 +345,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * reports: {@link MemoryCARWImpl} grows by page, so the allocation rounds up past
      * this bound.
      * <p>
-     * STRING / BINARY report {@code rowCount * 8} (one start offset per row), which is
-     * one entry short of the N+1 vector the native drivers read - see the class javadoc.
-     * VARCHAR and ARRAY report {@code rowCount * 16} and do match the native layout.
+     * STRING / BINARY report {@code rowCount * 8} (one start offset per row), VARCHAR and
+     * ARRAY {@code rowCount * 16} - in both cases the extent a page frame over these rows
+     * publishes. For STRING / BINARY that is one entry short of the on-disk N+1 aux model,
+     * which costs a frame consumer nothing but does mean the driver sizing helpers cannot
+     * be pointed at this vector; see the class javadoc before sizing anything from it.
      */
     public long auxSize(int col) {
         return ColumnType.isVarSize(columnTypes.getQuick(col)) ? auxMem.getQuick(col).getAppendOffset() : 0;
