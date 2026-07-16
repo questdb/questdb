@@ -200,30 +200,43 @@ public void testCompositeCreatesDictAndRegistryFiles() throws Exception {
 - Test: `core/src/test/java/io/questdb/test/cairo/CellRegistryTest.java`
 
 **Interfaces:**
-- Consumes: a `MapWriter` (write) or `SymbolMapReader` (read) over the `_cell` files; `CompositeTupleCodec` (Task 1).
-- Produces: `CellRegistry` with `int internCell(int[] tuple, int arity)` (write: `symbolMap.put(encode(tuple))`), `void getTuple(int ordinal, int[] sink)` (read: `decode(reader.valueOf(ordinal), sink)`), `int size()`. A `CellRegistry` is constructed around either a writer or a reader; write-only methods throw if constructed read-only.
+- Consumes: a `MapWriter` (write side) or a `SymbolMapReader` (read side) over the `_cell` files; `CompositeTupleCodec` (Task 1).
+- Produces: `CellRegistry` with `int internCell(int[] tuple, int arity)` (write side: `writer.put(encode(tuple))`), `void getTuple(int ordinal, int[] sink)` (read side: `decode(reader.valueOf(ordinal), sink)`), `int size()`. A `CellRegistry` is constructed around **either** a writer **or** a reader. `internCell` throws `IllegalStateException` when there is no writer; `getTuple` throws when there is no reader. **`getTuple` is inherently a read-side operation** — `SymbolMapWriter` has NO `valueOf(int)` (verified: only `getSymbolCount()`/memory accessors), so reverse lookup requires a `SymbolMapReader`.
 
-- [ ] **Step 1: Write the failing test** — drive a `CellRegistry` over a real `SymbolMapWriter` created against a temp table-root path (mirror an existing `SymbolMapWriterTest` for setup):
+- [ ] **Step 1: Write the failing test** — two tests: a write-side intern/dedup/size test, and a read-side round-trip that interns via a writer, closes it, then reopens a `SymbolMapReaderImpl` over the same files to reverse-lookup. Mirror the standalone symbol-map setup in `SymbolMapTest.java:99,184`:
 ```java
 @Test
 public void testInternIsStableAndDense() throws Exception {
-    // create _cell symbol files in a temp root, open a SymbolMapWriter (cache off), wrap in CellRegistry
-    try (CellRegistry reg = openWriterRegistry(/* temp path, arity=2 */)) {
+    // write side: intern tuples -> dense ordinals, stable + dedup
+    try (CellRegistry reg = openWriterRegistry()) {            // creates _cell files + opens a SymbolMapWriter
         Assert.assertEquals(0, reg.internCell(new int[]{5, 9}, 2));
         Assert.assertEquals(1, reg.internCell(new int[]{5, 10}, 2));
         Assert.assertEquals(0, reg.internCell(new int[]{5, 9}, 2));   // dedup -> same ordinal
         Assert.assertEquals(2, reg.size());
+    }
+}
+
+@Test
+public void testGetTupleRoundTripViaReader() throws Exception {
+    try (CellRegistry w = openWriterRegistry()) {              // intern via the writer, then close it
+        w.internCell(new int[]{5, 9}, 2);
+        w.internCell(new int[]{5, 10}, 2);
+    }
+    try (CellRegistry r = openReaderRegistry(2)) {             // reopen a reader over the same _cell files, count=2
         int[] out = new int[2];
-        reg.getTuple(1, out);
+        r.getTuple(0, out);
+        Assert.assertArrayEquals(new int[]{5, 9}, out);
+        r.getTuple(1, out);
         Assert.assertArrayEquals(new int[]{5, 10}, out);
+        Assert.assertEquals(2, r.size());
     }
 }
 ```
-(`openWriterRegistry` = create files via `MapWriter.createSymbolMapFiles`, construct a `SymbolMapWriter(config, path, "_cell", REGISTRY_TXN, 0 /*symbolCount*/, 0 /*symbolIndexInTxWriter*/, NOOP collector, -1 /*columnIndex*/)`, wrap. Confirm the exact constructor arity from `SymbolMapWriter.java:71-160` at implementation time and the `SymbolValueCountCollector` NOOP.)
+Helpers (verified signatures): `openWriterRegistry` = create the files via `MapWriter.createSymbolMapFiles(ff, mem, path, "_cell", REGISTRY_TXN, capacity, false)`, then `new SymbolMapWriter(configuration, path, "_cell", REGISTRY_TXN, 0 /*symbolCount*/, 0 /*symbolIndexInTxWriter*/, SymbolValueCountCollector.NOOP, -1 /*columnIndex*/)`, wrap in a `CellRegistry`. `openReaderRegistry(count)` = `new SymbolMapReaderImpl(configuration, path, "_cell", REGISTRY_TXN, count)`, wrap. (`SymbolMapWriter` ctor: `(CairoConfiguration, Path, CharSequence, long, int, int, SymbolValueCountCollector, int)`; `SymbolMapReaderImpl` ctor: `(CairoConfiguration, Path, CharSequence, long, int)`. The writer ctor requires the offset file to pre-exist — always `createSymbolMapFiles` first. Close the writer before opening the reader so its appends are flushed.)
 
 - [ ] **Step 2: Run to verify it fails** — FAIL (no class).
 
-- [ ] **Step 3: Write minimal implementation** — thin wrapper storing a `MapWriter writer` and/or `SymbolMapReader reader` and a reusable `StringSink`. `internCell` encodes then `writer.put(sink)`. `getTuple` reads `reader.valueOf(ordinal)` then decodes. `size()` = `writer.getSymbolCount()` / `reader.getSymbolCount()`.
+- [ ] **Step 3: Write minimal implementation** — thin wrapper holding a `MapWriter writer` (nullable) OR a `SymbolMapReader reader` (nullable) and a reusable `StringSink`. `internCell(tuple, arity)`: require `writer != null` (else `IllegalStateException`), `CompositeTupleCodec.encode(tuple, arity, sink)`, return `writer.put(sink)`. `getTuple(ordinal, sink)`: require `reader != null`, `CompositeTupleCodec.decode(reader.valueOf(ordinal), sink)`. `size()`: `writer != null ? writer.getSymbolCount() : reader.getSymbolCount()`. `close()` frees whichever it owns (the test's try-with-resources drives it). Reset the `StringSink` before each encode.
 
 - [ ] **Step 4: Run to verify it passes** — PASS.
 
