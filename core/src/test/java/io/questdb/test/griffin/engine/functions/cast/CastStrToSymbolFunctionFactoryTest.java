@@ -153,6 +153,44 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyDictionaryReleasesTrackedMemoryAcrossCursorLifecycles() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024L);
+            final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                    sqlExecutionContext.getSecurityContext(),
+                    1L,
+                    MemoryTrackerWorkload.QUERY
+            );
+            final FeedFunction arg = new FeedFunction();
+            final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
+            sqlExecutionContext.setMemoryTracker(tracker);
+            try {
+                for (int cycle = 0; cycle < 10; cycle++) {
+                    func.init(null, sqlExecutionContext);
+                    try {
+                        for (int i = 0; i < 64; i++) {
+                            arg.valueA = "cycle_" + cycle + "_symbol_" + i;
+                            Assert.assertEquals(i, func.getInt(null));
+                        }
+                        Assert.assertTrue("dictionary allocation must be tracked", tracker.getUsed() > 0);
+                    } finally {
+                        func.cursorClosed();
+                    }
+                    Assert.assertEquals("cursor close must release every dictionary charge", 0, tracker.getUsed());
+                }
+            } finally {
+                try {
+                    func.close();
+                    Assert.assertEquals("function close must leave the tracker balanced", 0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(null);
+                    tracker.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnusedDictionaryDoesNotAllocateAcrossCursorLifecycles() throws Exception {
         final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
         Assert.assertTrue(threadMXBean.isThreadAllocatedMemorySupported());

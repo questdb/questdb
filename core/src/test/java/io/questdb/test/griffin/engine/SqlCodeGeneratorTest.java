@@ -8405,6 +8405,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsClearsMaskForLateStringLeg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tb (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tc (s1 SYMBOL, s2 STRING)");
+            execute("INSERT INTO ta VALUES ('a', 'p')");
+            execute("INSERT INTO tb VALUES ('b', 'q')");
+            execute("INSERT INTO tc VALUES ('c', 'r')");
+
+            // s2 stops qualifying for re-symbolisation only at the third leg. This pins
+            // recursive mask clearing for both UNION implementations.
+            assertQuery("SELECT s1, s2 FROM ta UNION ALL SELECT s1, s2 FROM tb UNION ALL SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.STRING)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+            assertQuery("SELECT s1, s2 FROM ta UNION SELECT s1, s2 FROM tb UNION SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.STRING)
+                    .noRandomAccess()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsCountDoesNotMaterializeKeys() throws Exception {
         assertMemoryLeak(() -> {
             // Keep the input cardinality high enough to exercise dictionary growth without
@@ -8422,6 +8445,53 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
                     // count(K) only needs nullness. In particular, consuming all 100k distinct
                     // values must not populate the union's lazy symbol dictionary.
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsCountHandlesNullWithoutMaterializingKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, g INT)");
+            execute("CREATE TABLE tb (s SYMBOL, g INT)");
+            execute("INSERT INTO ta VALUES ('a', 1), (NULL, 1), (NULL, 2)");
+            execute("INSERT INTO tb VALUES ('b', 1), ('c', 2), (NULL, 2)");
+
+            try (RecordCursorFactory factory = select("SELECT count(s) FROM (ta UNION ALL tb)")) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(3, record.getLong(0));
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
+                }
+            }
+
+            try (RecordCursorFactory factory = select("""
+                    SELECT g, count(s) c
+                    FROM (
+                        SELECT s, g FROM ta
+                        UNION ALL
+                        SELECT s, g FROM tb
+                    )
+                    GROUP BY g
+                    ORDER BY g
+                    """)) {
+                final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
+                Assert.assertEquals(1, symbolCasts.size());
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, record.getInt(0));
+                    Assert.assertEquals(2, record.getLong(1));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(2, record.getInt(0));
+                    Assert.assertEquals(1, record.getLong(1));
+                    Assert.assertFalse(cursor.hasNext());
                     Assert.assertNull(symbolCasts.getQuick(0).valueOf(0));
                 }
             }
