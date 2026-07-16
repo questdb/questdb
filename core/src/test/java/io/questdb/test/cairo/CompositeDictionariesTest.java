@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CompositeDictionaries;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.test.AbstractCairoTest;
@@ -275,6 +276,77 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
                 w.removeColumn("price");                                  // non-cluster column -> allowed
                 Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("price") < 0);
             }
+        });
+    }
+
+    /**
+     * Whole-branch review finding I1: composite DDL guards ({@link #testAddSymbolColumnRejectedOnComposite()}
+     * et al.) live only on the apply-side {@code TableWriter}. {@code WalWriter} validates ALTER
+     * statements synchronously too, via a separate {@code MetadataValidatorService} -- but it shares
+     * {@code WalWriterMetadata metadata} with the apply-side {@code MetadataWriterService}, and {@code
+     * WalWriterMetadata} (unlike {@code TableWriterMetadata}/{@code TableReaderMetadata}) implements
+     * only {@code TableRecordMetadata}/{@code TableRecordMetadataSink} -- neither of which extends
+     * {@code TableStructure}, the interface that declares {@code getPartitionSpec()} (default {@code
+     * PartitionSpec.EMPTY}, overridden by {@code TableWriterMetadata}/{@code TableReaderMetadata} via
+     * {@code TableMetadata extends TableRecordMetadata, TableStructure} to return the real composite
+     * spec). {@code WalWriterMetadata} has no {@code getPartitionSpec()} at all, so neither of {@code
+     * WalWriter}'s {@code MetadataServiceStub} implementations can evaluate the composite guard,
+     * synchronously or otherwise.
+     * <p>
+     * Confirmed empirically (this test originally asserted the aspirational synchronous-rejection
+     * behavior via try/catch/fail, mirroring {@link #testAddSymbolColumnRejectedOnComposite()}, and
+     * that assertion FAILED -- the ALTER returned normally with no exception): {@code ALTER TABLE ...
+     * ADD COLUMN x SYMBOL} against a composite WAL table is accepted synchronously (recorded into the
+     * WAL) and only rejected later, when {@code ApplyWal2TableJob} applies the transaction through the
+     * real {@code TableWriter} -- which suspends the table instead of the client ever seeing a
+     * synchronous error. This is materially worse than the non-WAL behavior and is TICKETED rather
+     * than fixed here: plumbing the composite spec into {@code WalWriterMetadata} (reading the same
+     * additive {@code _meta} block {@code TableWriterMetadata}/{@code TableReaderMetadata} already
+     * read) is a real structural change, not a guard one-liner, and is out of scope for this pass.
+     * <p>
+     * This test intentionally documents the CURRENT (undesirable) suspend behavior rather than the
+     * aspirational synchronous-rejection one, so it fails loudly -- forcing a look at this Javadoc --
+     * the day either {@code WalWriterMetadata} gains spec access (and should reject synchronously
+     * instead) or the suspend mechanism itself changes.
+     */
+    @Test
+    public void testWalCompositeAddSymbolSuspendsRatherThanRejectsSynchronously() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+
+            // No synchronous rejection today (I1): the ALTER "succeeds" from the client's perspective...
+            execute("alter table t add column x symbol");
+
+            // ...but the queued transaction fails at WAL-apply time through the real TableWriter guard,
+            // suspending the table instead.
+            drainWalQueue();
+            Assert.assertTrue(
+                    "expected table to be suspended after WAL-apply rejects the composite ADD COLUMN SYMBOL",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
+            );
+        });
+    }
+
+    /**
+     * Companion to {@link #testWalCompositeAddSymbolSuspendsRatherThanRejectsSynchronously()} for DROP
+     * COLUMN of a dimension source column -- same root cause (I1), same ticketed-not-fixed status: the
+     * DROP is accepted synchronously and only the WAL-apply-side {@code TableWriter.removeColumn}
+     * guard rejects it, suspending the table.
+     */
+    @Test
+    public void testWalCompositeDropDimensionSourceSuspendsRatherThanRejectsSynchronously() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+
+            execute("alter table t drop column exchange");     // no synchronous rejection today (I1)
+
+            drainWalQueue();
+            Assert.assertTrue(
+                    "expected table to be suspended after WAL-apply rejects the composite DROP COLUMN",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t"))
+            );
         });
     }
 }
