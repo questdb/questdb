@@ -114,8 +114,15 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     private ObjList<String> buildTwinFingerprints(String twinName, ObjList<FuzzTransaction> txns, Rnd applyRnd) throws Exception {
         fuzzer.createInitialTableWal(twinName, 0);
+        // createInitialTableWal queues its unconditional "column top" ALTERs via WAL but never drains them,
+        // so an undrained fp[0] would show the PRE-alter (fewer-column) schema -- a state no crash recovery
+        // can ever land on, since those structural commits are already durable (markDurableBaseline runs
+        // AFTER setup(), i.e. after this point) well before the swept transaction's own crash point. Drain
+        // once here so fp[0] reflects the fully-materialized schema with 0 data rows, matching the
+        // legitimate committed state a crash during the FIRST transaction's own commit recovers to.
+        drainWalQueue();
         ObjList<String> history = new ObjList<>();
-        history.add(fingerprint(twinName));                          // fp[0] = empty
+        history.add(fingerprint(twinName));                          // fp[0] = empty, schema fully materialized
         final ObjList<FuzzTransaction> one = new ObjList<>();
         for (int i = 0, n = txns.size(); i < n; i++) {
             one.clear();
@@ -126,6 +133,65 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
         execute("drop table " + twinName);                          // crash(dbRoot) must not see the twin
         return history;
+    }
+
+    private static final String WAL_TABLE = "cf_wal";
+    private static final String TWIN_TABLE = "cf_twin";
+
+    private final class FuzzCrashWorkload implements AdaptiveCrashWorkload {
+        private final long s0, s1;
+        private ObjList<FuzzTransaction> txns;
+        private ObjList<String> fp;   // built lazily, once
+        private TableToken walToken;
+
+        FuzzCrashWorkload(long s0, long s1) { this.s0 = s0; this.s1 = s1; }
+
+        @Override
+        public TableToken[] setup(int iteration) throws Exception {
+            execute("drop table if exists " + WAL_TABLE);
+            txns = generateTxns(new Rnd(s0, s1), WAL_TABLE);          // recreates cf_wal (0 rows), same txns
+            walToken = engine.verifyTableName(WAL_TABLE);
+            if (fp == null) {
+                fp = buildTwinFingerprints(TWIN_TABLE, txns, new Rnd(s0, s1)); // once; drops the twin
+            }
+            return new TableToken[]{walToken};
+        }
+
+        @Override
+        public void commit() throws Exception {
+            fuzzer.applyToWal(txns, WAL_TABLE, 1, new Rnd(s0, s1));
+            drainWalQueue();
+        }
+
+        @Override
+        public int oracle(int k, int n) throws Exception {
+            Assert.assertFalse("table left suspended after recovery at k=" + k, anyTableSuspended(walToken)); // bar 2
+            String recovered = fingerprint(WAL_TABLE);
+            int p = lastMatch(fp, recovered);                        // bar 1 (membership)
+            Assert.assertTrue("recovered state at k=" + k + " matches NO committed snapshot (corruption?)\n"
+                    + recovered, p >= 0);
+            return p;
+        }
+    }
+
+    private SweepResult runSeedSweep(long s0, long s1, int windowUs) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, windowUs);
+        return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1));
+    }
+
+    // W=0 bar 3: full-at-N + monotone staircase over the returned per-k P array.
+    private void assertW0Bars(SweepResult r) {
+        int[] p = r.recoveredByK();
+        int prev = -1;
+        for (int k = 1; k <= r.sweptPoints; k++) {
+            Assert.assertTrue("staircase non-monotone at k=" + k + " (" + p[k] + " < " + prev + ")", p[k] >= prev);
+            prev = p[k];
+        }
+        if (!r.truncated) {
+            Assert.assertEquals("k=N must recover the full committed history", r.n, p[r.sweptPoints]);
+        }
     }
 
     @Test
@@ -174,5 +240,17 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         Rnd genRnd = new Rnd(s0, s1);
         ObjList<FuzzTransaction> txns = generateTxns(genRnd, walName);
         return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
+    }
+
+    @Test
+    public void testSelfCheckW0MinimalProfile() throws Exception {
+        runWithCrashFacade(() -> {
+            fuzzOverrideMinimal = true;               // inserts + O3 only, to validate the sweep machinery
+            try {
+                assertW0Bars(runSeedSweep(1234L, 5678L, 0));
+            } finally {
+                fuzzOverrideMinimal = false;
+            }
+        });
     }
 }

@@ -780,10 +780,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     /**
      * Read the file's CURRENT on-disk/page-cache bytes via a plain read(). MAP_SHARED mmap writes share the
      * page cache with read(), so this observes bytes written into a mapping even before any msync.
+     * <p>
+     * A DIRECTORY fd is treated as having no snapshottable byte content (empty), not an error: {@code
+     * TableWriter.addColumn} legitimately {@code fsyncAndClose}'s the partition directory itself after
+     * creating new column files (the standard POSIX "fsync the parent to persist the new dentry" idiom,
+     * guarded only on Windows) — a plain {@code read()} of a directory throws {@code IOException: Is a
+     * directory}, which would otherwise surface as an uncaught {@code UncheckedIOException} and wrongly
+     * distress/suspend the table (the engine's own catch around that fsync only expects {@code
+     * CairoException}). This is harmless: {@link #walk} (used by {@link #crash} and {@link
+     * #markDurableBaseline}) already filters to {@code Files::isRegularFile}, so a directory's entry in the
+     * content-model maps is never consulted for rollback.
      */
     private static byte[] readCurrent(String path) {
         Path pth = Paths.get(path);
-        if (!Files.exists(pth)) {
+        if (!Files.exists(pth) || Files.isDirectory(pth)) {
             return new byte[0];
         }
         try {
