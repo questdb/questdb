@@ -878,15 +878,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         try {
             lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
+            // ADAPTIVE W=0: make THIS SQL txn's events durable BEFORE the sequencer records it. getSequencerTxn
+            // below MS_SYNC-flushes the seq _txnlog (device-durable); without this sync the _event record is
+            // only in the page cache, so a power loss between the two leaves _txnlog pointing at a segTxn whose
+            // _event is not durable and recovery SUSPENDS the table. This preserves the data→events→seq
+            // ordering invariant the other paths keep (commit0's syncIfRequired, truncateSoft, applyMatView-
+            // Invalidate). Under W>0 the device flush is DEFERRED to the batched flushPendingDurable() via
+            // recordPendingDurable() below (the seq sync0 is MS_ASYNC then, so nothing is device-durable until
+            // the batch flushes data→events→seq together — no torn order).
+            if (walCommitMode() == CommitMode.ADAPTIVE && !deferDeviceFlush()) {
+                events.sync(walCommitMode());
+            }
             final long seqTxn = getSequencerTxn();
             // Deferred 2 (group commit, W>0): mirror the commit0 durable-ack path. The callers
             // (apply(AlterOperation) and apply(UpdateOperation)) already flushed any prior pending DATA
-            // commits before reaching here (preserving data→events→seq order), so it is safe to start a
-            // NEW pending batch for THIS SQL txn. Without this call, a SQL-only-then-idle table's
-            // localDurableSeqTxn would never advance over the SQL txn under W>0 (durable-ack liveness gap).
-            // This is not a safety bug — the structural apply() path already flushed before sequencing, so
-            // there is no torn order — but it closes the liveness gap so the background flusher carries the
-            // SQL txn to durable within ≤W even when commits stop.
+            // commits before reaching here (preserving data→events→seq order for PRIOR data), so it is safe to
+            // start a NEW pending batch for THIS SQL txn. Without this call, a SQL-only-then-idle table's
+            // localDurableSeqTxn would never advance over the SQL txn under W>0 (durable-ack liveness gap); the
+            // batched flush carries the SQL txn's events+seq to durable within ≤W even when commits stop.
             if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
                 recordPendingDurable(seqTxn);
             }
