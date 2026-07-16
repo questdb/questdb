@@ -429,9 +429,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             return value == Numbers.LONG_NULL
                     ? Numbers.LONG_NULL
                     : timestampDriver.from(
-                            value,
-                            ColumnType.getTimestampType(factory.getMetadata().getColumnType(0))
-                    );
+                    value,
+                    ColumnType.getTimestampType(factory.getMetadata().getColumnType(0))
+            );
         } else {
             return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
