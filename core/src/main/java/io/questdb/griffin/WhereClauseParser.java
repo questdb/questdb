@@ -102,6 +102,9 @@ public final class WhereClauseParser implements Mutable {
     // marks must be reverted so collapseIntrinsicNodes does not later
     // shred a still-needed branch and leave a half-collapsed OR node.
     private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+    // FunctionParser compiles scalar subqueries through the owning SqlCodeGenerator, which can re-enter extract().
+    // Each recursion level borrows one snapshot so the nested traversal cannot overwrite its suspended parent.
+    private final ObjList<SavedState> savedStates = new ObjList<>();
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final LongList tempInIntervals = new LongList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
@@ -127,6 +130,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean isConstFunction;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
+    private int reentryDepth;
     private long resolvedBoundConst;
     private Function resolvedBoundFunc;
     private CharSequence timestamp;
@@ -134,6 +138,15 @@ public final class WhereClauseParser implements Mutable {
     @Override
     public void clear() {
         models.clear();
+        csPool.clear();
+        clearTransientState();
+        reentryDepth = 0;
+        for (int i = 0, n = savedStates.size(); i < n; i++) {
+            savedStates.getQuick(i).clear();
+        }
+    }
+
+    private void clearTransientState() {
         stack.clear();
         keyNodes.clear();
         keyExclNodes.clear();
@@ -150,14 +163,73 @@ public final class WhereClauseParser implements Mutable {
         tmpFunctions.clear();
         clearKeys();
         clearExcludedKeys();
-        csPool.clear();
         timestamp = null;
         preferredKeyColumn = null;
+        resolvedBoundFunc = null;
         allKeyValuesAreKnown = true;
         allKeyExcludedValuesAreKnown = true;
     }
 
     public IntrinsicModel extract(
+            @NotNull AliasTranslator translator,
+            ExpressionNode node,
+            @NotNull RecordMetadata m,
+            CharSequence preferredKeyColumn,
+            int timestampIndex,
+            @NotNull FunctionParser functionParser,
+            @NotNull RecordMetadata metadata,
+            @NotNull SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            @NotNull TableReader reader,
+            boolean noIndex
+    ) throws SqlException {
+        final int depth = reentryDepth++;
+        SavedState saved = null;
+        Throwable failure = null;
+        try {
+            if (depth > 0) {
+                while (savedStates.size() < depth) {
+                    savedStates.add(new SavedState());
+                }
+                final SavedState candidate = savedStates.getQuick(depth - 1);
+                saveStateInto(candidate);
+                saved = candidate;
+                clearTransientState();
+            }
+            return extract0(
+                    translator,
+                    node,
+                    m,
+                    preferredKeyColumn,
+                    timestampIndex,
+                    functionParser,
+                    metadata,
+                    executionContext,
+                    latestByMultiColumn,
+                    reader,
+                    noIndex
+            );
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
+        } finally {
+            try {
+                if (saved != null) {
+                    restoreStateFrom(saved);
+                }
+            } catch (RuntimeException | Error restoreFailure) {
+                if (failure != null) {
+                    failure.addSuppressed(restoreFailure);
+                } else {
+                    throw restoreFailure;
+                }
+            } finally {
+                reentryDepth--;
+            }
+        }
+    }
+
+    private IntrinsicModel extract0(
             @NotNull AliasTranslator translator,
             ExpressionNode node,
             @NotNull RecordMetadata m,
@@ -484,6 +556,13 @@ public final class WhereClauseParser implements Mutable {
                 reader
         );
 
+        if (predicate.intrinsicValue == IntrinsicModel.FALSE
+                || tempModel.intrinsicValue == IntrinsicModel.FALSE) {
+            model.intersectEmpty();
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+
         if (extracted || tempModel.hasIntervalFilters()) {
             // Merge directly from the temp model without allocating an intermediate RuntimeIntervalModel.
             // This applies the offset to each interval boundary using the timestamp driver's add method,
@@ -537,6 +616,7 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode lo = between.args.getQuick(1);
         ExpressionNode hi = between.args.getQuick(0);
 
+        Throwable failure = null;
         try {
             model.setBetweenNegated(isNegated);
             boolean isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, lo);
@@ -548,8 +628,15 @@ public final class WhereClauseParser implements Mutable {
                 between.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
         } finally {
-            model.clearBetweenTempParsing();
+            if (failure != null) {
+                model.clearBetweenTempParsing(failure);
+            } else {
+                model.clearBetweenTempParsing();
+            }
         }
 
         return false;
@@ -631,12 +718,14 @@ public final class WhereClauseParser implements Mutable {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-                final Function func = functionParser.parseFunction(b, m, executionContext);
+                Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
+                    final Function ownedFunc = func;
+                    func = null;
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 } catch (Throwable th) {
-                    Misc.free(func);
+                    Misc.free(func, th);
                     throw th;
                 }
             } else {
@@ -740,14 +829,18 @@ public final class WhereClauseParser implements Mutable {
         }
         // special case for ts = (<subquery>) and similar cases
         if (a.type == ExpressionNode.LITERAL && isTimestamp(a) && b.type == ExpressionNode.QUERY) {
-            final Function func = functionParser.parseFunction(b, m, executionContext);
+            Function func = functionParser.parseFunction(b, m, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, func, b.position);
+                    final Function ownedFunc = func;
+                    func = null;
+                    return analyzeTimestampEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 }
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
             } catch (Throwable th) {
-                Misc.free(func);
+                Misc.free(func, th);
                 throw th;
             }
         }
@@ -874,7 +967,7 @@ public final class WhereClauseParser implements Mutable {
                     return true;
                 } else if (isFunc(inArg)) {
                     // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
-                    final Function func = functionParser.parseFunction(inArg, metadata, executionContext);
+                    Function func = functionParser.parseFunction(inArg, metadata, executionContext);
                     try {
                         if (checkFunctionCanBeStrInterval(executionContext, func)) {
                             if (func.isConstant()) {
@@ -884,15 +977,21 @@ public final class WhereClauseParser implements Mutable {
                                 } else {
                                     model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
                                 }
-                                Misc.free(func);
+                                final Function ownedFunc = func;
+                                func = null;
+                                Misc.free(ownedFunc);
                             } else if (func.isRuntimeConstant()) {
+                                final Function ownedFunc = func;
+                                func = null;
                                 if (!isNegated) {
-                                    model.intersectRuntimeIntervals(func);
+                                    model.intersectRuntimeIntervals(ownedFunc, inArg.position);
                                 } else {
-                                    model.subtractRuntimeIntervals(func);
+                                    model.subtractRuntimeIntervals(ownedFunc, inArg.position);
                                 }
                             } else {
-                                Misc.free(func);
+                                final Function ownedFunc = func;
+                                func = null;
+                                Misc.free(ownedFunc);
                                 return false;
                             }
                             in.intrinsicValue = IntrinsicModel.TRUE;
@@ -906,27 +1005,35 @@ public final class WhereClauseParser implements Mutable {
                                     model.subtractIntervals(interval.getLo(), interval.getHi());
                                 }
                                 in.intrinsicValue = IntrinsicModel.TRUE;
-                                Misc.free(func);
+                                final Function ownedFunc = func;
+                                func = null;
+                                Misc.free(ownedFunc);
                                 return true;
                             } else if (func.isRuntimeConstant()) {
+                                final Function ownedFunc = func;
+                                func = null;
                                 if (!isNegated) {
-                                    model.intersectRuntimeIntervals(func);
+                                    model.intersectRuntimeIntervals(ownedFunc, inArg.position);
                                 } else {
-                                    model.subtractRuntimeIntervals(func);
+                                    model.subtractRuntimeIntervals(ownedFunc, inArg.position);
                                 }
                                 in.intrinsicValue = IntrinsicModel.TRUE;
                                 return true;
                             }
-                            Misc.free(func);
+                            final Function ownedFunc = func;
+                            func = null;
+                            Misc.free(ownedFunc);
                             return false;
                         } else {
                             checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
                             // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
                             // This is same as equals
-                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, func, inArg.position);
+                            final Function ownedFunc = func;
+                            func = null;
+                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, ownedFunc, inArg.position);
                         }
                     } catch (Throwable th) {
-                        Misc.free(func);
+                        Misc.free(func, th);
                         throw th;
                     }
                 }
@@ -1332,7 +1439,7 @@ public final class WhereClauseParser implements Mutable {
             if (soundness == MonotonicTimestampFunction.NONE) {
                 return false;
             }
-            model.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
+            final TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
                     head,
                     chain,
                     loBound,
@@ -1343,8 +1450,9 @@ public final class WhereClauseParser implements Mutable {
                     hiConst,
                     isBetween,
                     outDriver
-            ));
+            );
             head = loBound = hiBound = null; // ownership transferred to the inverter
+            model.intersectMonotonicTimestamp(inverter);
             // a runtime bound may not be invertible when the scan opens, so it only prunes
             // and the predicate stays a residual filter
             return false;
@@ -1511,7 +1619,9 @@ public final class WhereClauseParser implements Mutable {
                 Function func = functionParser.parseFunction(b, m, executionContext);
                 try {
                     checkFunctionCanBeTimestamp(m, executionContext, func, b.position);
-                    return analyzeTimestampNotEqualsFunction(timestampDriver, model, node, func, b.position);
+                    final Function ownedFunc = func;
+                    func = null;
+                    return analyzeTimestampNotEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 } catch (Throwable th) {
                     Misc.free(func);
                     throw th;
@@ -1788,28 +1898,35 @@ public final class WhereClauseParser implements Mutable {
             Function func,
             int functionPosition
     ) throws SqlException {
-        if (func.isConstant()) {
-            long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
-            if (value == Numbers.LONG_NULL) {
-                // make it empty set
-                model.intersectEmpty();
-            } else {
-                model.intersectIntervals(value, value);
+        try {
+            if (func.isConstant()) {
+                long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
+                if (value == Numbers.LONG_NULL) {
+                    // make it empty set
+                    model.intersectEmpty();
+                } else {
+                    model.intersectIntervals(value, value);
+                }
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
+                return true;
+            } else if (func.isRuntimeConstant() || func.getType() == ColumnType.CURSOR) {
+                final Function ownedFunc = func;
+                func = null;
+                model.intersectRuntimeTimestamp(ownedFunc, functionPosition);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             }
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            Misc.free(func);
-            return true;
-        } else if (func.isRuntimeConstant()) {
-            model.intersectRuntimeTimestamp(func);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        } else if (func.getType() == ColumnType.CURSOR) {
-            model.intersectRuntimeTimestamp(func);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+            final Function ownedFunc = func;
+            func = null;
+            Misc.free(ownedFunc);
+            return false;
+        } catch (Throwable th) {
+            Misc.free(func, th);
+            throw th;
         }
-        Misc.free(func);
-        return false;
     }
 
     private boolean analyzeTimestampGreater(
@@ -1833,17 +1950,28 @@ public final class WhereClauseParser implements Mutable {
             } catch (NumericException e) {
                 throw SqlException.invalidDate(compareWithNode.token, compareWithNode.position);
             }
-            model.intersectIntervals(lo, Long.MAX_VALUE);
+            if (!equalsTo && lo == Long.MIN_VALUE) {
+                // a strict bound at Long.MAX_VALUE wrapped around during adjustment inside
+                // parseFullOrPartialDate; such a bound is just past the timestamp domain
+                // and matches nothing
+                model.intersectEmpty();
+            } else {
+                model.intersectIntervals(lo, Long.MAX_VALUE);
+            }
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         } else if (isFunc(compareWithNode)) {
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
                     lo = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (lo == Numbers.LONG_NULL) {
                         // make it empty set
+                        model.intersectEmpty();
+                    } else if (!equalsTo && lo == Long.MAX_VALUE) {
+                        // a strict bound just past the timestamp domain matches nothing;
+                        // lo + 1 would wrap around to Long.MIN_VALUE and select every row
                         model.intersectEmpty();
                     } else {
                         model.intersectIntervals(lo + adjustComparison(equalsTo, true), Long.MAX_VALUE);
@@ -1852,7 +1980,9 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(ownedFunc, Long.MAX_VALUE, adjustComparison(equalsTo, true), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1863,10 +1993,12 @@ public final class WhereClauseParser implements Mutable {
             }
         } else if (compareWithNode.type == ExpressionNode.QUERY) {
             // special case for ts = (<subquery>) and similar cases
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(ownedFunc, Long.MAX_VALUE, adjustComparison(equalsTo, true), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1903,7 +2035,7 @@ public final class WhereClauseParser implements Mutable {
             }
             return true;
         } else if (isFunc(compareWithNode)) {
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
@@ -1917,7 +2049,9 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(Long.MIN_VALUE, ownedFunc, adjustComparison(equalsTo, false), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1928,10 +2062,12 @@ public final class WhereClauseParser implements Mutable {
             }
         } else if (compareWithNode.type == ExpressionNode.QUERY) {
             // special case for ts = (<subquery>) and similar cases
-            final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
+            Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    final Function ownedFunc = func;
+                    func = null;
+                    model.intersectIntervals(Long.MIN_VALUE, ownedFunc, adjustComparison(equalsTo, false), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1948,20 +2084,33 @@ public final class WhereClauseParser implements Mutable {
             TimestampDriver timestampDriver,
             IntrinsicModel model,
             ExpressionNode node,
-            Function function,
+            Function func,
             int functionPosition
     ) throws SqlException {
-        if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(timestampDriver, function, functionPosition, true);
-            model.subtractIntervals(value, value);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
-        } else if (function.isRuntimeConstant()) {
-            model.subtractEquals(function);
-            node.intrinsicValue = IntrinsicModel.TRUE;
-            return true;
+        try {
+            if (func.isConstant()) {
+                long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
+                model.subtractIntervals(value, value);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
+                return true;
+            } else if (func.isRuntimeConstant()) {
+                final Function ownedFunc = func;
+                func = null;
+                model.subtractEquals(ownedFunc, functionPosition);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            }
+            final Function ownedFunc = func;
+            func = null;
+            Misc.free(ownedFunc);
+            return false;
+        } catch (Throwable th) {
+            Misc.free(func, th);
+            throw th;
         }
-        return false;
     }
 
     private void applyKeyExclusions(
@@ -2051,30 +2200,38 @@ public final class WhereClauseParser implements Mutable {
         Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
         try {
             if (!ColumnType.isTimestamp(func.getType())) {
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
                 return true;
             }
             if (func.isConstant()) {
                 long ts = func.getTimestamp(null);
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
                 if (isFirst) {
                     model.intersectIntervals(ts, ts);
                 } else {
                     model.unionIntervals(ts, ts);
                 }
             } else if (func.isRuntimeConstant()) {
+                final Function ownedFunc = func;
+                func = null;
                 if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
+                    model.intersectRuntimeTimestamp(ownedFunc, funcNode.position);
                 } else {
-                    model.unionRuntimeTimestamp(func);
+                    model.unionRuntimeTimestamp(ownedFunc, funcNode.position);
                 }
             } else {
-                Misc.free(func);
+                final Function ownedFunc = func;
+                func = null;
+                Misc.free(ownedFunc);
                 return true;
             }
             return false;
         } catch (Throwable th) {
-            Misc.free(func);
+            Misc.free(func, th);
             throw th;
         }
     }
@@ -2156,6 +2313,109 @@ public final class WhereClauseParser implements Mutable {
         tempKeyValuePos.clear();
         tempKeyValueType.clear();
         allKeyValuesAreKnown = true;
+    }
+
+    private void restoreStateFrom(SavedState state) {
+        timestamp = state.timestamp;
+        preferredKeyColumn = state.preferredKeyColumn;
+        noIndex = state.noIndex;
+        isConstFunction = state.isConstFunction;
+        resolvedBoundConst = state.resolvedBoundConst;
+        resolvedBoundFunc = state.resolvedBoundFunc;
+        allKeyValuesAreKnown = state.allKeyValuesAreKnown;
+        allKeyExcludedValuesAreKnown = state.allKeyExcludedValuesAreKnown;
+        stack.clear();
+        stack.addAll(state.stack);
+        keyNodes.clear();
+        keyNodes.addAll(state.keyNodes);
+        keyExclNodes.clear();
+        keyExclNodes.addAll(state.keyExclNodes);
+        orIntrinsicNodes.clear();
+        orIntrinsicNodes.addAll(state.orIntrinsicNodes);
+        tempNodes.clear();
+        tempNodes.addAll(state.tempNodes);
+        tempMonotonicChain.clear();
+        tempMonotonicChain.addAll(state.tempMonotonicChain);
+        tmpFunctions.clear();
+        tmpFunctions.addAll(state.tmpFunctions);
+        tempInIntervals.clear();
+        tempInIntervals.addAll(state.tempInIntervals);
+        tempKeys.clear();
+        tempKeys.addAll(state.tempKeys);
+        tempK.clear();
+        tempK.addAll(state.tempK);
+        tempKeyValues.clear();
+        tempKeyValues.addAll(state.tempKeyValues);
+        tempKeyExcludedValues.clear();
+        tempKeyExcludedValues.addAll(state.tempKeyExcludedValues);
+        tempPos.clear();
+        tempPos.addAll(state.tempPos);
+        tempType.clear();
+        tempType.addAll(state.tempType);
+        tempP.clear();
+        tempP.addAll(state.tempP);
+        tempT.clear();
+        tempT.addAll(state.tempT);
+        tempKeyValuePos.clear();
+        tempKeyValuePos.addAll(state.tempKeyValuePos);
+        tempKeyValueType.clear();
+        tempKeyValueType.addAll(state.tempKeyValueType);
+        tempKeyExcludedValuePos.clear();
+        tempKeyExcludedValuePos.addAll(state.tempKeyExcludedValuePos);
+        tempKeyExcludedValueType.clear();
+        tempKeyExcludedValueType.addAll(state.tempKeyExcludedValueType);
+        state.clear();
+    }
+
+    private void saveStateInto(SavedState state) {
+        state.timestamp = timestamp;
+        state.preferredKeyColumn = preferredKeyColumn;
+        state.noIndex = noIndex;
+        state.isConstFunction = isConstFunction;
+        state.resolvedBoundConst = resolvedBoundConst;
+        state.resolvedBoundFunc = resolvedBoundFunc;
+        state.allKeyValuesAreKnown = allKeyValuesAreKnown;
+        state.allKeyExcludedValuesAreKnown = allKeyExcludedValuesAreKnown;
+        state.stack.clear();
+        state.stack.addAll(stack);
+        state.keyNodes.clear();
+        state.keyNodes.addAll(keyNodes);
+        state.keyExclNodes.clear();
+        state.keyExclNodes.addAll(keyExclNodes);
+        state.orIntrinsicNodes.clear();
+        state.orIntrinsicNodes.addAll(orIntrinsicNodes);
+        state.tempNodes.clear();
+        state.tempNodes.addAll(tempNodes);
+        state.tempMonotonicChain.clear();
+        state.tempMonotonicChain.addAll(tempMonotonicChain);
+        state.tmpFunctions.clear();
+        state.tmpFunctions.addAll(tmpFunctions);
+        state.tempInIntervals.clear();
+        state.tempInIntervals.addAll(tempInIntervals);
+        state.tempKeys.clear();
+        state.tempKeys.addAll(tempKeys);
+        state.tempK.clear();
+        state.tempK.addAll(tempK);
+        state.tempKeyValues.clear();
+        state.tempKeyValues.addAll(tempKeyValues);
+        state.tempKeyExcludedValues.clear();
+        state.tempKeyExcludedValues.addAll(tempKeyExcludedValues);
+        state.tempPos.clear();
+        state.tempPos.addAll(tempPos);
+        state.tempType.clear();
+        state.tempType.addAll(tempType);
+        state.tempP.clear();
+        state.tempP.addAll(tempP);
+        state.tempT.clear();
+        state.tempT.addAll(tempT);
+        state.tempKeyValuePos.clear();
+        state.tempKeyValuePos.addAll(tempKeyValuePos);
+        state.tempKeyValueType.clear();
+        state.tempKeyValueType.addAll(tempKeyValueType);
+        state.tempKeyExcludedValuePos.clear();
+        state.tempKeyExcludedValuePos.addAll(tempKeyExcludedValuePos);
+        state.tempKeyExcludedValueType.clear();
+        state.tempKeyExcludedValueType.addAll(tempKeyExcludedValueType);
     }
 
     // removes nodes extracted into special symbol/key or timestamp filters from given node
@@ -3023,21 +3283,37 @@ public final class WhereClauseParser implements Mutable {
             return true;
         } else if (isFunc(node)) {
             final Function func = functionParser.parseFunction(node, metadata, executionContext);
+            boolean isRetained = false;
+            Throwable failure = null;
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
                 if (func.isConstant()) {
-                    long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
+                    final long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
                     model.setBetweenBoundary(timestamp);
-                    Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.setBetweenBoundary(func);
-                    return true;
+                    try {
+                        model.setBetweenBoundary(func, node.position);
+                        isRetained = true;
+                        return true;
+                    } catch (Throwable th) {
+                        // A pre-adoption failure leaves func caller-owned. A terminal handoff marks
+                        // it consumed before invoking throwing cleanup, so this catch must not
+                        // close it again.
+                        isRetained = model.isBetweenBoundaryFunctionConsumed();
+                        throw th;
+                    }
                 }
-                Misc.free(func);
             } catch (Throwable th) {
-                Misc.free(func);
+                failure = th;
                 throw th;
+            } finally {
+                if (!isRetained) {
+                    final Throwable cleanupFailure = Misc.freeBestEffort(failure, func);
+                    if (failure == null) {
+                        CairoException.rethrowCleanupFailure(cleanupFailure);
+                    }
+                }
             }
         }
         return false;
@@ -3145,6 +3421,63 @@ public final class WhereClauseParser implements Mutable {
         }
 
         return collapseWithinNodes(root);
+    }
+
+    private static final class SavedState {
+        private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
+        private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+        private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+        private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+        private final LongList tempInIntervals = new LongList();
+        private final CharSequenceHashSet tempK = new CharSequenceHashSet();
+        private final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
+        private final IntList tempKeyExcludedValuePos = new IntList();
+        private final IntList tempKeyExcludedValueType = new IntList();
+        private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+        private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
+        private final IntList tempKeyValuePos = new IntList();
+        private final IntList tempKeyValueType = new IntList();
+        private final ObjList<MonotonicTimestampFunction> tempMonotonicChain = new ObjList<>();
+        private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
+        private final IntList tempP = new IntList();
+        private final IntList tempPos = new IntList();
+        private final IntList tempT = new IntList();
+        private final IntList tempType = new IntList();
+        private final ObjList<Function> tmpFunctions = new ObjList<>();
+        private boolean allKeyExcludedValuesAreKnown;
+        private boolean allKeyValuesAreKnown;
+        private boolean isConstFunction;
+        private boolean noIndex;
+        private CharSequence preferredKeyColumn;
+        private long resolvedBoundConst;
+        private Function resolvedBoundFunc;
+        private CharSequence timestamp;
+
+        private void clear() {
+            keyExclNodes.clear();
+            keyNodes.clear();
+            orIntrinsicNodes.clear();
+            stack.clear();
+            tempInIntervals.clear();
+            tempK.clear();
+            tempKeyExcludedValues.clear();
+            tempKeyExcludedValuePos.clear();
+            tempKeyExcludedValueType.clear();
+            tempKeys.clear();
+            tempKeyValues.clear();
+            tempKeyValuePos.clear();
+            tempKeyValueType.clear();
+            tempMonotonicChain.clear();
+            tempNodes.clear();
+            tempP.clear();
+            tempPos.clear();
+            tempT.clear();
+            tempType.clear();
+            tmpFunctions.clear();
+            preferredKeyColumn = null;
+            resolvedBoundFunc = null;
+            timestamp = null;
+        }
     }
 
     static {
