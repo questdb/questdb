@@ -984,6 +984,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        // Capture the marker identity BEFORE the base reader snapshot is fixed. A marker observed
+        // here describes base commits that predate its publication, so the rebuild below covers
+        // them by construction. Captured any later (after getReader), a publication in between
+        // could describe a commit the fixed snapshot does not contain, and the identity clear at
+        // the success site would wrongly consume it.
+        final Object preSnapshotMarker = viewState.getPendingInvalidationMarker();
+
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         boolean isFullRefreshDeferred = false;
         // Set once the auth-refusal catch below defers this invocation's own refused owner; the
@@ -1036,7 +1043,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (didRefresh || refreshContext.intervalIterator == null) {
                         assert !refreshContext.hasTruncateBarrier;
                         viewState.recordFullRefreshSuccess(baseTableToken, refreshContext.toBaseTxn);
-                        viewState.clearPendingInvalidationIfCoveredByLastFullRefresh();
+                        if (!viewState.clearPendingInvalidationIfCoveredByLastFullRefresh()
+                                && viewState.getPendingInvalidationReason(preSnapshotMarker) != null) {
+                            // Provenance-free markers (2-arg enqueueInvalidate publications) can never
+                            // pass the coverage check, but this rebuild covers the captured marker by
+                            // construction: it was published before the fixed base reader existed.
+                            // Clear exactly that identity; a newer publication minted a new object, so
+                            // the CAS fails and the post-release handoff wakes it conservatively.
+                            viewState.clearPendingInvalidation(preSnapshotMarker);
+                        }
                     }
                 } finally {
                     refreshSqlExecutionContext.clearReader();

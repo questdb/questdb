@@ -863,6 +863,67 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshConsumesProvenanceFreeMarkerCoveredByItsSnapshot() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final MatViewState state = fixture.state();
+
+            // Build the zombie: a provenance-free reason marker retained on an invalid view. The seam
+            // publishes the marker mid-hold (as a losing apply-time INVALIDATE would), then breaks the
+            // view SQL so the holding refresh fails into invalid state. finalize's isInvalid gate skips
+            // the wake without clearing the facet, and invalidateView's entry gate never consumes a
+            // marker on an invalid view -- only a successful REFRESH FULL can now consume it.
+            final AtomicBoolean hasFired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> {
+                    if (hasFired.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("update operation");
+                        try {
+                            execute("alter table base_price drop column price");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        drainWalQueue();
+                    }
+                });
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T14:00')");
+                drainWalQueue();
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+            Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
+            Assert.assertTrue("the zombie setup needs an invalid view", state.isInvalid());
+            Assert.assertTrue("the zombie setup needs a retained reason marker", state.isPendingInvalidation());
+
+            // Repair the base so a FULL rebuild can succeed, then run the documented recovery.
+            execute("alter table base_price add column price double");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL;");
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            // Without the fix, the FULL's finalize enqueued a stale INVALIDATE (the coverage check
+            // bails on the marker's missing provenance); this drain would flip the freshly repaired
+            // view back to invalid.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "a successful FULL rebuild must consume the provenance-free marker its snapshot covers",
+                    state.isPendingInvalidation()
+            );
+            Assert.assertFalse("the repaired view must stay valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testFullRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
