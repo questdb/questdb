@@ -357,38 +357,69 @@ public void testReaderReadsRegistryAndDictAfterReopen() throws Exception {
 
 ---
 
-### Task 7: CompositeDictionaries value-interning API (identity reuse / dedicated / hash)
+### Task 7: Dimension value-interning API (identity reuse / hash / truncate)
 
 **Files:**
-- Modify: `CompositeDictionaries.java` (add value→int and int→value per dimension).
-- Test: `CompositeDictionariesTest.java` (interning semantics).
+- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java` — add `public int internDimensionValue(int dimIndex, CharSequence value)`.
+- Modify: `core/src/main/java/io/questdb/cairo/TableReader.java` — add `public int keyOfDimensionValue(int dimIndex, CharSequence value)` and `public CharSequence valueOfDimensionKey(int dimIndex, int key)`.
+- Create: `core/src/main/java/io/questdb/cairo/CompositeDimensionTransform.java` — a tiny static helper for the truncate prefix, shared by writer + reader (one place for the transform).
+- Test: `CompositeDictionariesTest.java` (writer interning) + `CompositeDictPersistenceTest.java` (reader keyOf round-trip).
+
+**Why here, not on `CompositeDictionaries`:** identity dims REUSE the source column's own symbol map — that is `getSymbolMapWriter(columnIndex)` (writer) / `getSymbolMapReader(columnIndex)` (reader), which live on `TableWriter`/`TableReader`. Housing the dispatch there uses existing accessors + `getCompositeDictionaries()` and avoids re-threading source-column maps into the holder.
 
 **Interfaces:**
-- Produces: `int internValue(int dimIndex, <rawColumnValue>)` — identity → `dictFor(dim).put(value)`; truncate → `dedicatedDict.put(truncate(value, N))`; hash → `Hash.boundedHash(value, N)` (no dict); expr → `dedicatedDict.put(exprResult)` (expr evaluation itself is Plan 4; here expose the dedicated-dict `put` path). `keyOfValue(dimIndex, value)` (prune) and `valueOfKey(dimIndex, int)` (label) mirror using the reader.
+- Consumes: `metadata.getPartitionSpec().getDimension(dimIndex)` (`getKind()`/`getColumnIndex()`/`getParam()`), `getSymbolMapWriter(int)` (`TableWriter:2510`) / `getSymbolMapReader(int)` (`TableReader:559`), `getCompositeDictionaries().dedicatedDictFor(dimIndex)` (writer) / `.dictReaderFor(dimIndex)` (reader), `io.questdb.std.Hash.boundedHash(CharSequence, int)` (`Hash.java:49`).
+- Produces: `TableWriter.internDimensionValue(dimIndex, value) → int`; `TableReader.keyOfDimensionValue(dimIndex, value) → int` (returns `SymbolTable.VALUE_NOT_FOUND` when absent) and `valueOfDimensionKey(dimIndex, key) → CharSequence`; `CompositeDimensionTransform.truncatedPrefix(CharSequence value, int n, StringSink sink) → CharSequence` (first `n` chars — if `value == null` or `value.length() <= n`, return `value` unchanged).
 
-- [ ] **Step 1: Write the failing test** — writer-side: intern the same symbol value on an `identity` dimension and confirm it returns the SAME dense int as the source column's own symbol map (proving reuse), and that a `hash(col,N)` dimension yields a key in `0..N-1` with no dedicated dict:
+**Dispatch (same shape writer/reader, on `dim.getKind()`):**
+- IDENTITY → reuse the source column dict: writer `getSymbolMapWriter(dim.getColumnIndex()).put(value)`; reader `getSymbolMapReader(dim.getColumnIndex()).keyOf(value)` / `.valueOf(key)`. Returns the SAME ordinal as the column itself.
+- HASH → `Hash.boundedHash(value, dim.getParam())` — pure, in `[0, param)`, NO dict, identical on writer + reader; `valueOfDimensionKey` for a hash dim has no reverse → return `null`.
+- TRUNCATE → intern the first-`param`-char prefix into the dedicated dict: writer `dedicatedDictFor(dimIndex).put(CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), sink))`; reader `dictReaderFor(dimIndex).keyOf(prefix)` / `.valueOf(key)`.
+- EXPRESSION → `throw new UnsupportedOperationException("composite expression dimensions land in Plan 4")`.
+
+- [ ] **Step 1: Write the failing tests**
 ```java
 @Test
-public void testIdentityReusesColumnDictAndHashNeedsNone() throws Exception {
+public void testInternDimensionValueIdentityReuseAndHash() throws Exception {   // writer
     assertMemoryLeak(() -> {
         execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                 "timestamp(ts) partition by day, exchange, hash(symbol, 8) wal");
         try (TableWriter w = getWriter("t")) {
-            CompositeDictionaries d = w.getCompositeDictionaries();
-            int viaDim = d.internValue(0, "NYSE");                       // identity(exchange)
-            int viaCol = w.getSymbolMapWriter(/*exchange col idx*/ 1).put("NYSE");
-            Assert.assertEquals(viaCol, viaDim);                          // same dictionary
-            int h = d.internValue(1, "BTC");                             // hash(symbol,8)
+            int viaCol = w.getSymbolMapWriter(1).put("NYSE");         // exchange col idx 1
+            int viaDim = w.internDimensionValue(0, "NYSE");           // identity(exchange)
+            Assert.assertEquals(viaCol, viaDim);                     // identity reuses the column dict
+            int h = w.internDimensionValue(1, "BTC");                // hash(symbol, 8)
             Assert.assertTrue(h >= 0 && h < 8);
-            Assert.assertNull(d.dictFor(1));                             // hash has no dedicated dict
+        }
+    });
+}
+@Test
+public void testTruncateDimInternsPrefixAndReaderKeyOf() throws Exception {     // truncate + reader round-trip
+    assertMemoryLeak(() -> {
+        execute("create table t (ts timestamp, symbol symbol) " +
+                "timestamp(ts) partition by day, truncate(symbol, 3) wal");
+        int key;
+        try (TableWriter w = getWriter("t")) {
+            key = w.internDimensionValue(0, "BTCUSDT");              // truncate dim0 -> prefix "BTC"
+            Assert.assertEquals(key, w.internDimensionValue(0, "BTCETH")); // same prefix -> same key
+            TableWriter.Row row = w.newRow(0);                       // a real row so commit() persists (see Task 6 nuance)
+            row.putSym(1, "BTCUSDT");
+            row.append();
+            w.commit();
+        }
+        engine.releaseInactive();
+        try (TableReader r = getReader("t")) {
+            Assert.assertEquals(key, r.keyOfDimensionValue(0, "BTCZZZ")); // "BTC" prefix -> same key
+            TestUtils.assertEquals("BTC", r.valueOfDimensionKey(0, key));
         }
     });
 }
 ```
+(Verify the `newRow`/`putSym`/`append` idiom + column indices against an existing WAL-table write test; the row is only to create a transaction so `commit()` persists the dedicated-dict count.)
 
-- [ ] **Step 2: Run to verify it fails** — FAIL (no `internValue`).
+- [ ] **Step 2: Run to verify it fails** — FAIL (no `internDimensionValue`).
 
-- [ ] **Step 3: Write minimal implementation** — dispatch on `dimension.getKind()`: IDENTITY → `getSymbolMapWriter(dim.getColumnIndex()).put(value)`; TRUNCATE → apply the truncate transform to the value then `dedicatedDict.put(...)` (truncate on a symbol value = a prefix/bucketing per the transform param; reuse the same transform the resolver documents — keep it a pure helper); HASH → `Hash.boundedHash(value)` bounded to N (match QuestDB's existing symbol-hash if one exists); EXPRESSION → `dedicatedDict.put(exprText-evaluated)` — but since expression evaluation is Plan 4, throw `UnsupportedOperationException("composite expression dimensions land in Plan 4")` here and cover only identity/hash/truncate. Read-side `keyOfValue`/`valueOfKey` mirror via `SymbolMapReader.keyOf`/`valueOf`.
+- [ ] **Step 3: Write minimal implementation** — add the two methods + the static helper per the Dispatch table above. Keep a reusable `StringSink` on the writer/reader for the truncate prefix (do not allocate per call). Guard the writer method: `internDimensionValue` requires `getCompositeDictionaries() != null` for truncate dims (a composite table always has it); identity/hash need only the spec.
 
 - [ ] **Step 4: Run to verify it passes** — PASS.
 
