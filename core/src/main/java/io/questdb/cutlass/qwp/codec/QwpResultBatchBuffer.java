@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -361,10 +362,17 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             if (symbolTables != null && wireTypesArr[i] == QwpConstants.TYPE_SYMBOL) {
                 try {
                     st = symbolTables.getSymbolTable(i);
-                    // A dynamic symbol table may have to materialize a dictionary merely
-                    // to turn its text into a temporary key. QWP ultimately needs the text,
-                    // so reserve the native-key fast path for genuine static dictionaries.
-                    if (!(st instanceof StaticSymbolTable)) {
+                    // Projections commonly wrap a static table in SymbolColumn. Recover the
+                    // underlying static table before deciding whether the native-key path is
+                    // safe. Efficient translating tables (such as an all-SYMBOL UNION) also
+                    // opt into this path without claiming that their dictionary is static.
+                    if (st instanceof SymbolFunction symbolFunction) {
+                        final StaticSymbolTable staticSymbolTable = symbolFunction.getStaticSymbolTable();
+                        if (staticSymbolTable != null) {
+                            st = staticSymbolTable;
+                        }
+                    }
+                    if (st == null || !st.supportsKeyValueAccess()) {
                         st = null;
                     }
                 } catch (UnsupportedOperationException ignored) {
@@ -888,9 +896,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         scratch.appendSymbolConnId(connId);
                     }
                 } else {
-                    // No static SymbolTable is exposed by the cursor. Read text directly so
-                    // dynamic symbols do not build a redundant key dictionary; addEntry()
-                    // performs bytes-keyed dedup in the connection dictionary.
+                    // No efficient key/value SymbolTable is exposed by the cursor. Read text
+                    // directly so dynamic symbols do not build a redundant key dictionary;
+                    // addEntry() performs bytes-keyed dedup in the connection dictionary.
                     CharSequence cs = record.getSymA(ci);
                     if (cs == null) {
                         scratch.appendNull();

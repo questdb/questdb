@@ -65,8 +65,10 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     public static class Func extends SymbolFunction implements UnaryFunction {
         private static final int INITIAL_HASH_CAPACITY = 4;
         private static final long INITIAL_TEXT_CAPACITY = 16;
+        private static final int LENGTH_OFFSET = Integer.BYTES;
         private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
         private static final int OFFSET_ENTRY_SIZE = Long.BYTES;
+        private static final int TEXT_OFFSET = 2 * Integer.BYTES;
         private final Function arg;
         private final DirectString symbolA = new DirectString();
         private final DirectString symbolB = new DirectString();
@@ -114,13 +116,17 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence value = arg.getStrA(rec);
+            return intern(arg.getStrA(rec));
+        }
+
+        public int intern(@Nullable CharSequence value) {
             if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
             ensureHashTable();
-            int slot = findSlot(value);
+            final int hash = Chars.hashCode(value);
+            int slot = findSlot(value, hash);
             final int storedKey = Unsafe.getInt(hashAddress + ((long) slot << 2));
             if (storedKey != 0) {
                 return storedKey - 1;
@@ -131,13 +137,13 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             }
             if (next > hashThreshold) {
                 rehash();
-                slot = findSlot(value);
+                slot = findSlot(value, hash);
             }
 
             final int len = value.length();
-            // Keep every length header int-aligned. Besides being friendlier to ARM,
+            // Keep every entry header int-aligned. Besides being friendlier to ARM,
             // this matches the alignment used by the other native UTF-16 maps.
-            final long entrySize = (Integer.BYTES + ((long) len << 1) + 3) & ~3L;
+            final long entrySize = (TEXT_OFFSET + ((long) len << 1) + 3) & ~3L;
             final long requiredTextSize = textSize + entrySize;
             if (requiredTextSize < textSize) {
                 throw CairoException.nonCritical().put("dynamic symbol dictionary size overflow");
@@ -147,8 +153,9 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
             final int key = next - 1;
             Unsafe.putLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE, textSize);
-            Unsafe.putInt(textAddress + textSize, len);
-            long p = textAddress + textSize + Integer.BYTES;
+            Unsafe.putInt(textAddress + textSize, hash);
+            Unsafe.putInt(textAddress + textSize + LENGTH_OFFSET, len);
+            long p = textAddress + textSize + TEXT_OFFSET;
             for (int i = 0; i < len; i++) {
                 Unsafe.putChar(p + ((long) i << 1), value.charAt(i));
             }
@@ -277,24 +284,27 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             textCapacity = newCapacity;
         }
 
-        private int findSlot(CharSequence value) {
-            int slot = Hash.spread(Chars.hashCode(value)) & hashMask;
+        private int findSlot(CharSequence value, int hash) {
+            int slot = Hash.spread(hash) & hashMask;
             while (true) {
                 final int storedKey = Unsafe.getInt(hashAddress + ((long) slot << 2));
-                if (storedKey == 0 || equalsValue(value, storedKey - 1)) {
+                if (storedKey == 0 || equalsValue(value, storedKey - 1, hash)) {
                     return slot;
                 }
                 slot = (slot + 1) & hashMask;
             }
         }
 
-        private boolean equalsValue(CharSequence value, int key) {
+        private boolean equalsValue(CharSequence value, int key, int hash) {
             final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            final int len = Unsafe.getInt(textAddress + offset);
+            if (Unsafe.getInt(textAddress + offset) != hash) {
+                return false;
+            }
+            final int len = Unsafe.getInt(textAddress + offset + LENGTH_OFFSET);
             if (len != value.length()) {
                 return false;
             }
-            final long p = textAddress + offset + Integer.BYTES;
+            final long p = textAddress + offset + TEXT_OFFSET;
             for (int i = 0; i < len; i++) {
                 if (Unsafe.getChar(p + ((long) i << 1)) != value.charAt(i)) {
                     return false;
@@ -305,13 +315,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         private int hashValue(int key) {
             final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            final int len = Unsafe.getInt(textAddress + offset);
-            final long p = textAddress + offset + Integer.BYTES;
-            int hash = 0;
-            for (int i = 0; i < len; i++) {
-                hash = 31 * hash + Unsafe.getChar(p + ((long) i << 1));
-            }
-            return hash;
+            return Unsafe.getInt(textAddress + offset);
         }
 
         private void rehash() {
@@ -373,8 +377,8 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
                 return null;
             }
             final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            final int len = Unsafe.getInt(textAddress + offset);
-            return view.of(textAddress + offset + Integer.BYTES, len);
+            final int len = Unsafe.getInt(textAddress + offset + LENGTH_OFFSET);
+            return view.of(textAddress + offset + TEXT_OFFSET, len);
         }
     }
 }

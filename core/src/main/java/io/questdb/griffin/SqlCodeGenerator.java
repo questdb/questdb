@@ -28,6 +28,7 @@ import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -329,6 +330,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -11050,9 +11052,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!isResymboliseRequired) {
             return unionFactory;
         }
-        // One reserved slot per projected column. Unlike generateSelectVirtualWithSubQuery this
-        // projection never appends a hidden timestamp column, so there is no extra slot to reserve.
-        final int reservedSlots = columnCount;
         // Own unionFactory from here on: the guard assert and the metadata/list allocations below can
         // all throw (an OutOfMemoryError, say), and for a distinct UNION unionFactory already holds a
         // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
@@ -11069,51 +11068,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert !unionFactory.supportsPageFrameCursor()
                     && !unionFactory.supportsFilterStealing()
                     && !unionFactory.supportsTimeFrameCursor();
-            final PriorityMetadata priorityMetadata = new PriorityMetadata(reservedSlots, baseMetadata);
             final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
-            functions = new ObjList<>(reservedSlots);
+            final IntList columnToFunctionIndex = new IntList(columnCount);
+            functions = new ObjList<>();
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = baseMetadata.getColumnName(i);
-                // Register baseColumn before wrapping it: both the cast-to-symbol constructor and the
-                // metadata constructor below can throw (an OutOfMemoryError, say), and the catch can
-                // only free what the list already holds. When the wrapper is built it takes ownership
-                // of baseColumn (UnaryFunction.close closes its arg), so swap it into the slot rather
-                // than adding it, to avoid freeing baseColumn twice.
-                Function baseColumn = FunctionParser.createColumn(0, columnName, priorityMetadata);
                 final boolean isSymbolCastRequired = symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING;
-                functions.add(baseColumn);
-                if (isSymbolCastRequired && unionSymbolProjectionTestHook != null) {
-                    baseColumn = unionSymbolProjectionTestHook.wrapFunction(
-                            baseColumn,
-                            UnionSymbolProjectionTestHook.BASE_COLUMN
-                    );
-                    functions.setQuick(i, baseColumn);
-                }
-                final TableColumnMetadata m;
                 if (isSymbolCastRequired) {
+                    // Register baseColumn before wrapping it: the hook and wrapper construction can
+                    // throw, and the catch can only free objects already owned by this list. Once the
+                    // symbol function is built it owns baseColumn, so replace the slot to avoid a
+                    // double close. Only symbol columns enter this list; all other getters delegate
+                    // directly to the union record in UnionSymbolCastRecordCursorFactory.
+                    final int functionIndex = functions.size();
+                    Function baseColumn = new StrColumn(i);
+                    functions.add(baseColumn);
+                    if (unionSymbolProjectionTestHook != null) {
+                        baseColumn = unionSymbolProjectionTestHook.wrapFunction(
+                                baseColumn,
+                                UnionSymbolProjectionTestHook.BASE_COLUMN
+                        );
+                        functions.setQuick(functionIndex, baseColumn);
+                    }
                     if (unionSymbolProjectionTestHook != null) {
                         unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.BASE_COLUMN);
                     }
                     Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);
+                    functions.setQuick(functionIndex, function);
                     if (unionSymbolProjectionTestHook != null) {
                         function = unionSymbolProjectionTestHook.wrapFunction(
                                 function,
                                 UnionSymbolProjectionTestHook.SYMBOL_FUNCTION
                         );
+                        functions.setQuick(functionIndex, function);
                     }
-                    functions.setQuick(i, function);
+                    if (!(function instanceof CastStrToSymbolFunctionFactory.Func)) {
+                        throw CairoException.critical(0).put("invalid union symbol projection function");
+                    }
                     if (unionSymbolProjectionTestHook != null) {
                         unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.SYMBOL_FUNCTION);
                     }
                     // A cast-to-symbol builds its dictionary lazily, so its symbol table is not static.
-                    m = new TableColumnMetadata(columnName, SYMBOL, IndexType.NONE, 0, false, function.getMetadata());
+                    virtualMetadata.add(new TableColumnMetadata(
+                            columnName,
+                            SYMBOL,
+                            IndexType.NONE,
+                            0,
+                            false,
+                            function.getMetadata()
+                    ));
+                    columnToFunctionIndex.add(functionIndex);
                 } else {
-                    m = new TableColumnMetadata(columnName, baseMetadata.getColumnType(i), baseColumn.getMetadata());
+                    virtualMetadata.add(baseMetadata.getColumnMetadata(i));
+                    columnToFunctionIndex.add(-1);
                 }
-                virtualMetadata.add(m);
-                priorityMetadata.add(m);
             }
-            return new VirtualRecordCursorFactory(virtualMetadata, priorityMetadata, functions, unionFactory, reservedSlots);
+            virtualMetadata.setTimestampIndex(baseMetadata.getTimestampIndex());
+            return new UnionSymbolCastRecordCursorFactory(
+                    virtualMetadata,
+                    unionFactory,
+                    columnToFunctionIndex,
+                    functions
+            );
         } catch (Throwable e) {
             Misc.freeObjList(functions);
             Misc.free(unionFactory);

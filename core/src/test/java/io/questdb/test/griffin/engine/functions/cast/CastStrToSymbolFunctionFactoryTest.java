@@ -91,6 +91,13 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
             arg.valueA = "seen_via_getInt";
             Assert.assertEquals(0, func.getInt(null));
 
+            // Empty text has a header but no UTF-16 payload. Keep it after multiple rehashes
+            // to pin the cached-hash/length/text offsets for this boundary case.
+            arg.valueA = "";
+            Assert.assertEquals(100, func.getInt(null));
+            Assert.assertEquals("", func.valueOf(100).toString());
+            Assert.assertEquals(100, func.getInt(null));
+
             // NULL maps to the null sentinel and resolves back to null.
             arg.valueA = null;
             Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));

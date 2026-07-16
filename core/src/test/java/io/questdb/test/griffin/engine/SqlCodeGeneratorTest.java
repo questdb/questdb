@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -42,6 +43,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
@@ -8463,6 +8465,58 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsTranslatesNativeKeysPerSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG)");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG)");
+            // Both source dictionaries assign key 0, but to different text. The second row
+            // in tb then reuses ta's text under a different native key.
+            execute("INSERT INTO ta VALUES ('a', 1), ('a', 2)");
+            execute("INSERT INTO tb VALUES ('b', 3), ('a', 4)");
+
+            try (RecordCursorFactory factory = select("SELECT s, v FROM ta UNION ALL SELECT s, v FROM tb")) {
+                UnionSymbolCastRecordCursorFactory projection = null;
+                for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+                    if (current instanceof UnionSymbolCastRecordCursorFactory) {
+                        projection = (UnionSymbolCastRecordCursorFactory) current;
+                        break;
+                    }
+                }
+                Assert.assertNotNull(projection);
+                Assert.assertEquals(
+                        "only the SYMBOL column should have a projection function",
+                        1,
+                        projection.getFunctions().size()
+                );
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    Assert.assertTrue(resultTable.supportsKeyValueAccess());
+                    final Record record = cursor.getRecord();
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int aKey = record.getInt(0);
+                    TestUtils.assertEquals("a", resultTable.valueOf(aKey));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(aKey, record.getInt(0));
+                    Assert.assertTrue(cursor.hasNext());
+                    final int bKey = record.getInt(0);
+                    Assert.assertNotEquals(aKey, bKey);
+                    TestUtils.assertEquals("b", resultTable.valueOf(bKey));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(aKey, record.getInt(0));
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // Rewinding preserves both merged keys and the per-source translations.
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(aKey, record.getInt(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsFollowedByNonUnionSetOperation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL)");
@@ -9610,8 +9664,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     private static ObjList<CastStrToSymbolFunctionFactory.Func> findUnionSymbolCasts(RecordCursorFactory factory) {
         final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = new ObjList<>();
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof VirtualRecordCursorFactory) {
-                final ObjList<Function> functions = ((VirtualRecordCursorFactory) current).getFunctions();
+            if (current instanceof VirtualRecordCursorFactory || current instanceof UnionSymbolCastRecordCursorFactory) {
+                final ObjList<Function> functions = current instanceof VirtualRecordCursorFactory
+                        ? ((VirtualRecordCursorFactory) current).getFunctions()
+                        : ((UnionSymbolCastRecordCursorFactory) current).getFunctions();
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     final Function function = functions.getQuick(i);
                     if (function instanceof CastStrToSymbolFunctionFactory.Func) {

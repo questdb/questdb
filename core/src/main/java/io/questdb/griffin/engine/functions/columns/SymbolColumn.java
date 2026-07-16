@@ -125,6 +125,11 @@ public class SymbolColumn extends SymbolFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean supportsKeyValueAccess() {
+        return symbolTable != null && symbolTable.supportsKeyValueAccess();
+    }
+
+    @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
     }

@@ -35,6 +35,15 @@ public interface SymbolTable {
     int VALUE_NOT_FOUND = -2;
 
     /**
+     * Returns true when reading a row's integer symbol key and resolving it through this table
+     * is cheaper than reading the symbol text from the row. Dynamic symbol functions normally
+     * return false because producing the key may itself require hashing the text.
+     */
+    default boolean supportsKeyValueAccess() {
+        return false;
+    }
+
+    /**
      * Look up "B" instance of CharSequence for symbol key. "B" instance allows
      * calling code to have two simultaneous symbol CharSequence instances in case
      * they have to be compared by their text value.

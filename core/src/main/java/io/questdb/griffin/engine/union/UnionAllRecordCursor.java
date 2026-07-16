@@ -33,9 +33,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor, UnionSymbolSourceCursor {
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
+    private RecordCursor currentSymbolSourceCursor;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
 
@@ -57,6 +58,11 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public RecordCursor getCurrentSymbolSourceCursor() {
+        return currentSymbolSourceCursor;
     }
 
     @Override
@@ -97,17 +103,32 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     @Override
     public void toTop() {
         record.setAb(true);
+        currentSymbolSourceCursor = null;
         nextMethod = nextA;
         cursorA.toTop();
         cursorB.toTop();
     }
 
     private boolean nextA() {
-        return cursorA.hasNext() || switchToSlaveCursor();
+        if (cursorA.hasNext()) {
+            setCurrentSymbolSourceCursor(cursorA);
+            return true;
+        }
+        return switchToSlaveCursor();
     }
 
     private boolean nextB() {
-        return cursorB.hasNext();
+        if (cursorB.hasNext()) {
+            setCurrentSymbolSourceCursor(cursorB);
+            return true;
+        }
+        return false;
+    }
+
+    private void setCurrentSymbolSourceCursor(RecordCursor cursor) {
+        currentSymbolSourceCursor = cursor instanceof UnionSymbolSourceCursor sourceCursor
+                ? sourceCursor.getCurrentSymbolSourceCursor()
+                : cursor;
     }
 
     private boolean switchToSlaveCursor() {

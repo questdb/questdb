@@ -35,11 +35,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor, UnionSymbolSourceCursor {
     private final Map map;
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
     private final RecordSink recordSink;
+    private RecordCursor currentSymbolSourceCursor;
     private boolean isOpen;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
@@ -68,6 +69,11 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public RecordCursor getCurrentSymbolSourceCursor() {
+        return currentSymbolSourceCursor;
     }
 
     @Override
@@ -101,6 +107,7 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     public void toTop() {
         map.clear();
         record.setAb(true);
+        currentSymbolSourceCursor = null;
         nextMethod = nextA;
         cursorA.toTop();
         cursorB.toTop();
@@ -108,13 +115,24 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
 
     private boolean nextA() {
         if (cursorA.hasNext()) {
+            setCurrentSymbolSourceCursor(cursorA);
             return true;
         }
         return switchToCursorB();
     }
 
     private boolean nextB() {
-        return cursorB.hasNext();
+        if (cursorB.hasNext()) {
+            setCurrentSymbolSourceCursor(cursorB);
+            return true;
+        }
+        return false;
+    }
+
+    private void setCurrentSymbolSourceCursor(RecordCursor cursor) {
+        currentSymbolSourceCursor = cursor instanceof UnionSymbolSourceCursor sourceCursor
+                ? sourceCursor.getCurrentSymbolSourceCursor()
+                : cursor;
     }
 
     private boolean switchToCursorB() {

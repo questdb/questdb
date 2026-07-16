@@ -22,16 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.union;
 
-public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
+import io.questdb.cairo.sql.RecordCursor;
 
-    @Override
-    default boolean supportsKeyValueAccess() {
-        return true;
-    }
-
-    boolean containsNullValue();
-
-    int getSymbolCount();
+interface UnionSymbolSourceCursor {
+    RecordCursor getCurrentSymbolSourceCursor();
 }
