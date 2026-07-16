@@ -1418,6 +1418,11 @@ public class LiveViewInstance implements QuietCloseable {
      * moved ahead of the manifest could release WAL the durable ring still
      * resumes from. Runs on the refresh worker under the refresh latch. See
      * {@link #lastPublishedRingGeneration}.
+     * <p>
+     * Restart recovery calls this too, for the manifest it rehydrates rather than
+     * one it wrote: adopting a durable {@code (generation, covered, newest)} the
+     * previous process published is the same claim, and the same three values
+     * have to move together for it.
      */
     public void recordCheckpointRingPublication(long generation, long coveredBaseSeqTxn, long newestBaseSeqTxn) {
         lastPublishedRingGeneration = generation;

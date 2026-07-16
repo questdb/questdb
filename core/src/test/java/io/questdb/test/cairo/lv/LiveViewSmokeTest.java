@@ -18851,6 +18851,483 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingRehydratedOnRestart() throws Exception {
+        // The core of the feature: a restart with a trusted manifest gets the
+        // whole ring back, not just the highest .cp. covered equals the
+        // reconciled floor here (a clean shutdown), so the trust rule fires and
+        // every listed entry becomes a resume anchor again.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LongList expectedRing = new LongList();
+            final long generationBeforeRestart;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                lv.copyRetainedCheckpointsTo(expectedRing);
+                generationBeforeRestart = lv.getLastPublishedRingGeneration();
+                Assert.assertTrue(generationBeforeRestart > 0);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+            // The ring is the pre-restart ring, verbatim - not the one promoted
+            // entry the highest-only fallback would leave.
+            Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+            final LongList restoredRing = new LongList();
+            lv.copyRetainedCheckpointsTo(restoredRing);
+            TestUtils.assertEquals(expectedRing, restoredRing);
+            // The head is the ring's newest listed entry, and the restore stamped
+            // the .cp's own maxTs over the sweep's placeholder.
+            Assert.assertEquals(lv.getRetainedCheckpointLvSeqTxn(2), lv.getHeadCheckpointLvSeqTxn());
+            Assert.assertEquals(lv.getRetainedCheckpointMaxTs(2), lv.getHeadCheckpointMaxTs());
+            // The candidate is consumed exactly once.
+            Assert.assertNull(lv.getCheckpointRingCandidate());
+            // Recovery adopted the manifest's durable state: the generation
+            // continues the on-disk counter rather than restarting at 1, and both
+            // WAL-purge-floor arms name the newest listed entry.
+            Assert.assertEquals(generationBeforeRestart, lv.getLastPublishedRingGeneration());
+            Assert.assertEquals(lv.getRetainedCheckpointBaseSeqTxn(2), lv.getLastPublishedRingNewestBaseSeqTxn());
+            Assert.assertEquals(lv.getRetainedCheckpointBaseSeqTxn(2), lv.getRingNewestBaseSeqTxn());
+            Assert.assertFalse(lv.isCheckpointRingDirty());
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingRestartResumesFromOlderAnchor() throws Exception {
+        // The payoff, and the acceptance signal of section 11.8: the FIRST
+        // post-restart O3 lands between an older anchor and the head, and must
+        // resume from that older anchor rather than rebuild from the view's lower
+        // bound. Against the highest-only fallback the ring holds the head alone,
+        // no entry sits below the trigger, and the whole view recomputes -
+        // o3_boundary_replay_rows moves instead of o3_resume_replay_rows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getRetainedCheckpointCount());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A cross-commit O3 at ts=15: above the maxTs=10 anchor, below the
+                // maxTs=20 and maxTs=30 entries it unseals. This is the first
+                // post-restart cycle, so the restore and the O3 land together.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertTrue(
+                    "the first post-restart O3 must resume from a recovered anchor",
+                    lv.getO3ResumeReplayRows() > 0
+            );
+            Assert.assertEquals(
+                    "the first post-restart O3 must not rebuild from the view's lower bound",
+                    0,
+                    lv.getO3BoundaryReplayRows()
+            );
+            // Content equals a from-scratch recompute over the applied base.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t4\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingRestartIgnoresUnlistedPoisonedCheckpoint() throws Exception {
+        // The allow-list rule, end to end, and the counterpart of
+        // testO3RestartDoesNotResurrectStaleCheckpointAsAnchor (which pins the
+        // same safety with the flag off, at the cost of a boundary rebuild).
+        //
+        // An O3 retirement unlinks the .cp files it unseals with best-effort
+        // removeQuiet. When that unlink fails, a poisoned .cp - window state
+        // predating the late row - lingers on disk below the highest survivor and
+        // at an lvSeqTxn <= appliedWatermark, so no orphan rule can catch it. The
+        // manifest is what separates it from a sealed one: it is not listed,
+        // therefore it is garbage, whatever the directory says. Rehydration must
+        // recover the two listed anchors and none of the residue.
+        final AtomicBoolean failCpUnlink = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (failCpUnlink.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_FILE_EXT)
+                        && !Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final long poisonedLvSeqTxn;
+            final long ts20 = MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(ts20, lv.getRetainedCheckpointMaxTs(1));
+                poisonedLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
+
+                // Arm the unlink failure, then fire a cross-commit O3 at ts=15: it
+                // retires the maxTs=20 / maxTs=30 entries (published away before
+                // the replay commits) but cannot delete their files, resumes from
+                // the maxTs=10 anchor, and seals a fresh maxTs=30 head.
+                failCpUnlink.set(true);
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+            // The poisoned file must genuinely survive, or the test proves nothing.
+            Assert.assertTrue(
+                    "the poisoned maxTs=20 .cp must survive the failed unlink on disk",
+                    existsCheckpointFile(lv, poisonedLvSeqTxn)
+            );
+            // Two listed anchors back, and the residue in neither of them.
+            Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+            for (int i = 0; i < lv.getRetainedCheckpointCount(); i++) {
+                Assert.assertNotEquals(
+                        "an unlisted .cp must never re-enter the ring",
+                        poisonedLvSeqTxn,
+                        lv.getRetainedCheckpointLvSeqTxn(i)
+                );
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A later O3 at ts=25 sits above the poisoned maxTs=20 residue and
+                // below the maxTs=30 head. A ring rebuilt from the directory would
+                // resume from the poisoned entry, whose row_number() counter
+                // predates the ts=15 row, and collide rn at 3.
+                setCurrentMicros(1_200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                    "2026-11-01T00:00:25.000000Z\t25\t4\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t5\n");
+
+            failCpUnlink.set(false);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingTrustedAgainstReconciledFloorNotRawState() throws Exception {
+        // The v1 regression, and the reason the trust decision runs on the
+        // refresh worker rather than in the startup sweep.
+        //
+        // A crash between the inline apply and the trailing _lv.s persist leaves
+        // the raw _lv.s behind the LV table's real durable position - the routine
+        // crash window, and exactly the restart the ring exists for. The manifest
+        // published ahead of that commit carries covered = the commit point, so a
+        // sweep comparing covered against the RAW _lv.s watermark sees covered
+        // running ahead and discards the ring. Against the reconciled floor -
+        // reconcileAppliedFloorAfterRestart clamps _lv.s back up from the LV
+        // table - the two are equal and the ring is trusted.
+        final AtomicBoolean failStatePersist = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStatePersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final long staleRawWatermark;
+            final long ringCovered;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 20; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                staleRawWatermark = lv.getStateReader().getAppliedWatermark();
+
+                // The crash window: the in-order publication and the commit land,
+                // the inline apply makes the row durable in the LV table, and the
+                // trailing _lv.s persist fails. _ring now claims a covered the raw
+                // _lv.s does not know about.
+                failStatePersist.set(true);
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                failStatePersist.set(false);
+
+                ringCovered = lv.getLastPublishedRingCoveredBaseSeqTxn();
+                Assert.assertTrue(
+                        "the manifest must claim a covered the raw _lv.s has not caught up to",
+                        ringCovered > staleRawWatermark
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            // What the sweep can see: _lv.s still stale, so covered != raw
+            // watermark. Deciding trust here would throw the ring away.
+            Assert.assertEquals(staleRawWatermark, reloaded.getStateReader().getAppliedWatermark());
+            Assert.assertEquals(ringCovered, reloaded.getCheckpointRingCandidate().getCoveredBaseSeqTxn());
+            Assert.assertNotEquals(ringCovered, staleRawWatermark);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            // The worker reconciled the floor up to the LV table, found it equal
+            // to covered, and trusted the ring.
+            Assert.assertEquals(ringCovered, reloaded.getStateReader().getAppliedWatermark());
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            Assert.assertTrue(
+                    "the ring must survive the crash window it exists for, was "
+                            + reloaded.getRetainedCheckpointCount(),
+                    reloaded.getRetainedCheckpointCount() > 1
+            );
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingNotTrustedWhenCoveredLagsFloor() throws Exception {
+        // The conservative half of the trust rule. A publication that fails leaves
+        // covered parked on an older commit while the cycle proceeds and the floor
+        // walks past it, so covered != the reconciled floor and the whole manifest
+        // is discarded: no listed entry becomes an anchor, and _ring is removed so
+        // the next restart's sweep cleans up the .cp files it had been exempting.
+        final AtomicBoolean failRingPublish = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failRingPublish.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 20; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                // _ring goes unwritable, and the cycle carries on regardless - a
+                // failed publication never blocks a commit. The floor advances past
+                // the covered the last good manifest claims.
+                failRingPublish.set(true);
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertTrue(lv.isCheckpointRingDirty());
+                Assert.assertTrue(
+                        "the stale manifest must claim a covered below the floor",
+                        lv.getLastPublishedRingCoveredBaseSeqTxn() < lv.getStateReader().getAppliedWatermark()
+                );
+            }
+            failRingPublish.set(false);
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertNotNull("the stale manifest is still structurally valid", reloaded.getCheckpointRingCandidate());
+            final long fallbackHead = reloaded.getHeadCheckpointLvSeqTxn();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            Assert.assertNull(reloaded.getCheckpointRingCandidate());
+            // Highest-only: the sweep's fallback head, promoted, and nothing else.
+            Assert.assertEquals(1, reloaded.getRetainedCheckpointCount());
+            Assert.assertEquals(fallbackHead, reloaded.getRetainedCheckpointLvSeqTxn(0));
+            Assert.assertEquals(fallbackHead, reloaded.getHeadCheckpointLvSeqTxn());
+            // The untrusted manifest is gone, so the next sweep has no allow-list.
+            try (Path path = new Path(); Path liveViewDir = new Path()) {
+                liveViewDir.of(engine.getConfiguration().getDbRoot()).concat(reloaded.getLiveViewToken());
+                Assert.assertFalse(
+                        "an untrusted _ring must not survive the fallback",
+                        engine.getConfiguration().getFilesFacade()
+                                .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$())
+                );
+            }
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingRehydratePrunesToLoweredRetentionCount() throws Exception {
+        // The codec cannot enforce the retention budget - it has no configuration
+        // - so an operator lowering the count between restarts must cost a prune,
+        // not the whole ring: rejecting a manifest for being over budget would buy
+        // a full scan to enforce a bound the prune satisfies for free. The prune
+        // republishes before unlinking, so the manifest never names a missing .cp.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final long evictedLvSeqTxn;
+            final long keptLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                evictedLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(0);
+                keptLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
+            }
+
+            // Restart with room for two entries instead of eight.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+            // Trimmed to the new budget, oldest first - not discarded.
+            Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+            Assert.assertEquals(keptLvSeqTxn, lv.getRetainedCheckpointLvSeqTxn(0));
+            // The evicted entry's .cp is unlinked, and the republished manifest no
+            // longer names it - otherwise the next restart's exists() check would
+            // reject the whole ring.
+            Assert.assertFalse(existsCheckpointFile(lv, evictedLvSeqTxn));
+            Assert.assertFalse(lv.isCheckpointRingDirty());
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+            }
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(
+                    "the republished manifest must still be trustable on the next restart",
+                    2,
+                    reloaded.getRetainedCheckpointCount()
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3CorruptNonHeadAnchorIsEvictedAndNotRetried() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {

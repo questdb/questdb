@@ -4203,24 +4203,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             evictedCheckpoints.clear();
             instance.invalidateRetainedCheckpointsFrom(batchMaxTs, evictedCheckpoints);
             instance.addRetainedCheckpoint(lvSeqTxn, batchMaxTs, baseSeqTxn, instance.getLvRowsTotal(), stateBytes);
-            // Count and bytes are the primary retention bounds. The event-time
-            // horizon is a loose upper safety, disabled by default: when
-            // enabled, an entry older than retentionMicros below the fresh head
-            // (batchMaxTs) is pruned. At real ingest rates count/bytes bind
-            // first (near-head checkpoint spacing covers many times the observed
-            // base lateness); a retentionMicros <= 0 (the default) disables the
-            // horizon so low-rate views keep their older, event-time-distant
-            // anchors instead of collapsing the ring to a single entry.
-            // pruneRetainedCheckpoints always keeps the newest entry.
-            final CairoConfiguration configuration = engine.getConfiguration();
-            final long retentionMicros = configuration.getLiveViewCheckpointRetentionMicros();
-            final long minRetainedMaxTs = retentionMicros > 0 ? batchMaxTs - retentionMicros : Numbers.LONG_NULL;
-            instance.pruneRetainedCheckpoints(
-                    configuration.getLiveViewCheckpointRetentionCount(),
-                    configuration.getLiveViewCheckpointRetentionMaxBytes(),
-                    minRetainedMaxTs,
-                    evictedCheckpoints
-            );
+            // Prune back within the budget against the fresh head's maxTs.
+            pruneRetainedCheckpointsToBudget(instance, batchMaxTs, evictedCheckpoints);
             // Publish the ring BEFORE the head advances. Every listed entry is
             // sealed at lvSeqTxn: the fresh one by construction, the survivors
             // because an O3 cycle already retired whatever this commit unsealed
@@ -4253,7 +4237,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // already holds the fresh entry, so resume anchors stay available even
             // while the manifest trails.
             final boolean ringPublished = publishCheckpointRing(instance, lvSeqTxn);
-            if (ringPublished || !configuration.isLiveViewCheckpointRingDurableEnabled()) {
+            if (ringPublished || !engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
                 instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
             }
             // Unlink unconditionally, even when the publish failed and the stale
@@ -4540,12 +4524,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Restart-restore: opens the head {@code .cp} (stamped on the
-     * instance by the startup sweep), rehydrates the LV's window state from
-     * the manifest + anchor block + per-function blocks, replays the base WAL
-     * forward to close the checkpoint-cadence gap between the head and the
-     * applied point, then resumes the refresh worker at the applied point so
+     * Restart-restore: opens the head {@code .cp}, rehydrates the LV's window
+     * state from the manifest + anchor block + per-function blocks, replays the
+     * base WAL forward to close the checkpoint-cadence gap between the head and
+     * the applied point, then resumes the refresh worker at the applied point so
      * the next incremental refresh rebuilds only the un-flushed lead.
+     * <p>
+     * Which {@code .cp} is the head is {@link #rehydrateCheckpointRing}'s
+     * decision, not the startup sweep's: a trusted {@code _ring} manifest
+     * repopulates the whole retained-checkpoint ring and names its newest listed
+     * entry, so a first post-restart O3 below the head can resume from an older
+     * anchor instead of rebuilding from {@code viewLowerBoundTimestamp}. Without
+     * one the sweep's highest surviving {@code .cp} stands, alone in the ring.
      * <p>
      * The head {@code .cp}'s {@code baseSeqTxn} can lag the persisted applied
      * watermark, because the checkpoint cadence does not write a fresh {@code .cp}
@@ -4570,24 +4560,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * via the pending-invalidation hook rather than serving wrong results.
      */
     private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
-        // Restart-restore trusts only the highest survivor as a resume anchor
-        // (v1, section 6.3): the ring is never rebuilt by scanning the surviving
-        // on-disk .cp files, because a stale .cp whose unlink failed is
-        // indistinguishable from a sealed one and would poison a later O3 resume.
-        // The single trusted head IS promoted into the ring once restored (see the
-        // tail of this method), but nothing populates the ring before that, so it
-        // must still be empty when this single-shot restore runs. If it is not,
-        // some path has started resurrecting on-disk entries as anchors - fail
-        // loudly in tests.
+        // The ring is never rebuilt by scanning the surviving on-disk .cp files:
+        // a stale .cp whose retirement unlink failed is indistinguishable from a
+        // sealed one and would poison a later O3 resume. It is repopulated only
+        // from the durable _ring manifest's allow-list (rehydrateCheckpointRing
+        // below) or, absent one, from the single restored head
+        // (promoteRestoredHeadIntoRing at the tail). Both run inside this
+        // single-shot restore, and the catalogue load stashes a manifest
+        // CANDIDATE on the instance rather than ring entries, so the ring must
+        // still be empty on entry. If it is not, some path has started
+        // resurrecting on-disk entries as anchors - fail loudly in tests.
         assert instance.getRetainedCheckpointCount() == 0
                 : "retained-checkpoint ring must be empty on restart restore, was "
                 + instance.getRetainedCheckpointCount();
-        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
         // The persisted applied watermark (base seqTxn) is disk truth: the LV's
-        // on-disk table holds every base commit up to it. Snapshot it before the
-        // restore below overwrites the in-memory watermarks with the head's
-        // (potentially older) base seqTxn.
+        // on-disk table holds every base commit up to it, and
+        // reconcileAppliedFloorAfterRestart has already clamped it up from the LV
+        // table, so this IS the reconciled floor the manifest is judged against.
+        // Snapshot it before the restore below overwrites the in-memory
+        // watermarks with the head's (potentially older) base seqTxn.
         final long diskAppliedSeqTxn = instance.getAppliedWatermark();
+        final long headLvSeqTxn = rehydrateCheckpointRing(instance, diskAppliedSeqTxn);
         if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
             // restoreFromHead failed in one of two distinct ways:
             //  - Compatibility break (LV_*_VERSION_* errno): it stashed a
@@ -4648,6 +4641,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 restoredHeadState.stateBytes,
                 Numbers.LONG_NULL
         );
+        // Replaces the entry-time "the ring is always empty after restart"
+        // contract. A rehydrated ring ends on the entry we just restored from,
+        // and the manifest's claim about it must match the .cp's own manifest -
+        // maybeWriteHeadCheckpoint stamps batchMaxTs into both. A mismatch means
+        // the allow-list and the checkpoints have drifted, which would let an
+        // anchor search select on a maxTs the window state does not hold.
+        assert instance.getRetainedCheckpointCount() == 0
+                || (instance.getRetainedCheckpointLvSeqTxn(instance.getRetainedCheckpointCount() - 1) == headLvSeqTxn
+                && instance.getRetainedCheckpointMaxTs(instance.getRetainedCheckpointCount() - 1) == restoredHeadState.maxTimestamp)
+                : "rehydrated checkpoint ring must end on the restored head, was lvSeqTxn="
+                + instance.getRetainedCheckpointLvSeqTxn(instance.getRetainedCheckpointCount() - 1)
+                + ", maxTs=" + instance.getRetainedCheckpointMaxTs(instance.getRetainedCheckpointCount() - 1)
+                + " against head lvSeqTxn=" + headLvSeqTxn + ", maxTs=" + restoredHeadState.maxTimestamp;
         long resumeSeqTxn = manifestBaseSeqTxn;
         long replayedRows = 0;
         if (diskAppliedSeqTxn > manifestBaseSeqTxn && isDedupBase(instance)) {
@@ -4717,6 +4723,278 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Decides whether the {@code _checkpoints/_ring} manifest the startup sweep
+     * stashed may be trusted, rehydrates the retained-checkpoint ring from it
+     * when it may, and names the checkpoint {@link #tryRestoreFromHead} restores
+     * window state from.
+     * <p>
+     * The trust rule is one comparison:
+     * <pre>
+     *     trust the ring  iff  ring.coveredBaseSeqTxn == reconciled applied floor
+     * </pre>
+     * At equality every listed entry is sealed at the view's true durable
+     * position, which is exactly what an anchor must be. The floor has to be the
+     * <em>reconciled</em> one - {@code _lv.s} is a stale lower bound by design,
+     * because {@code persistState} cannot persist-then-publish, and
+     * {@code reconcileAppliedFloorAfterRestart} clamps it back up from the LV
+     * table. Comparing against the raw {@code _lv.s} value instead would read the
+     * routine crash window (manifest published, {@code _lv.s} not yet) as a
+     * mismatch and discard the ring on precisely the restarts it exists for.
+     * That is why this runs on the refresh worker: the reconciled floor does not
+     * exist on the startup thread the sweep runs on.
+     * <p>
+     * Everything else falls back, conservatively and non-fatally: no manifest, an
+     * unreadable one, a version-skewed one, one naming a checkpoint that is gone,
+     * a {@code covered} that does not match, or an entry this code could not have
+     * written. Ring state is derived, so a fallback costs one boundary rebuild
+     * and never invalidates the view.
+     * <p>
+     * <b>Under trust the manifest, not the directory, defines the anchors.</b> The
+     * sweep's highest surviving {@code .cp} is the <em>fallback</em> head, and a
+     * trusted manifest that lists an entry overrides it: the newest listed entry
+     * becomes the head even when it sits above the raw watermark the sweep gated
+     * on - the manifest vouches for it, and the sweep exempted the file for
+     * exactly this - and a higher unlisted {@code .cp} is ignored rather than
+     * restored, whatever its filename says.
+     * <p>
+     * A trusted manifest that lists <em>nothing</em> takes the fallback head all
+     * the same, and deliberately: it withholds anchors, it does not condemn the
+     * directory. Restoring an unlisted head cannot resurrect stale window state,
+     * because {@link #tryRestoreFromHead} re-seeds {@code latestSeenTs} from the
+     * head's own {@code maxTs} and then replays the checkpoint-to-applied gap - a
+     * head that a consumed commit unsealed is unsealed by a commit inside that
+     * gap, by construction, so {@code replayToApplied} detects the O3 and rebuilds.
+     * The ring therefore only ever gains an entry that replay proved sealed, which
+     * is the property the allow-list protects, and refusing the head here would
+     * buy a full scan on a doubly-degraded path (a retirement whose unlink AND
+     * whose post-replay {@code .cp} write both failed) that recovers correctly
+     * without one. Do not "harden" this into a rebuild without a reproduction.
+     *
+     * @param reconciledFloor the applied watermark after
+     *                        {@code reconcileAppliedFloorAfterRestart}
+     * @return the {@code lvSeqTxn} to restore window state from: the ring's newest
+     * listed entry when the manifest is trusted and lists one, the sweep's
+     * fallback head otherwise.
+     */
+    private long rehydrateCheckpointRing(LiveViewInstance instance, long reconciledFloor) {
+        final long fallbackHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        final LiveViewCheckpointRingCandidate candidate = instance.getCheckpointRingCandidate();
+        // Single-shot, whatever the verdict: the sweep that produced the
+        // candidate runs once per process and this restore runs once per LV
+        // lifetime, so nothing downstream may read startup state as live.
+        instance.setCheckpointRingCandidate(null);
+        if (candidate == null || !candidate.isStructurallyValid()) {
+            // No manifest on disk, unreadable, or the durable ring is disabled -
+            // the sweep's read is gated on the flag, so a null candidate is the
+            // kill switch too, and this method is inert without it.
+            return fallbackHeadLvSeqTxn;
+        }
+        final long covered = candidate.getCoveredBaseSeqTxn();
+        final int entryCount = candidate.getEntryCount();
+        if (covered != reconciledFloor || !isCheckpointRingRehydratable(instance, candidate)) {
+            LOG.info().$("live view checkpoint ring recovery fallback [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", reason=").$(covered != reconciledFloor ? "covered does not match the reconciled floor" : "entry not rehydratable")
+                    .$(", generation=").$(candidate.getGeneration())
+                    .$(", ringCovered=").$(covered)
+                    .$(", reconciledFloor=").$(reconciledFloor)
+                    .$(", entries=").$(entryCount)
+                    .$(", fallbackHeadLvSeqTxn=").$(fallbackHeadLvSeqTxn).I$();
+            discardCheckpointRingManifest(instance);
+            return fallbackHeadLvSeqTxn;
+        }
+        for (int i = 0; i < entryCount; i++) {
+            instance.addRetainedCheckpoint(
+                    candidate.getEntryLvSeqTxn(i),
+                    candidate.getEntryMaxTs(i),
+                    candidate.getEntryBaseSeqTxn(i),
+                    candidate.getEntryLvRowsTotal(i),
+                    candidate.getEntryStateBytes(i)
+            );
+        }
+        // Adopt the manifest as this process's durable ring state before anything
+        // republishes over it. The generation must continue the on-disk counter
+        // rather than restart at 1, or a run's publications reuse generations the
+        // manifest already burned and stop being countable from the logs. And
+        // lastPublishedRingNewestBaseSeqTxn is the durable arm of WalPurgeJob's
+        // base WAL floor, which only a publication otherwise stamps - rehydration
+        // is the one path that adopts a manifest this process did not publish, so
+        // leaving it LONG_NULL would make the two arms disagree for no reason.
+        instance.recordCheckpointRingPublication(
+                candidate.getGeneration(),
+                covered,
+                entryCount == 0 ? Numbers.LONG_NULL : candidate.getEntryBaseSeqTxn(entryCount - 1)
+        );
+        pruneRehydratedCheckpointRing(instance, covered);
+        final int retainedCount = instance.getRetainedCheckpointCount();
+        if (retainedCount == 0) {
+            // Trusted, but it offers no anchor - so the sweep's head stands, and
+            // the restore validates it the way it does without any manifest.
+            LOG.info().$("live view checkpoint ring restored empty [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", generation=").$(candidate.getGeneration())
+                    .$(", coveredBaseSeqTxn=").$(covered)
+                    .$(", fallbackHeadLvSeqTxn=").$(fallbackHeadLvSeqTxn).I$();
+            return fallbackHeadLvSeqTxn;
+        }
+        final long newestLvSeqTxn = instance.getRetainedCheckpointLvSeqTxn(retainedCount - 1);
+        // Stamp the newest listed entry as the head, replacing the placeholders
+        // the startup sweep left (subscribeFromSeqTxn as a safe purge-floor lower
+        // bound, a LONG_NULL maxTs and zero stateBytes) - the manifest knows the
+        // real values. Ahead of the restore, so that a corrupt anchor sends
+        // handleCorruptHeadCheckpoint at the .cp the head actually names and it
+        // clears the head trio rather than stranding it on the sweep's pick.
+        instance.setHeadCheckpoint(
+                newestLvSeqTxn,
+                instance.getRetainedCheckpointBaseSeqTxn(retainedCount - 1),
+                instance.getRetainedCheckpointMaxTs(retainedCount - 1),
+                instance.getRetainedCheckpointStateBytes(retainedCount - 1),
+                Numbers.LONG_NULL
+        );
+        LOG.info().$("live view checkpoint ring restored [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", generation=").$(candidate.getGeneration())
+                .$(", coveredBaseSeqTxn=").$(covered)
+                .$(", entries=").$(retainedCount)
+                .$(", oldestMaxTs=").$(instance.getRetainedCheckpointMaxTs(0))
+                .$(", headLvSeqTxn=").$(newestLvSeqTxn)
+                .$(", headMaxTs=").$(instance.getRetainedCheckpointMaxTs(retainedCount - 1)).I$();
+        return newestLvSeqTxn;
+    }
+
+    /**
+     * Whether every entry of a trusted manifest describes a checkpoint this code
+     * could have written. Rejects the manifest <b>whole</b> rather than entry by
+     * entry, the way the sweep's missing-{@code .cp} rule does: a partial ring is
+     * a claim nothing backs, and membership is what makes the survivors
+     * meaningful.
+     * <p>
+     * The codec cannot enforce this. It validates ordering and the
+     * {@code coveredBaseSeqTxn} bounds, and {@link Numbers#LONG_NULL} is
+     * {@code Long.MIN_VALUE}, so a LONG_NULL field passes every one of them by
+     * being smaller than whatever it is compared against. No such entry is
+     * reachable from either {@code addRetainedCheckpoint} call site - both stamp
+     * real values - but rehydration is what first turns manifest bytes into ring
+     * records, so the check belongs here:
+     * <ul>
+     *     <li>a LONG_NULL {@code baseSeqTxn} restamps the ring's purge-floor
+     *     mirror to LONG_NULL, which {@code WalPurgeJob} reads as "no floor" and
+     *     which would release the base WAL of a ring about to be trusted;</li>
+     *     <li>a LONG_NULL {@code maxTs} undercuts every
+     *     {@link #findResumeAnchorBelow} ceiling and would anchor a replay at
+     *     {@code LONG_NULL + 1}, admitting every base row including those below
+     *     the START FROM boundary - the same reason
+     *     {@link #promoteRestoredHeadIntoRing} refuses one;</li>
+     *     <li>a LONG_NULL {@code lvSeqTxn} names no {@code .cp} the sweep's
+     *     {@code exists()} check could have passed, so a manifest carrying one
+     *     describes a directory that cannot exist.</li>
+     * </ul>
+     */
+    private boolean isCheckpointRingRehydratable(LiveViewInstance instance, LiveViewCheckpointRingCandidate candidate) {
+        for (int i = 0, n = candidate.getEntryCount(); i < n; i++) {
+            if (candidate.getEntryLvSeqTxn(i) == Numbers.LONG_NULL
+                    || candidate.getEntryMaxTs(i) == Numbers.LONG_NULL
+                    || candidate.getEntryBaseSeqTxn(i) == Numbers.LONG_NULL) {
+                LOG.error().$("live view checkpoint ring manifest entry has a null coordinate [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", entryIndex=").$(i)
+                        .$(", lvSeqTxn=").$(candidate.getEntryLvSeqTxn(i))
+                        .$(", maxTs=").$(candidate.getEntryMaxTs(i))
+                        .$(", baseSeqTxn=").$(candidate.getEntryBaseSeqTxn(i)).I$();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Trims a rehydrated ring back inside the running retention budget and
+     * unlinks whatever falls out.
+     * <p>
+     * The codec deliberately does not enforce the count / byte bounds - it has no
+     * configuration - and rejecting a manifest over budget would be the wrong
+     * answer anyway: an operator <em>lowering</em> a budget between restarts
+     * should cost a prune, which satisfies the bound for free, not a full scan.
+     * The event-time horizon keys off the newest entry, exactly as the add path
+     * keys it off the fresh head's {@code batchMaxTs}.
+     * <p>
+     * Republishes before unlinking, the way {@code maybeWriteHeadCheckpoint}
+     * does: the manifest on disk still lists what the prune dropped, and
+     * unlinking first would leave it naming missing files, which the next
+     * restart's {@code exists()} check rejects whole. The unlink then runs
+     * regardless of the publication's outcome - a stale manifest costs one
+     * fallback, while retaining the files leaks the disk the prune exists to
+     * bound, and they are unlisted garbage the moment the next publication lands.
+     */
+    private void pruneRehydratedCheckpointRing(LiveViewInstance instance, long coveredBaseSeqTxn) {
+        final int entryCount = instance.getRetainedCheckpointCount();
+        if (entryCount == 0) {
+            return;
+        }
+        evictedCheckpoints.clear();
+        pruneRetainedCheckpointsToBudget(instance, instance.getRetainedCheckpointMaxTs(entryCount - 1), evictedCheckpoints);
+        if (evictedCheckpoints.size() == 0) {
+            return;
+        }
+        LOG.info().$("live view pruned rehydrated checkpoint ring [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", evicted=").$(evictedCheckpoints.size())
+                .$(", retained=").$(instance.getRetainedCheckpointCount()).I$();
+        publishCheckpointRing(instance, coveredBaseSeqTxn);
+        unlinkCheckpointFiles(instance, evictedCheckpoints);
+    }
+
+    /**
+     * Prunes the retained-checkpoint ring back within the configured retention
+     * budget, measuring the event-time horizon from {@code referenceMaxTs} - the
+     * newest entry the ring is meant to keep, which is the fresh head on the add
+     * path and the manifest's last entry on the rehydrate path.
+     * <p>
+     * The single place that says which knobs bound the ring, so the two callers
+     * cannot drift onto different budgets. Count and bytes are the primary
+     * bounds. The event-time horizon is a loose upper safety, disabled by
+     * default: when enabled, an entry older than {@code retentionMicros} below
+     * {@code referenceMaxTs} is pruned. At real ingest rates count/bytes bind
+     * first - near-head checkpoint spacing covers many times the observed base
+     * lateness - and a {@code retentionMicros <= 0} (the default) disables the
+     * horizon so low-rate views keep their older, event-time-distant anchors
+     * instead of collapsing the ring to a single entry.
+     * <p>
+     * {@code pruneRetainedCheckpoints} always keeps the newest entry, and appends
+     * each evicted {@code lvSeqTxn} to {@code evictedOut} for the caller to
+     * unlink - this touches no files.
+     */
+    private void pruneRetainedCheckpointsToBudget(LiveViewInstance instance, long referenceMaxTs, LongList evictedOut) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final long retentionMicros = configuration.getLiveViewCheckpointRetentionMicros();
+        instance.pruneRetainedCheckpoints(
+                configuration.getLiveViewCheckpointRetentionCount(),
+                configuration.getLiveViewCheckpointRetentionMaxBytes(),
+                retentionMicros > 0 ? referenceMaxTs - retentionMicros : Numbers.LONG_NULL,
+                evictedOut
+        );
+    }
+
+    /**
+     * Removes {@code _checkpoints/_ring} after the trust decision fell back.
+     * <p>
+     * Best-effort and non-fatal: a failed removal leaves a manifest whose
+     * {@code covered} still does not match the floor, so it stays untrusted, and
+     * the next publication overwrites it. Removing it matters for the {@code .cp}
+     * files the sweep exempted on its behalf: they survived as an allow-list that
+     * turned out not to be trustworthy, and with the manifest gone the next
+     * restart's sweep retires them with no allow-list at all.
+     */
+    private void discardCheckpointRingManifest(LiveViewInstance instance) {
+        path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
+        // Self-base: Path.of(this) is a no-op, so this addresses _ring off the LV
+        // directory just built - through the one path builder every other site
+        // uses, so the two cannot drift.
+        LiveViewCheckpointRingManifest.ringManifestPath(path, path);
+        engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+    }
+
+    /**
      * Seeds the retained-checkpoint ring with the head {@link #tryRestoreFromHead}
      * just restored, making it the ring's sole entry.
      * <p>
@@ -4744,6 +5022,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private void promoteRestoredHeadIntoRing(LiveViewInstance instance, long headLvSeqTxn, long manifestBaseSeqTxn) {
         if (restoredHeadState.maxTimestamp == Numbers.LONG_NULL) {
+            return;
+        }
+        if (instance.getRetainedCheckpointCount() > 0) {
+            // rehydrateCheckpointRing trusted the manifest, so the ring already
+            // ends on this head (the assert in tryRestoreFromHead pins that) and
+            // carries the older anchors the manifest vouched for. Adding it again
+            // would trip addRetainedCheckpoint's strictly-increasing-maxTs
+            // contract. Promotion is the no-manifest fallback's way of reaching
+            // the same place with one entry.
             return;
         }
         // The .cp this entry names is the one restoreFromHead just read, and
