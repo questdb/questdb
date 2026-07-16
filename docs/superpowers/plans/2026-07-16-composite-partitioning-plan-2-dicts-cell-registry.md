@@ -244,56 +244,74 @@ Helpers (verified signatures): `openWriterRegistry` = create the files via `MapW
 
 ---
 
-### Task 5: Writer-side registration of dedicated interners
+### Task 5: Interners as first-class `_txn` symbol maps (create-path count + writer registration)
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java` (`configureColumnMemory`, ~`:5159-5199`; add a `CompositeDictionaries compositeDicts` field + a `getCompositeDictionaries()` accessor + close/rollback handling).
+- Modify: `core/src/main/java/io/questdb/cairo/TableUtils.java` — **Part A**: in `createTableOrViewOrMatViewFiles`, inside the existing `if (compositeLayout.hasInterners()) { … }` block (the one Task 3 added, right after it creates the interner files), add `symbolMapCount += compositeLayout.dedicatedCount() + 1;` so the initial `_txn` written by `createTxn(mem, symbolMapCount, …)` (~`:790`) sizes its symbol-count region to include the dedicated dicts + registry (all counts 0). `symbolMapCount` is declared at ~`:698` and consumed at ~`:790`; the `hasInterners()` block sits between them, so the bump reaches `createTxn`.
+- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java` — **Part B**: `configureColumnMemory` (~`:5159-5199`); add a `CompositeDictionaries compositeDicts` field, a `getCompositeDictionaries()` accessor (returns null when the table has no interners), a `getDenseSymbolMapCount()` test accessor, and null-out `compositeDicts` in the writer's close path.
 - Create: `core/src/main/java/io/questdb/cairo/CompositeDictionaries.java`
-- Test: `core/src/test/java/io/questdb/test/cairo/CompositeDictionariesTest.java` (writer case).
+- Test: `core/src/test/java/io/questdb/test/cairo/CompositeDictionariesTest.java`.
+
+**Why both halves land together (the core invariant):** the interners are first-class `_txn` symbol maps. The create-path `_txn` count (A) and the writer's `denseSymbolMapWriters` registration (B) are two halves of ONE invariant — `_txn.symbolColumnCount == denseSymbolMapWriters.size() == realSymbolCols + dedicatedDicts + 1`. If they landed apart, a writer commit with no registered interners would rewrite `symbolColumnCount` back to `realSymbolCols` (clobber), and a create that counted interners with a non-registering writer would read counts out of range. With BOTH, every existing loop handles interners uniformly, **no special-casing**: commit sets `symbolColumnCount = denseSymbolMapWriters.size()` (`TxWriter.java:645,782`); rollback (`TableWriter.java:13050-13054`) iterates `txWriter.unsafeReadSymbolColumnCount()` — which now includes the interner slots from creation, so uncommitted interns ARE discarded on rollback (Task 8 depends on this); sync/truncate/close iterate `denseSymbolMapWriters`; `TxReader` self-derives `symbolColumnCount = symbolsSize / 8` (`TxReader.java:634`). Plain tables have zero interners → `symbolMapCount` unchanged → `_txn` byte-identical.
 
 **Interfaces:**
-- Consumes: `CompositeInternerLayout` (Task 2), `CellRegistry` (Task 4), the writer's `denseSymbolMapWriters` and `txWriter` (as `SymbolValueCountCollector`), `getSymbolMapWriter(int columnIndex)` (`:2510`).
-- Produces: `CompositeDictionaries` with `MapWriter dictFor(int dimIndex)` (identity → `getSymbolMapWriter(dimension.getColumnIndex())`; truncate/expr → the dedicated writer; hash → null), `CellRegistry cellRegistry()`, and `int internRow(...)` deferred to Plan 4 (not built here). Writer-open builds it.
+- Consumes: `CompositeInternerLayout` (Task 2), `CellRegistry` (Task 4), the writer's `denseSymbolMapWriters` + `txWriter`.
+- Produces: `CompositeDictionaries` (holder) with `MapWriter dedicatedDictFor(int dimIndex)` (the dedicated `SymbolMapWriter` for a truncate/expression dim, else null) and `CellRegistry cellRegistry()`. `TableWriter.getCompositeDictionaries()` returns the holder, or **null** for a table with no interners. Value interning (`internValue`, identity-reuse) is Task 7.
 
-- [ ] **Step 1: Write the failing test** — open a writer on a composite table and assert the dedicated interners are registered and reachable, and that a plain table registers none:
+- [ ] **Step 1: Write the failing tests**
 ```java
 @Test
-public void testWriterRegistersDedicatedInternersInOrder() throws Exception {
+public void testInitialTxnCountsInterners() throws Exception {          // Part A
+    assertMemoryLeak(() -> {
+        execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+        // 2 real SYMBOL cols + 1 dedicated dict (truncate) + 1 registry = 4
+        try (TableReader r = getReader("t")) {
+            Assert.assertEquals(4, r.getTxFile().unsafeReadSymbolColumnCount());  // or the reader's symbol-column-count accessor
+        }
+    });
+}
+@Test
+public void testWriterRegistersDedicatedInternersInOrder() throws Exception {   // Part B
     assertMemoryLeak(() -> {
         execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
                 "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
         try (TableWriter w = getWriter("t")) {
-            // spec: dim0 = identity(exchange) [reuses column dict, no dedicated];
-            //       dim1 = truncate(symbol, 3) [dedicated dict]
+            // dim0 = identity(exchange) [reuses column dict, no dedicated]; dim1 = truncate(symbol,3) [dedicated]
             CompositeDictionaries d = w.getCompositeDictionaries();
-            Assert.assertNull(d.dictFor(0));                        // identity -> reuses column dict, no dedicated
-            Assert.assertNotNull(d.dictFor(1));                     // truncate -> dedicated dict
+            Assert.assertNotNull(d);
+            Assert.assertNull(d.dedicatedDictFor(0));               // identity -> no dedicated dict
+            Assert.assertNotNull(d.dedicatedDictFor(1));            // truncate -> dedicated dict
             Assert.assertNotNull(d.cellRegistry());
-            // 2 real SYMBOL columns (exchange, symbol) + 1 dedicated dict + 1 registry = 4 dense maps
-            Assert.assertEquals(2 + 2, w.getDenseSymbolMapCount());
+            Assert.assertEquals(2 + 2, w.getDenseSymbolMapCount()); // 2 real symbols + dict + registry
         }
     });
 }
 @Test
-public void testPlainTableRegistersNoDedicatedInterners() throws Exception {
+public void testPlainTableRegistersNoInterners() throws Exception {
     assertMemoryLeak(() -> {
         execute("create table p (ts timestamp, s symbol) timestamp(ts) partition by day wal");
         try (TableWriter w = getWriter("p")) {
-            Assert.assertFalse(w.getCompositeDictionaries().isComposite());
+            Assert.assertNull(w.getCompositeDictionaries());        // no interners for a plain table
+            Assert.assertEquals(1, w.getDenseSymbolMapCount());     // exactly the 1 SYMBOL column
+        }
+        try (TableReader r = getReader("p")) {
+            Assert.assertEquals(1, r.getTxFile().unsafeReadSymbolColumnCount()); // _txn unchanged for plain
         }
     });
 }
 ```
-(Adjust dim indices to the actual spec order; add a small `getDenseSymbolMapCount()` test accessor if none exists. `getWriter` mirrors existing writer tests.)
+(Confirm the exact `_txn` symbol-column-count read accessor by mirroring an existing test that inspects `_txn` — e.g. `TableReader.getTxFile()` then `unsafeReadSymbolColumnCount()`/`getSymbolColumnCount()`. Add the `getDenseSymbolMapCount()` accessor to `TableWriter` if none exists — `return denseSymbolMapWriters.size();`.)
 
-- [ ] **Step 2: Run to verify it fails** — FAIL (no `getCompositeDictionaries`).
+- [ ] **Step 2: Run to verify it fails** — `testInitialTxnCountsInterners` fails (count is 2, not 4, until Part A); `testWriterRegistersDedicatedInternersInOrder` fails (no `getCompositeDictionaries`).
 
-- [ ] **Step 3: Write minimal implementation** — after the per-column symbol-map loop in `configureColumnMemory`, build `CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec())` and gate on `layout.hasInterners()` (NOT `isComposite()` — see Global Constraints): for each dedicated dict then the registry, construct a `SymbolMapWriter` **using the identical argument shape as the per-column construction at `TableWriter.java:5168-5182`** — that loop sets `symbolIndexInTxWriter = denseSymbolMapWriters.size()` immediately before `denseSymbolMapWriters.add(...)`, passes `txWriter` as the `SymbolValueCountCollector`, and reads the initial symbol count from `_txn` (copy that exact count-source expression verbatim — do NOT invent `unsafeReadSymbolCount`; the per-column loop is the source of truth, and it already yields 0 for a freshly-created table). Pass `columnIndex = -1`; for the registry pass `_cell`/`REGISTRY_TXN`/`cacheFlag=false`. `denseSymbolMapWriters.add(dw)` for each, in layout order (dedicated dicts, then registry). Wrap the registry writer in `CellRegistry`; store everything in a new `CompositeDictionaries`.
-  **Why this is crash-safe for free (verified):** `MapWriter extends SymbolCountProvider` (`MapWriter.java:39`), and `txWriter.commit(denseSymbolMapWriters)` sets `symbolColumnCount = denseSymbolMapWriters.size()` and writes one count per dense entry (`TxWriter.java:645,782`); the partition table offset is `getPartitionTableSizeOffset(symbolColumnCount)` (`TxWriter.java:641,670`), so it shifts automatically. `TxReader` derives `symbolColumnCount = symbolsSize / Long.BYTES` from the header (`TxReader.java:634`) — no format/header change. Rollback (`TableWriter.java:13054`), truncate, sync, and close all iterate `denseSymbolMapWriters` — so no extra teardown beyond nulling the holder in the writer's close path.
+- [ ] **Step 3: Write minimal implementation**
+  **Part A** (`TableUtils.createTableOrViewOrMatViewFiles`): inside the existing `if (compositeLayout.hasInterners())` block, after the registry `createSymbolMapFiles(...)` call, add `symbolMapCount += compositeLayout.dedicatedCount() + 1;`.
+  **Part B** (`TableWriter.configureColumnMemory`): after the per-column symbol-map loop, build `CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec())`; if `layout.hasInterners()`, for each dim `i` with `layout.needsDedicatedDict(i)`, then the registry, construct a `SymbolMapWriter` **using the identical argument shape as the per-column construction at `TableWriter.java:5168-5182`** — set `symbolIndexInTxWriter = denseSymbolMapWriters.size()`, pass `txWriter` as the collector, and read the initial count from `_txn` via `txWriter.getSymbolValueCount(symbolIndexInTxWriter)` (valid because Part A put the slot in `_txn` at count 0). Pass the reserved `columnNameTxn` (`layout.dictColumnNameTxn(i)` / `REGISTRY_TXN`), `columnIndex = -1`, and for the registry `_cell`/`cacheFlag=false`. `denseSymbolMapWriters.add(w)` for each in layout order (dedicated dicts, then registry). Wrap the registry writer in a `CellRegistry`; store the dedicated dicts (keyed by dim index) + the registry in a new `CompositeDictionaries`; assign to `compositeDicts`. (For a table with no interners, leave `compositeDicts == null`.) Rollback/truncate/sync/close already iterate `denseSymbolMapWriters` — no extra teardown beyond nulling `compositeDicts` in close.
 
-- [ ] **Step 4: Run to verify it passes** — PASS. Also run `mvn -q -pl core test -Dtest=CompositeMetaFormatTest,CompositeBackwardCompatTest` — plain-table paths (`denseSymbolMapWriters.size()` == symbol-column count) unaffected and `_txn` byte-identical.
+- [ ] **Step 4: Run to verify it passes** — PASS (3 tests). Also run `mvn -q -pl core test -Dtest=CompositeMetaFormatTest,CompositeBackwardCompatTest,CompositeDictPersistenceTest` — plain-table paths unaffected, composite create still green.
 
-- [ ] **Step 5: Commit** — `feat(cairo): register composite dedicated interners on writer open`
+- [ ] **Step 5: Commit** — `feat(cairo): register composite interners as first-class _txn symbol maps (create count + writer open)`
 
 ---
 
