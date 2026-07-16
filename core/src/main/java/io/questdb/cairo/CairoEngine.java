@@ -1009,8 +1009,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             // indistinguishable from a sealed entry. Resurrecting
                             // it as an anchor would let a later O3 resume from
                             // pre-late-row window state and serve wrong results.
-                            // See LiveViewRefreshJob.tryRestoreFromHead and the
-                            // handoff design section 6.3.
+                            // See LiveViewRefreshJob.tryRestoreFromHead.
                             liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
                             final long headSeqTxn = LiveViewRecovery.sweepCheckpoints(
                                     configuration.getFilesFacade(),

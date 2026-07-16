@@ -1069,6 +1069,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     cursorTimestampIndex, viewLowerBoundTimestamp, filter, fromSeqTxn, toSeqTxn,
                     walWriter, copier, populateTier, latestSeenTsSnapshot
             );
+            // Publish ahead of the commit below and of the no-row branch's bare
+            // watermark walk; both advance the floor to advanceTo. The o3Detected
+            // guard is load-bearing, not defensive: drainBaseWal rolls its draft
+            // back on detect but leaves advanceTo sitting ON the offending seqTxn,
+            // so publishing here would claim the ring is sealed at the very commit
+            // that unseals it. That cycle republishes through o3Replay's retire.
+            if (!drainResult.o3Detected) {
+                publishCheckpointRingOnAdvance(instance, drainResult.advanceTo);
+            }
             if (drainResult.appendedRows > 0) {
                 // The LV WAL block carries advanceTo as maxBaseSeqTxnInBlock. The
                 // inline apply below makes the rows durable in the LV's on-disk
@@ -1380,6 +1389,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
                 return;
             }
+
+            // Publish ahead of the forward append's commit. The overlap branch
+            // above has handed every unsealing cycle to o3Replay, so what remains
+            // is strictly forward and stays sealed at effectiveSeqTxn - the point
+            // the watermarks advance to below. Ordered after the overlap decision,
+            // not beside the effectiveSeqTxn read, so an overlap cycle never
+            // publishes a membership its own retire is about to shrink.
+            publishCheckpointRingOnAdvance(instance, effectiveSeqTxn);
 
             // Strictly-forward cheap append over the applied reader.
             // Inclusive lower bound: strictly above the frontier, floored at the view's
@@ -2115,6 +2132,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
         final long priorLead = instance.getLeadRowCount();
         final long flushRows = priorLead + stagingRowsToInclude;
+        // Publish ahead of both branches below - the no-row one walks the floor
+        // to advanceTo with no commit at all, the materialising one commits there
+        // - and one call covers both because they advance to the same point. The
+        // lead is in-order by construction: finishLeadRefresh hands every O3 cycle
+        // to o3Replay before a flush can see it. This is the lead path's only
+        // in-order publication; its drain half never advances the durable floor.
+        publishCheckpointRingOnAdvance(instance, advanceTo);
         if (flushRows == 0 || tier == null) {
             // Nothing to materialise (only non-data / filtered base commits walked,
             // or no tier). Advance the watermarks anyway so base WAL retention
@@ -2397,15 +2421,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * it names: the retire above has just proved that no row in the trigger
      * commit or the ahead range sits at or below any survivor's {@code maxTs},
      * which is exactly "sealed at {@code coveredBaseSeqTxn}", and that stays true
-     * whether or not the replay below then succeeds (design section 6.2).
+     * whether or not the replay below then succeeds.
      * <p>
      * Publishing before the unlink is what keeps a crash in between cheap: the
      * manifest is an allow-list, so a file it does not list is garbage whether or
      * not its unlink lands, whereas unlinking first would leave the prior
      * manifest naming files that no longer exist and a restart would reject it
-     * whole over the referenced-file check. Failure never blocks the replay
-     * (design section 6.4) - the helper logs and returns false, and the
-     * in-memory ring the resume anchors come from is already correct.
+     * whole over the referenced-file check. Failure never blocks the replay:
+     * the helper logs and returns false, and the in-memory ring the resume
+     * anchors come from is already correct.
      */
     private void invalidateRetainedCheckpointsOnO3(LiveViewInstance instance, long triggerLowTs, long coveredBaseSeqTxn) {
         evictedCheckpoints.clear();
@@ -2624,6 +2648,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // accept that the live output for the O3 batch is wrong until
             // a non-O3 cycle naturally advances state.
             invalidateHeadOnO3(instance, advanceTo, lateRowTs, instance.getLatestSeenTs());
+            // Retire the rest of the ring on the same terms (LONG_NULL drops it
+            // whole) and publish the now-empty membership at the point the
+            // watermarks below advance to. invalidateHeadOnO3 retires only the
+            // head, which sufficed while nothing published the ring: this branch
+            // feeds the O3 batch through the in-WAL-order pipeline and then walks
+            // the watermarks over it, so every retained entry is unsealed - and
+            // one left in the in-memory ring would be listed by the next in-order
+            // publication at a covered equal to the floor, the one state a restart
+            // trusts.
+            //
+            // Usually a no-op: a non-capable view seals no .cp, so the ring is
+            // empty. The shape that is not is a view whose functions lost snapshot
+            // support across a restart - capability is computed on first use here,
+            // while promoteRestoredHeadIntoRing has already listed the restored
+            // head.
+            //
+            // invalidateHeadOnO3 unlinking the head .cp before this publication
+            // inverts the publish-then-unlink order, but costs nothing here: that
+            // order exists so a crash between cannot leave the prior manifest
+            // naming a missing file, which restart rejects whole, and the ring is
+            // being dropped whole anyway - the same empty membership either way.
+            invalidateRetainedCheckpointsOnO3(instance, Numbers.LONG_NULL, advanceTo);
             LOG.critical().$("live view O3 replay skipped, snapshot capability is false [view=")
                     .$(viewName)
                     .$(", advanceTo=").$(advanceTo)
@@ -3190,7 +3236,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // rebuild's commit point - before the commit below, off the same
         // retireLowTs that drives the in-memory drop. A non-DATA / recovery
         // trigger empties the ring, so its publication is an empty manifest and a
-        // crash mid-rebuild leaves no anchor to select (design section 6.5).
+        // crash mid-rebuild leaves no anchor to select.
         invalidateRetainedCheckpointsOnO3(instance, retireLowTs, effectiveSeqTxn);
         boolean readerAttached = false;
         long appendedRows = 0;
@@ -3963,6 +4009,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Publishes the ring ahead of an in-order cycle that walks the durable floor
+     * to {@code advanceTo}, unsealing nothing. Membership is unchanged by
+     * construction - an in-order cycle emits only rows above {@code latestSeenTs},
+     * which is at or above every entry's {@code maxTs} - so only
+     * {@code coveredBaseSeqTxn} moves.
+     * <p>
+     * Load-bearing rather than tidy. Otherwise the ring reaches disk only beside a
+     * {@code .cp} write and on an O3 retire, and a view sealing a checkpoint once
+     * per million rows while advancing its floor every base commit would leave
+     * {@code covered} parked on the last checkpoint - so restart, which trusts the
+     * manifest only when {@code covered} equals the reconciled applied floor,
+     * would reject the ring on every steadily-ingesting view.
+     * <p>
+     * Ordered ahead of the cycle's commit so the window a crash can land in is the
+     * commit rather than this write: once the commit lands, the floor is
+     * {@code advanceTo} and the manifest already says so. A crash the other way
+     * (published, commit lost) leaves {@code covered} above the floor, which reads
+     * as the conservative fallback, not a wrong answer - the claim holds either
+     * way, being about the listed entries rather than the cycle.
+     * <p>
+     * Mirrors the caller's advance guard rather than assuming it: publishing
+     * {@code covered} below the floor would only turn a trustable manifest into an
+     * untrustable one.
+     */
+    private void publishCheckpointRingOnAdvance(LiveViewInstance instance, long advanceTo) {
+        if (advanceTo > instance.getAppliedWatermark()) {
+            publishCheckpointRing(instance, advanceTo);
+        }
+    }
+
+    /**
      * Head-checkpoint write hook. Computes the per-LV snapshot
      * capability on the first call, accumulates the cycle's row count into
      * the cadence counter, and writes a fresh {@code <lvSeqTxn>.cp} when
@@ -4026,10 +4103,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // itself outright without a lastWrittenUs, and the row counter restarts
         // from zero - so the restored head would stay the ring's ONLY entry until
         // an O3 forces a write or a full rowsCadence accumulates. Densify above it
-        // on the first flush instead (design section 3.2): until a second entry
-        // exists, every O3 at or below the restored head has no older anchor to
-        // resume from and rebuilds from the view's lower bound, which is O(view
-        // age) on a long-lived view.
+        // on the first flush instead: until a second entry exists, every O3 at
+        // or below the restored head has no older anchor to resume from and
+        // rebuilds from the view's lower bound, which is O(view age) on a
+        // long-lived view.
         //
         // Gated on a real batchMaxTs because the write seals a ring entry: a
         // LONG_NULL maxTs anchor undercuts every findResumeAnchorBelow ceiling and
@@ -4135,23 +4212,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Publish the ring BEFORE the head advances. Every listed entry is
             // sealed at lvSeqTxn: the fresh one by construction, the survivors
             // because an O3 cycle already retired whatever this commit unsealed
-            // (design section 6.2) and an in-order one unseals nothing (every
-            // maxTs is below the commit's minTs). Callers reach here only after
+            // and an in-order one unseals nothing (every maxTs is below the
+            // commit's minTs). Callers reach here only after
             // the LV's own commit and the _lv.s persist, so lvSeqTxn is also the
             // applied watermark a restart reconciles against: covered == floor,
             // which is the trust rule.
             //
-            // Publishing ahead of the head is load-bearing rather than cosmetic
-            // (design section 6.1). WalPurgeJob min-combines
-            // getHeadCheckpointBaseSeqTxn(), so the head carries the base WAL
-            // purge floor, and restart's replayToApplied re-feeds raw base WAL
-            // from the restored entry's baseSeqTxn. Let the head advance onto an
-            // entry the durable manifest does not list and the floor releases WAL
-            // that a restart trusting the manifest still needs to replay from its
-            // older newest entry. Both the crash window (crash between the .cp
-            // commit and the publish) and a failed publish open exactly that gap,
-            // so the head waits on a successful publication - the ordering covers
-            // the crash, the gate covers the failure.
+            // Publishing ahead of the head is load-bearing rather than cosmetic.
+            // WalPurgeJob min-combines getHeadCheckpointBaseSeqTxn(), so the head
+            // carries the base WAL purge floor, and restart's replayToApplied
+            // re-feeds raw base WAL from the restored entry's baseSeqTxn. Let the
+            // head advance onto an entry the durable manifest does not list and
+            // the floor releases WAL that a restart trusting the manifest still
+            // needs to replay from its older newest entry. Both the crash window
+            // (crash between the .cp commit and the publish) and a failed publish
+            // open exactly that gap, so the head waits on a successful
+            // publication - the ordering covers the crash, the gate the failure.
             //
             // The gate reads the flag rather than the return value because the
             // helper returns false for a disabled ring too: with no manifest to
@@ -4161,9 +4237,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // A failed publish therefore leaves the fresh .cp an orphan with the
             // head, the floor and the cadence counters all parked on the previous
             // entry, so the next cycle writes another .cp and re-lists the ring
-            // from memory. The view keeps serving throughout (design section 6.4):
-            // the in-memory ring already holds the fresh entry, so resume anchors
-            // stay available even while the manifest trails.
+            // from memory. The view keeps serving throughout: the in-memory ring
+            // already holds the fresh entry, so resume anchors stay available even
+            // while the manifest trails.
             final boolean ringPublished = publishCheckpointRing(instance, lvSeqTxn);
             if (ringPublished || !configuration.isLiveViewCheckpointRingDurableEnabled()) {
                 instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
@@ -4630,7 +4706,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Seeds the retained-checkpoint ring with the head {@link #tryRestoreFromHead}
-     * just restored, making it the ring's sole entry (design section 3.1).
+     * just restored, making it the ring's sole entry.
      * <p>
      * This grants the head no trust it did not already hold: the head-hit branch of
      * {@link #o3Replay} resumes from it directly, off the head metadata, without
