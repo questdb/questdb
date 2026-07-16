@@ -51,6 +51,14 @@ public class CellRegistry implements QuietCloseable {
         this.reader = reader;
     }
 
+    /**
+     * Frees the wrapped writer/reader. WARNING: only call this on a {@code CellRegistry} that OWNS its
+     * writer/reader (e.g. a standalone one you constructed directly, as in unit tests). Do NOT call it on a
+     * registry obtained via {@link CompositeDictionaries#cellRegistry()} on a live {@link TableWriter}/
+     * {@link TableReader}: there the wrapped {@code SymbolMapWriter}/{@code SymbolMapReaderImpl} is owned and
+     * freed elsewhere ({@code TableWriter.denseSymbolMapWriters} / {@code TableReader.compositeInternerReaders}),
+     * so closing it here double-frees. The holder is non-owning and is simply nulled on teardown.
+     */
     @Override
     public void close() {
         writer = Misc.freeIfCloseable(writer);
