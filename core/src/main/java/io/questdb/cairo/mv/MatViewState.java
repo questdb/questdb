@@ -417,7 +417,9 @@ public class MatViewState implements QuietCloseable {
      */
     boolean clearPendingInvalidation(Object expectedMarker) {
         assert latch.get();
-        final PendingInvalidation pending = (PendingInvalidation) expectedMarker;
+        if (!(expectedMarker instanceof PendingInvalidation pending)) {
+            return false;
+        }
         final Object replacement = pending.fullRefreshOwner != null
                 ? new PendingInvalidation(null, null, Numbers.LONG_NULL, false, pending.fullRefreshOwner)
                 : null;
@@ -576,6 +578,10 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshStartTimestampUs;
     }
 
+    Object getPendingFullRefreshOwner(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.fullRefreshOwner : null;
+    }
+
     @TestOnly
     public TableToken getPendingInvalidationBaseTableTokenForTesting() {
         return getPendingInvalidationBaseTableToken(pendingInvalidationMarker);
@@ -588,10 +594,6 @@ public class MatViewState implements QuietCloseable {
 
     public String getPendingInvalidationReason() {
         return getPendingInvalidationReason(pendingInvalidationMarker);
-    }
-
-    Object getPendingFullRefreshOwner(Object marker) {
-        return marker instanceof PendingInvalidation pending ? pending.fullRefreshOwner : null;
     }
 
     TableToken getPendingInvalidationBaseTableToken(Object marker) {
@@ -702,8 +704,24 @@ public class MatViewState implements QuietCloseable {
         return latch.get();
     }
 
+    boolean isPendingFullRefresh() {
+        return isPendingFullRefresh(pendingInvalidationMarker);
+    }
+
+    boolean isPendingFullRefresh(Object marker) {
+        return marker instanceof PendingInvalidation pending && pending.fullRefreshOwner != null;
+    }
+
+    boolean isPendingFullRefreshOwner(Object expectedOwner) {
+        return getPendingFullRefreshOwner(pendingInvalidationMarker) == expectedOwner;
+    }
+
     public boolean isPendingInvalidation() {
         return pendingInvalidationMarker != null;
+    }
+
+    boolean isPendingInvalidationForced(Object marker) {
+        return marker instanceof PendingInvalidation pending && pending.isInvalidationForced;
     }
 
     @TestOnly
@@ -720,22 +738,6 @@ public class MatViewState implements QuietCloseable {
         return retryAfter == Numbers.LONG_NULL || nowMicros >= retryAfter;
     }
 
-    boolean isPendingFullRefresh() {
-        return isPendingFullRefresh(pendingInvalidationMarker);
-    }
-
-    boolean isPendingFullRefresh(Object marker) {
-        return marker instanceof PendingInvalidation pending && pending.fullRefreshOwner != null;
-    }
-
-    boolean isPendingFullRefreshOwner(Object expectedOwner) {
-        return getPendingFullRefreshOwner(pendingInvalidationMarker) == expectedOwner;
-    }
-
-    boolean isPendingInvalidationForced(Object marker) {
-        return marker instanceof PendingInvalidation pending && pending.isInvalidationForced;
-    }
-
     public void markAsDropped() {
         dropped = true;
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
@@ -746,29 +748,6 @@ public class MatViewState implements QuietCloseable {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
         this.invalid = true;
-    }
-
-    public void markAsPendingInvalidation() {
-        markAsPendingFullRefreshAndGetOwner();
-    }
-
-    public void markAsPendingInvalidation(String invalidationReason) {
-        markAsPendingInvalidationAndGetMarker(invalidationReason);
-    }
-
-    @TestOnly
-    public void markAsPendingInvalidationForTesting(
-            String invalidationReason,
-            TableToken invalidationBaseTableToken,
-            long invalidationBaseTxn,
-            boolean isInvalidationForced
-    ) {
-        markAsPendingInvalidationAndGetMarker(
-                invalidationReason,
-                invalidationBaseTableToken,
-                invalidationBaseTxn,
-                isInvalidationForced
-        );
     }
 
     Object markAsPendingFullRefreshAndGetOwner() {
@@ -794,6 +773,31 @@ public class MatViewState implements QuietCloseable {
                 return fullRefreshOwner;
             }
         }
+    }
+
+    @TestOnly
+    public void markAsPendingFullRefreshForTesting() {
+        markAsPendingFullRefreshAndGetOwner();
+    }
+
+    @TestOnly
+    public void markAsPendingInvalidation(String invalidationReason) {
+        markAsPendingInvalidationAndGetMarker(invalidationReason);
+    }
+
+    @TestOnly
+    public void markAsPendingInvalidationForTesting(
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
+        markAsPendingInvalidationAndGetMarker(
+                invalidationReason,
+                invalidationBaseTableToken,
+                invalidationBaseTxn,
+                isInvalidationForced
+        );
     }
 
     Object markAsPendingInvalidationAndGetMarker(String invalidationReason) {
@@ -974,15 +978,6 @@ public class MatViewState implements QuietCloseable {
         avgScanRangeTsUnits = foldEma(avgScanRangeTsUnits, rangeTsUnits);
     }
 
-    void requestPendingTaskRetry(int retryFlags) {
-        while (true) {
-            final int currentFlags = pendingTaskRetryFlags;
-            if (PENDING_TASK_RETRY_FLAGS_UPDATER.compareAndSet(this, currentFlags, currentFlags | retryFlags)) {
-                return;
-            }
-        }
-    }
-
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
         this.lastRefreshFinishTimestampUs = refreshTimestamp;
@@ -994,6 +989,15 @@ public class MatViewState implements QuietCloseable {
         // necessarily already cleared here. markAsValid clears them again on recovery.
         resetRefreshRetry();
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
+    }
+
+    void requestPendingTaskRetry(int retryFlags) {
+        while (true) {
+            final int currentFlags = pendingTaskRetryFlags;
+            if (PENDING_TASK_RETRY_FLAGS_UPDATER.compareAndSet(this, currentFlags, currentFlags | retryFlags)) {
+                return;
+            }
+        }
     }
 
     /**

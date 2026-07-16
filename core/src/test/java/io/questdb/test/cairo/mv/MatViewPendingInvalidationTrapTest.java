@@ -243,7 +243,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final Thread fullPublisher = new Thread(() -> {
                 try {
-                    state.markAsPendingInvalidation();
+                    state.markAsPendingFullRefreshForTesting();
                 } catch (Throwable th) {
                     publisherFailure.set(th);
                 }
@@ -302,7 +302,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         "the invalidation publisher must pause after reading the empty marker",
                         hasReadEmptyMarker.await(30, TimeUnit.SECONDS)
                 );
-                state.markAsPendingInvalidation();
+                state.markAsPendingFullRefreshForTesting();
             } finally {
                 resumeReasonPublisher.countDown();
                 reasonPublisher.join(30_000);
@@ -764,7 +764,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertTrue(state.tryLock());
             try {
                 state.markAsPendingInvalidation("split finalize witness");
-                state.markAsPendingInvalidation();
+                state.markAsPendingFullRefreshForTesting();
                 try {
                     MatViewRefreshJob.finalizeAndUnlock(engine, splittingStore, viewToken, state, false);
                     Assert.fail("the FULL wake enqueue failure must propagate");
@@ -1925,14 +1925,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final MatViewState state = fixture.state();
 
-            // A null-reason marker is the full-refresh reschedule (markAsPendingInvalidation() with no reason,
+            // A null-reason marker is the full-refresh reschedule (markAsPendingFullRefreshForTesting() with no reason,
             // see fullRefresh), not a deferred invalidation. The post-release handoff must route it back to
             // FULL_REFRESH rather than INVALIDATE.
             final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
                     if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation(); // no reason -> full-refresh reschedule marker
+                        state.markAsPendingFullRefreshForTesting(); // no reason -> full-refresh reschedule marker
                     }
                 });
 
@@ -2000,7 +2000,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // Facets combine on one marker: the no-arg overload ADDS the owner facet (it is not a
             // no-op) while preserving the reason, and a later reason publication preserves the owner.
             Assert.assertFalse(state.hasPendingFullRefreshOwnerForTesting());
-            state.markAsPendingInvalidation();
+            state.markAsPendingFullRefreshForTesting();
             Assert.assertTrue("the no-arg overload must add the owner facet",
                     state.hasPendingFullRefreshOwnerForTesting());
             Assert.assertEquals("unknown provenance", state.getPendingInvalidationReason());
@@ -2039,7 +2039,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // reason-bearing marker it adds the owner facet while preserving the reason, so a losing full
             // refresh cannot demote a deferral that a lock-holder's finalize would recover into one only
             // the queued full refresh clears.
-            state.markAsPendingInvalidation();
+            state.markAsPendingFullRefreshForTesting();
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertEquals("the sentinel must not demote a reason-bearing deferral",
                     "truncate operation", state.getPendingInvalidationReason());
@@ -2047,7 +2047,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // From an empty marker the sentinel arms: pending, but with no reason, still distinct from the
             // cleared state.
             clearPendingInvalidation(state);
-            state.markAsPendingInvalidation();
+            state.markAsPendingFullRefreshForTesting();
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertNull(state.getPendingInvalidationReason());
 
@@ -3003,7 +3003,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 job.setOnHoldingLockForTesting(() -> {
                     // One-shot: the FULL owner lands during the first (refused) hold only.
                     if (hasPublishedFullOwner.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation();
+                        state.markAsPendingFullRefreshForTesting();
                     }
                 });
                 engine.getMatViewStateStore().enqueueInvalidate(viewToken, "sticky refusal witness");
@@ -3054,7 +3054,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 // losing-contender shape) and refuses on every pass -- sticky, like the writer chokepoint.
                 job.setOnHoldingLockForTesting(() -> {
                     if (hasPublishedNewerOwner.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation();
+                        state.markAsPendingFullRefreshForTesting();
                     }
                     throw CairoException.readOnlyAccess();
                 });
