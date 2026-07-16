@@ -517,7 +517,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-    private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    // Each recursively active generate() invocation owns separate parser scratch state.
+    private final ObjList<WhereClauseParser> whereClauseParsers = new ObjList<>();
     private final WindowJoinAggColumnVectorizedCheck windowJoinAggColumnVectorizedCheck = new WindowJoinAggColumnVectorizedCheck();
     private final WindowJoinColCheckVisitor windowJoinColCheckVisitor = new WindowJoinColCheckVisitor();
     // a bitset of string/symbol columns forced to be serialised as varchar
@@ -532,6 +533,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
+    private int whereClauseParserDepth;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -679,7 +681,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void clear() {
-        whereClauseParser.clear();
+        for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
+            whereClauseParsers.getQuick(i).clear();
+        }
+        whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
         pushdownFilterExtractor.clear();
@@ -721,7 +726,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
-        return generateQuery(model, executionContext, true);
+        final int parserIndex = whereClauseParserDepth;
+        while (whereClauseParsers.size() <= parserIndex) {
+            whereClauseParsers.add(new WhereClauseParser());
+        }
+        whereClauseParsers.getQuick(parserIndex).clearTransientState();
+        whereClauseParserDepth++;
+        try {
+            return generateQuery(model, executionContext, true);
+        } finally {
+            whereClauseParserDepth--;
+        }
     }
 
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
@@ -8609,7 +8624,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // the optimization, we must restore the original tree.
                                     ExpressionNode savedWhereClause = ExpressionNode.deepClone(
                                             expressionNodePool, whereClause);
-                                    distinctIntrinsic = whereClauseParser.extract(
+                                    distinctIntrinsic = getWhereClauseParser().extract(
                                             tableModel,
                                             whereClause,
                                             tableMeta,
@@ -10197,7 +10212,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode withinExtracted;
 
         if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
-            withinExtracted = whereClauseParser.extractWithin(
+            withinExtracted = getWhereClauseParser().extractWithin(
                     model,
                     model.getWhereClause(),
                     queryMeta,
@@ -10242,7 +10257,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                intrinsicModel = whereClauseParser.extract(
+                intrinsicModel = getWhereClauseParser().extract(
                         model,
                         whereClause,
                         metadata,
@@ -10256,7 +10271,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         SqlHints.hasNoIndexHint(model)
                 );
             } else {
-                intrinsicModel = whereClauseParser.getEmpty(
+                intrinsicModel = getWhereClauseParser().getEmpty(
                         reader.getMetadata().getTimestampType(),
                         reader.getPartitionedBy(),
                         executionContext.getCairoEngine().getConfiguration()
@@ -11232,6 +11247,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
+    }
+
+    private WhereClauseParser getWhereClauseParser() {
+        assert whereClauseParserDepth > 0;
+        return whereClauseParsers.getQuick(whereClauseParserDepth - 1);
     }
 
     private void guardAgainstDotsInOrderByAdvice(IQueryModel model) throws SqlException {

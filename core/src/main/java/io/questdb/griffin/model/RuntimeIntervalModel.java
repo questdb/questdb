@@ -29,11 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Interval;
@@ -347,16 +347,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             }
             return Numbers.LONG_NULL;
         } else if (functionType == ColumnType.CURSOR) {
-            // special case for ts = (<subquery>) and similar cases
+            // Legacy raw cursor bounds use the same scalar-cardinality contract as wrapped bounds.
             final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
             assert factory != null;
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                if (cursor.hasNext()) {
-                    return timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
-                } else {
-                    return Numbers.LONG_NULL;
-                }
-            }
+            final long value = ScalarSubQueryUtils.readTimestamp(factory, sqlExecutionContext, 0);
+            return value == Numbers.LONG_NULL
+                    ? Numbers.LONG_NULL
+                    : timestampDriver.from(value, ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
         } else {
             return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }

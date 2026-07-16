@@ -129,6 +129,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersect(long lo, Function hi, short adjustment) {
         if (isEmptySet()) {
+            Misc.free(hi);
             return;
         }
 
@@ -139,6 +140,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersect(Function lo, long hi, short adjustment) {
         if (isEmptySet()) {
+            Misc.free(lo);
             return;
         }
 
@@ -216,6 +218,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectRuntimeIntervals(Function intervalFunction) {
         if (isEmptySet()) {
+            Misc.free(intervalFunction);
             return;
         }
 
@@ -226,6 +229,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectRuntimeTimestamp(Function function) {
         if (isEmptySet()) {
+            Misc.free(function);
             return;
         }
 
@@ -387,6 +391,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractEquals(Function function) {
         if (isEmptySet()) {
+            Misc.free(function);
             return;
         }
 
@@ -448,6 +453,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractRuntimeIntervals(Function intervalFunction) {
         if (isEmptySet()) {
+            Misc.free(intervalFunction);
             return;
         }
 
@@ -507,6 +513,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void unionRuntimeTimestamp(Function function) {
         if (isEmptySet()) {
+            Misc.free(function);
             return;
         }
 
@@ -605,6 +612,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void intersectCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
@@ -614,6 +622,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
@@ -623,6 +632,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void unionCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);

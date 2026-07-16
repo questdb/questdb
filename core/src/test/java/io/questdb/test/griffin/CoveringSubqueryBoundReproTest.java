@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
@@ -15,6 +39,20 @@ import org.junit.Test;
  */
 public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
 
+    private final String constantBounds =
+            "select ts, value from sensor where series = 's1' " +
+                    "and ts >= '2021-11-23T12:51:23.700716000Z' " +
+                    "and ts <= '2021-11-23T17:59:17.060338000Z'";
+    private final String subqueryBounds =
+            "select ts, value from sensor where series = 's1' " +
+                    "and ts >= (select lo from bounds where sel = 100) " +
+                    "and ts <= (select hi from bounds where sel = 100)";
+    private final String subqueryBoundsSymLast =
+            "select ts, value from sensor where " +
+                    "ts >= (select lo from bounds where sel = 100) " +
+                    "and ts <= (select hi from bounds where sel = 100) " +
+                    "and series = 's1'";
+
     private void createSchema() throws Exception {
         execute("create table sensor (" +
                 "    ts timestamp_ns parquet(delta_binary_packed, lz4_raw)," +
@@ -23,15 +61,15 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
                 ") timestamp(ts) partition by hour");
         execute("create table bounds (lo timestamp_ns, hi timestamp_ns, sel int)");
         execute("insert into bounds values (" +
-                "cast('2021-11-23T12:51:23.700716000Z' as timestamp_ns), " +
-                "cast('2021-11-23T17:59:17.060338000Z' as timestamp_ns), 100)");
+                "'2021-11-23T12:51:23.700716000Z'::timestamp_ns, " +
+                "'2021-11-23T17:59:17.060338000Z'::timestamp_ns, 100)");
     }
 
     // ~3000 rows across ~8 hourly partitions on 2021-11-23, several symbols incl. 's1',
     // plus boundary rows exactly at lo and hi to exercise inclusive bounds.
     private void seedData() throws Exception {
         execute("insert into sensor " +
-                "select (cast('2021-11-23T12:00:00.000000000Z' as timestamp_ns) + (x * 7000000000L))::timestamp_ns, " +
+                "select ('2021-11-23T12:00:00.000000000Z'::timestamp_ns + (x * 7_000_000_000L))::timestamp_ns, " +
                 "       rnd_symbol('s1','s2','s3','s4','s1'), " +
                 "       rnd_float() " +
                 "from long_sequence(3000)");
@@ -42,22 +80,6 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
                 "('2021-11-23T12:51:23.700715999Z','s1', 44.0), " +   // just below lo (excluded)
                 "('2021-11-23T17:59:17.060338001Z','s1', 45.0)");     // just above hi (excluded)
     }
-
-    private final String subqueryBounds =
-            "select ts, value from sensor where series = 's1' " +
-                    "and ts >= (select lo from bounds where sel = 100) " +
-                    "and ts <= (select hi from bounds where sel = 100)";
-
-    private final String subqueryBoundsSymLast =
-            "select ts, value from sensor where " +
-                    "ts >= (select lo from bounds where sel = 100) " +
-                    "and ts <= (select hi from bounds where sel = 100) " +
-                    "and series = 's1'";
-
-    private final String constantBounds =
-            "select ts, value from sensor where series = 's1' " +
-                    "and ts >= '2021-11-23T12:51:23.700716000Z' " +
-                    "and ts <= '2021-11-23T17:59:17.060338000Z'";
 
     private void assertUsesCoveringIndex(String sql) throws Exception {
         sink.clear();
@@ -105,6 +127,51 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
             assertUsesCoveringIndex(subqueryBoundsSymLast);
             assertSqlCursors(constantBounds, subqueryBounds);
             assertSqlCursors(constantBounds, subqueryBoundsSymLast);
+        });
+    }
+
+    @Test
+    public void testScalarSubqueryTimestampBoundsRejectMultipleRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO events VALUES ('2024-01-02', 1)");
+            execute("CREATE TABLE multiple_bounds (ts TIMESTAMP)");
+            execute("INSERT INTO multiple_bounds VALUES ('2024-01-01'), ('2024-01-02')");
+
+            final String direct = "SELECT * FROM events WHERE ts >= (SELECT ts FROM multiple_bounds)";
+            assertExceptionNoLeakCheck(
+                    direct,
+                    direct.indexOf("(SELECT") + 1,
+                    "scalar sub-query returned more than one row"
+            );
+
+            final String equality = "SELECT * FROM events WHERE ts = (SELECT ts FROM multiple_bounds)";
+            assertExceptionNoLeakCheck(
+                    equality,
+                    equality.indexOf("(SELECT") + 1,
+                    "scalar sub-query returned more than one row"
+            );
+
+            final String upper = "SELECT * FROM events WHERE ts <= (SELECT ts FROM multiple_bounds)";
+            assertExceptionNoLeakCheck(
+                    upper,
+                    upper.indexOf("(SELECT") + 1,
+                    "scalar sub-query returned more than one row"
+            );
+
+            final String between = "SELECT * FROM events WHERE ts BETWEEN (SELECT ts FROM multiple_bounds) AND '2024-01-03'";
+            assertExceptionNoLeakCheck(
+                    between,
+                    between.indexOf("(SELECT") + 1,
+                    "scalar sub-query returned more than one row"
+            );
+
+            final String monotonic = "SELECT * FROM events WHERE dateadd('d', 1, ts) >= (SELECT ts FROM multiple_bounds)";
+            assertExceptionNoLeakCheck(
+                    monotonic,
+                    monotonic.indexOf("(SELECT") + 1,
+                    "scalar sub-query returned more than one row"
+            );
         });
     }
 
@@ -211,6 +278,45 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNestedLatestBySubqueryPreservesResidualFilter() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (ts TIMESTAMP, sym SYMBOL INDEX, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO events VALUES
+                        ('2024-01-01', 'a', 1),
+                        ('2024-01-02', 'a', 2),
+                        ('2024-01-03', 'a', 3),
+                        ('2024-01-02', 'b', 2)
+                    """);
+            execute("CREATE TABLE latest_bounds (lo TIMESTAMP, selector SYMBOL) TIMESTAMP(lo) PARTITION BY DAY");
+            execute("INSERT INTO latest_bounds VALUES ('2024-01-02', 'x')");
+
+            assertQuery("""
+                    SELECT ts, sym, value
+                    FROM events
+                    WHERE ts >= (
+                          SELECT lo
+                          FROM latest_bounds
+                          WHERE selector = 'x'
+                          LATEST ON lo PARTITION BY selector
+                      )
+                      AND sym = 'a'
+                      AND value = 2
+                    ORDER BY ts
+                    """)
+                    .withPlanContaining("Index forward scan on: sym")
+                    .withPlanNotContaining("Async Filter", "Async JIT Filter")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tvalue
+                            2024-01-02T00:00:00.000000Z\ta\t2
+                            """);
+        });
+    }
+
     // Empty subquery result -> null bound. Must behave identically to a constant NULL bound
     // (both return no rows) and must not crash or corrupt the key scan.
     @Test
@@ -252,13 +358,33 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenSubqueryBoundsReleasedWhenIntervalAlreadyEmpty() throws Exception {
+    public void testSubqueryBoundsReleasedWhenIntervalAlreadyEmpty() throws Exception {
         assertMemoryLeak(() -> {
             createSchema();
             seedData();
 
             // The parser visits the rightmost AND terms first, so the contradictory constants
-            // empty the interval model before it compiles each BETWEEN boundary combination.
+            // empty the interval model before it compiles the runtime scalar bound.
+            assertQuery("""
+                    SELECT ts FROM sensor
+                    WHERE ts >= (SELECT lo FROM bounds WHERE sel = 100)
+                      AND ts > '2022-01-01'
+                      AND ts < '2021-01-01'
+                    """).timestamp("ts").returns("ts\n");
+            assertQuery("""
+                    SELECT ts FROM sensor
+                    WHERE ts <= (SELECT hi FROM bounds WHERE sel = 100)
+                      AND ts > '2022-01-01'
+                      AND ts < '2021-01-01'
+                    """).timestamp("ts").returns("ts\n");
+            assertQuery("""
+                    SELECT ts FROM sensor
+                    WHERE ts = (SELECT lo FROM bounds WHERE sel = 100)
+                      AND ts > '2022-01-01'
+                      AND ts < '2021-01-01'
+                    """).timestamp("ts").returns("ts\n");
+
+            // Exercise each BETWEEN boundary combination after the model is already empty.
             assertQuery("""
                     SELECT ts FROM sensor
                     WHERE ts BETWEEN (SELECT lo FROM bounds WHERE sel = 100)
