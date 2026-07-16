@@ -46,6 +46,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
@@ -79,8 +80,8 @@ import org.jetbrains.annotations.TestOnly;
  * even across an O3 rewrite. The seam split also assumes the disk scan is
  * ascending, so a backward / index scan (e.g. {@code ORDER BY ts DESC} pushed
  * into the base) routes disk-only. When the fence does not hold (tier absent /
- * empty, pruned projection, a disk cursor that is not a plain table scan, a
- * non-ascending scan, or a seqTxn mismatch) the cursor falls back to disk-only,
+ * empty, a timestamp-pruned projection, a disk cursor that is not a plain table
+ * scan, a non-ascending scan, or a seqTxn mismatch) the cursor falls back to disk-only,
  * which serves the applied prefix - always correct, at worst one flush cycle
  * behind the lead. O3 replay rewrites the disk tier and atomically rebuilds the
  * in-mem tier from the rewritten LV table (see
@@ -91,20 +92,22 @@ import org.jetbrains.annotations.TestOnly;
  * rewritten disk, so the fence routes those reads disk-only until a later cycle
  * republishes.
  * <p>
- * The in-mem tier stores the full output row, so the cursor routes through it
- * only when the read projects every output column in declared order (see
- * {@link #isFullSchemaProjection}). Pruned or reordered projections - e.g.
- * {@code SELECT max(rn)}, where column pruning drops the timestamp and leaves
- * {@code timestampColumnIndex < 0} - serve from disk alone, which is correct
- * because disk holds every applied row (such reads simply do not see the lead).
- * SYMBOL output columns route through the tier too: the refresh worker
+ * The in-mem tier stores the full output row, so a read that prunes or reorders
+ * columns projects a subset of what the slot already holds. The cursor resolves
+ * each projected column to its tier column through the disk scan's
+ * {@link ColumnMapping} (see {@link #isTierAddressableProjection}), so such reads
+ * route too. A read that prunes the designated timestamp - e.g.
+ * {@code SELECT max(rn)}, which leaves {@code timestampColumnIndex < 0} - still
+ * serves from disk alone, because the seam split has no timestamp to cut on; that
+ * is correct because disk holds every applied row (the read simply does not see
+ * the lead). SYMBOL output columns route through the tier too: the refresh worker
  * eager-interns the un-flushed lead's symbols into the LV table's id space (see
  * {@link io.questdb.cairo.lv.LiveViewSymbolCache}), and {@link #getSymbolTable}
  * returns a {@link io.questdb.cairo.lv.LiveViewSymbolTable} overlay that resolves
  * a committed id via the disk reader's symbol table and a lead-only id via the
  * cache - one LV-table id space, so both per-record reads and raw-int-key reads
  * (WHERE / GROUP BY / static ORDER BY) stay correct (see
- * {@link #isFullSchemaProjection}).
+ * {@link #isTierAddressableProjection}).
  * <p>
  * In-mem rows synthesize a tagged rowId (the sign bit set over the buffer row
  * index); {@link #recordAt(Record, long)} decodes it back to a buffer row
@@ -124,6 +127,12 @@ public class LiveViewRecordCursor implements RecordCursor {
     private static final long IN_MEM_ROW_ID_FLAG = Long.MIN_VALUE;
     private final MergedRecord recordA = new MergedRecord();
     private final MergedRecord recordB = new MergedRecord();
+    // Output column -> tier column, one entry per projected column, built in of()
+    // from the disk scan's ColumnMapping. The tier stores the LV's full output row,
+    // so a pruned or reordered projection reads a subset of the slot's columns
+    // through this indirection instead of indexing the buffer by output position.
+    // Empty unless the projection is tier-addressable; only read while routing.
+    private final IntList tierColumns = new IntList();
     private RecordCursor diskCursor;
     private boolean diskExhausted;
     // Set on the first hasNext() after of()/toTop(): once true the disk cursor
@@ -146,7 +155,7 @@ public class LiveViewRecordCursor implements RecordCursor {
     private long leadStart;
     private LiveViewInMemoryBuffer pinnedSlot;
     // True when the fence holds (pinned slot and disk reader share an LV-table
-    // seqTxn) and the read is a full-schema identity projection. Seam routing in
+    // seqTxn) and every projected column resolves to a tier column. Seam routing in
     // hasNext() serves the slot for ts >= seamTs only when this is true.
     private boolean routingEligible;
     private int slotIdx;
@@ -200,7 +209,9 @@ public class LiveViewRecordCursor implements RecordCursor {
         // the disk reader's committed table - so both a getSymA per-record read and
         // a raw-int-key read (WHERE / GROUP BY / static ORDER BY) see the lead's
         // values. Disk-only reads (no routing) resolve straight from disk.
-        if (routingEligible && symbolCache != null && symbolCache.isSymbolColumn(columnIndex)) {
+        // isSymbolColumn / the overlay's cache lookups are keyed by TIER column, which a
+        // pruned or reordered projection no longer numbers the same as the output column.
+        if (routingEligible && symbolCache != null && symbolCache.isSymbolColumn(tierColumns.getQuick(columnIndex))) {
             return symbolTableOverlay(columnIndex);
         }
         return diskCursor.getSymbolTable(columnIndex);
@@ -306,16 +317,21 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        if (routingEligible && symbolCache != null && symbolCache.isSymbolColumn(columnIndex)) {
-            // Owning overlay: it closes the freshly cloned disk table the caller
-            // would otherwise free directly (parallel execution clones tables).
-            return new LiveViewSymbolTable().of(
-                    (StaticSymbolTable) diskCursor.newSymbolTable(columnIndex),
-                    symbolCache,
-                    columnIndex,
-                    pinnedSlot.newSymbolMaxId(columnIndex),
-                    true
-            );
+        if (routingEligible && symbolCache != null) {
+            // The cache and the slot's symbol horizon are keyed by TIER column; only the
+            // disk table is fetched by output column.
+            final int tierColumn = tierColumns.getQuick(columnIndex);
+            if (symbolCache.isSymbolColumn(tierColumn)) {
+                // Owning overlay: it closes the freshly cloned disk table the caller
+                // would otherwise free directly (parallel execution clones tables).
+                return new LiveViewSymbolTable().of(
+                        (StaticSymbolTable) diskCursor.newSymbolTable(columnIndex),
+                        symbolCache,
+                        tierColumn,
+                        pinnedSlot.newSymbolMaxId(tierColumn),
+                        true
+                );
+            }
         }
         return diskCursor.newSymbolTable(columnIndex);
     }
@@ -337,6 +353,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.inMemEligible = false;
         this.routingEligible = false;
         this.symbolCache = null;
+        this.tierColumns.clear();
         if (symbolTableOverlays != null) {
             symbolTableOverlays.clear();
         }
@@ -357,7 +374,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.slotIdx = pin;
                     this.pinnedSlot = candidate.getSlot(pin);
                     this.symbolCache = candidate.getSymbolCache();
-                    this.inMemEligible = isFullSchemaProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex);
+                    this.inMemEligible = isTierAddressableProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex, tierColumns);
                     // LONG_NULL means the disk cursor exposes no LV-table seqTxn to fence
                     // against at all: it is not a plain forward table scan (an index scan,
                     // an interval-filtered or pushdown-filtered page-frame cursor, a
@@ -367,9 +384,10 @@ public class LiveViewRecordCursor implements RecordCursor {
                             ? diskReaderSeqTxn(diskCursor)
                             : Numbers.LONG_NULL;
                     if (!inMemEligible || !diskScanAscending || diskSeqTxn == Numbers.LONG_NULL) {
-                        // Statically disk-only: the projection is pruned/reordered or
-                        // the disk cursor is non-table (inMemEligible false), the scan
-                        // is not ascending (the seam split assumes ascending ts), or the
+                        // Statically disk-only: the projection drops the timestamp or
+                        // does not resolve against the tier's columns, or the disk
+                        // cursor is non-table (inMemEligible false), the scan is not
+                        // ascending (the seam split assumes ascending ts), or the
                         // cursor carries no seqTxn to fence against (diskSeqTxn
                         // LONG_NULL - e.g. SELECT * FROM lv WHERE ts >= '...', whose
                         // interval filter the optimiser pushes into the page-frame scan).
@@ -414,8 +432,8 @@ public class LiveViewRecordCursor implements RecordCursor {
                 }
             }
         }
-        recordA.bindDisk(diskCursor.getRecord(), this, pinnedSlot);
-        recordB.bindDisk(diskCursor.getRecordB(), this, pinnedSlot);
+        recordA.bindDisk(diskCursor.getRecord(), this, pinnedSlot, tierColumns);
+        recordB.bindDisk(diskCursor.getRecordB(), this, pinnedSlot, tierColumns);
     }
 
     @Override
@@ -534,6 +552,50 @@ public class LiveViewRecordCursor implements RecordCursor {
         recordA.toDiskMode();
     }
 
+    // Resolves each projected column to the tier column it reads and appends the
+    // result to tierColumnsOut (output column i -> tierColumnsOut[i]), returning
+    // true when every column resolves. The disk scan's ColumnMapping already
+    // carries that resolution: it maps output column i to the LV-table storage
+    // column the scan reads, and the tier stores the LV table's columns in
+    // declared order, so mapping.getColumnIndex(i) IS the tier column. The type
+    // comparison guards the premise that the two column spaces agree - a
+    // mismatch means the tier was shaped from a different schema than the read
+    // sees, so fail safe to disk-only rather than serve another column's bytes.
+    // A cursor that is not a page-frame scan (an aliasing or expression
+    // projection the optimiser fronts with a SelectedRecord / VirtualRecord)
+    // exposes no mapping and returns false. Leaves tierColumnsOut empty on false.
+    private static boolean buildTierColumnMapping(
+            RecordCursor diskCursor,
+            RecordMetadata baseMetadata,
+            LiveViewInMemoryBuffer buffer,
+            IntList tierColumnsOut
+    ) {
+        if (!(diskCursor instanceof PageFrameRecordCursor pfrc)) {
+            return false;
+        }
+        final var frameCursor = pfrc.getPageFrameCursor();
+        if (frameCursor == null) {
+            return false;
+        }
+        final ColumnMapping mapping = frameCursor.getColumnMapping();
+        final int columnCount = baseMetadata.getColumnCount();
+        if (mapping == null || mapping.getColumnCount() != columnCount) {
+            return false;
+        }
+        final int tierColumnCount = buffer.columnCount();
+        for (int i = 0; i < columnCount; i++) {
+            final int tierColumn = mapping.getColumnIndex(i);
+            if (tierColumn < 0
+                    || tierColumn >= tierColumnCount
+                    || buffer.columnType(tierColumn) != baseMetadata.getColumnType(i)) {
+                tierColumnsOut.clear();
+                return false;
+            }
+            tierColumnsOut.add(tierColumn);
+        }
+        return true;
+    }
+
     // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
     // not a plain FULL table-reader scan we can fence cheaply. Seam routing
     // assumes the disk side yields every LV-table row below the seam in ascending
@@ -561,84 +623,43 @@ public class LiveViewRecordCursor implements RecordCursor {
     }
 
     /**
-     * The in-mem tier stores the live view's full output row. A read whose
-     * projection prunes or reorders columns would index the buffer by the wrong
-     * column, and a read that prunes the timestamp leaves
-     * {@code timestampColumnIndex < 0}, which would address the buffer and the
-     * disk record out of bounds. Such reads serve from disk only, which is
-     * correct because disk holds every applied row - they simply do not see the
-     * un-flushed lead, trailing it by at most one flush cycle. Only an identity
-     * projection (every output column, in declared order) may route through the
-     * tier.
+     * The in-mem tier stores the live view's full output row, so a read that prunes
+     * or reorders columns projects a subset of what the slot already holds - the
+     * data is there, only the indirection is missing. This resolves every projected
+     * column to its tier column through the disk scan's {@link ColumnMapping} and
+     * records the result in {@code tierColumnsOut}, which {@link MergedRecord}'s
+     * in-mem accessors then read the buffer through. Pruned projections
+     * ({@code SELECT ts, x FROM lv}) and reordered ones ({@code SELECT x, ts FROM
+     * lv}) therefore route through the tier and see the un-flushed lead.
      * <p>
-     * The column count + per-position type match is necessary but not sufficient:
-     * two same-typed columns are type-equal yet not identity, so a reordered
-     * projection (e.g. {@code SELECT ts, b, a FROM lv} where {@code a} and
-     * {@code b} share a type - the optimiser fuses the reorder into the
-     * page-frame scan as a reordered column list, so {@code baseMetadata} matches
-     * the buffer position-by-type) would pass it while
-     * {@link MergedRecord}'s in-mem accessors, which index the buffer by output
-     * position, serve {@code a} where {@code b} is expected. The buffer stores the
-     * LV table's columns in declared order, so routing is safe only when output
-     * column {@code i} maps to LV-table storage column {@code i};
-     * {@link #isIdentityColumnMapping} enforces that on the disk scan's column
-     * mapping. Reads whose base is not a plain page-frame scan (an aliasing or
-     * expression projection the optimiser fronts with a {@code SelectedRecord} /
-     * {@code VirtualRecord}) also fail the check and route disk-only - always
-     * correct.
+     * Two shapes stay disk-only. A projection that prunes the designated timestamp
+     * leaves {@code timestampColumnIndex < 0}, and the seam split has no timestamp
+     * to cut the disk scan on - {@code SELECT max(rn) FROM lv} is the common case.
+     * A read whose base is not a plain page-frame scan (an aliasing or expression
+     * projection the optimiser fronts with a {@code SelectedRecord} /
+     * {@code VirtualRecord}) exposes no column mapping to resolve against. Both
+     * serve from disk alone, which is correct because disk holds every applied row -
+     * they simply do not see the lead, trailing it by at most one flush cycle.
      * <p>
      * SYMBOL columns are routable: the tier stores LV-table-consistent symbol ids
      * (eager-interned by the refresh worker, see
      * {@link io.questdb.cairo.lv.LiveViewSymbolCache}), so the in-mem branch in
      * {@link MergedRecord#getSymA}/{@link MergedRecord#getSymB} resolves them via
      * {@link #getSymbolTable}'s overlay - committed ids against the disk reader,
-     * lead-only ids against the cache.
+     * lead-only ids against the cache. The overlay and the cache key off the TIER
+     * column, so they resolve through {@code tierColumnsOut} too.
      */
-    private static boolean isFullSchemaProjection(
+    private static boolean isTierAddressableProjection(
             RecordCursor diskCursor,
             RecordMetadata baseMetadata,
             LiveViewInMemoryBuffer buffer,
-            int timestampColumnIndex
+            int timestampColumnIndex,
+            IntList tierColumnsOut
     ) {
         if (timestampColumnIndex < 0 || buffer == null) {
             return false;
         }
-        final int columnCount = buffer.columnCount();
-        if (baseMetadata.getColumnCount() != columnCount) {
-            return false;
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (baseMetadata.getColumnType(i) != buffer.columnType(i)) {
-                return false;
-            }
-        }
-        return isIdentityColumnMapping(diskCursor, columnCount);
-    }
-
-    // Returns true iff the disk cursor is a page-frame scan whose query-to-reader
-    // column mapping is the identity over [0, columnCount): output column i reads
-    // LV-table storage column i. A non-page-frame cursor, a column-count mismatch,
-    // or any reordered / pruned mapping returns false, so the caller routes
-    // disk-only (always correct). See isFullSchemaProjection for why the identity
-    // mapping - not merely a per-position type match - is what keeps routing safe.
-    private static boolean isIdentityColumnMapping(RecordCursor diskCursor, int columnCount) {
-        if (!(diskCursor instanceof PageFrameRecordCursor pfrc)) {
-            return false;
-        }
-        final var frameCursor = pfrc.getPageFrameCursor();
-        if (frameCursor == null) {
-            return false;
-        }
-        final ColumnMapping mapping = frameCursor.getColumnMapping();
-        if (mapping == null || mapping.getColumnCount() != columnCount) {
-            return false;
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (mapping.getColumnIndex(i) != i) {
-                return false;
-            }
-        }
-        return true;
+        return buildTierColumnMapping(diskCursor, baseMetadata, buffer, tierColumnsOut);
     }
 
     private void releaseSlot() {
@@ -652,20 +673,23 @@ public class LiveViewRecordCursor implements RecordCursor {
         slotIdx = -1;
     }
 
-    // Lazily creates (and caches per column) the symbol-resolution overlay for a
-    // SYMBOL column while routing. The overlay borrows the disk cursor's symbol
-    // table (the cursor closes that via diskCursor), so it does not own it.
+    // Lazily creates (and caches per OUTPUT column) the symbol-resolution overlay for
+    // a SYMBOL column while routing. The overlay borrows the disk cursor's symbol
+    // table (the cursor closes that via diskCursor), so it does not own it. The disk
+    // table is fetched by output column, while the cache and the slot's symbol horizon
+    // key off the tier column the projection resolves to.
     private LiveViewSymbolTable symbolTableOverlay(int columnIndex) {
         if (symbolTableOverlays == null) {
             symbolTableOverlays = new ObjList<>();
         }
         LiveViewSymbolTable overlay = columnIndex < symbolTableOverlays.size() ? symbolTableOverlays.getQuick(columnIndex) : null;
         if (overlay == null) {
+            final int tierColumn = tierColumns.getQuick(columnIndex);
             overlay = new LiveViewSymbolTable().of(
                     (StaticSymbolTable) diskCursor.getSymbolTable(columnIndex),
                     symbolCache,
-                    columnIndex,
-                    pinnedSlot.newSymbolMaxId(columnIndex),
+                    tierColumn,
+                    pinnedSlot.newSymbolMaxId(tierColumn),
                     false
             );
             symbolTableOverlays.extendAndSet(columnIndex, overlay);
@@ -718,10 +742,13 @@ public class LiveViewRecordCursor implements RecordCursor {
         private long bufferRow;
         private RecordCursor cursor;
         private boolean inMemMode;
+        // Output column -> tier column; see LiveViewRecordCursor.tierColumns. Shared
+        // with the cursor and recordB - the mapping is fixed for the cursor's life.
+        private IntList tierColumns;
 
         @Override
         public ArrayView getArray(int col, int columnType) {
-            return inMemMode ? buffer.getArray(bufferRow, col, arrayView(col)) : super.getArray(col, columnType);
+            return inMemMode ? buffer.getArray(bufferRow, tierCol(col), arrayView(col)) : super.getArray(col, columnType);
         }
 
         @Override
@@ -731,7 +758,7 @@ public class LiveViewRecordCursor implements RecordCursor {
             }
             // Mirror Record's default getArrayDouble1d2d over the buffer's array view
             // (DelegatingRecord's override would otherwise index the disk record).
-            final ArrayView array = buffer.getArray(bufferRow, col, arrayView(col));
+            final ArrayView array = buffer.getArray(bufferRow, tierCol(col), arrayView(col));
             if (array.isNull() || idx0 >= array.getDimLen(0)) {
                 return Double.NaN;
             }
@@ -746,38 +773,38 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public BinarySequence getBin(int col) {
-            return inMemMode ? buffer.getBin(bufferRow, col, bsView(col)) : super.getBin(col);
+            return inMemMode ? buffer.getBin(bufferRow, tierCol(col), bsView(col)) : super.getBin(col);
         }
 
         @Override
         public long getBinLen(int col) {
-            return inMemMode ? buffer.getBinLen(bufferRow, col) : super.getBinLen(col);
+            return inMemMode ? buffer.getBinLen(bufferRow, tierCol(col)) : super.getBinLen(col);
         }
 
         @Override
         public boolean getBool(int col) {
-            return inMemMode ? buffer.getBool(bufferRow, col) : super.getBool(col);
+            return inMemMode ? buffer.getBool(bufferRow, tierCol(col)) : super.getBool(col);
         }
 
         @Override
         public byte getByte(int col) {
-            return inMemMode ? buffer.getByte(bufferRow, col) : super.getByte(col);
+            return inMemMode ? buffer.getByte(bufferRow, tierCol(col)) : super.getByte(col);
         }
 
         @Override
         public char getChar(int col) {
-            return inMemMode ? (char) buffer.getShort(bufferRow, col) : super.getChar(col);
+            return inMemMode ? (char) buffer.getShort(bufferRow, tierCol(col)) : super.getChar(col);
         }
 
         @Override
         public long getDate(int col) {
-            return inMemMode ? buffer.getLong(bufferRow, col) : super.getDate(col);
+            return inMemMode ? buffer.getLong(bufferRow, tierCol(col)) : super.getDate(col);
         }
 
         @Override
         public void getDecimal128(int col, Decimal128 sink) {
             if (inMemMode) {
-                buffer.getDecimal128(bufferRow, col, sink);
+                buffer.getDecimal128(bufferRow, tierCol(col), sink);
             } else {
                 super.getDecimal128(col, sink);
             }
@@ -785,13 +812,13 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public short getDecimal16(int col) {
-            return inMemMode ? buffer.getDecimal16(bufferRow, col) : super.getDecimal16(col);
+            return inMemMode ? buffer.getDecimal16(bufferRow, tierCol(col)) : super.getDecimal16(col);
         }
 
         @Override
         public void getDecimal256(int col, Decimal256 sink) {
             if (inMemMode) {
-                buffer.getDecimal256(bufferRow, col, sink);
+                buffer.getDecimal256(bufferRow, tierCol(col), sink);
             } else {
                 super.getDecimal256(col, sink);
             }
@@ -799,78 +826,78 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public int getDecimal32(int col) {
-            return inMemMode ? buffer.getDecimal32(bufferRow, col) : super.getDecimal32(col);
+            return inMemMode ? buffer.getDecimal32(bufferRow, tierCol(col)) : super.getDecimal32(col);
         }
 
         @Override
         public long getDecimal64(int col) {
-            return inMemMode ? buffer.getDecimal64(bufferRow, col) : super.getDecimal64(col);
+            return inMemMode ? buffer.getDecimal64(bufferRow, tierCol(col)) : super.getDecimal64(col);
         }
 
         @Override
         public byte getDecimal8(int col) {
-            return inMemMode ? buffer.getDecimal8(bufferRow, col) : super.getDecimal8(col);
+            return inMemMode ? buffer.getDecimal8(bufferRow, tierCol(col)) : super.getDecimal8(col);
         }
 
         @Override
         public double getDouble(int col) {
-            return inMemMode ? buffer.getDouble(bufferRow, col) : super.getDouble(col);
+            return inMemMode ? buffer.getDouble(bufferRow, tierCol(col)) : super.getDouble(col);
         }
 
         @Override
         public float getFloat(int col) {
-            return inMemMode ? buffer.getFloat(bufferRow, col) : super.getFloat(col);
+            return inMemMode ? buffer.getFloat(bufferRow, tierCol(col)) : super.getFloat(col);
         }
 
         @Override
         public byte getGeoByte(int col) {
-            return inMemMode ? buffer.getByte(bufferRow, col) : super.getGeoByte(col);
+            return inMemMode ? buffer.getByte(bufferRow, tierCol(col)) : super.getGeoByte(col);
         }
 
         @Override
         public int getGeoInt(int col) {
-            return inMemMode ? buffer.getInt(bufferRow, col) : super.getGeoInt(col);
+            return inMemMode ? buffer.getInt(bufferRow, tierCol(col)) : super.getGeoInt(col);
         }
 
         @Override
         public long getGeoLong(int col) {
-            return inMemMode ? buffer.getLong(bufferRow, col) : super.getGeoLong(col);
+            return inMemMode ? buffer.getLong(bufferRow, tierCol(col)) : super.getGeoLong(col);
         }
 
         @Override
         public short getGeoShort(int col) {
-            return inMemMode ? buffer.getShort(bufferRow, col) : super.getGeoShort(col);
+            return inMemMode ? buffer.getShort(bufferRow, tierCol(col)) : super.getGeoShort(col);
         }
 
         @Override
         public int getIPv4(int col) {
-            return inMemMode ? buffer.getInt(bufferRow, col) : super.getIPv4(col);
+            return inMemMode ? buffer.getInt(bufferRow, tierCol(col)) : super.getIPv4(col);
         }
 
         @Override
         public int getInt(int col) {
-            return inMemMode ? buffer.getInt(bufferRow, col) : super.getInt(col);
+            return inMemMode ? buffer.getInt(bufferRow, tierCol(col)) : super.getInt(col);
         }
 
         @Override
         public long getLong(int col) {
-            return inMemMode ? buffer.getLong(bufferRow, col) : super.getLong(col);
+            return inMemMode ? buffer.getLong(bufferRow, tierCol(col)) : super.getLong(col);
         }
 
         @Override
         public long getLong128Hi(int col) {
-            return inMemMode ? buffer.getLong128Hi(bufferRow, col) : super.getLong128Hi(col);
+            return inMemMode ? buffer.getLong128Hi(bufferRow, tierCol(col)) : super.getLong128Hi(col);
         }
 
         @Override
         public long getLong128Lo(int col) {
-            return inMemMode ? buffer.getLong128Lo(bufferRow, col) : super.getLong128Lo(col);
+            return inMemMode ? buffer.getLong128Lo(bufferRow, tierCol(col)) : super.getLong128Lo(col);
         }
 
         @Override
         public void getLong256(int col, CharSink<?> sink) {
             if (inMemMode) {
-                buffer.getLong256(bufferRow, col, sink);
+                buffer.getLong256(bufferRow, tierCol(col), sink);
             } else {
                 super.getLong256(col, sink);
             }
@@ -878,19 +905,19 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public Long256 getLong256A(int col) {
-            return inMemMode ? buffer.getLong256(bufferRow, col, long256A(col)) : super.getLong256A(col);
+            return inMemMode ? buffer.getLong256(bufferRow, tierCol(col), long256A(col)) : super.getLong256A(col);
         }
 
         @Override
         public Long256 getLong256B(int col) {
-            return inMemMode ? buffer.getLong256(bufferRow, col, long256B(col)) : super.getLong256B(col);
+            return inMemMode ? buffer.getLong256(bufferRow, tierCol(col), long256B(col)) : super.getLong256B(col);
         }
 
         @Override
         public long getLongIPv4(int col) {
             // Override DelegatingRecord's disk-record delegation so an in-mem IPv4
             // (tier-stored as an int) resolves from RAM. No caller today; tier type.
-            return inMemMode ? Numbers.ipv4ToLong(buffer.getInt(bufferRow, col)) : super.getLongIPv4(col);
+            return inMemMode ? Numbers.ipv4ToLong(buffer.getInt(bufferRow, tierCol(col))) : super.getLongIPv4(col);
         }
 
         @Override
@@ -908,22 +935,22 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public short getShort(int col) {
-            return inMemMode ? buffer.getShort(bufferRow, col) : super.getShort(col);
+            return inMemMode ? buffer.getShort(bufferRow, tierCol(col)) : super.getShort(col);
         }
 
         @Override
         public CharSequence getStrA(int col) {
-            return inMemMode ? buffer.getStr(bufferRow, col, csViewA(col)) : super.getStrA(col);
+            return inMemMode ? buffer.getStr(bufferRow, tierCol(col), csViewA(col)) : super.getStrA(col);
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return inMemMode ? buffer.getStr(bufferRow, col, csViewB(col)) : super.getStrB(col);
+            return inMemMode ? buffer.getStr(bufferRow, tierCol(col), csViewB(col)) : super.getStrB(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            return inMemMode ? buffer.getStrLen(bufferRow, col) : super.getStrLen(col);
+            return inMemMode ? buffer.getStrLen(bufferRow, tierCol(col)) : super.getStrLen(col);
         }
 
         @Override
@@ -931,7 +958,7 @@ public class LiveViewRecordCursor implements RecordCursor {
             if (!inMemMode) {
                 return super.getSymA(col);
             }
-            return recordSymbolTable(col).valueOf(buffer.getInt(bufferRow, col));
+            return recordSymbolTable(col).valueOf(buffer.getInt(bufferRow, tierCol(col)));
         }
 
         @Override
@@ -942,12 +969,12 @@ public class LiveViewRecordCursor implements RecordCursor {
             // valueBOf (not valueOf) so getSymA and getSymB of the same row use two
             // flyweights; with a NOCACHE column they are distinct reused instances.
             // The overlay is per-record, so recordA/recordB do not clobber either.
-            return recordSymbolTable(col).valueBOf(buffer.getInt(bufferRow, col));
+            return recordSymbolTable(col).valueBOf(buffer.getInt(bufferRow, tierCol(col)));
         }
 
         @Override
         public long getTimestamp(int col) {
-            return inMemMode ? buffer.getLong(bufferRow, col) : super.getTimestamp(col);
+            return inMemMode ? buffer.getLong(bufferRow, tierCol(col)) : super.getTimestamp(col);
         }
 
         @Override
@@ -963,23 +990,24 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public Utf8Sequence getVarcharA(int col) {
-            return inMemMode ? buffer.getVarchar(bufferRow, col, utf8ViewA(col)) : super.getVarcharA(col);
+            return inMemMode ? buffer.getVarchar(bufferRow, tierCol(col), utf8ViewA(col)) : super.getVarcharA(col);
         }
 
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            return inMemMode ? buffer.getVarchar(bufferRow, col, utf8ViewB(col)) : super.getVarcharB(col);
+            return inMemMode ? buffer.getVarchar(bufferRow, tierCol(col), utf8ViewB(col)) : super.getVarcharB(col);
         }
 
         @Override
         public int getVarcharSize(int col) {
-            return inMemMode ? buffer.getVarcharSize(bufferRow, col) : super.getVarcharSize(col);
+            return inMemMode ? buffer.getVarcharSize(bufferRow, tierCol(col)) : super.getVarcharSize(col);
         }
 
-        void bindDisk(Record diskRecord, RecordCursor cursor, LiveViewInMemoryBuffer buffer) {
+        void bindDisk(Record diskRecord, RecordCursor cursor, LiveViewInMemoryBuffer buffer, IntList tierColumns) {
             this.base = diskRecord;
             this.cursor = cursor;
             this.buffer = buffer;
+            this.tierColumns = tierColumns;
             this.bufferRow = -1;
             this.inMemMode = false;
         }
@@ -1062,6 +1090,15 @@ public class LiveViewRecordCursor implements RecordCursor {
                 symbolTableCache.extendAndSet(col, symbolTable);
             }
             return symbolTable;
+        }
+
+        // The tier column output column col reads. Only ever called in in-mem mode,
+        // which the cursor enters solely for a tier-addressable projection, so the
+        // mapping always covers col. The per-column read flyweights above stay keyed
+        // by OUTPUT column: a projection may repeat a tier column (SELECT ts, x, x),
+        // and two output columns must not share one flyweight.
+        private int tierCol(int col) {
+            return tierColumns.getQuick(col);
         }
 
         private Utf8SplitString utf8ViewA(int col) {

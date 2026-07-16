@@ -51,9 +51,9 @@ import org.jetbrains.annotations.TestOnly;
  * The returned cursor wires seam_ts routing: when the consistency fence
  * holds it serves disk rows with {@code ts < seamTs} and the pinned in-mem slot
  * for {@code ts >= seamTs}, skipping the hot tail partition(s) of the LV table.
- * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a full-schema,
- * ascending, unfiltered-scan requirement keep this safe; anything else falls
- * back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
+ * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a
+ * tier-addressable-projection, ascending, unfiltered-scan requirement keep this
+ * safe; anything else falls back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
  * {@link #toPlan} surfaces the static, query-shape part of this decision as the
  * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
  * <p>
@@ -313,8 +313,11 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      *   <li>the base scan is forward (ascending timestamp) - the seam split
      *   assumes ascending disk rows, so a backward / index scan routes
      *   disk-only;</li>
-     *   <li>the projection keeps the timestamp ({@code timestampColumnIndex >= 0})
-     *   - a timestamp-pruned read (e.g. an aggregate over the LV) cannot seam;</li>
+     *   <li>the projection keeps the designated timestamp
+     *   ({@code timestampColumnIndex >= 0}) - a timestamp-pruned read (e.g. an
+     *   aggregate over the LV) has nothing to seam the disk scan on. Pruning or
+     *   reordering the OTHER columns is fine: the cursor resolves each projected
+     *   column to its tier column through the scan's column mapping;</li>
      *   <li>every projected column is a type the tier can store (fixed-width,
      *   SYMBOL, STRING, BINARY, VARCHAR, ARRAY) - an unsupported type (a non-persisted
      *   type such as INTERVAL) means no tier, so it routes disk-only. SYMBOL columns are fine: the
@@ -322,12 +325,9 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      *   read.</li>
      * </ul>
      * A {@code true} result is a capability flag, not a guarantee: a static plan
-     * cannot see the runtime seqTxn fence, the tier's population state, a
-     * column-pruned (but timestamp-bearing) projection - the in-mem subset check
-     * still rejects it - a reordered full-schema projection (the optimiser fuses
-     * the reorder into the scan as a non-identity column mapping; the cursor's
-     * identity-mapping check rejects it), or a timestamp-interval filter pushed
-     * into the scan, all of which can still route an individual cursor disk-only.
+     * cannot see the runtime seqTxn fence, the tier's population state, or a
+     * timestamp-interval filter pushed into the scan, any of which can still route
+     * an individual cursor disk-only.
      * A {@code false} result, by contrast, is reliable: the read is always
      * disk-only, since these preconditions are hard disqualifiers the cursor
      * enforces too.

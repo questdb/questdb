@@ -109,16 +109,24 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFenceNotEligibleForPrunedProjection() throws Exception {
+    public void testFenceNotEligibleForTimestampPrunedProjection() throws Exception {
         assertMemoryLeak(() -> {
             createIngestRefresh();
-            // Pruning the timestamp leaves no full-schema identity projection, so
-            // the in-mem tier cannot be addressed -> disk-only.
+            // Pruning the designated timestamp leaves the seam split nothing to cut
+            // the disk scan on (timestampColumnIndex < 0) -> disk-only. Pruning any
+            // OTHER column is fine: the cursor resolves each projected column to its
+            // tier column through the scan's mapping.
             try (
                     RecordCursorFactory factory = select("SELECT rn FROM lv");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("pruned projection must not be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertFalse("timestamp-pruned projection must not be routing-eligible", cursor.isRoutingEligible());
+            }
+            try (
+                    RecordCursorFactory factory = select("SELECT ts, rn FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("timestamp-bearing pruned projection must be routing-eligible", cursor.isRoutingEligible());
             }
         });
     }
@@ -148,7 +156,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
     @Test
     public void testDiskOnlyReadReleasesTierPin() throws Exception {
-        // M3: a statically disk-only read - a pruned/reordered projection, a
+        // M3: a statically disk-only read - a timestamp-pruned projection, a
         // non-table cursor, or a non-ascending scan - can never engage the fence,
         // so LiveViewRecordCursor.of() releases the tier slot pin immediately
         // rather than holding it for the cursor's whole lifetime. Sustained
@@ -174,12 +182,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             }
             Assert.assertFalse("closing the routing read releases the pin", isPublishedSlotReaderPinned(tier));
 
-            // A pruned projection is disk-only and must not hold the pin while open.
+            // A timestamp-pruned projection is disk-only and must not hold the pin
+            // while open.
             try (
                     RecordCursorFactory factory = select("SELECT rn FROM lv");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("pruned projection must be disk-only", cursor.isRoutingEligible());
+                Assert.assertFalse("timestamp-pruned projection must be disk-only", cursor.isRoutingEligible());
                 Assert.assertFalse("a disk-only pruned read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
 
@@ -265,56 +274,159 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testReorderedSameTypeProjectionRoutesDiskOnly() throws Exception {
-        // C1 regression: the in-mem tier stores the LV's output row in declared
-        // column order and MergedRecord indexes the buffer by output position. A
-        // reordered projection over two same-typed columns (SELECT ts, b, a FROM
-        // lv, with a and b both INT) shares the buffer's column count and its
-        // per-position types, so the pre-fix count + type gate wrongly engaged the
-        // tier and served a where b was expected: the optimiser fuses the reorder
-        // into the page-frame scan as a reordered column mapping ([0, 2, 1, 3]),
-        // leaving no SelectedRecord wrapper to correct it. The identity
-        // column-mapping check now routes such a read disk-only (always correct),
-        // while an in-declared-order read still routes through the tier.
+    public void testReorderedSameTypeProjectionServesLeadFromRam() throws Exception {
+        // C1 regression, re-pointed at the column mapping. The in-mem tier stores
+        // the LV's output row in declared column order, and MergedRecord used to
+        // index the buffer by OUTPUT position. A reordered projection over two
+        // same-typed columns (SELECT ts, b, a FROM lv, with a and b both INT)
+        // shares the buffer's column count and its per-position types, so a count +
+        // type gate cannot tell the two apart and would serve a where b is
+        // expected: the optimiser fuses the reorder into the page-frame scan as a
+        // reordered column mapping ([0, 2, 1, 3]), leaving no SelectedRecord
+        // wrapper to correct it. That is why the shape was fenced to disk-only.
+        //
+        // MergedRecord now resolves each output column to its tier column through
+        // that same mapping, so the reorder both routes AND reads the right
+        // column. Rows 3-4 are an un-flushed lead that exists nowhere but RAM, so a
+        // mapping regression surfaces as swapped values on them rather than as a
+        // silently disk-served read.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, a, b, row_number() OVER () AS rn FROM base");
-            execute("INSERT INTO base (ts, a, b) VALUES " +
-                    "('2026-05-12T00:00:00.000001Z', 10, 20), " +
-                    "('2026-05-12T00:00:00.000002Z', 11, 21)");
-            drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-            drainWalQueue();
+                execute("INSERT INTO base (ts, a, b) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 10, 20), " +
+                        "('2026-05-12T00:00:02.000000Z', 11, 21)");
+                drainWalQueue();
+                drainJob(job); // clock 0: first tick flushes rows 1-2 to disk
 
-            // Positive control: the in-declared-order full-schema read routes
-            // through the tier (identity mapping) and agrees with disk-only.
-            try (
-                    RecordCursorFactory factory = select("SELECT ts, a, b, rn FROM lv");
-                    LiveViewRecordCursor cursor = openLvCursor(factory)
-            ) {
-                Assert.assertTrue("in-declared-order read must route through the tier", cursor.isRoutingEligible());
+                execute("INSERT INTO base (ts, a, b) VALUES " +
+                        "('2026-05-12T00:00:03.000000Z', 12, 22), " +
+                        "('2026-05-12T00:00:04.000000Z', 13, 23)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: refresh as the un-flushed lead, no flush
             }
-            assertModeBMatchesDiskOnly("SELECT ts, a, b, rn FROM lv");
 
-            // The reorder swaps two same-typed columns: pre-fix the tier engaged
-            // and served swapped values. It must now route disk-only, and the
-            // values must be correct (b then a).
-            try (
-                    RecordCursorFactory factory = select("SELECT ts, b, a, rn FROM lv");
-                    LiveViewRecordCursor cursor = openLvCursor(factory)
-            ) {
-                Assert.assertFalse("reordered same-type projection must route disk-only", cursor.isRoutingEligible());
-            }
-            assertModeBMatchesDiskOnly("SELECT ts, b, a, rn FROM lv");
-            assertQuery("SELECT ts, b, a, rn FROM lv")
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("ts\tb\ta\trn\n" +
-                            "2026-05-12T00:00:00.000001Z\t20\t10\t1\n" +
-                            "2026-05-12T00:00:00.000002Z\t21\t11\t2\n");
+            // Control: the in-declared-order read routes and leads disk.
+            InnerRead ordered = readInner("SELECT ts, a, b, rn FROM lv");
+            Assert.assertTrue("in-declared-order read must route through the tier", ordered.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, ordered.leadRowsServed);
+
+            InnerRead reordered = readInner("SELECT ts, b, a, rn FROM lv");
+            Assert.assertTrue("reordered same-type projection must route through the tier", reordered.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, reordered.leadRowsServed);
+
+            // Differential oracle plus an explicit expectation: b then a, on the
+            // disk-backed overlap (rn 1-2) and the RAM-only lead (rn 3-4) alike.
+            assertLvMatchesOracle("SELECT ts, b, a, rn FROM lv",
+                    "SELECT ts, b, a, rn FROM (SELECT ts, a, b, row_number() OVER () AS rn FROM base)");
+            StringSink sink = new StringSink();
+            printSql("SELECT ts, b, a, rn FROM lv", sink);
+            Assert.assertEquals("ts\tb\ta\trn\n" +
+                    "2026-05-12T00:00:01.000000Z\t20\t10\t1\n" +
+                    "2026-05-12T00:00:02.000000Z\t21\t11\t2\n" +
+                    "2026-05-12T00:00:03.000000Z\t22\t12\t3\n" +
+                    "2026-05-12T00:00:04.000000Z\t23\t13\t4\n", sink.toString());
+        });
+    }
+
+    @Test
+    public void testPrunedProjectionServesLeadFromRam() throws Exception {
+        // A projection that keeps the designated timestamp but prunes other columns
+        // (SELECT ts, g FROM lv over an lv of ts, x, g, rn) is the ordinary shape a
+        // user writes, and it used to be permanently blind to the un-flushed lead:
+        // the routing gate demanded every output column, in declared order. The tier
+        // stores the full output row, so the pruned read is just a subset of what the
+        // slot already holds - each output column resolves to its tier column through
+        // the scan's column mapping ([0, 2] here).
+        assertMemoryLeak(() -> {
+            buildMixedFlushedPlusLead();
+
+            // The pruned read leads disk: rows 4-5 exist only in RAM. The projection
+            // shifts g from tier column 2 to output column 1, so a record that indexed
+            // the buffer by output position would read x's int as g's symbol id.
+            InnerRead pruned = readInner("SELECT ts, g FROM lv");
+            Assert.assertTrue("pruned projection must route through the tier", pruned.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, pruned.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, pruned.leadRowsServed);
+            assertLvMatchesOracle("SELECT ts, g FROM lv",
+                    "SELECT ts, g FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base)");
+
+            // Pruning around a fixed-width column routes the same way.
+            InnerRead prunedInt = readInner("SELECT ts, rn FROM lv");
+            Assert.assertTrue("pruned fixed-width projection must route", prunedInt.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, prunedInt.leadRowsServed);
+            assertLvMatchesOracle("SELECT ts, rn FROM lv",
+                    "SELECT ts, rn FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base)");
+
+            // Pruned AND reordered, with the timestamp no longer first.
+            InnerRead reordered = readInner("SELECT g, ts FROM lv");
+            Assert.assertTrue("pruned + reordered projection must route", reordered.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, reordered.leadRowsServed);
+            assertLvMatchesOracle("SELECT g, ts FROM lv",
+                    "SELECT g, ts FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base)");
+
+            // Explicit expectation on the symbol values: 'cc' (rn=4) is a lead-only
+            // symbol that lives solely in the tier's cache, so the overlay must
+            // resolve it through the TIER column (2), not the output column (1).
+            StringSink sink = new StringSink();
+            printSql("SELECT ts, g FROM lv", sink);
+            Assert.assertEquals("ts\tg\n" +
+                    "2026-05-12T00:00:01.000000Z\taa\n" +
+                    "2026-05-12T00:00:02.000000Z\tbb\n" +
+                    "2026-05-12T00:00:03.000000Z\taa\n" +
+                    "2026-05-12T00:00:04.000000Z\tcc\n" +
+                    "2026-05-12T00:00:05.000000Z\tbb\n", sink.toString());
+        });
+    }
+
+    @Test
+    public void testPrunedSymbolProjectionFiltersOnLeadOnlyValue() throws Exception {
+        // The symbol overlay and the tier's symbol cache both key off the TIER
+        // column, while the disk symbol table is fetched by OUTPUT column - the two
+        // diverge the moment a projection prunes a column ahead of the SYMBOL. This
+        // drives the raw-int-key path (WHERE / GROUP BY resolve a value to a key via
+        // getSymbolTable.keyOf, rather than reading each record's string), which is
+        // where a mis-keyed overlay does not merely return a wrong string but silently
+        // matches nothing: 'cc' is a lead-only symbol whose id exists in no disk
+        // symbol table, so only the overlay's cache band can resolve it.
+        assertMemoryLeak(() -> {
+            buildMixedFlushedPlusLead();
+
+            // g sits at tier column 2, output column 1.
+            InnerRead pruned = readInner("SELECT ts, g FROM lv");
+            Assert.assertTrue("pruned projection must route through the tier", pruned.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, pruned.leadRowsServed);
+
+            // A lead-only symbol: the row exists only in RAM and its id only in the cache.
+            assertLvMatchesOracle("SELECT ts, g FROM lv WHERE g = 'cc'",
+                    "SELECT ts, g FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base) WHERE g = 'cc'");
+            StringSink cc = new StringSink();
+            printSql("SELECT ts, g FROM lv WHERE g = 'cc'", cc);
+            Assert.assertEquals("ts\tg\n2026-05-12T00:00:04.000000Z\tcc\n", cc.toString());
+
+            // A committed symbol that re-occurs in the lead: one overlap row from disk
+            // (rn=2) and one RAM-only lead row (rn=5), both under the same committed id.
+            StringSink bb = new StringSink();
+            printSql("SELECT ts, g FROM lv WHERE g = 'bb'", bb);
+            Assert.assertEquals("ts\tg\n" +
+                    "2026-05-12T00:00:02.000000Z\tbb\n" +
+                    "2026-05-12T00:00:05.000000Z\tbb\n", bb.toString());
+
+            // A symbol the lead never carries returns its overlap rows and nothing else.
+            StringSink aa = new StringSink();
+            printSql("SELECT ts, g FROM lv WHERE g = 'aa'", aa);
+            Assert.assertEquals("ts\tg\n" +
+                    "2026-05-12T00:00:01.000000Z\taa\n" +
+                    "2026-05-12T00:00:03.000000Z\taa\n", aa.toString());
+
+            // A value absent from both bands must not match a neighbouring column's
+            // int read as a symbol id.
+            StringSink none = new StringSink();
+            printSql("SELECT ts, g FROM lv WHERE g = 'zz'", none);
+            Assert.assertEquals("ts\tg\n", none.toString());
         });
     }
 
@@ -1761,9 +1873,9 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
 
-            // The read must be full-schema (SELECT *) so it routes through the tier
-            // and serves the lead; a pruned projection (e.g. SELECT g) would fence to
-            // disk-only and never see the lead. g='bb' matches one disk-overlap row
+            // The read keeps the designated timestamp so it routes through the tier
+            // and serves the lead; a timestamp-pruned projection (e.g. SELECT g) would
+            // fence to disk-only and never see the lead. g='bb' matches one disk-overlap row
             // (rn=2) and one un-flushed lead row (rn=5). rn=5 lives only in RAM, so
             // its presence in the filtered output proves the lead is both served AND
             // filtered; the aa/cc rows must be dropped even though the tier serves
@@ -3318,6 +3430,33 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "('2026-05-12T00:00:05.000000Z', 5)");
             drainWalQueue();
             drainJob(job); // clock still 0: refresh B as the un-flushed lead, no flush
+        }
+    }
+
+    // Four-column variant of buildFlushedPlusLead (ts, x INT, g SYMBOL, rn LONG) so a
+    // projection can prune or reorder AROUND a column and move g off its tier index:
+    // SELECT ts, g maps output 1 to tier column 2. 3 flushed rows on disk (symbols
+    // aa=0, bb=1 in LV id space), then a 2-row un-flushed lead where 'cc' is brand new
+    // (id 2, resolvable only from the tier's symbol cache) and 'bb' re-occurs
+    // (committed id 1, resolvable via the disk reader).
+    private void buildMixedFlushedPlusLead() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
+                "SELECT ts, x, g, row_number() OVER () AS rn FROM base");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, x, g) VALUES " +
+                    "('2026-05-12T00:00:01.000000Z', 1, 'aa'), " +
+                    "('2026-05-12T00:00:02.000000Z', 2, 'bb'), " +
+                    "('2026-05-12T00:00:03.000000Z', 3, 'aa')");
+            drainWalQueue();
+            drainJob(job); // clock 0: first tick flushes the batch to disk (aa=0, bb=1)
+
+            execute("INSERT INTO base (ts, x, g) VALUES " +
+                    "('2026-05-12T00:00:04.000000Z', 4, 'cc'), " +
+                    "('2026-05-12T00:00:05.000000Z', 5, 'bb')");
+            drainWalQueue();
+            drainJob(job); // clock still 0: refresh the lead (cc new, bb committed), no flush
         }
     }
 
