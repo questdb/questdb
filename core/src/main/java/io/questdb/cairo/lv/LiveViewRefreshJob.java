@@ -3258,8 +3258,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             final long replaceLowTs = fullRebuild
                                     ? viewLowerBoundTimestamp
                                     : triggerLowTs != Numbers.LONG_NULL
-                                            ? Math.min(replayMinTs, triggerLowTs)
-                                            : replayMinTs;
+                                      ? Math.min(replayMinTs, triggerLowTs)
+                                      : replayMinTs;
                             fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
