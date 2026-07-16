@@ -37,9 +37,13 @@ public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends Abstra
     public AbstractSampleByNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
             RecordMetadata metadata,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            Function timezoneNameFunc,
+            Function offsetFunc,
+            Function sampleFromFunc,
+            Function sampleToFunc
     ) {
-        super(base, metadata, recordFunctions);
+        super(base, metadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
     }
 
     @Override
