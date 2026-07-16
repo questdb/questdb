@@ -72,6 +72,55 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassthroughMatViewInheritsBaseSymbolIndex() throws Exception {
+        // R2: a passthrough materialized view (SELECT * FROM base) inherits the base table's SYMBOL
+        // index for each directly-projected symbol column, so indexed reads over the view (e.g.
+        // LATEST ON under an EXPIRE ROWS retention policy) can use the index instead of a full scan.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN ts < dateadd('d', -1, now()) CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k");
+                assertTrue(ki >= 0);
+                assertTrue("passthrough MV should inherit base symbol index", metadata.isColumnIndexed(ki));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewDoesNotInheritIndexForNonPassthroughColumn() throws Exception {
+        // Only DIRECT pass-through symbol columns inherit the base index. A renamed/expression column
+        // is not a straight pass-through, so it must not silently gain an index.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select k || '_x' k2, v, ts from base) EXPIRE ROWS WHEN ts < dateadd('d', -1, now()) CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k2");
+                assertTrue(ki >= 0);
+                assertTrue("expression column must not inherit an index", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewNonIndexedBaseSymbolStaysUnindexed() throws Exception {
+        // If the base symbol is not indexed, the pass-through MV column stays unindexed.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from base) EXPIRE ROWS WHEN ts < dateadd('d', -1, now()) CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k");
+                assertTrue(ki >= 0);
+                assertTrue("non-indexed base symbol must stay unindexed", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
     public void testReadsOldFormatMetaWithoutZeroingTtlOrMisreadingExpiry() throws Exception {
         // Backward-compat: the LATEST minor version (== EXPIRE_ROWS == 3) must NOT zero TTL on an object
         // written before this feature, and the trailing expiry section must read as ABSENT (null/0) — not

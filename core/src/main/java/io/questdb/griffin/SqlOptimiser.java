@@ -2333,6 +2333,162 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model the starting model.
      */
+    // Hoist a bare single-table sub-query up into the model that carries LATEST ON, so the LATEST ON
+    // becomes a direct table read (structurally identical to the same-level query) and codegen reaches
+    // the indexed generateLatestByTableQuery fast path instead of LatestBy light + full scan.
+    //
+    // Fires only when it is provably equivalent to the same-level query AND wins big:
+    //   - the LATEST ON model directly nests a bare `SELECT * FROM t [WHERE ...]` table read
+    //     (no projection/rename, joins, aggregation, distinct, window, sampleBy, union, order by,
+    //     limit, or its own latest by);
+    //   - LATEST ON targets that table's DESIGNATED timestamp (the fast path keys off
+    //     metadata.getTimestampIndex(); a non-designated timestamp would silently use the wrong one);
+    //   - every PARTITION BY column is an indexed SYMBOL (the only case where the direct-table
+    //     latest-by beats LatestBy light - index seek per key vs full scan).
+    // Any other shape is left exactly as-is (same plan and same output).
+    private void pushLatestByToTableModel(@Nullable IQueryModel model, SqlExecutionContext executionContext) {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+        if (model.getLatestByType() == IQueryModel.LATEST_BY_NEW
+                && model.getLatestBy().size() > 0
+                && model.getTableNameExpr() == null) {
+            final IQueryModel table = findHoistableTableModel(model.getNestedModel());
+            final ExpressionNode onTs = model.getTimestamp();
+            if (table != null
+                    && onTs != null
+                    && isHoistValid(model.getNestedModel(), table, onTs, model.getLatestBy(), executionContext)) {
+                // fold the bare table read up into this model, dropping the intervening identity
+                // pass-through projection(s): now LATEST ON reads the table directly (same structure as
+                // the same-level query), so codegen uses the indexed fast path and output column order
+                // is unchanged. The table's WHERE (if any) simply ANDs with this model's WHERE.
+                model.setTableNameExpr(table.getTableNameExpr());
+                model.setTableId(table.getTableId());
+                model.setMetadataVersion(table.getMetadataVersion());
+                final ExpressionNode tableWhere = table.getWhereClause();
+                final ExpressionNode modelWhere = model.getWhereClause();
+                final ExpressionNode combinedWhere = tableWhere == null
+                        ? modelWhere
+                        : modelWhere == null
+                        ? tableWhere
+                        : concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, tableWhere, modelWhere);
+                model.setWhereClause(combinedWhere);
+                model.setNestedModel(table.getNestedModel());
+                model.setSelectModelType(IQueryModel.SELECT_MODEL_NONE);
+            }
+        }
+        pushLatestByToTableModel(model.getNestedModel(), executionContext);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            pushLatestByToTableModel(model.getJoinModels().getQuick(i), executionContext);
+        }
+        pushLatestByToTableModel(model.getUnionModel(), executionContext);
+    }
+
+    // Locate the bare table read that a LATEST ON model nests, reachable only through pass-through
+    // projections (a sub-query's expanded `SELECT *`). Returns the bare `SELECT * FROM t [WHERE ...]`
+    // table model, or null if any intervening model could change the row set or ordering. The stricter
+    // column-identity/count check is done in isHoistValid (it needs table metadata).
+    private IQueryModel findHoistableTableModel(IQueryModel m) {
+        while (m != null) {
+            if (!m.isOptimisable()
+                    || m.getJoinModels().size() > 1
+                    || m.getUnionModel() != null
+                    || m.getLatestBy().size() > 0
+                    || m.getGroupBy().size() > 0
+                    || m.getSampleBy() != null
+                    || m.getLimitLo() != null
+                    || m.getLimitHi() != null
+                    || m.getOrderBy().size() > 0
+                    || m.hasSharedRefs()) {
+                return null;
+            }
+            final int t = m.getSelectModelType();
+            if (t != IQueryModel.SELECT_MODEL_NONE && t != IQueryModel.SELECT_MODEL_CHOOSE) {
+                return null;
+            }
+            if (m.getTableNameExpr() != null) {
+                // the bare table read: no explicit projection, real table (not a function)
+                if (m.getTableNameFunction() != null
+                        || m.getTableNameExpr().type == FUNCTION
+                        || m.getBottomUpColumns().size() != 0) {
+                    return null;
+                }
+                return m;
+            }
+            // intervening model: must be a pure projection with no WHERE (a filter here would be
+            // dropped by folding). Identity/full-column verification happens in isHoistValid.
+            if (m.getWhereClause() != null) {
+                return null;
+            }
+            m = m.getNestedModel();
+        }
+        return null;
+    }
+
+    // Metadata-aware validation for the hoist. Opens the base table's metadata once and checks:
+    //   1) LATEST ON targets the table's DESIGNATED timestamp. This must be checked against the table
+    //      METADATA, not the table model's timestamp token: a sub-query can redesignate the timestamp
+    //      (e.g. `(SELECT * FROM t timestamp(ts2))`), which leaves the model token as ts2 while the
+    //      folded direct-table read still requires the metadata designated timestamp - firing there
+    //      would turn a valid query into a compile error;
+    //   2) every LATEST ON PARTITION BY column is an indexed SYMBOL on the table (the only case that
+    //      wins big - index seek per key vs full scan - and keeps the rewrite surgical); and
+    //   3) every intervening projection between the LATEST ON model and the table is a FULL identity
+    //      (each column a bare un-aliased reference, exposing exactly the table's columns), so folding
+    //      those layers away cannot change which columns (or how many) the query exposes.
+    // Any resolution failure conservatively returns false (no rewrite).
+    private boolean isHoistValid(IQueryModel nested, IQueryModel table, ExpressionNode onTs, ObjList<ExpressionNode> latestBy, SqlExecutionContext executionContext) {
+        final ExpressionNode tableNameExpr = table.getTableNameExpr();
+        if (tableNameExpr == null) {
+            return false;
+        }
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
+        if (tableToken == null) {
+            return false;
+        }
+        try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+            // (1) LATEST ON must be on the table's DESIGNATED timestamp (per metadata, not model token)
+            final int tsIdx = metadata.getTimestampIndex();
+            if (tsIdx < 0 || !Chars.equalsIgnoreCase(onTs.token, metadata.getColumnName(tsIdx))) {
+                return false;
+            }
+            // (2) partition-by columns are indexed symbols
+            for (int i = 0, n = latestBy.size(); i < n; i++) {
+                final ExpressionNode col = latestBy.getQuick(i);
+                if (col.type != ExpressionNode.LITERAL) {
+                    return false;
+                }
+                final int idx = metadata.getColumnIndexQuiet(col.token);
+                if (idx < 0
+                        || !ColumnType.isSymbol(metadata.getColumnType(idx))
+                        || !metadata.isColumnIndexed(idx)) {
+                    return false;
+                }
+            }
+            // (2) each intervening projection is a full identity over all table columns
+            final int columnCount = metadata.getColumnCount();
+            for (IQueryModel m = nested; m != null && m != table; m = m.getNestedModel()) {
+                final ObjList<QueryColumn> cols = m.getBottomUpColumns();
+                if (cols.size() != columnCount) {
+                    return false;
+                }
+                for (int i = 0; i < columnCount; i++) {
+                    final QueryColumn qc = cols.getQuick(i);
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast == null
+                            || ast.type != ExpressionNode.LITERAL
+                            || !Chars.equalsIgnoreCase(qc.getAlias(), ast.token)
+                            || metadata.getColumnIndexQuiet(ast.token) < 0) {
+                        return false;
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            return false;
+        }
+        return true;
+    }
+
     private void collapseStackedChooseModels(@Nullable IQueryModel model) {
         if (model == null || !model.isOptimisable()) {
             return;
@@ -12479,6 +12635,7 @@ public class SqlOptimiser implements Mutable {
             rewriteTrivialGroupByExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
+            pushLatestByToTableModel(rewrittenModel, sqlExecutionContext);
             rewriteCountDistinct(rewrittenModel);
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);

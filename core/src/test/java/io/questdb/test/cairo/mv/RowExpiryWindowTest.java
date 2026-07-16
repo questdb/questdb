@@ -149,6 +149,39 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnOverExpiringViewUsesIndexedFastPath() throws Exception {
+        // R1 + R2 end-to-end: LATEST ON over a passthrough EXPIRE ROWS view reads through the injected
+        // retention keep-filter using the SYMBOL index the view inherited from its base (indexed
+        // latest-by), NOT a LatestBy light full scan - and returns the correct latest row per key within
+        // the retained window.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('A',1.0,'2024-01-01T00:00:00.000000Z'),"
+                    + "('A',2.0,'2024-01-03T00:00:00.000000Z'),"
+                    + "('B',3.0,'2024-01-01T00:00:00.000000Z'),"
+                    + "('B',4.0,'2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z' cleanup every 1h");
+            drainWalAndMatViewQueues();
+            assertQuery("select k, v from mv latest on ts partition by k")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                LatestByDeferredListValuesFiltered
+                                    Interval backward scan on: mv
+                                      intervals: [("2024-01-02T00:00:00.000000Z","MAX")]
+                            """);
+            // correct latest row per key within the retained window (rows before 2024-01-02 expired)
+            assertQuery("select k, v from mv latest on ts partition by k order by k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\tv\n"
+                            + "A\t2.0\n"
+                            + "B\t4.0\n");
+        });
+    }
+
+    @Test
     public void testKeepHighestAllTiesPerKey() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest v partition by k");

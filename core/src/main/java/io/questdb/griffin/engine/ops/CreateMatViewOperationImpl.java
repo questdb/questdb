@@ -421,6 +421,37 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             throw SqlException.$(baseTableNamePosition, "base table has to be WAL enabled");
         }
 
+        // Inherit the base table's SYMBOL index for each directly-projected pass-through column, unless
+        // the CREATE statement already declared an index for it. A passthrough materialized view (e.g.
+        // SELECT * FROM base, as used by EXPIRE ROWS retention views) otherwise silently drops the base
+        // index, forcing full scans for indexed/LATEST ON reads that could use an index seek.
+        try (TableMetadata baseMetadata = sqlExecutionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                final ExpressionNode ast = qc.getAst();
+                // only a bare column reference is a straight pass-through; skip expressions/casts
+                if (ast == null || ast.type != LITERAL) {
+                    continue;
+                }
+                final int baseIdx = baseMetadata.getColumnIndexQuiet(ast.token);
+                if (baseIdx < 0
+                        || !ColumnType.isSymbol(baseMetadata.getColumnType(baseIdx))
+                        || !baseMetadata.isColumnIndexed(baseIdx)) {
+                    continue;
+                }
+                final CreateTableColumnModel columnModel = createColumnModelMap.get(SqlUtil.toColumnName(qc.getName()));
+                if (columnModel == null || columnModel.isIndexed()) {
+                    // keep an index the user declared explicitly in the CREATE statement
+                    continue;
+                }
+                columnModel.setIndexType(
+                        baseMetadata.getColumnMetadata(baseIdx).getIndexType(),
+                        ast.position,
+                        baseMetadata.getIndexValueBlockCapacity(baseIdx)
+                );
+            }
+        }
+
         // Find sampling interval.
         CharSequence intervalExpr = null;
         int intervalPos = 0;

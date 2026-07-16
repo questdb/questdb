@@ -297,6 +297,35 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByIndexedSubQueryFastPathSameResultAsSameLevel() throws Exception {
+        // R1: LATEST ON over a trivial identity-passthrough sub-query of an indexed-symbol table is
+        // relocated to the direct-table indexed fast path. It must return exactly the same rows (in the
+        // same designated-timestamp order) as the equivalent same-level query. The dataset is arranged
+        // so a wrong plan would be observable: key-insertion order (CC, BB) differs from latest-ts order.
+        assertMemoryLeak(() -> {
+            execute("create table x (a double, b symbol index, k timestamp) timestamp(k) partition by DAY");
+            execute("insert into x values (10.0,'CC','1970-01-01T00:00:00.000000Z'),"
+                    + "(20.0,'BB','1970-01-02T00:00:00.000000Z'),"
+                    + "(30.0,'BB','1970-01-03T00:00:00.000000Z'),"
+                    + "(40.0,'CC','1970-01-04T00:00:00.000000Z')");
+            // With an explicit projection, the relocated sub-query form must be byte-identical to the
+            // equivalent same-level form (which already uses the indexed fast path) - same rows, same
+            // column order, same designated timestamp. Compared cursor-to-cursor.
+            assertSqlCursors(
+                    "select a, b, k from x where b in ('BB','CC') and a > 0 latest on k partition by b order by b",
+                    "select a, b, k from (x where b in ('BB','CC')) where a > 0 latest on k partition by b order by b"
+            );
+            // Correct latest-per-key values (dataset arranged so key-order != latest-ts order).
+            assertQuery("select b, k, a from (x where b in ('BB','CC')) where a > 0 latest on k partition by b order by b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("b\tk\ta\n"
+                            + "BB\t1970-01-03T00:00:00.000000Z\t30.0\n"
+                            + "CC\t1970-01-04T00:00:00.000000Z\t40.0\n");
+        });
+    }
+
+    @Test
     public void testLatestByLightSubQueryOrderByTimestampNotElided() throws Exception {
         // A LATEST ON ... over a derived sub-query compiles to LatestByLightRecordCursorFactory,
         // which emits one row per partition key in map order, NOT in designated-timestamp order.
