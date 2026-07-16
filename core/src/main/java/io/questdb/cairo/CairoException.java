@@ -75,7 +75,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // version_unsupported rather than hiding it; distinct from structural
     // corruption so the two map to different operator-visible outcomes.
     public static final int LV_FILE_VERSION_UNSUPPORTED = LV_CHECKPOINT_FILE_VERSION_MISMATCH - 1;
-    private static final int TABLE_SUSPENDED = LV_FILE_VERSION_UNSUPPORTED - 1;
+    // The _checkpoints/_ring manifest failed structural validation: absent
+    // block, truncated payload, format version newer than this build, or an
+    // entry-invariant violation. The ring is derived state, so this is a
+    // recovery-quality signal, not a compatibility break: the caller logs, falls
+    // back to highest-.cp-only recovery and leaves the view valid. Distinct from
+    // LV_FILE_VERSION_UNSUPPORTED and LV_CHECKPOINT_FILE_VERSION_MISMATCH, which
+    // cover required state and do surface to the operator.
+    public static final int LV_CHECKPOINT_RING_MANIFEST_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
+    private static final int TABLE_SUSPENDED = LV_CHECKPOINT_RING_MANIFEST_INVALID - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
