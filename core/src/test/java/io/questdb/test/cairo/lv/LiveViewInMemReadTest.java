@@ -49,6 +49,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -591,15 +592,21 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     Record record = cursor.getRecord();
 
                     // Forward pass: capture each row's id and printed content.
-                    // Disk rows (below the seam) carry non-negative ids; in-mem
-                    // rows (at/above the seam) carry the sign-bit-tagged id.
+                    // Both tiers' ids are frame-encoded: disk rows (below the seam)
+                    // carry the base scan's own frame indices, in-mem rows (at/above
+                    // the seam) carry the reserved slot frame index. Every id must be
+                    // non-negative - a light ASOF / LT JOIN treats Long.MIN_VALUE as "no
+                    // slave row", so an in-mem id colliding with it drops the match
+                    // (see testAsOfJoinLinearRhsMatchesFirstTierRow). Disk ids start at
+                    // 0 (frame 0, row 0), so 0 itself is ordinary.
                     LongList rowIds = new LongList();
                     ObjList<String> forwardRows = new ObjList<>();
                     int diskRowIds = 0;
                     int inMemRowIds = 0;
                     while (cursor.hasNext()) {
                         long rowId = record.getRowId();
-                        if (rowId < 0) {
+                        Assert.assertTrue("rowId must be non-negative, was " + rowId, rowId >= 0);
+                        if (Rows.toPartitionIndex(rowId) == Rows.MAX_SAFE_PARTITION_INDEX) {
                             inMemRowIds++;
                         } else {
                             diskRowIds++;
@@ -646,14 +653,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     Assert.assertTrue("view must serve the in-mem tier (Mode B)", cursor.isRoutingEligible());
                     Record recordA = cursor.getRecord();
 
-                    // Forward pass: collect the in-mem row ids (sign-bit tagged) and a
+                    // Forward pass: collect the in-mem row ids (they carry the reserved
+                    // slot frame index) and a
                     // stable copy of each in-mem row's var-size values.
                     LongList inMemIds = new LongList();
                     ObjList<String> expectedStr = new ObjList<>();
                     ObjList<String> expectedVarchar = new ObjList<>();
                     while (cursor.hasNext()) {
                         long rowId = recordA.getRowId();
-                        if (rowId < 0) { // in-mem row
+                        if (Rows.toPartitionIndex(rowId) == Rows.MAX_SAFE_PARTITION_INDEX) { // in-mem row
                             inMemIds.add(rowId);
                             expectedStr.add(recordA.getStrA(1).toString());
                             Utf8Sequence vc = recordA.getVarcharA(2);
@@ -727,14 +735,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     Assert.assertTrue("view must serve the in-mem tier (Mode B)", cursor.isRoutingEligible());
                     Record recordA = cursor.getRecord();
 
-                    // Forward pass: collect the in-mem row ids (sign-bit tagged) and a
+                    // Forward pass: collect the in-mem row ids (they carry the reserved
+                    // slot frame index) and a
                     // stable copy of each in-mem row's symbol value. The slot rows are
                     // flushed (overlap), so the symbol resolves via the disk base.
                     LongList inMemIds = new LongList();
                     ObjList<String> expectedSym = new ObjList<>();
                     while (cursor.hasNext()) {
                         long rowId = recordA.getRowId();
-                        if (rowId < 0) { // in-mem row
+                        if (Rows.toPartitionIndex(rowId) == Rows.MAX_SAFE_PARTITION_INDEX) { // in-mem row
                             inMemIds.add(rowId);
                             CharSequence sym = recordA.getSymA(1);
                             expectedSym.add(sym == null ? null : sym.toString());
@@ -794,7 +803,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     ObjList<String> expectedSym = new ObjList<>();
                     while (cursor.hasNext()) {
                         long rowId = recordA.getRowId();
-                        if (rowId < 0) { // in-mem row
+                        if (Rows.toPartitionIndex(rowId) == Rows.MAX_SAFE_PARTITION_INDEX) { // in-mem row
                             inMemIds.add(rowId);
                             CharSequence sym = recordA.getSymA(1);
                             expectedSym.add(sym == null ? null : sym.toString());
@@ -2528,6 +2537,123 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "2026-05-12T00:00:03.000000Z\t4\t4\n" +
                     "2026-05-12T00:00:10.000000Z\t5\t5\n" +
                     "2026-05-12T00:00:11.000000Z\t6\t6\n", out.toString());
+        });
+    }
+
+    @Test
+    public void testAsOfJoinLinearRhsMatchesFirstTierRow() throws Exception {
+        // The asof_linear hint forces the AsOfJoinLight fallback, which is the one
+        // ASOF shape that consumes the LV's RECORD cursor (the fast path takes the
+        // time-frame cursor, which is disk-only - see
+        // testAsOfJoinRhsSeesAppliedPrefixNotLead). The light join remembers its
+        // running slave match as a rowId and treats Long.MIN_VALUE as "no slave row
+        // yet", so an in-mem rowId must never be that value: the tier's buffer row 0
+        // is a perfectly ordinary row and a master row can match it.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk: ts 01..03 x=1..3; lead (RAM): ts 04,05 x=4,5
+
+            // The whole slot is resident (IN MEMORY 30m covers ts 01..05), so the seam
+            // sits at ts 01 and buffer row 0 IS the ts-01 row - the match below.
+            InnerRead direct = readInner("SELECT * FROM lv");
+            Assert.assertEquals("every lv row must be served from the tier", 5, direct.inMemRowsServed);
+
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id) VALUES " +
+                    "('2026-05-12T00:00:01.500000Z', 1), " +
+                    "('2026-05-12T00:00:04.500000Z', 2)");
+            drainWalQueue();
+
+            final String sql = "SELECT /*+ asof_linear(p lv) */ p.ts, p.id, lv.x FROM probe p ASOF JOIN lv";
+            // Pin the record-cursor light path: the fast time-frame join would not
+            // read the tier at all and the test would prove nothing.
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join", "LiveView");
+
+            // id 1 matches the ts-01 lv row (buffer row 0, x=1); id 2 matches the
+            // ts-04 lead row (buffer row 3, x=4).
+            StringSink sink = new StringSink();
+            printSql(sql, sink);
+            Assert.assertEquals(
+                    "ts\tid\tx\n" +
+                            "2026-05-12T00:00:01.500000Z\t1\t1\n" +
+                            "2026-05-12T00:00:04.500000Z\t2\t4\n",
+                    sink.toString());
+        });
+    }
+
+    @Test
+    public void testAsOfJoinLinearKeyedRhsMatchesFirstTierRow() throws Exception {
+        // The keyed light ASOF reaches the sentinel from a different angle than the
+        // non-keyed one: it stores matched rowIds in a map (which round-trips any
+        // value verbatim), but carries the first slave row PAST the current master as
+        // a dangling lastSlaveRowID, and replays it into the map on the next master
+        // row only "if (lastSlaveRowID != Numbers.LONG_NULL)". So the tier's buffer
+        // row 0 has to be the dangling row for the bug to show, which needs a master
+        // row BELOW it (id 1 here) followed by one above it (id 2).
+        assertMemoryLeak(() -> {
+            buildMixedFlushedPlusLead(); // disk: ts 01 aa/1, 02 bb/2, 03 aa/3; lead: ts 04 cc/4, 05 bb/5
+
+            InnerRead direct = readInner("SELECT * FROM lv");
+            Assert.assertEquals("every lv row must be served from the tier", 5, direct.inMemRowsServed);
+
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id, g) VALUES " +
+                    "('2026-05-12T00:00:00.500000Z', 1, 'aa'), " +
+                    "('2026-05-12T00:00:01.500000Z', 2, 'aa')");
+            drainWalQueue();
+
+            final String sql = "SELECT /*+ asof_linear(p lv) */ p.ts, p.id, lv.x " +
+                    "FROM probe p ASOF JOIN lv ON g";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("AsOf Join", "LiveView");
+
+            // id 1 sits below every lv row, so it has no match and leaves the ts-01 row
+            // (buffer row 0) dangling. id 2 must then match it.
+            StringSink sink = new StringSink();
+            printSql(sql, sink);
+            Assert.assertEquals(
+                    "ts\tid\tx\n" +
+                            "2026-05-12T00:00:00.500000Z\t1\tnull\n" +
+                            "2026-05-12T00:00:01.500000Z\t2\t1\n",
+                    sink.toString());
+        });
+    }
+
+    @Test
+    public void testProjectionSortKeyMaterializationOverTierRowZero() throws Exception {
+        // The third consumer of an in-mem rowId, and the one that fails hardest:
+        // SortKeyMaterializingRecordCursor keys its rowId -> ordinal map with
+        // noEntryKey = Long.MIN_VALUE, so a rowId of that value is stored but never
+        // found again, get() falls back to noEntryValue = -1, and MaterializedRecord
+        // turns the -1 ordinal into a NEGATIVE native offset. That is an out-of-bounds
+        // read, not a wrong answer. A projection over an LV reaches it (VirtualRecord
+        // delegates getRowId to the LV's record).
+        //
+        // Both properties force the path deterministically rather than hoping the
+        // optimiser picks it: encoded sort would otherwise win, and the default
+        // complexity threshold (3) would not materialize this cheap key. The plan
+        // assertion below is the guard that we actually got there.
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD, 0);
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk: ts 01..03 x=1..3; lead (RAM): ts 04,05 x=4,5
+
+            InnerRead direct = readInner("SELECT * FROM lv");
+            Assert.assertEquals("every lv row must be served from the tier", 5, direct.inMemRowsServed);
+
+            // Descending sort key, so buffer row 0 (x=1) sorts LAST - it has to survive
+            // the map round-trip to land there at all.
+            final String sql = "SELECT ts, (100 - x * 7) AS k FROM lv ORDER BY k DESC";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Materialize sort keys", "LiveView");
+
+            StringSink sink = new StringSink();
+            printSql(sql, sink);
+            Assert.assertEquals(
+                    "ts\tk\n" +
+                            "2026-05-12T00:00:01.000000Z\t93\n" +
+                            "2026-05-12T00:00:02.000000Z\t86\n" +
+                            "2026-05-12T00:00:03.000000Z\t79\n" +
+                            "2026-05-12T00:00:04.000000Z\t72\n" +
+                            "2026-05-12T00:00:05.000000Z\t65\n",
+                    sink.toString());
         });
     }
 

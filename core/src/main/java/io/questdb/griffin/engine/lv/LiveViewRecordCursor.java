@@ -48,6 +48,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf16Sink;
@@ -108,11 +109,23 @@ import org.jetbrains.annotations.TestOnly;
  * so a page-frame cursor over the tier can bind the same overlay and let a filter
  * worker resolve the lead without a record.
  * <p>
- * In-mem rows synthesize a tagged rowId (the sign bit set over the buffer row
- * index); {@link #recordAt(Record, long)} decodes it back to a buffer row
- * against the still-pinned slot. Disk rowIds are non-negative, so the tag never
- * collides. Random-access readers (ASOF JOIN as RHS, etc.) can therefore land
- * on an in-mem row and round-trip correctly within the cursor's lifetime.
+ * In-mem rows synthesize a rowId in the same frame-encoded space the disk scan
+ * beneath this cursor already uses - {@code Rows.toRowID(frameIndex, rowIndex)} -
+ * taking a reserved frame index of their own ({@code SLOT_FRAME_INDEX}) over the
+ * buffer row; {@link #recordAt(Record, long)} decodes it back against the
+ * still-pinned slot. Random-access readers (a linear ASOF / LT JOIN with the LV as
+ * RHS, and the rest of random access) can therefore land on an in-mem row and
+ * round-trip correctly within the cursor's lifetime.
+ * <p>
+ * These rowIds must stay inside the engine's ordinary rowId space, which is why
+ * they are frame-encoded rather than tagged. In-mem rows used to set the sign bit
+ * over the buffer row index instead, which made buffer row 0's rowId exactly
+ * {@code Long.MIN_VALUE} - the value the light ASOF / LT JOIN cursors use as their
+ * "no slave row yet" sentinel. A master row whose match was the slot's first row
+ * therefore joined against NULL (or, if an earlier master row had a match, against
+ * that stale row). Frame encoding keeps every in-mem rowId positive, so no sentinel
+ * aliases one; it also puts them above every disk rowId, which is the order the
+ * seam split serves them in.
  * <p>
  * Single-shot lifecycle: the factory allocates a fresh instance per
  * {@link LiveViewRecordCursorFactory#getCursor(io.questdb.griffin.SqlExecutionContext)}.
@@ -120,10 +133,25 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class LiveViewRecordCursor implements RecordCursor {
 
-    // In-mem rows carry no disk rowId; getRowId() synthesizes one by setting the
-    // sign bit over the buffer row index. Disk rowIds are non-negative, so the
-    // tag never collides; recordAt() decodes it back against the pinned slot.
-    private static final long IN_MEM_ROW_ID_FLAG = Long.MIN_VALUE;
+    // Frame index the in-mem rows' synthesized rowIds carry. A rowId on the page-frame
+    // path is Rows.toRowID(frameIndex, rowIndex), and the disk cursor under this one is
+    // a page-frame scan, so an in-mem row is addressable by taking a frame index of its
+    // own - exactly as LiveViewPageFrameCursor's synthetic slot frame gets one from the
+    // frame sequence. The top safe index is reserved rather than assigned: the record
+    // path has no frame sequence to draw the next index from, and the base scan numbers
+    // its frames from 0 up, so the top of the space is the one value it cannot reach.
+    // (Rows.toRowID overflows into the sign bit above MAX_SAFE_PARTITION_INDEX, so a
+    // scan with that many frames is already outside the engine's rowId space.)
+    //
+    // This index must never escape into the disk cursor: it names a frame only THIS
+    // cursor knows about. recordAt() is the only decoder, and it keeps in-mem rowIds
+    // away from diskCursor.recordAt(). What also keeps them away today is that this
+    // cursor does not forward setRecordAtRows() / setParquetDecodeHint() to the disk
+    // cursor - the RecordCursor defaults are no-ops. Forwarding either (e.g. to pick up
+    // the parquet decode win) would hand in-mem rowIds to PageFrameMemoryPool, which
+    // indexes its address cache by Rows.toPartitionIndex(rowId) and would run off the
+    // end of a frame count of a handful.
+    private static final int SLOT_FRAME_INDEX = Rows.MAX_SAFE_PARTITION_INDEX;
     private final MergedRecord recordA = new MergedRecord();
     private final MergedRecord recordB = new MergedRecord();
     // Resolves the read's SYMBOL columns: the disk cursor's tables overlaid with the
@@ -409,15 +437,16 @@ public class LiveViewRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         MergedRecord mr = (MergedRecord) record;
-        if (atRowId < 0) {
-            // Tagged in-mem rowId (sign bit set over the buffer row index).
+        if (Rows.toPartitionIndex(atRowId) == SLOT_FRAME_INDEX) {
+            // An in-mem rowId: the reserved slot frame index over the buffer row.
             // Decode back to a buffer row and position the record against the
             // still-pinned slot. Valid for the cursor's lifetime, during which
             // the slot stays pinned and frozen.
-            mr.toInMemMode(atRowId & Long.MAX_VALUE);
+            mr.toInMemMode(Rows.toLocalRowID(atRowId));
             return;
         }
-        // Disk rowId (non-negative): delegate to the disk cursor.
+        // A disk rowId: delegate to the disk cursor, which decodes it the same way
+        // against its own frames.
         mr.toDiskMode();
         diskCursor.recordAt(mr.diskRecord(), atRowId);
     }
@@ -818,15 +847,21 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public long getRowId() {
-            // In-mem rows synthesize a tagged rowId: the sign bit set over the
-            // buffer row index. recordAt() decodes it back against the still-
-            // pinned slot. Disk rowIds are non-negative, so the tag never
-            // collides and random access stays self-consistent within the
+            // In-mem rows synthesize a rowId in the same frame-encoded space the disk
+            // scan under this cursor uses, taking the reserved slot frame index; the
+            // buffer row is the row index within it. recordAt() decodes it back against
+            // the still-pinned slot, so random access stays self-consistent for the
             // cursor's lifetime.
             if (inMemMode) {
-                return IN_MEM_ROW_ID_FLAG | bufferRow;
+                return Rows.toRowID(SLOT_FRAME_INDEX, bufferRow);
             }
-            return base.getRowId();
+            final long rowId = base.getRowId();
+            // The reserved index is only reserved because the base cannot reach it; if a
+            // scan ever did, an in-mem rowId would alias a disk one and recordAt() would
+            // serve the wrong row. Fail loudly rather than silently.
+            assert Rows.toPartitionIndex(rowId) != SLOT_FRAME_INDEX
+                    : "disk rowId " + rowId + " occupies the reserved slot frame index";
+            return rowId;
         }
 
         @Override
