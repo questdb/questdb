@@ -232,4 +232,190 @@ public class CompositeTxCellTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Plan 3, Task 3: {@code findAttachedPartitionRawIndexBy(ts, cellKey)} must find the exact raw
+     * offset of a (ts, cellKey) partition, and -- on a miss -- return the same negative
+     * insertion-point encoding {@code findAttachedPartitionRawIndexByLoTimestamp} uses ({@code
+     * -(rawInsertionIndex) - 1}), just disambiguated by cellKey within a same-ts run. Builds
+     * day1/cell0, day1/cell1, day2/cell0 (stride 8, so raw offsets are index*8) via the
+     * tail-append seam -- already in (ts, cellKey) order, so this test is purely about the finder,
+     * not the insert.
+     */
+    @Test
+    public void testFindRawIndexByTsAndCellKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+            final long day2 = Micros.DAY_MICROS;
+            final long day3 = 2 * Micros.DAY_MICROS;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day1, 20L, 101L, 1);
+                    txWriter.appendPartitionForTest(day2, 30L, 102L, 0);
+
+                    // Exact hits: raw offset = partition index * stride (8).
+                    Assert.assertEquals(0, txWriter.findAttachedPartitionRawIndexBy(day1, 0));
+                    Assert.assertEquals(8, txWriter.findAttachedPartitionRawIndexBy(day1, 1));
+                    Assert.assertEquals(16, txWriter.findAttachedPartitionRawIndexBy(day2, 0));
+
+                    // Miss within an existing ts run: (day1, 5) sorts after (day1, 1) and before
+                    // (day2, 0) -- insertion point must land exactly there, raw offset 16, encoded
+                    // as -(16) - 1 = -17 (same convention as findAttachedPartitionRawIndexByLoTimestamp).
+                    int missWithinRun = txWriter.findAttachedPartitionRawIndexBy(day1, 5);
+                    Assert.assertEquals(-17, missWithinRun);
+                    Assert.assertEquals("decoded insertion point must be right after (day1, cell1)'s raw offset",
+                            16, -(missWithinRun) - 1);
+
+                    // Miss entirely before every ts: insertion point is raw offset 0, encoded -1.
+                    Assert.assertEquals(-1, txWriter.findAttachedPartitionRawIndexBy(day1 - Micros.DAY_MICROS, 0));
+
+                    // Miss entirely after every ts: insertion point is raw offset 24 (append at tail),
+                    // encoded -(24) - 1 = -25.
+                    Assert.assertEquals(-25, txWriter.findAttachedPartitionRawIndexBy(day3, 0));
+                }
+            }
+        });
+    }
+
+    /**
+     * Plan 3, Task 3: the composite insert must place a new (ts, cellKey) partition at the position
+     * that keeps the attached-partitions array totally ordered (ts ASC, cellKey ASC), not just
+     * tail-appended. Starts from day1/cell0, day2/cell0 (built via the Task-2 tail-append seam) and
+     * inserts day1/cell1 via the new {@code insertPartitionForTest} -- which, unlike {@code
+     * appendPartitionForTest}, computes its slot from {@code findAttachedPartitionRawIndexBy} --
+     * asserting it lands in the middle: cell0@day1, cell1@day1, cell0@day2.
+     */
+    @Test
+    public void testInsertPartitionForTestKeepsOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+            final long day2 = Micros.DAY_MICROS;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day2, 30L, 102L, 0);
+                    Assert.assertEquals(2, txWriter.getPartitionCount());
+
+                    txWriter.insertPartitionForTest(day1, 20L, 101L, 1);
+
+                    Assert.assertEquals(3, txWriter.getPartitionCount());
+
+                    Assert.assertEquals(day1, txWriter.getPartitionTimestampByIndex(0));
+                    Assert.assertEquals(0, txWriter.getPartitionCellKey(0));
+                    Assert.assertEquals(10L, txWriter.getPartitionSize(0));
+                    Assert.assertEquals(100L, txWriter.getPartitionNameTxn(0));
+
+                    Assert.assertEquals(day1, txWriter.getPartitionTimestampByIndex(1));
+                    Assert.assertEquals(1, txWriter.getPartitionCellKey(1));
+                    Assert.assertEquals(20L, txWriter.getPartitionSize(1));
+                    Assert.assertEquals(101L, txWriter.getPartitionNameTxn(1));
+
+                    Assert.assertEquals(day2, txWriter.getPartitionTimestampByIndex(2));
+                    Assert.assertEquals(0, txWriter.getPartitionCellKey(2));
+                    Assert.assertEquals(30L, txWriter.getPartitionSize(2));
+                    Assert.assertEquals(102L, txWriter.getPartitionNameTxn(2));
+                }
+            }
+        });
+    }
+
+    /**
+     * Plan 3, Task 3 plain/dormant guard: the 2-D {@code (ts, cellKey)} finder must resolve exactly
+     * like today's single-key lookup family for (a) a plain table (stride 4, no cellKey slot at all)
+     * and (b) a dormant composite table (stride 8, but every real cellKey is still 0 -- Plan 4 hasn't
+     * landed write routing yet). Cross-checks the new raw finder against the pre-existing, untouched
+     * public family ({@link TxReader#getPartitionIndex}, {@link TxReader#attachedPartitionsContains})
+     * for both an exact hit and a genuine miss.
+     */
+    @Test
+    public void testTwoDimensionalFinderMatchesPlainAndDormantBehavior() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, x double) timestamp(ts) partition by day"); // plain
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange"); // dormant composite
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+            final long day2 = Micros.DAY_MICROS;
+            final long day3 = 2 * Micros.DAY_MICROS;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            // (a) plain: stride 4, raw offsets are index * 4.
+            TableToken plainToken = engine.verifyTableName("p");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(plainToken).concat(TXN_FILE_NAME).$();
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(false);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day2, 20L, 101L, 0);
+
+                    Assert.assertEquals(4, txWriter.getLongsPerAttachedPartition());
+                    Assert.assertEquals(0, txWriter.findAttachedPartitionRawIndexBy(day1, 0));
+                    Assert.assertEquals(4, txWriter.findAttachedPartitionRawIndexBy(day2, 0));
+                    Assert.assertEquals(0, txWriter.getPartitionIndex(day1));
+                    Assert.assertEquals(1, txWriter.getPartitionIndex(day2));
+                    Assert.assertTrue(txWriter.attachedPartitionsContains(day1));
+
+                    // genuine miss: day3 does not exist yet on either table.
+                    Assert.assertEquals(-1, txWriter.getPartitionIndex(day3));
+                    Assert.assertFalse(txWriter.attachedPartitionsContains(day3));
+                    int missRaw = txWriter.findAttachedPartitionRawIndexBy(day3, 0);
+                    Assert.assertEquals(8, -(missRaw) - 1); // append at raw offset 8 (tail, stride 4)
+                }
+            }
+
+            // (b) dormant composite: stride 8, but every real cellKey is 0 -- must agree with (a).
+            TableToken compositeToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(compositeToken).concat(TXN_FILE_NAME).$();
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day2, 20L, 101L, 0);
+
+                    Assert.assertEquals(8, txWriter.getLongsPerAttachedPartition());
+                    Assert.assertEquals(0, txWriter.findAttachedPartitionRawIndexBy(day1, 0));
+                    Assert.assertEquals(8, txWriter.findAttachedPartitionRawIndexBy(day2, 0));
+                    Assert.assertEquals(0, txWriter.getPartitionIndex(day1));
+                    Assert.assertEquals(1, txWriter.getPartitionIndex(day2));
+                    Assert.assertTrue(txWriter.attachedPartitionsContains(day1));
+
+                    Assert.assertEquals(-1, txWriter.getPartitionIndex(day3));
+                    Assert.assertFalse(txWriter.attachedPartitionsContains(day3));
+                    int missRaw = txWriter.findAttachedPartitionRawIndexBy(day3, 0);
+                    Assert.assertEquals(16, -(missRaw) - 1); // append at raw offset 16 (tail, stride 8)
+                }
+            }
+        });
+    }
 }

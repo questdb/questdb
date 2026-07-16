@@ -191,6 +191,44 @@ public class TxReader implements Closeable, Mutable {
         return index / longsPerAttachedPartition;
     }
 
+    /**
+     * Returns the raw index of the exact {@code (ts, cellKey)} partition, or a negative insertion
+     * point using the same encoding {@link #findAttachedPartitionRawIndexByLoTimestamp} returns
+     * (that method is now a thin {@code cellKey = 0} wrapper around this one, so plain-table and
+     * dormant-composite-table callers see byte-identical results): {@code -(rawInsertionIndex) - 1},
+     * where rawInsertionIndex is the raw offset (a multiple of {@link #longsPerAttachedPartition}) at
+     * which a new record must be inserted to keep the array sorted {@code (ts ASC, cellKey ASC)}.
+     * <p>
+     * Shape mirrors {@code ColumnVersionReader.getRecordIndex}: binary-search on the primary key (ts)
+     * to the first same-ts block, then linear-scan forward within the equal-ts run comparing a
+     * secondary key (cellKey, at slot {@link #PARTITION_CELL_KEY_OFFSET} instead of a column index).
+     * Unlike that method, a miss here returns a full insertion-point encoding rather than collapsing
+     * to -1 -- the composite insert path needs to know exactly where to insert.
+     */
+    public int findAttachedPartitionRawIndexBy(long ts, int cellKey) {
+        int index = attachedPartitions.binarySearchBlock(attachedPartitionsShl, ts, Vect.BIN_SEARCH_SCAN_UP);
+        if (index < 0) {
+            // ts itself isn't present -- the insertion point binarySearchBlock already computed is
+            // correct regardless of cellKey: there's no same-ts run to disambiguate.
+            return index;
+        }
+        // ts found; `index` is the raw index of the FIRST same-ts entry (BIN_SEARCH_SCAN_UP guarantees
+        // "first of equal keys"). Scan forward across the run of equal-ts entries, comparing cellKey.
+        final int sz = attachedPartitions.size();
+        for (; index < sz && attachedPartitions.getQuick(index + PARTITION_TS_OFFSET) == ts; index += longsPerAttachedPartition) {
+            final int thisCellKey = getPartitionCellKeyByRawIndex(index);
+            if (thisCellKey == cellKey) {
+                return index;
+            }
+            if (thisCellKey > cellKey) {
+                return -(index + 1);
+            }
+        }
+        // Ran off the end of the ts run (every entry in it has a smaller cellKey) or off the end of
+        // the whole array -- either way `index` is already the correct insertion point.
+        return -(index + 1);
+    }
+
     public int getBaseOffset() {
         return baseOffset;
     }
@@ -333,10 +371,7 @@ public class TxReader implements Closeable, Mutable {
      * meaningfully reading this value; this task only establishes the accessor and stride machinery.
      */
     public int getPartitionCellKey(int partitionIndex) {
-        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION) {
-            return 0;
-        }
-        return (int) attachedPartitions.getQuick(partitionIndex * longsPerAttachedPartition + PARTITION_CELL_KEY_OFFSET);
+        return getPartitionCellKeyByRawIndex(partitionIndex * longsPerAttachedPartition);
     }
 
     public int getPartitionCount() {
@@ -908,8 +943,25 @@ public class TxReader implements Closeable, Mutable {
     }
 
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
-        // Start from the end, usually it will be last partition searched / appended
-        return attachedPartitions.binarySearchBlock(attachedPartitionsShl, ts, Vect.BIN_SEARCH_SCAN_UP);
+        // Thin cellKey=0 wrapper (Plan 3 Task 3): correct for a plain table (stride 4, one partition
+        // per ts) and for a dormant composite table (stride 8, every real cellKey is still 0 until
+        // Plan 4 lands write routing) -- both have at most one entry per ts, so this is byte-identical
+        // to the old direct binarySearchBlock call for every caller in this codebase today.
+        return findAttachedPartitionRawIndexBy(ts, 0);
+    }
+
+    /**
+     * Raw-index counterpart of {@link #getPartitionCellKey(int)} -- used by {@link
+     * #findAttachedPartitionRawIndexBy(long, int)}'s linear scan, which only ever has a raw index in
+     * hand. Same plain-table guard: stride 4 has no cellKey slot, so this never reads
+     * attachedPartitions for a plain table (slot 4 there would actually belong to the NEXT
+     * partition's timestamp).
+     */
+    int getPartitionCellKeyByRawIndex(int rawIndex) {
+        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION) {
+            return 0;
+        }
+        return (int) attachedPartitions.getQuick(rawIndex + PARTITION_CELL_KEY_OFFSET);
     }
 
     int getPartitionSquashCountByRawIndex(int indexRaw) {

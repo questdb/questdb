@@ -282,6 +282,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         insertPartitionSizeByTimestamp(attachedPartitions.size(), partitionTimestamp, size, nameTxn, cellKey);
     }
 
+    /**
+     * Test-only: the real (timestamp, cellKey)-ordered insert (Plan 3 Task 3). Unlike {@link
+     * #appendPartitionForTest}, which always raw-tail-appends, this computes the correct sorted
+     * position via {@link TxReader#findAttachedPartitionRawIndexBy} and physically inserts there,
+     * shifting later entries right -- so a test can grow a multi-cell attached-partitions list one
+     * insert at a time, in any order, and assert the resulting (ts, cellKey) layout. Production
+     * mutators still only ever pass cellKey 0 (real cellKey write-routing is Plan 4); this seam exists
+     * purely to exercise the ordering logic ahead of that.
+     */
+    public void insertPartitionForTest(long partitionTimestamp, long size, long nameTxn, int cellKey) {
+        int indexRaw = findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+        if (indexRaw > -1) {
+            throw CairoException.nonCritical().put("partition (ts, cellKey) already exists");
+        }
+        insertPartitionSizeByTimestamp(-(indexRaw + 1), partitionTimestamp, size, nameTxn, cellKey);
+    }
+
     public boolean isInsideExistingPartition(long timestamp) {
         int index = attachedPartitions.binarySearchBlock(attachedPartitionsShl, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index > -1 && index < attachedPartitions.size()) {
