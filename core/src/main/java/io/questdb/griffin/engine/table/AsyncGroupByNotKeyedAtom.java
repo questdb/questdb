@@ -169,6 +169,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     }
 
     @Override
+    @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
     public void clear() {
         ownerFunctionUpdater.updateEmpty(ownerMapValue);
         ownerMapValue.setNew(true);
@@ -279,28 +285,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
-    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
-        }
     }
 
     public boolean hasNonBatchFunctions() {
@@ -337,6 +323,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
     }
 
+    @Override
+    @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks.hasTestAcquireLatch();
+    }
+
     /**
      * Attempts to acquire a slot for the given worker thread.
      * On success, a {@link #release(int)} call must follow.
@@ -371,6 +363,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 allocator.reopen();
             }
         }
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     @Override

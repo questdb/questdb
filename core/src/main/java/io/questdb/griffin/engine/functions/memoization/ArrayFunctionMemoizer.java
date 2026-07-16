@@ -76,10 +76,16 @@ public final class ArrayFunctionMemoizer extends ArrayFunction implements Memoiz
     /**
      * Delegates rather than reporting {@link ArrayFunction}'s own {@code type} field, which nothing
      * here ever sets and which would therefore read {@code UNDEFINED}. Dimensionality is encoded in
-     * the type, so a caller that decoded it off the wrapper - as {@code dim_length()} does - would see
-     * zero dimensions and reject every index. Delegating rather than snapshotting in the constructor
-     * also keeps the answer right for a wrapped array bind variable, whose type is weak-dimensioned
-     * until a value is bound.
+     * the type, so a caller that decoded it off the wrapper would see zero dimensions and reject
+     * every index.
+     * <p>
+     * This is hardening, not a fix for a known query: the code generator only ever swaps a memoizer
+     * in for a top-level projection function, whose arguments were bound before the swap, so no
+     * argument tree can hold one - and the callers that do decode dimensionality reach the column
+     * through {@code ColumnFunction.unwrap()}, which peels memoizers off first.
+     * <p>
+     * Delegating rather than snapshotting in the constructor also keeps the answer right for a
+     * wrapped array bind variable, whose type is weak-dimensioned until a value is bound.
      */
     @Override
     public int getType() {

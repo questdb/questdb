@@ -286,6 +286,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     }
 
     @Override
+    @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
     public void clear() {
         // Clear group by functions
         Misc.clearObjList(ownerGroupByFunctions);
@@ -481,28 +487,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
-    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
-        }
     }
 
     @Override
@@ -582,6 +568,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     }
 
+    @Override
+    @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks.hasTestAcquireLatch();
+    }
+
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             return -1;
@@ -621,6 +613,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 }
             }
         }
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     public void toTop() {

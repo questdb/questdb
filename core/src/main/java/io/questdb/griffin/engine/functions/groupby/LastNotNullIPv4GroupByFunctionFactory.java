@@ -94,18 +94,16 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
             // skipped; non-null input wins when the stored value is still null or has an
             // earlier rowId. The inherited LastIPv4 override takes the max rowId and writes
             // its value unconditionally, so a trailing NULL clobbers the real value.
-            //
-            // Scan direct column addresses backwards, as the not-keyed computeBatch above does. probeBatch emits rows in
-            // ascending order, so forwards every later non-null row of a key rewrites its entry:
-            // 2048 writes for a 2048-row frame over 8 keys, against 8 backwards. Same result -
-            // only a key's highest-rowId non-null can win either way, and the isNew row is the
-            // key's first, so it is visited last and loses to what already sits in the entry.
             final long rowIdOffset = mapValue.getOffset(valueIndex);
             final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
             // Fast path: arg is a direct IPv4 column with data on the current frame.
             // Zero page address means a column top; fall through to the record-based path.
             final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
             if (argAddr != 0) {
+                // Backwards: probeBatch emits rows in ascending rowId order, so a forward scan rewrites
+                // a key's entry for every later non-null row - O(N) writes against O(K) for K keys.
+                // Same result either way: only a key's highest-rowId non-null can win, and the isNew
+                // row is the key's first, so backwards it is visited last and loses to the entry.
                 for (long i = rowCount - 1; i >= 0; i--) {
                     final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                     final long rowIndex = Map.decodeBatchRowIndex(encoded);
@@ -126,18 +124,14 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                 for (long i = 0; i < rowCount; i++) {
                     final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                     final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                    final boolean isNew = Map.isNewBatchEntry(encoded);
-                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                    final long rowId = baseRowId + rowIndex;
                     record.setRowIndex(rowIndex);
                     final int value = arg.getIPv4(record);
-                    final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
-                    if (!isNew && existingValue != Numbers.IPv4_NULL && rowId <= Unsafe.getLong(entryBase + rowIdOffset)) {
-                        continue;
-                    }
                     // Mirror computeFirst semantics on new entries (write through even for
                     // null values) so the state matches what the per-row path produces.
-                    if (value != Numbers.IPv4_NULL || isNew) {
+                    if (value != Numbers.IPv4_NULL || Map.isNewBatchEntry(encoded)) {
+                        final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                        final long rowId = baseRowId + rowIndex;
+                        final int existingValue = Unsafe.getInt(entryBase + valueColumnOffset);
                         if (existingValue == Numbers.IPv4_NULL || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
                             Unsafe.putLong(entryBase + rowIdOffset, rowId);
                             Unsafe.putInt(entryBase + valueColumnOffset, value);

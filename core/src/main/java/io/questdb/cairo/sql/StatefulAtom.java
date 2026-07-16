@@ -57,12 +57,6 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
      * The -1 sentinel keeps a test honest: an atom may hold no locks at all - an
      * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter clones no
      * per-worker filters - and asserting zero against it would pass for the wrong reason.
-     * <p>
-     * Not every {@link io.questdb.griffin.engine.PerWorkerLocks} is reachable this way.
-     * {@code griffin.engine.groupby.vect.GroupByRecordCursorFactory} holds one with no atom behind it
-     * at all - the vectorized GROUP BY does not run on a {@code PageFrameSequence} - so its reducer is
-     * invisible to a test that walks the factory tree for an atom, and its slot handling has to be
-     * covered some other way.
      *
      * @return the number of slots held, or -1 when this atom holds no per-worker locks
      */
@@ -73,25 +67,21 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
 
     /**
      * Returns how many times this atom's reducers have acquired a per-worker slot, or -1 when the
-     * atom guards no per-worker state at all. The tally only grows, so unlike
-     * {@link #getAcquiredSlotCount()} it tells a run that released every slot it took from a run
-     * where no worker took one - the owner thread reduces with its own state and acquires nothing,
-     * so both end at zero held slots.
+     * atom guards no per-worker state at all. Unlike {@link #getAcquiredSlotCount()} the tally never
+     * goes down, so it tells a run that released every slot it took from a run where no worker took
+     * one - the owner thread reduces with its own state and acquires nothing, so both end at zero
+     * held slots.
+     * <p>
+     * The tally is only kept while a latch is installed, and
+     * {@link #setTestSlotAcquireLatch(CountDownLatch)} restarts it from zero, so it counts this
+     * latch's acquisitions rather than the atom's lifetime total. Production reducers pay nothing
+     * for it.
      *
      * @return the number of slot acquisitions, or -1 when this atom holds no per-worker locks
      */
     @TestOnly
     default long getSlotAcquireCount() {
         return -1;
-    }
-
-    @TestOnly
-    default boolean isTestSlotAcquireWaitEnabled() {
-        return false;
-    }
-
-    @TestOnly
-    default void setTestSlotAcquireLatch(CountDownLatch latch) {
     }
 
     /**
@@ -103,5 +93,14 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
      * @throws SqlException when bind variable validation or any other kind of validation fails
      */
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+    }
+
+    @TestOnly
+    default boolean isTestSlotAcquireWaitEnabled() {
+        return false;
+    }
+
+    @TestOnly
+    default void setTestSlotAcquireLatch(CountDownLatch latch) {
     }
 }

@@ -328,7 +328,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         try {
             final boolean isParquetFrame = task.isParquetFrame();
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, owner, isParquetFrame, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, isParquetFrame, task.isCountOnly());
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {

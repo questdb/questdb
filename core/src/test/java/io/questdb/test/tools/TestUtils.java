@@ -925,7 +925,10 @@ public final class TestUtils {
         try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
             final StatefulAtom atom = findAtom(factory, query);
             for (int i = 0; i < 2; i++) {
-                final long acquireCount = atom.getSlotAcquireCount();
+                // The tally lives on the locks the latch installs, so it starts at zero for every
+                // execution: any acquisition below is this execution's. An atom that guards no
+                // per-worker state reports -1 and fails the assertion, which is what stops a plan
+                // that quietly stopped cloning per-worker state from passing here.
                 final CountDownLatch acquired = new CountDownLatch(1);
                 atom.setTestSlotAcquireLatch(acquired);
                 try {
@@ -942,7 +945,7 @@ public final class TestUtils {
                     assertNoSlotLeak(factory, query);
                     Assert.assertTrue(
                             "no worker acquired a slot for: " + query,
-                            atom.getSlotAcquireCount() > acquireCount
+                            atom.getSlotAcquireCount() > 0
                     );
                 } finally {
                     atom.setTestSlotAcquireLatch(null);

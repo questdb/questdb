@@ -30,15 +30,22 @@ import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class AdaptiveWorkStealingStrategyTest {
 
     @Test
     public void testTestHookSelectsInstrumentedStrategy() {
-        for (java.lang.reflect.Field field : AdaptiveWorkStealingStrategy.class.getDeclaredFields()) {
-            Assert.assertNotEquals(StatefulAtom.class, field.getType());
-            Assert.assertNotEquals(boolean.class, field.getType());
+        // The production strategy carries no per-atom test state: the hook lives on the
+        // instrumented subclass that of() mints only for an atom that asks for one. Checked by
+        // field type rather than field count, so an unrelated field can still be added.
+        for (Field field : AdaptiveWorkStealingStrategy.class.getDeclaredFields()) {
+            Assert.assertNotEquals(
+                    "production strategy must hold no atom reference, found: " + field.getName(),
+                    StatefulAtom.class,
+                    field.getType()
+            );
         }
 
         final AdaptiveWorkStealingStrategy strategy = new AdaptiveWorkStealingStrategy(0, 0);

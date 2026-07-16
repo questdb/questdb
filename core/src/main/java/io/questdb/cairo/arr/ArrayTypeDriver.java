@@ -87,7 +87,8 @@ import org.jetbrains.annotations.Nullable;
  *           shape of an N-dimensional array is exactly N ints starting at the entry's offset.
  *           Readers that walk the shape by hand rely on this - see
  *           {@code PageFrameMemoryRecord.getArrayDimLen0} and {@code getArrayDouble1d2d0}.
- *         * Each dimension size is a 32-bit int, but uses only 27 bits.
+ *         * Each dimension size is a 32-bit int, but uses only 28 bits: {@link ArrayView#DIM_MAX_LEN}
+ *           caps it at (1 << 28) - 1.
  *     * Padding:
  *         * enough padding to satisfy the datatype alignment requirements.
  *         * e.g. for 64-bit numeric types, the following section starts on an

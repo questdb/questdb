@@ -354,6 +354,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     }
 
     @Override
+    @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
     public void clear() {
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
@@ -587,28 +593,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
-    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
-        }
     }
 
     public @Nullable TimestampDriver getTimestampDriver() {
@@ -762,6 +748,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return skipAggregation;
     }
 
+    @Override
+    @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks.hasTestAcquireLatch();
+    }
+
     public boolean isVectorized() {
         return vectorized;
     }
@@ -810,6 +802,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     public void setSkipAggregation(boolean skipAggregation) {
         this.skipAggregation = skipAggregation;
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {

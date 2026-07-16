@@ -74,11 +74,11 @@ import org.junit.Test;
  * {@code assertFixtureColumnTypes} pins every column's type, so a cast that silently widens again
  * fails here rather than turning a type's case into a duplicate of another's.
  * <p>
- * Scope - this test exercises the merge dest-null guard only. For last_not_null that guard is the
- * defect fixed on this branch (the merge previously compared rowId alone), so the pre-fix code
- * drops values here on essentially every run. For first_not_null the guard already existed, so
- * these cases are a regression guard that it stays in place - deleting the first_not_null dest-null
- * guard makes them fail with the same signature. They do NOT cover the separate computeNext
+ * Scope - this test exercises the merge dest-null guard only. Both the first_not_null and the
+ * last_not_null guard predate this branch: they landed in #7224, and every merge() here is
+ * unchanged from it. These cases are therefore a regression guard that the guards stay in place -
+ * deleting either dest-null guard makes them fail with the same signature, values dropped on
+ * essentially every run. They do NOT cover the separate computeNext
  * ordering defect (a slot receiving a key's rows out of rowId order). The min-rowId merge corrects
  * a single slot's ordering error unless two non-null rows of one key happen to land in the same
  * slot in reverse order, a scheduling window that cannot be forced from SQL; a count-based,

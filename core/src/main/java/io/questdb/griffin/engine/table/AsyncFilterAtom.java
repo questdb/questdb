@@ -57,16 +57,16 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
     private final ObjList<Function> perWorkerFilters;
-    private PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
-    private final ObjList<SelectivityStats> threadSafeSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    private final ObjList<SelectivityStats> threadSafeSelectivityStats;
+    private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
-    private IntHashSet lateMatSkipColumnIndexes;
+    private PerWorkerLocks perWorkerLocks;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -87,17 +87,30 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             for (int i = 0; i < slotCount; i++) {
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
+            // Only the query owner reaches the thread-safe stats once per-worker filters exist:
+            // maybeAcquireFilter() hands every other thread a slot, and a slot reads its own bucket.
+            // So the owner bucket is the whole list, and getSelectivityStats() folds onto it.
+            threadSafeSelectivityStats = new ObjList<>(1);
+            threadSafeSelectivityStats.extendAndSet(0, new SelectivityStats());
         } else {
             perWorkerLocks = null;
             perWorkerSelectivityStats = null;
-        }
-        threadSafeSelectivityStats = new ObjList<>(workerCount + 1);
-        for (int i = 0; i <= workerCount; i++) {
-            threadSafeSelectivityStats.extendAndSet(i, new SelectivityStats());
+            // No slots to hand out, so every thread lands here: one bucket per reducing worker plus
+            // a trailing one for workerId == -1.
+            threadSafeSelectivityStats = new ObjList<>(workerCount + 1);
+            for (int i = 0; i <= workerCount; i++) {
+                threadSafeSelectivityStats.extendAndSet(i, new SelectivityStats());
+            }
         }
         this.columnTypes = columnTypes;
         this.preTouchEnabled = preTouchEnabled;
         this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
+    }
+
+    @Override
+    @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
     }
 
     @Override
@@ -135,47 +148,19 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return filterUsedColumnIndexes;
     }
 
-    public MemoryTracker getMemoryTracker() {
-        return memoryTracker;
-    }
-
     public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
         final IntHashSet skipSet = lateMatSkipColumnIndexes;
         return skipSet != null ? skipSet : filterUsedColumnIndexes;
     }
 
-    private SelectivityStats getSelectivityStats(int slotId, int workerId) {
-        if (slotId == -1 || perWorkerSelectivityStats == null) {
-            final int statsId = workerId > -1 ? workerId : threadSafeSelectivityStats.size() - 1;
-            return threadSafeSelectivityStats.getQuick(statsId);
-        }
-        return perWorkerSelectivityStats.getQuick(slotId);
-    }
-
-    @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks != null ? perWorkerLocks.getSlotAcquireCount() : -1;
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
-        }
     }
 
     @Override
@@ -191,6 +176,12 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
                 executionContext.setCloneSymbolTables(current);
             }
         }
+    }
+
+    @Override
+    @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
     }
 
     /**
@@ -330,7 +321,15 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, int workerId, boolean owner, boolean isParquetFrame, boolean isCountOnly) {
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        if (perWorkerLocks != null) {
+            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
+        }
+    }
+
+    public boolean shouldUseLateMaterialization(int slotId, int workerId, boolean isParquetFrame, boolean isCountOnly) {
         if (!isParquetFrame) {
             return false;
         }
@@ -340,10 +339,10 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (isCountOnly) {
             return true;
         }
-        // Foreign query-owner threads all have workerId -1 and may steal concurrently.
-        // They cannot share mutable statistics, so use the conservative first-sample choice.
-        return slotId == -1 && workerId == -1 && !owner
-                || getSelectivityStats(slotId, workerId).shouldUseLateMaterialization();
+        // Foreign query-owner threads all have workerId -1 and may steal concurrently, so
+        // updateSelectivityStats() keeps them out of the owner bucket. Reading it is still safe:
+        // the owner is the only writer, and a stale sample only skews a heuristic.
+        return getSelectivityStats(slotId, workerId).shouldUseLateMaterialization();
     }
 
     @Override
@@ -361,4 +360,20 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
+    private SelectivityStats getSelectivityStats(int slotId, int workerId) {
+        if (slotId == -1 || perWorkerSelectivityStats == null) {
+            // The reducing pool is sized independently of this atom, so the incoming worker id can
+            // be >= workerCount. Fold it into [0, workerCount), the same way PerWorkerLocks does.
+            // The trailing bucket is reserved for workerId == -1.
+            final int workerBuckets = threadSafeSelectivityStats.size() - 1;
+            final int statsId;
+            if (workerId > -1 && workerBuckets > 0) {
+                statsId = workerId >= workerBuckets ? workerId % workerBuckets : workerId;
+            } else {
+                statsId = workerBuckets;
+            }
+            return threadSafeSelectivityStats.getQuick(statsId);
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
+    }
 }

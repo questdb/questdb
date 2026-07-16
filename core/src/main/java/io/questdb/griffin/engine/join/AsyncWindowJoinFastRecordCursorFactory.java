@@ -363,17 +363,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final Function joinFilter = atom.getJoinFilter(slotId);
 
-        // clearTemporaryData() sits inside the try that releases the slot, as it does in the five
-        // filterAndAggregate* reducers below and in the sixteen of the general factory. It cannot
-        // throw today - chunks.isOpen() guards the only realloc, which only shrinks the temporary
-        // allocator's chunk index back to its initial capacity. A shrinking realloc passes a negative
-        // delta to Unsafe's alloc-limit check, which skips it - so this is structural rather than a
-        // fix for a live leak, and the next throwing call added here is safe by construction. A slot
-        // leaked here would be permanent:
-        // PerWorkerLocks has no reset and the atom belongs to the factory, so once every slot had
-        // leaked, each later execution of the cached statement would spin in acquireSlot for a slot
-        // nobody will release. (The getters between the acquire and this try are ObjList lookups and
-        // cannot throw, so they can stay above it; the finally needs none of them.)
+        // The slot is held from here on. clearTemporaryData() and every of() below must sit inside
+        // the try that releases it: PerWorkerLocks has no reset and the atom belongs to the factory,
+        // so a slot leaked here is lost for as long as the factory stays in the SQL cache, and once
+        // every slot has leaked each later execution spins in acquireSlot for a slot nobody will
+        // release. The getters above the try are ObjList lookups and cannot throw.
         try {
             atom.clearTemporaryData(slotId);
             final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -524,7 +518,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
-        // See aggregate() for why the slot must be held across the calls below.
         try {
             atom.clearTemporaryData(slotId);
             final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -676,7 +669,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final WindowJoinPrevailingCache prevailingCache = atom.getPrevailingCache(slotId);
         final IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
-        // See aggregate() for why the slot must be held across the calls below.
         try {
             atom.clearTemporaryData(slotId);
             final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -881,7 +873,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        // See aggregate() for why the slot must be held across the calls below.
         try {
             atom.clearTemporaryData(slotId);
             final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);
@@ -1065,7 +1056,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        // See aggregate() for why the slot must be held across the calls below.
         try {
             atom.clearTemporaryData(slotId);
             final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);

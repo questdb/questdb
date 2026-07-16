@@ -4328,18 +4328,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT key, " +
                         " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
                         " first(ashort) ashort, first(ageoshort) ageoshort, first(achar) achar, " +
-                        " first(anint) anint, first(anipv4) anipv4, first_not_null(anipv4) anipv4_nn, first(ageoint) ageoint, first(afloat) afloat, " +
+                        " first(anint) anint, first(anipv4) anipv4, first(ageoint) ageoint, first(afloat) afloat, " +
                         " first(along) along, first(adouble) adouble, first(adate) adate, first(ts) ts, first(ageolong) ageolong, " +
                         " first(asymbol) asymbol, first(astring) astring, " +
                         " first(auuid) auuid " +
                         "FROM tab ORDER BY key DESC",
                 """
-                        key\taboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tanipv4\tanipv4_nn\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid
-                        k4\tfalse\t29\t1100\t664\t000101011000\tI\t1506802640\t66.9.11.179\t66.9.11.179\t1011000011101011\t0.625966\t-5024542231726589509\tnull\t2015-08-03T15:58:03.335Z\t1970-01-05T15:31:40.000000Z\t01011101101001101000100100101110\t\tTKVVSJ\t8e4a7f66-1df6-432b-af17-1b3f06f6387d
-                        k3\ttrue\t25\t1100\t1013\t001111001001\tC\t-1269042121\t184.92.27.200\t184.92.27.200\t0101011010000100\t0.9566236\t-3214230645884399728\t0.5406709846540508\t2015-11-11T12:56:57.854Z\t1970-01-05T15:23:20.000000Z\t11111100110100011011101011101011\tPEHN\tLYXWCKYLSU\t78c594c4-9699-4885-aa18-96d0ad3419d2
-                        k2\tfalse\t9\t0101\t279\t011101100011\tL\t1978144263\t171.117.213.66\t171.117.213.66\t0111100011010111\tnull\t-7439145921574737517\t0.7763904674818695\t2015-09-18T13:48:49.642Z\t1970-01-05T15:15:00.000000Z\t01010100000001000011010111010101\tCPSW\tOOZZV\t9b27eba5-e9cf-41e2-9660-300cea7db540
-                        k1\ttrue\t5\t1100\t788\t001111011001\tT\t-85170055\t149.34.19.60\t149.34.19.60\t0010110111110001\t0.87567717\t8416773233910814357\t0.8799634725391621\t2015-08-17T21:12:06.116Z\t1970-01-05T15:06:40.000000Z\t10110001001100000010111011111011\tCPSW\tDXYSBEO\t4c009450-0fbf-4dfe-b6fb-2001fe5dfb09
-                        k0\tfalse\t13\t0000\t165\t000000110100\tO\t-640305320\t22.51.83.99\t22.51.83.99\t1011000000001111\t0.9918093\t-5315599072928175674\t0.32424562653969957\t2015-02-10T08:56:03.707Z\t1970-01-05T15:40:00.000000Z\t11011011111111001010110010100110\tCPSW\t\ta1d06d6e-b3a5-4079-8972-5663d8da9768
+                        key\taboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tanipv4\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid
+                        k4\tfalse\t29\t1100\t664\t000101011000\tI\t1506802640\t66.9.11.179\t1011000011101011\t0.625966\t-5024542231726589509\tnull\t2015-08-03T15:58:03.335Z\t1970-01-05T15:31:40.000000Z\t01011101101001101000100100101110\t\tTKVVSJ\t8e4a7f66-1df6-432b-af17-1b3f06f6387d
+                        k3\ttrue\t25\t1100\t1013\t001111001001\tC\t-1269042121\t184.92.27.200\t0101011010000100\t0.9566236\t-3214230645884399728\t0.5406709846540508\t2015-11-11T12:56:57.854Z\t1970-01-05T15:23:20.000000Z\t11111100110100011011101011101011\tPEHN\tLYXWCKYLSU\t78c594c4-9699-4885-aa18-96d0ad3419d2
+                        k2\tfalse\t9\t0101\t279\t011101100011\tL\t1978144263\t171.117.213.66\t0111100011010111\tnull\t-7439145921574737517\t0.7763904674818695\t2015-09-18T13:48:49.642Z\t1970-01-05T15:15:00.000000Z\t01010100000001000011010111010101\tCPSW\tOOZZV\t9b27eba5-e9cf-41e2-9660-300cea7db540
+                        k1\ttrue\t5\t1100\t788\t001111011001\tT\t-85170055\t149.34.19.60\t0010110111110001\t0.87567717\t8416773233910814357\t0.8799634725391621\t2015-08-17T21:12:06.116Z\t1970-01-05T15:06:40.000000Z\t10110001001100000010111011111011\tCPSW\tDXYSBEO\t4c009450-0fbf-4dfe-b6fb-2001fe5dfb09
+                        k0\tfalse\t13\t0000\t165\t000000110100\tO\t-640305320\t22.51.83.99\t1011000000001111\t0.9918093\t-5315599072928175674\t0.32424562653969957\t2015-02-10T08:56:03.707Z\t1970-01-05T15:40:00.000000Z\t11011011111111001010110010100110\tCPSW\t\ta1d06d6e-b3a5-4079-8972-5663d8da9768
                         """
         );
     }
@@ -4433,18 +4433,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT key, " +
                         " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
                         " last(ashort) ashort, last(ageoshort) ageoshort, last(achar) achar, " +
-                        " last(anint) anint, last(anipv4) anipv4, last_not_null(anipv4) anipv4_nn, last(ageoint) ageoint, last(afloat) afloat, " +
+                        " last(anint) anint, last(anipv4) anipv4, last(ageoint) ageoint, last(afloat) afloat, " +
                         " last(along) along, last(adouble) adouble, last(adate) adate, last(ts) ts, last(ageolong) ageolong, " +
                         " last(asymbol) asymbol, last(astring) astring, " +
                         " last(auuid) auuid " +
                         "FROM tab ORDER BY key DESC",
                 """
-                        key\taboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tanipv4\tanipv4_nn\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid
-                        k4\tfalse\t31\t0101\t330\t110110100011\tF\t-848336394\t235.231.19.15\t235.231.19.15\t0110111101100110\t0.25648606\t-9157587264521797613\t0.21377964990604514\t2015-02-01T20:25:30.629Z\t1970-01-28T18:23:20.000000Z\t01011011001110110000010000101101\tCPSW\tMPVGXH\t18362dcf-ef83-4aab-ac47-04e5093bf747
-                        k3\tfalse\t38\t1010\t87\t110111011001\tJ\t1901541154\t37.251.146.2\t37.251.146.2\t1001000010010001\tnull\t-5509931004723445033\t0.023379956696789717\t2015-02-12T10:52:41.010Z\t1970-01-28T18:15:00.000000Z\t11010110001110011010110000001111\tPEHN\tCSXKOBEGGNBZMI\t6e80006a-871f-417a-b33a-82ae2a7b83e8
-                        k2\ttrue\t8\t0110\t556\t101001101101\tS\t1284672871\t123.157.83.21\t123.157.83.21\t0000001101111100\t6.6161156E-4\t9154573717374787696\t0.151734552716993\t2015-02-06T11:08:08.607Z\t1970-01-28T18:06:40.000000Z\t00011101011001001010001110011010\t\tPWKZMYWJ\tcd1c6b4b-1b2d-4324-9477-dc8aeb3e13f3
-                        k1\ttrue\t17\t1100\t147\t011101001110\tI\t1516951853\t88.98.63.55\t88.98.63.55\t1010001110110001\t0.58338606\t-6618178923628468143\t0.1996073004071821\t2015-05-23T20:25:36.412Z\t1970-01-28T17:58:20.000000Z\t11001011111011110001101111100000\tPEHN\tFBGWS\t232fceaa-4da1-4f63-8f6d-0b7977b184bf
-                        k0\tfalse\t28\t0100\t859\t111101110010\tY\t1033747429\t210.8.117.61\t210.8.117.61\t0100111000110011\t0.030083895\t6812734169481155056\t0.15322992873721464\t2015-06-04T13:11:05.363Z\t1970-01-28T18:31:40.000000Z\t01001000100000110011110011111100\tHYRX\t\t8055fd98-3b39-4806-9dbf-5a050468a62a
+                        key\taboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tanipv4\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid
+                        k4\tfalse\t31\t0101\t330\t110110100011\tF\t-848336394\t235.231.19.15\t0110111101100110\t0.25648606\t-9157587264521797613\t0.21377964990604514\t2015-02-01T20:25:30.629Z\t1970-01-28T18:23:20.000000Z\t01011011001110110000010000101101\tCPSW\tMPVGXH\t18362dcf-ef83-4aab-ac47-04e5093bf747
+                        k3\tfalse\t38\t1010\t87\t110111011001\tJ\t1901541154\t37.251.146.2\t1001000010010001\tnull\t-5509931004723445033\t0.023379956696789717\t2015-02-12T10:52:41.010Z\t1970-01-28T18:15:00.000000Z\t11010110001110011010110000001111\tPEHN\tCSXKOBEGGNBZMI\t6e80006a-871f-417a-b33a-82ae2a7b83e8
+                        k2\ttrue\t8\t0110\t556\t101001101101\tS\t1284672871\t123.157.83.21\t0000001101111100\t6.6161156E-4\t9154573717374787696\t0.151734552716993\t2015-02-06T11:08:08.607Z\t1970-01-28T18:06:40.000000Z\t00011101011001001010001110011010\t\tPWKZMYWJ\tcd1c6b4b-1b2d-4324-9477-dc8aeb3e13f3
+                        k1\ttrue\t17\t1100\t147\t011101001110\tI\t1516951853\t88.98.63.55\t1010001110110001\t0.58338606\t-6618178923628468143\t0.1996073004071821\t2015-05-23T20:25:36.412Z\t1970-01-28T17:58:20.000000Z\t11001011111011110001101111100000\tPEHN\tFBGWS\t232fceaa-4da1-4f63-8f6d-0b7977b184bf
+                        k0\tfalse\t28\t0100\t859\t111101110010\tY\t1033747429\t210.8.117.61\t0100111000110011\t0.030083895\t6812734169481155056\t0.15322992873721464\t2015-06-04T13:11:05.363Z\t1970-01-28T18:31:40.000000Z\t01001000100000110011110011111100\tHYRX\t\t8055fd98-3b39-4806-9dbf-5a050468a62a
                         """
         );
     }

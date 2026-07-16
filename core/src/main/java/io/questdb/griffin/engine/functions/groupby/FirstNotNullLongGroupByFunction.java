@@ -98,16 +98,12 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final boolean isNew = Map.isNewBatchEntry(encoded);
-                final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
-                final long rowId = baseRowId + rowIndex;
                 record.setRowIndex(rowIndex);
                 final long value = arg.getLong(record);
-                final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
-                if (!isNew && existingValue != Numbers.LONG_NULL && rowId >= Unsafe.getLong(entryBase + rowIdOffset)) {
-                    continue;
-                }
-                if (value != Numbers.LONG_NULL || isNew) {
+                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                    final long rowId = baseRowId + rowIndex;
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
                     if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
                         Unsafe.putLong(entryBase + rowIdOffset, rowId);
                         Unsafe.putLong(entryBase + valueColumnOffset, value);

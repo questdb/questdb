@@ -3528,22 +3528,18 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testNullArraySingletonSurvivesConsumerClose() throws Exception {
         assertMemoryLeak(() -> {
+            // The singleton is a BorrowedArray, whose close() is a no-op. A DirectArray would have
+            // gone to UNDEFINED here and failed the type assertion below.
             final ArrayView first = NullConstant.NULL.getArray(null);
-            try {
-                Assert.assertEquals(ColumnType.NULL, first.getType());
-                first.close();
+            Assert.assertEquals(ColumnType.NULL, first.getType());
+            first.close();
 
-                final ArrayView second = NullConstant.NULL.getArray(null);
-                Assert.assertSame(first, second);
-                Assert.assertEquals(ColumnType.NULL, second.getType());
-                Assert.assertEquals(0, second.getDimCount());
-                Assert.assertEquals(0, second.getCardinality());
-                Assert.assertEquals(0, second.getFlatViewLength());
-            } finally {
-                if (first instanceof DirectArray directArray) {
-                    directArray.ofNull();
-                }
-            }
+            final ArrayView second = NullConstant.NULL.getArray(null);
+            Assert.assertSame(first, second);
+            Assert.assertEquals(ColumnType.NULL, second.getType());
+            Assert.assertEquals(0, second.getDimCount());
+            Assert.assertEquals(0, second.getCardinality());
+            Assert.assertEquals(0, second.getFlatViewLength());
         });
     }
 

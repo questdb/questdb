@@ -110,6 +110,11 @@ public class PerWorkerLocks {
         throw CairoException.nonCritical().put("query aborted").setInterruption(true);
     }
 
+    @TestOnly
+    public boolean awaitTestAcquire() {
+        return true;
+    }
+
     /**
      * Returns the number of slots currently held. Every acquired slot must be released, so this is
      * zero whenever no worker is inside a locked section. A non-zero count once all workers are done
@@ -132,6 +137,9 @@ public class PerWorkerLocks {
      * {@link #getAcquiredSlotCount()} this tally never goes down, so it tells a run where every
      * worker released what it took from a run where no worker took a slot at all - both hold zero
      * at the end.
+     * <p>
+     * Only {@link #withTestAcquireLatch(CountDownLatch)}'s instance counts; acquireSlot() keeps no
+     * tally, so the tally costs production reducers nothing and this base always reports zero.
      */
     @TestOnly
     public long getSlotAcquireCount() {
@@ -147,11 +155,6 @@ public class PerWorkerLocks {
         if (slot > -1) {
             locks.set(INTS_PER_SLOT * slot, 0);
         }
-    }
-
-    @TestOnly
-    public boolean awaitTestAcquire() {
-        return true;
     }
 
     @TestOnly

@@ -111,7 +111,11 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
      * Returns -1 for any other argument, which then takes the {@code ArrayView} route.
      */
     private static int arrayColumnIndex(Function arrayArg) {
-        return arrayArg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
+        // unwrap() rather than a bare instanceof: it peels the memoizer wrappers the code generator
+        // inserts around a projection referenced more than once, which a bare check would send down
+        // the slow ArrayView route.
+        final ColumnFunction cf = ColumnFunction.unwrap(arrayArg);
+        return cf != null ? cf.getColumnIndex() : -1;
     }
 
     private static class ConstFunc extends IntFunction implements UnaryFunction {
@@ -232,6 +236,12 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
             // every index. arrayColumnType above stays a snapshot because it is only read on the
             // arrayColumnIndex >= 0 fast path, where the arg is a plain column whose type is final.
             this.dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
+            // getInt()'s fast path hands dim to an unchecked shape read, so it may only run once dim
+            // has been bounds-checked against a real dimensionality. decodeWeakArrayDimensionality
+            // yields -1 for weak dims and 0 for a NULL type, either of which disables that check - so
+            // the fast path is only sound while a plain array column always decodes to dims >= 1.
+            assert arrayColumnIndex < 0 || dims > 0
+                    : "array column with no concrete dimensionality: " + ColumnType.nameOf(arrayArg.getType());
         }
 
         @Override

@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
 import io.questdb.griffin.engine.table.SelectedRecord;
+import io.questdb.griffin.engine.union.UnionRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -96,21 +97,6 @@ public class ArrayAccessorForwardingTest {
     }
 
     @Test
-    public void testMultiHorizonJoinRecordForwards() {
-        final MultiHorizonJoinRecord record = new MultiHorizonJoinRecord(1);
-        record.init(
-                new int[]{MultiHorizonJoinRecord.SOURCE_MASTER, MultiHorizonJoinRecord.SOURCE_SLAVE_BASE, MultiHorizonJoinRecord.SOURCE_SEQUENCE},
-                new int[]{2, 3, 0}
-        );
-        final ObjList<Record> slaves = new ObjList<>();
-        slaves.add(new DirectOnlyArrayRecord(3));
-        record.of(new DirectOnlyArrayRecord(2), 0, 0, slaves);
-        assertForwards(record);
-        assertForwards(record, 1);
-        assertNullSource(record, 2);
-    }
-
-    @Test
     public void testMaterializedRecordForwards() throws Exception {
         final Class<?> recordClass = Class.forName("io.questdb.griffin.engine.orderby.MaterializedRecord");
         final Constructor<?> constructor = recordClass.getDeclaredConstructor();
@@ -129,9 +115,34 @@ public class ArrayAccessorForwardingTest {
     }
 
     @Test
+    public void testMultiHorizonJoinRecordForwards() {
+        final MultiHorizonJoinRecord record = new MultiHorizonJoinRecord(1);
+        record.init(
+                new int[]{MultiHorizonJoinRecord.SOURCE_MASTER, MultiHorizonJoinRecord.SOURCE_SLAVE_BASE, MultiHorizonJoinRecord.SOURCE_SEQUENCE},
+                new int[]{2, 3, 0}
+        );
+        final ObjList<Record> slaves = new ObjList<>();
+        slaves.add(new DirectOnlyArrayRecord(3));
+        record.of(new DirectOnlyArrayRecord(2), 0, 0, slaves);
+        assertForwards(record);
+        assertForwards(record, 1);
+        assertNullSource(record, 2);
+    }
+
+    @Test
+    public void testSelectedRecordForwards() {
+        // A non-identity cross index: the projection's column 0 is the base's column 2, so an
+        // override that forwarded the raw column index would read the wrong column.
+        final IntList crossIndex = new IntList();
+        crossIndex.add(2);
+        final SelectedRecord record = new SelectedRecord(crossIndex);
+        record.of(new DirectOnlyArrayRecord(2));
+        assertForwards(record);
+    }
+
+    @Test
     public void testUnionRecordForwardsBothBranches() {
-        final io.questdb.griffin.engine.union.UnionRecord record =
-                new io.questdb.griffin.engine.union.UnionRecord();
+        final UnionRecord record = new UnionRecord();
         record.of(new DirectOnlyArrayRecord(0), new DirectOnlyArrayRecord(0));
         assertForwards(record);
         record.setAb(false);
@@ -152,17 +163,6 @@ public class ArrayAccessorForwardingTest {
         of.invoke(record, new DirectOnlyArrayRecord(2), new DirectOnlyArrayRecord(3), 0L);
         assertForwards(record);
         assertForwards(record, 1);
-    }
-
-    @Test
-    public void testSelectedRecordForwards() {
-        // A non-identity cross index: the projection's column 0 is the base's column 2, so an
-        // override that forwarded the raw column index would read the wrong column.
-        final IntList crossIndex = new IntList();
-        crossIndex.add(2);
-        final SelectedRecord record = new SelectedRecord(crossIndex);
-        record.of(new DirectOnlyArrayRecord(2));
-        assertForwards(record);
     }
 
     private static void assertForwards(Record record) {

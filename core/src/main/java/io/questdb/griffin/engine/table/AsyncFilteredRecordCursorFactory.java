@@ -303,7 +303,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         // a slot leaked here would be lost for as long as the factory stayed in the SQL cache, and
         // once every slot had leaked each later execution would spin in acquireSlot forever.
         try {
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, owner, isParquetFrame, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, isParquetFrame, task.isCountOnly());
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {

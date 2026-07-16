@@ -241,6 +241,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     @Override
+    @TestOnly
+    public boolean awaitTestSlotAcquire() {
+        return perWorkerLocks.awaitTestAcquire();
+    }
+
+    @Override
     public void clear() {
         shardingCtx.clear();
         Misc.clearObjList(ownerGroupByFunctions);
@@ -413,28 +419,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
-    @TestOnly
     public long getSlotAcquireCount() {
         return perWorkerLocks.getSlotAcquireCount();
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
-        }
     }
 
     @Override
@@ -460,6 +446,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public boolean isSharded() {
         return shardingCtx.isSharded();
+    }
+
+    @Override
+    @TestOnly
+    public boolean isTestSlotAcquireWaitEnabled() {
+        return perWorkerLocks.hasTestAcquireLatch();
     }
 
     /**
@@ -507,6 +499,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             groupByFunctions.getQuick(i).resetStats();
         }
+    }
+
+    @Override
+    @TestOnly
+    public void setTestSlotAcquireLatch(CountDownLatch latch) {
+        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     @Override

@@ -97,11 +97,17 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                     execute(compiler, "CREATE TABLE tab (k SYMBOL, a DOUBLE[][], d INT)", ctx);
                     execute(
                             compiler,
+                            // Row 0 carries the only in-bounds dim, so first_not_null takes it and
+                            // rows 1 and 2 lose. Their args must still be evaluated: a batched path
+                            // that skipped losing rows would swallow the out-of-bounds error. The
+                            // last_not_null half cannot pin that - the record-based path scans
+                            // forward, so every row outranks the stored one and none of them lose -
+                            // and rides along as an error-propagation check.
                             """
                                     INSERT INTO tab VALUES
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 2),
                                         ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 3),
-                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 5),
-                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 2)
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 5)
                                     """,
                             ctx
                     );
