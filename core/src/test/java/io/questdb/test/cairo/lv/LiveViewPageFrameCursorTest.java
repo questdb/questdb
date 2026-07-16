@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -42,13 +43,16 @@ import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -145,6 +149,39 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                     final LongList served = drainTimestamps(cursor, metadataOf(identityTierColumns()));
                     assertTimestamps(served, 1, 14);
                     Assert.assertEquals("the frame above the seam must never be pulled", 1, base.nextCalls);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionScopedWalkServesTheDiskTierOnly() throws Exception {
+        // toPartition() scopes the walk to one of the LV table's disk partitions, which
+        // drops the tier out of the read until the next toTop(). The slot is not a
+        // partition of that table, so there is nothing it could contribute to a walk of
+        // one - and the caller (ConcurrentTimeFrameState, driving a WINDOW / HORIZON JOIN
+        // slave) has already sized its frame model from the reader's per-partition row
+        // counts, so a surprise extra frame corrupts it rather than enriching it.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 12)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // Slot holds disk rows [8, 12) as overlap plus 2 lead rows (ts 13, 14).
+                fillSlot(tier, slotIdx, disk, 6, 2);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(diskCursor(disk, identityTierColumns(), 8, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+
+                    cursor.toPartition(0);
+                    // Every disk row, and not one lead row: 12, not 14. The routed walk
+                    // below is the one that reaches the lead.
+                    assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 12);
+
+                    // toTop() ends the scoped walk, so the cursor routes again.
+                    cursor.toTop();
+                    assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 14);
                 }
             }
         });
@@ -598,7 +635,10 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     // through {@code projection}, as the real cursor resolves through its columnIndexes.
     // Keying by storage column instead would quietly model an identity projection and let
     // a pruned-projection test pass without exercising the mapping at all.
-    private static class TestDiskPageFrameCursor implements PageFrameCursor {
+    // <p>
+    // It models the LV table as a SINGLE partition (every frame reports partition index 0),
+    // which is all toPartition() needs to be exercised.
+    private static class TestDiskPageFrameCursor implements TablePageFrameCursor {
         private final int columnCount;
         private final ColumnMapping columnMapping = new ColumnMapping();
         private final int[] frameHis;
@@ -658,6 +698,14 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
+        public TableReader getTableReader() {
+            // No table behind the stub. The cursor under test only delegates this on the
+            // partition-scoped path, where nothing reads it; the routing fence, which does,
+            // runs in the factory against a real scan.
+            return null;
+        }
+
+        @Override
         public boolean isExternal() {
             return false;
         }
@@ -682,6 +730,11 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long size() {
             return store.rowCount();
         }
@@ -689,6 +742,13 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         @Override
         public boolean supportsSizeCalculation() {
             return true;
+        }
+
+        @Override
+        public void toPartition(int partitionIndex) {
+            // Single partition, so a scoped walk restarts at the first frame.
+            Assert.assertEquals(0, partitionIndex);
+            nextFrame = 0;
         }
 
         @Override

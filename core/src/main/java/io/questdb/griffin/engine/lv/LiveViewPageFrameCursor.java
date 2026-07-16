@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.lv;
 
 import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -33,9 +34,12 @@ import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -81,8 +85,17 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * The cursor takes ownership of the base cursor and the tier pin in {@link #of},
  * first thing, so any later failure releases both through {@link #close()}.
+ * <p>
+ * <b>Why it is a {@link TablePageFrameCursor}.</b> Both tiers belong to the LV's own
+ * table, but the reason is mechanical: consumers that treat a frame source as a table -
+ * a WINDOW / HORIZON JOIN slave, the {@code SelectedRecordCursorFactory} and
+ * {@code ExtraNullColumnCursorFactory} projections - cast what
+ * {@link LiveViewRecordCursorFactory#getPageFrameCursor} hands back to this interface.
+ * The table-shaped members delegate to the base cursor, which the routing fence has
+ * already established is a plain table scan. See {@link #toPartition} for the one that
+ * carries a behavioural decision.
  */
-public class LiveViewPageFrameCursor implements PageFrameCursor {
+public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // Partition index the synthetic slot frame reports. Its only consumer is the
     // frame's rowIdOffset (PageFrameAddressCache.add -> Rows.toRowID(partitionIndex,
     // partitionLo)), which in turn feeds PageFrameMemoryRecord.getUpdateRowId() alone -
@@ -103,13 +116,16 @@ public class LiveViewPageFrameCursor implements PageFrameCursor {
     // slot's columns through this indirection. Copied in of() so the cursor owns a
     // snapshot the caller cannot mutate underneath it.
     private final IntList tierColumns = new IntList();
-    private PageFrameCursor base;
+    private TablePageFrameCursor base;
     // Disk rows this cursor serves: the scan's leading rows, strictly below the seam.
     // base.size() - leadStart, snapshotted in of().
     private long diskRoutedRows;
     // Disk rows covered by the frames returned so far.
     private long diskRowsEmitted;
     private boolean isDiskExhausted;
+    // Set by toPartition(), cleared by toTop(): the walk is scoped to one disk partition,
+    // so next() hands straight to the base and the tier stays out of it. See toPartition().
+    private boolean isPartitionScoped;
     private boolean isSlotEmitted;
     private LiveViewInMemoryBuffer slot;
     private int slotIdx;
@@ -188,8 +204,23 @@ public class LiveViewPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public TableReader getTableReader() {
+        // The LV's on-disk tier. The in-mem slot has no reader of its own, and the only
+        // consumers that ask are the partition-scoped ones - see toPartition().
+        return base.getTableReader();
+    }
+
+    @Override
     public boolean hasActivePushdownFilter() {
         return base.hasActivePushdownFilter();
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        // Always false while routing: the fence admits no interval-filtered scan, since a
+        // filtered disk band next to the unfiltered slot would over-return the excluded
+        // rows. Delegate anyway rather than hard-code the fence's conclusion here.
+        return base.hasIntervalFilter();
     }
 
     @Override
@@ -205,6 +236,10 @@ public class LiveViewPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next(long skipTarget) {
+        if (isPartitionScoped) {
+            // A partition-scoped walk is a disk-tier walk; see toPartition().
+            return base.next(skipTarget);
+        }
         if (!isDiskExhausted) {
             final long remainingDiskRows = diskRoutedRows - diskRowsEmitted;
             if (remainingDiskRows > 0) {
@@ -260,7 +295,7 @@ public class LiveViewPageFrameCursor implements PageFrameCursor {
      * @param tierColumns output column -> tier column; copied
      */
     public LiveViewPageFrameCursor of(
-            PageFrameCursor base,
+            TablePageFrameCursor base,
             LiveViewInMemoryTier tier,
             int slotIdx,
             LiveViewInMemoryBuffer slot,
@@ -296,6 +331,17 @@ public class LiveViewPageFrameCursor implements PageFrameCursor {
         return this;
     }
 
+    /**
+     * Unsupported: the base factory's {@code getPageFrameCursor()} opens the disk scan and
+     * this cursor wraps the already-opened result through {@link #of}, so there is no
+     * partition frame cursor to bind here. Same shape as the other page-frame wrappers
+     * (see {@code SelectedRecordCursorFactory.SelectedPageFrameCursor}).
+     */
+    @Override
+    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public void releaseOpenPartitions() {
         base.releaseOpenPartitions();
@@ -320,10 +366,36 @@ public class LiveViewPageFrameCursor implements PageFrameCursor {
         return base.supportsSizeCalculation();
     }
 
+    /**
+     * Scopes the walk to one of the LV table's disk partitions, which drops the tier out of
+     * the read: {@link #next} hands straight to the base until the next {@link #toTop}.
+     * <p>
+     * The in-mem slot is not a partition of that table and has no index in its space, so
+     * there is no partition this cursor could answer with the slot frame. The consumer that
+     * asks is {@code ConcurrentTimeFrameState} (a WINDOW / HORIZON JOIN slave), which
+     * derives its whole frame model from the table reader's per-partition row counts before
+     * walking a partition to patch in the addresses - a model the slot frame is invisible
+     * to, and one whose frame-count assert a surprise extra frame would trip. Serving that
+     * consumer the applied prefix leaves it exactly where
+     * {@link LiveViewRecordCursorFactory#getTimeFrameCursor} already puts an LV: correct,
+     * and at most one flush cycle behind the lead. Bridging the lead into a time frame is
+     * the deferred enhancement noted there, not something to smuggle in through here.
+     * <p>
+     * The tier pin stays held for the cursor's life regardless. It buys this walk nothing,
+     * but the symbol overlay {@link #of} bound resolves against the slot, and a consumer may
+     * still call {@link #getSymbolTable}.
+     */
+    @Override
+    public void toPartition(int partitionIndex) {
+        isPartitionScoped = true;
+        base.toPartition(partitionIndex);
+    }
+
     @Override
     public void toTop() {
         base.toTop();
         isDiskExhausted = false;
+        isPartitionScoped = false;
         diskRowsEmitted = 0;
         isSlotEmitted = false;
     }

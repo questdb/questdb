@@ -1292,22 +1292,22 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testOrderByTsDescRunsFilterThroughPageFrames() throws Exception {
-        // ORDER BY ts DESC is pushed into the base as a backward scan, which lead
-        // routing can never serve (the seam split assumes ascending disk rows), so
-        // the read is statically disk-only and LiveViewRecordCursor degenerates
-        // into a pass-through of the base cursor. The factory therefore exposes the
-        // base's page frames, handing the read to the parallel + JIT filter with
-        // LIMIT pushdown - the same execution the identical read over a plain table
-        // gets. The wrapper used to report the supportsPageFrameCursor() default of
-        // false, so a filtered LV read fell back to a single-threaded, interpreted
-        // Filter that could not stop early on the limit.
+    public void testFilteredReadsRunThroughPageFrames() throws Exception {
+        // Every filtered LV read reaches the parallel + JIT filter with LIMIT pushdown -
+        // the same execution the identical read over a plain table gets - whether or not
+        // it routes through the tier. The wrapper used to report the
+        // supportsPageFrameCursor() default of false, so a filtered LV read fell back to
+        // a single-threaded, interpreted Filter that could not stop early on the limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            // ORDER BY ts DESC is pushed into the base as a backward scan, which lead
+            // routing can never serve (the seam split assumes ascending disk rows), so
+            // this read is statically disk-only: the frames come from the base scan
+            // unchanged.
             assertQuery("SELECT * FROM lv WHERE sym = 'EURUSD' ORDER BY ts DESC LIMIT 10")
                     .noLeakCheck()
                     .assertsPlanContaining(
@@ -1324,12 +1324,16 @@ public class LiveViewTest extends AbstractLiveViewTest {
             assertQuery("SELECT count() FROM lv WHERE sym = 'EURUSD'")
                     .noLeakCheck()
                     .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: false");
-            // A forward, full-schema read CAN route through the tier, so it must keep
-            // the record-cursor path: page frames come from the base scan alone and
-            // would silently drop the un-flushed lead the tier exists to serve.
+            // A forward, full-schema read routes through the tier AND reaches the
+            // parallel filter, which runs over the tier's own frame. This arm asserted
+            // notContaining("Async") while the two were exclusive: page frames came from
+            // the base scan alone, so a routable read had to give them up to keep the
+            // un-flushed lead. Fresh or fast, never both - and the filtered scan over
+            // recent data, the read that most wants freshness, was the one the fork sent
+            // to disk.
             assertQuery("SELECT * FROM lv WHERE sym = 'EURUSD'")
                     .noLeakCheck()
-                    .assertsPlanNotContaining("Async");
+                    .assertsPlanContaining("Async", "Filter", "filter: sym='EURUSD'", "LiveView", "inMemory: true");
             execute("DROP LIVE VIEW lv");
         });
     }

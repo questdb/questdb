@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,6 +41,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -55,6 +57,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * Phase-3a in-memory-tier read path.
@@ -270,6 +275,150 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 Assert.assertFalse("seqTxn mismatch must not route", cursor.isRoutingEligible());
                 Assert.assertTrue("a version-fence miss must keep the slot pinned for the retry", isPublishedSlotReaderPinned(tier));
             }
+        });
+    }
+
+    @Test
+    public void testPageFrameFilteredReadServesLeadFromRam() throws Exception {
+        // The payoff of routing the page-frame path: a filtered read is fresh AND fast.
+        // The factory used to fork - supportsPageFrameCursor() returned
+        // !inMemRoutable - so a routable read kept the single-threaded interpreted
+        // record cursor and a read that took the parallel filter got the base's frames
+        // and no lead. Now the filter runs over the tier's own synthetic frame, the same
+        // way it runs over a native partition.
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+
+            // The plan proves the read takes BOTH: an Async (parallel) filter above a
+            // LiveView that reports itself routable. Without it the data assertions
+            // below would still pass on the record-cursor path, testing nothing new.
+            assertQuery("SELECT * FROM lv WHERE g = 'bb'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true");
+
+            // g='bb' matches one disk-overlap row (rn=2) and one un-flushed lead row
+            // (rn=5). rn=5 exists only in the tier, so its presence proves a filter
+            // worker read the slot frame - and the aa/cc rows are dropped, so it
+            // filtered rather than just appended the tier's rows.
+            StringSink bb = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'bb'", bb);
+            Assert.assertEquals("ts\tg\trn\n" +
+                    "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
+                    "2026-05-12T00:00:05.000000Z\tbb\t5\n", bb.toString());
+
+            // 'cc' is LEAD-ONLY: it was first interned by the refresh worker and is not
+            // in the disk reader's symbol table at all. A filter worker resolves the
+            // key through the frame cursor's own symbol tables, so a frame path that
+            // bound no lead overlay returns nothing here rather than something wrong.
+            StringSink cc = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'cc'", cc);
+            Assert.assertEquals("ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n", cc.toString());
+
+            // Differential oracle over the same shapes: a from-scratch recompute from base.
+            assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
+                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE rn > 1");
+        });
+    }
+
+    @Test
+    public void testPageFrameReadPinsTierSlotOnlyWhileRouting() throws Exception {
+        // The frame path's pin lifetime. A routed frame cursor publishes the slot's raw
+        // native addresses, so it must hold the pin for its whole life - a filter worker
+        // touching a released slot reads freed memory. Every non-routing outcome must
+        // release it at open instead: sustained concurrent readers straddling a tier swap
+        // would otherwise pin BOTH slots, failing publishToInMemoryTier and forcing the
+        // refresh worker to emergency-flush the lead every cycle.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
+            Assert.assertFalse("no reader open -> slot unpinned", isPublishedSlotReaderPinned(tier));
+
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                Assert.assertTrue("an aligned identity read must route through the tier's frame",
+                        cursor instanceof LiveViewPageFrameCursor);
+                Assert.assertTrue("a routed frame cursor must hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+            Assert.assertFalse("closing the routed frame cursor releases the pin", isPublishedSlotReaderPinned(tier));
+
+            // An interval filter is pushed into the scan, so the disk band would miss
+            // rows the unfiltered slot still holds: it can never route, and must not
+            // hold the pin.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'");
+                    PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                Assert.assertFalse("an interval-filtered read must not route",
+                        cursor instanceof LiveViewPageFrameCursor);
+                Assert.assertFalse("a disk-only frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+
+            // A backward frame order cannot serve the seam cut, which serves the disk
+            // band and then the ascending slot. The order is the consumer's ask, not the
+            // base's shape, so it is checked in its own right.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_DESC)
+            ) {
+                Assert.assertFalse("a backward frame order must not route",
+                        cursor instanceof LiveViewPageFrameCursor);
+                Assert.assertFalse("a backward frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+
+            // A version-fence miss does not route either. Unlike the record path - which
+            // keeps the pin so getCursor's staleness retry can still read the slot - the
+            // frame path makes that retry decision before it returns, so nothing
+            // downstream needs the pin and it releases like any other miss.
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            long seqTxn = slot.lvSeqTxn();
+            slot.setLvSeqTxn(mismatch(seqTxn));
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                Assert.assertFalse("a seqTxn mismatch must not route", cursor instanceof LiveViewPageFrameCursor);
+                Assert.assertFalse("a fence-miss frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+            } finally {
+                slot.setLvSeqTxn(seqTxn);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinSlaveSeesAppliedPrefixNotLead() throws Exception {
+        // A WINDOW JOIN slave asks its factory for page frames and casts the result to
+        // TablePageFrameCursor, then drives it through ConcurrentTimeFrameState - which
+        // builds its whole frame model from the table reader's per-partition row counts
+        // and walks one partition at a time (toPartition). The in-mem slot is not a
+        // partition of that table, so it stays out of that walk and the join sees the
+        // applied prefix, exactly where getTimeFrameCursor already leaves an LV.
+        //
+        // Reachable, and it was already broken before the frame path routed: the LV
+        // factory's own `assert !inMemRoutable` fired here, because supportsTimeFrameCursor()
+        // (which gates the parallel window join) is true for very nearly the same shapes
+        // inMemRoutable is. Nothing covered it. Routing the frame path without making the
+        // routed cursor a TablePageFrameCursor would have turned that into a
+        // ClassCastException.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            // The probe's +/-10s window spans every LV row, flushed (x=1,2,3) and
+            // un-flushed lead (x=4,5) alike, so the sum names which tiers the slave read:
+            // 6 is the applied prefix, 15 would mean the lead came through.
+            StringSink sink = new StringSink();
+            printSql("SELECT p.ts, sum(lv.x) AS agg FROM probe p " +
+                    "WINDOW JOIN lv RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
+                    "EXCLUDE PREVAILING ORDER BY p.ts", sink);
+            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t6\n", sink.toString());
         });
     }
 

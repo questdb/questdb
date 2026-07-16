@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.lv;
 
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
@@ -39,7 +38,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
-import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -292,15 +290,7 @@ public class LiveViewRecordCursor implements RecordCursor {
      * re-opened reader observes at least the slot's seqTxn and the retry converges.
      */
     boolean isSlotNewerThanDisk() {
-        if (pinnedSlot == null) {
-            return false;
-        }
-        final long slotSeqTxn = pinnedSlot.lvSeqTxn();
-        if (slotSeqTxn == Numbers.LONG_NULL) {
-            return false;
-        }
-        final long diskSeqTxn = diskReaderSeqTxn(diskCursor);
-        return diskSeqTxn != Numbers.LONG_NULL && slotSeqTxn > diskSeqTxn;
+        return LiveViewRouting.isSlotNewerThanDisk(pinnedSlot, diskReaderSeqTxn(diskCursor));
     }
 
     @Override
@@ -389,9 +379,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // agree) and the slot actually holds rows. Mismatch / unstamped
                         // => disk-only, but the slot stays pinned for the staleness
                         // retry noted above.
-                        this.routingEligible = pinnedSlot.rowCount() > 0
-                                && pinnedSlot.lvSeqTxn() != Numbers.LONG_NULL
-                                && pinnedSlot.lvSeqTxn() == diskSeqTxn;
+                        this.routingEligible = LiveViewRouting.isFenced(pinnedSlot, diskSeqTxn);
                         // Snapshot the overlap/lead boundary. Rows [0, leadStart) are
                         // the overlap (also on disk, served via the seam split); rows
                         // [leadStart, rowCount) are the un-flushed lead, served only
@@ -529,72 +517,21 @@ public class LiveViewRecordCursor implements RecordCursor {
         recordA.toDiskMode();
     }
 
-    // Resolves each projected column to the tier column it reads and appends the
-    // result to tierColumnsOut (output column i -> tierColumnsOut[i]), returning
-    // true when every column resolves. The disk scan's ColumnMapping already
-    // carries that resolution: it maps output column i to the LV-table storage
-    // column the scan reads, and the tier stores the LV table's columns in
-    // declared order, so mapping.getColumnIndex(i) IS the tier column. The type
-    // comparison guards the premise that the two column spaces agree - a
-    // mismatch means the tier was shaped from a different schema than the read
-    // sees, so fail safe to disk-only rather than serve another column's bytes.
-    // A cursor that is not a page-frame scan (an aliasing or expression
-    // projection the optimiser fronts with a SelectedRecord / VirtualRecord)
-    // exposes no mapping and returns false. Leaves tierColumnsOut empty on false.
-    private static boolean buildTierColumnMapping(
-            RecordCursor diskCursor,
-            RecordMetadata baseMetadata,
-            LiveViewInMemoryBuffer buffer,
-            IntList tierColumnsOut
-    ) {
-        if (!(diskCursor instanceof PageFrameRecordCursor pfrc)) {
-            return false;
-        }
-        final var frameCursor = pfrc.getPageFrameCursor();
-        if (frameCursor == null) {
-            return false;
-        }
-        final ColumnMapping mapping = frameCursor.getColumnMapping();
-        final int columnCount = baseMetadata.getColumnCount();
-        if (mapping == null || mapping.getColumnCount() != columnCount) {
-            return false;
-        }
-        final int tierColumnCount = buffer.columnCount();
-        for (int i = 0; i < columnCount; i++) {
-            final int tierColumn = mapping.getColumnIndex(i);
-            if (tierColumn < 0
-                    || tierColumn >= tierColumnCount
-                    || buffer.columnType(tierColumn) != baseMetadata.getColumnType(i)) {
-                tierColumnsOut.clear();
-                return false;
-            }
-            tierColumnsOut.add(tierColumn);
-        }
-        return true;
-    }
-
     // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
     // not a plain FULL table-reader scan we can fence cheaply. Seam routing
     // assumes the disk side yields every LV-table row below the seam in ascending
     // ts order, so any scan shape that under-returns or reorders rows must
-    // disengage the fence (fail safe to disk-only): an interval filter (e.g. a
-    // WHERE on the designated timestamp, pushed into the scan) makes disk[ts <
-    // seamTs] miss rows while the unfiltered slot over-returns; a non-entity row
-    // cursor (an indexed or row-filtered scan, should a future change push either
-    // into the LV base) or an active parquet pushdown filter under-returns the
-    // same way; a backward scan breaks the ascending assumption. A non-page-frame
-    // plan (LATEST BY, complex factory) returns LONG_NULL too.
+    // disengage the fence (fail safe to disk-only). The record path adds two
+    // checks LiveViewRouting.diskReaderSeqTxn cannot make from a frame cursor
+    // alone: a non-entity row cursor (an indexed or row-filtered scan, should a
+    // future change push either into the LV base) under-returns rows the frames
+    // still carry, and a backward row cursor breaks the ascending assumption. A
+    // non-page-frame plan (LATEST BY, complex factory) returns LONG_NULL too.
     private static long diskReaderSeqTxn(RecordCursor diskCursor) {
         if (diskCursor instanceof PageFrameRecordCursorImpl pfrc
                 && pfrc.getRowCursorFactory().isEntity()
-                && pfrc.getRowCursorFactory().isForwardScan()
-                && pfrc.getPageFrameCursor() instanceof TablePageFrameCursor tpfc
-                && !tpfc.hasIntervalFilter()
-                && !tpfc.hasActivePushdownFilter()) {
-            TableReader reader = tpfc.getTableReader();
-            if (reader != null) {
-                return reader.getSeqTxn();
-            }
+                && pfrc.getRowCursorFactory().isForwardScan()) {
+            return LiveViewRouting.diskReaderSeqTxn(pfrc.getPageFrameCursor());
         }
         return Numbers.LONG_NULL;
     }
@@ -636,7 +573,13 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (timestampColumnIndex < 0 || buffer == null) {
             return false;
         }
-        return buildTierColumnMapping(diskCursor, baseMetadata, buffer, tierColumnsOut);
+        // A cursor that is not a page-frame scan (an aliasing or expression projection the
+        // optimiser fronts with a SelectedRecord / VirtualRecord) exposes no frame cursor,
+        // and so no column mapping to resolve against.
+        if (!(diskCursor instanceof PageFrameRecordCursor pfrc)) {
+            return false;
+        }
+        return LiveViewRouting.buildTierColumnMapping(pfrc.getPageFrameCursor(), baseMetadata, buffer, tierColumnsOut);
     }
 
     private void releaseSlot() {

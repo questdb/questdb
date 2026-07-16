@@ -28,7 +28,9 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,8 +39,15 @@ import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.TestOnly;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 /**
  * Live-view read path. Wraps the standard
@@ -57,19 +66,19 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #toPlan} surfaces the static, query-shape part of this decision as the
  * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
  * <p>
- * That same static decision picks the execution path. A read the shape rules out
- * of routing is disk-only for good, which makes the cursor a pass-through of the
- * base scan, so the factory exposes the base's page frames
- * ({@link #supportsPageFrameCursor}) and lets the engine run the read the way it
- * runs a plain table read - parallel filter, JIT filter, LIMIT pushdown. A
- * routable read keeps the record-cursor path, since page frames come from the
- * base scan alone and would drop the un-flushed lead.
+ * The read gets the tier and the engine's page-frame machinery, not one or the
+ * other. {@link #supportsPageFrameCursor} follows the base, so a filtered live-view
+ * read runs the parallel filter, the JIT filter and LIMIT pushdown the way a plain
+ * table read does - and {@link #getPageFrameCursor} still routes, handing back a
+ * {@link LiveViewPageFrameCursor} whose synthetic frame over the pinned slot the
+ * filter runs over exactly as it runs over a native partition. Routing evaluates the
+ * same fence on both paths (see {@link LiveViewRouting}); a read that fails it gets
+ * the base's frames unchanged.
  * <p>
- * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
- * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
- * {@code close()}, so reusing a single cursor across consecutive
- * {@code getCursor} calls would release the previous reader's pin if both
- * cursors are still live (e.g. a plan-explain probe over the same factory).
+ * Each {@link #getCursor(SqlExecutionContext)} / {@link #getPageFrameCursor} call
+ * allocates a fresh cursor: it pins a tier slot until {@code close()}, so reusing a
+ * single cursor across consecutive calls would release the previous reader's pin if
+ * both cursors are still live (e.g. a plan-explain probe over the same factory).
  * Allocation here is once per query, not on the row hot path, so the cost
  * is negligible.
  */
@@ -80,10 +89,11 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     // not an expected iteration count.
     private static final int MAX_STALE_DISK_RETRIES = 8;
     // Test-only, single-shot hook run right after the disk cursor is opened but
-    // before the tier slot is pinned. Lets a test deterministically inject a flush
-    // into that exact window - the disk-open / slot-pin race that leaves the disk
-    // snapshot older than the republished slot - to exercise the staleness retry in
-    // getCursor. Production never sets it; the null check is a single per-query read.
+    // before the tier slot is pinned - on either read path. Lets a test
+    // deterministically inject a flush into that exact window - the disk-open /
+    // slot-pin race that leaves the disk snapshot older than the republished slot -
+    // to exercise the staleness retry. Production never sets it; the null check is a
+    // single per-query read.
     @TestOnly
     private static volatile Runnable onDiskCursorOpenedHook;
     private final RecordCursorFactory base;
@@ -157,14 +167,100 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Test-only: arms a single-shot hook that fires inside {@link #getCursor}
-     * right after the disk cursor is opened and before the tier slot is pinned.
-     * Used to deterministically reproduce the disk-open / slot-pin flush race the
-     * staleness retry guards against. Production never calls this.
+     * Test-only: arms a single-shot hook that fires inside {@link #getCursor} or
+     * {@link #getPageFrameCursor} - whichever opens next - right after the disk cursor is
+     * opened and before the tier slot is pinned. Used to deterministically reproduce the
+     * disk-open / slot-pin flush race the staleness retry guards against. Production never
+     * calls this.
      */
     @TestOnly
     public static void setOnDiskCursorOpenedHook(Runnable hook) {
         onDiskCursorOpenedHook = hook;
+    }
+
+    /**
+     * One attempt at the frame path: pins a tier slot and evaluates the routing fence over
+     * it and the (already opened) disk scan. Returns a {@link LiveViewPageFrameCursor} when
+     * the read routes, {@code diskCursor} itself when it does not, or {@code null} to ask
+     * {@link #getPageFrameCursor} for another attempt against a fresh disk snapshot - having
+     * already released the pin and closed {@code diskCursor}. Takes ownership of
+     * {@code diskCursor}: every exit either hands it back or frees it.
+     * <p>
+     * Unlike {@link LiveViewRecordCursor#of}, every non-routing outcome releases the pin
+     * before returning, including a version-fence miss. The record path holds that one so
+     * {@link #getCursor}'s {@code isSlotNewerThanDisk()} retry can still read the slot; here
+     * the retry decision is made in this method, against the slot it still holds, so once it
+     * returns nothing downstream needs the pin. Sustained concurrent readers straddling a
+     * tier swap can otherwise pin both slots, which fails the refresh worker's
+     * publishToInMemoryTier and emergency-flushes the lead every cycle.
+     */
+    private PageFrameCursor bindFrameCursor(
+            PageFrameCursor diskCursor,
+            LiveViewInstance instance,
+            boolean isLastAttempt
+    ) {
+        // Held here only until of() below adopts them; the catch releases whatever this
+        // method still owns at the point of failure.
+        LiveViewInMemoryTier tier = null;
+        int slotIdx = -1;
+        LiveViewPageFrameCursor cursor = null;
+        try {
+            runDiskCursorOpenedHook();
+            // A non-table frame source carries no LV-table seqTxn to fence against, so it
+            // can never route. Checked before the pin so the tier is left alone entirely.
+            if (!(diskCursor instanceof TablePageFrameCursor tableDiskCursor)) {
+                return diskCursor;
+            }
+            final LiveViewInMemoryTier candidate = instance.getInMemoryTier();
+            if (candidate == null) {
+                return diskCursor;
+            }
+            // A return of -1 means the tier was concurrently closed (LV dropped); we then
+            // hold neither the global pin lease nor a per-slot rc and must not touch it again.
+            final int pin = candidate.acquireRead();
+            if (pin < 0) {
+                return diskCursor;
+            }
+            tier = candidate;
+            slotIdx = pin;
+            final LiveViewInMemoryBuffer slot = tier.getSlot(pin);
+            final long diskSeqTxn = LiveViewRouting.diskReaderSeqTxn(tableDiskCursor);
+            final IntList tierColumns = new IntList();
+            if (diskSeqTxn != Numbers.LONG_NULL
+                    && LiveViewRouting.buildTierColumnMapping(tableDiskCursor, base.getMetadata(), slot, tierColumns)) {
+                if (!isLastAttempt && LiveViewRouting.isSlotNewerThanDisk(slot, diskSeqTxn)) {
+                    tier.releaseRead(pin);
+                    tier = null;
+                    slotIdx = -1;
+                    Misc.free(diskCursor);
+                    return null;
+                }
+                if (LiveViewRouting.isFenced(slot, diskSeqTxn)) {
+                    // Read the cache before the cursor exists: once `cursor` is assigned the
+                    // catch below frees through it, and it can only free what of() adopted.
+                    final LiveViewSymbolCache symbolCache = tier.getSymbolCache();
+                    cursor = new LiveViewPageFrameCursor();
+                    // of() adopts diskCursor and the pin before anything that can throw, so
+                    // from here close() is what releases them - hence the catch's fork.
+                    cursor.of(tableDiskCursor, tier, pin, slot, symbolCache, tierColumns);
+                    return cursor;
+                }
+            }
+            tier.releaseRead(pin);
+            tier = null;
+            slotIdx = -1;
+            return diskCursor;
+        } catch (Throwable th) {
+            if (cursor != null) {
+                Misc.free(cursor);
+            } else {
+                if (tier != null && slotIdx >= 0) {
+                    tier.releaseRead(slotIdx);
+                }
+                Misc.free(diskCursor);
+            }
+            throw th;
+        }
     }
 
     private LiveViewRecordCursor openBoundCursor(
@@ -175,13 +271,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         RecordCursor diskCursor = base.getCursor(executionContext);
         final LiveViewRecordCursor cursor;
         try {
-            final Runnable hook = onDiskCursorOpenedHook;
-            if (hook != null) {
-                // Single-shot: clear before running so the staleness retry's second
-                // disk open does not re-fire it.
-                onDiskCursorOpenedHook = null;
-                hook.run();
-            }
+            runDiskCursorOpenedHook();
             cursor = new LiveViewRecordCursor();
         } catch (Throwable t) {
             // Nothing owns diskCursor yet (of() has not run), so free it here.
@@ -200,16 +290,45 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Serves the base scan's page frames directly, bypassing
-     * {@link LiveViewRecordCursor} entirely. Only reachable when
-     * {@link #supportsPageFrameCursor()} holds - i.e. the read is statically
-     * disk-only - where the cursor is a pure pass-through anyway, so the bypass
-     * loses nothing. See {@link #supportsPageFrameCursor()}.
+     * The page-frame twin of {@link #getCursor}: the base scan's frames cut at the seam,
+     * followed by a synthetic frame over the pinned in-mem slot, so a frame consumer sees
+     * the un-flushed lead too. Falls back to the base scan's frames unchanged whenever
+     * routing cannot engage - the shape rules it out, the tier is absent or empty, or the
+     * seqTxn fence misses - which serves the applied prefix, correct and at worst one flush
+     * cycle stale. See {@link LiveViewPageFrameCursor}.
+     * <p>
+     * A backward frame order routes disk-only: the seam cut serves the disk band and then
+     * the slot, which is ascending by construction. {@link #isInMemRoutable} already rules
+     * out a base whose natural scan is backward, but the {@code order} argument is the
+     * consumer's, not the base's, so it is checked in its own right.
      */
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        assert !inMemRoutable : "page frames bypass the tier; only a statically disk-only read may take this path";
-        return base.getPageFrameCursor(executionContext, order);
+        if (!inMemRoutable || (order != ORDER_ASC && order != ORDER_ANY)) {
+            return base.getPageFrameCursor(executionContext, order);
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
+        if (instance == null) {
+            return base.getPageFrameCursor(executionContext, order);
+        }
+        // Staleness retry against the disk-open / slot-pin race; see getCursor for why a
+        // slot newer than the disk snapshot must not be served as-is.
+        for (int attempt = 0; ; attempt++) {
+            final PageFrameCursor diskCursor = base.getPageFrameCursor(executionContext, order);
+            if (diskCursor == null) {
+                // The base does not frame this read at all, so there is nothing to route
+                // over. Checked here rather than in bindFrameCursor, whose null means the
+                // opposite - see below.
+                return null;
+            }
+            final PageFrameCursor cursor = bindFrameCursor(diskCursor, instance, attempt >= MAX_STALE_DISK_RETRIES);
+            if (cursor != null) {
+                return cursor;
+            }
+            // null asks for a retry: the pinned slot was newer than the disk snapshot, and
+            // bindFrameCursor has already released both. The next attempt re-opens the disk
+            // side against a fresh snapshot, which observes at least the slot's flush.
+        }
     }
 
     @Override
@@ -232,6 +351,23 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.getTimeFrameCursor(executionContext);
     }
 
+    /**
+     * Serves disk only, for the same reason - and with the same consequence - as
+     * {@link #getTimeFrameCursor}: the read sees the applied prefix and trails the in-mem
+     * lead by at most one flush cycle.
+     * <p>
+     * Delegating is not optional. {@link #supportsTimeFrameCursor()} governs whether a
+     * caller may call this at all, and this factory answers that with the base's verdict,
+     * which holds for a plain ascending scan - very nearly the same shape
+     * {@link #isInMemRoutable} accepts. The inherited default returns null, so a parallel
+     * WINDOW / HORIZON JOIN over a live view NPE'd in its atom's constructor rather than
+     * running.
+     */
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        return base.newTimeFrameCursor();
+    }
+
     @Override
     public boolean producesMaterializedPageFrames() {
         // The frames come from the base scan (see getPageFrameCursor), so the base
@@ -247,29 +383,23 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * True only for a read that {@link #isInMemRoutable} statically rules out of
-     * lead routing - in practice an {@code ORDER BY ts DESC} the optimiser pushed
-     * into the base as a backward scan, a timestamp-pruned projection, or an
-     * unsupported column type.
+     * Follows the base scan, so a live-view read gets the engine's page-frame machinery
+     * whenever a plain read of the same table would: the parallel filter, the JIT-compiled
+     * filter, and LIMIT pushdown into that filter. Reporting the {@code false} default
+     * instead sent every filtered live-view read down a single-threaded, interpreted
+     * {@code Filter} with no limit pushdown - several times slower than the same read
+     * through the base table.
      * <p>
-     * Such a read is disk-only for the cursor's whole life: {@code isInMemRoutable}
-     * is false on hard disqualifiers that {@link LiveViewRecordCursor#of} enforces
-     * too, where it releases the tier slot outright and degenerates into a
-     * pass-through of the base cursor. Page frames therefore serve exactly the rows
-     * the record cursor would have, and exposing them hands the read back to the
-     * engine's page-frame machinery: the parallel filter, the JIT-compiled filter,
-     * and LIMIT pushdown into that filter. Without this the wrapper reported the
-     * {@code false} default, and every filtered live-view read fell back to a
-     * single-threaded, interpreted {@code Filter} with no limit pushdown - a read
-     * over the same data through the base table is several times quicker.
-     * <p>
-     * A routable ({@code inMemRoutable == true}) read must NOT take this path: its
-     * frames come from the base scan alone, so it would silently drop the
-     * un-flushed lead the tier exists to serve. It keeps the record-cursor path.
+     * This used to exclude a routable read ({@code !inMemRoutable && ...}), because frames
+     * came from the base scan alone and would have dropped the un-flushed lead: a read could
+     * be fresh or fast, never both, and a filtered scan over recent data - the read that
+     * most wants freshness - was exactly the one the fork sent to disk. It no longer has to
+     * choose. {@link #getPageFrameCursor} routes in its own right, and the filter runs over
+     * the tier's frame like any other.
      */
     @Override
     public boolean supportsPageFrameCursor() {
-        return !inMemRoutable && base.supportsPageFrameCursor();
+        return base.supportsPageFrameCursor();
     }
 
     @Override
@@ -343,6 +473,17 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         return true;
+    }
+
+    // Single-shot: clears the hook before running it, so the staleness retry's second
+    // disk open does not re-fire it. Production never arms one; the null check is a
+    // single per-query read.
+    private static void runDiskCursorOpenedHook() {
+        final Runnable hook = onDiskCursorOpenedHook;
+        if (hook != null) {
+            onDiskCursorOpenedHook = null;
+            hook.run();
+        }
     }
 
     @Override
