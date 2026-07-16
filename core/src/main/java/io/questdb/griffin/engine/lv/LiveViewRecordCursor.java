@@ -31,13 +31,11 @@ import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
-import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
@@ -102,12 +100,15 @@ import org.jetbrains.annotations.TestOnly;
  * is correct because disk holds every applied row (the read simply does not see
  * the lead). SYMBOL output columns route through the tier too: the refresh worker
  * eager-interns the un-flushed lead's symbols into the LV table's id space (see
- * {@link io.questdb.cairo.lv.LiveViewSymbolCache}), and {@link #getSymbolTable}
- * returns a {@link io.questdb.cairo.lv.LiveViewSymbolTable} overlay that resolves
- * a committed id via the disk reader's symbol table and a lead-only id via the
- * cache - one LV-table id space, so both per-record reads and raw-int-key reads
- * (WHERE / GROUP BY / static ORDER BY) stay correct (see
- * {@link #isTierAddressableProjection}).
+ * {@link io.questdb.cairo.lv.LiveViewSymbolCache}), and the cursor answers
+ * {@link #getSymbolTable} / {@link #newSymbolTable} through a
+ * {@link LiveViewSymbolTableSource}, which resolves a committed id via the disk
+ * reader's symbol table and a lead-only id via the cache - one LV-table id space, so
+ * both per-record reads and raw-int-key reads (WHERE / GROUP BY / static ORDER BY)
+ * stay correct (see {@link #isTierAddressableProjection}). That source is a
+ * standalone {@link io.questdb.cairo.sql.SymbolTableSource} rather than cursor state,
+ * so a page-frame cursor over the tier can bind the same overlay and let a filter
+ * worker resolve the lead without a record.
  * <p>
  * In-mem rows synthesize a tagged rowId (the sign bit set over the buffer row
  * index); {@link #recordAt(Record, long)} decodes it back to a buffer row
@@ -127,6 +128,10 @@ public class LiveViewRecordCursor implements RecordCursor {
     private static final long IN_MEM_ROW_ID_FLAG = Long.MIN_VALUE;
     private final MergedRecord recordA = new MergedRecord();
     private final MergedRecord recordB = new MergedRecord();
+    // Resolves the read's SYMBOL columns: the disk cursor's tables overlaid with the
+    // pinned tier's eager-interned lead symbols while routing, the disk cursor's
+    // tables alone otherwise. Bound in of() once the routing decision is made.
+    private final LiveViewSymbolTableSource symbolTableSource = new LiveViewSymbolTableSource();
     // Output column -> tier column, one entry per projected column, built in of()
     // from the disk scan's ColumnMapping. The tier stores the LV's full output row,
     // so a pruned or reordered projection reads a subset of the slot's columns
@@ -159,15 +164,6 @@ public class LiveViewRecordCursor implements RecordCursor {
     // hasNext() serves the slot for ts >= seamTs only when this is true.
     private boolean routingEligible;
     private int slotIdx;
-    // The pinned tier's eager-interning symbol cache. Non-null only while routing
-    // through the tier; used to resolve the un-flushed lead's symbols that are not
-    // yet on disk. Reset on of(); cleared on close.
-    private LiveViewSymbolCache symbolCache;
-    // Per-column symbol-resolution overlays (disk symbol table + the lead's cache),
-    // lazily created for SYMBOL columns while routing so getSymbolTable() resolves
-    // both bands in one LV-table id space. Null until first needed; entries null for
-    // non-SYMBOL columns. Freed on close.
-    private ObjList<LiveViewSymbolTable> symbolTableOverlays;
     private LiveViewInMemoryTier tier;
     private int timestampColumnIndex;
 
@@ -177,16 +173,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        // The getSymbolTable() overlays borrow the disk cursor's symbol tables
-        // (closed via diskCursor below), so closing them only drops references.
-        if (symbolTableOverlays != null) {
-            Misc.freeObjListIfCloseable(symbolTableOverlays);
-            symbolTableOverlays.clear();
-        }
+        // Drops the shared getSymbolTable() overlays, which borrow the disk cursor's
+        // symbol tables (closed via diskCursor below).
+        symbolTableSource.close();
         // Per-record getSym overlays own their cloned disk tables; free them.
         recordA.clearSymbolTables();
         recordB.clearSymbolTables();
-        symbolCache = null;
         releaseSlot();
         pinnedSlot = null;
         diskCursor = Misc.free(diskCursor);
@@ -204,17 +196,13 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        // While routing through the tier, a SYMBOL column resolves through an
-        // overlay that adds the un-flushed lead's eager-interned symbols on top of
-        // the disk reader's committed table - so both a getSymA per-record read and
-        // a raw-int-key read (WHERE / GROUP BY / static ORDER BY) see the lead's
-        // values. Disk-only reads (no routing) resolve straight from disk.
-        // isSymbolColumn / the overlay's cache lookups are keyed by TIER column, which a
-        // pruned or reordered projection no longer numbers the same as the output column.
-        if (routingEligible && symbolCache != null && symbolCache.isSymbolColumn(tierColumns.getQuick(columnIndex))) {
-            return symbolTableOverlay(columnIndex);
-        }
-        return diskCursor.getSymbolTable(columnIndex);
+        // While routing through the tier, a SYMBOL column resolves through an overlay
+        // that adds the un-flushed lead's eager-interned symbols on top of the disk
+        // reader's committed table - so both a getSymA per-record read and a
+        // raw-int-key read (WHERE / GROUP BY / static ORDER BY) see the lead's values.
+        // Disk-only reads bind the source in pass-through mode and resolve straight
+        // from disk. See LiveViewSymbolTableSource.
+        return symbolTableSource.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -317,23 +305,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        if (routingEligible && symbolCache != null) {
-            // The cache and the slot's symbol horizon are keyed by TIER column; only the
-            // disk table is fetched by output column.
-            final int tierColumn = tierColumns.getQuick(columnIndex);
-            if (symbolCache.isSymbolColumn(tierColumn)) {
-                // Owning overlay: it closes the freshly cloned disk table the caller
-                // would otherwise free directly (parallel execution clones tables).
-                return new LiveViewSymbolTable().of(
-                        (StaticSymbolTable) diskCursor.newSymbolTable(columnIndex),
-                        symbolCache,
-                        tierColumn,
-                        pinnedSlot.newSymbolMaxId(tierColumn),
-                        true
-                );
-            }
-        }
-        return diskCursor.newSymbolTable(columnIndex);
+        return symbolTableSource.newSymbolTable(columnIndex);
     }
 
     public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex, boolean diskScanAscending) {
@@ -352,14 +324,12 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.pinnedSlot = null;
         this.inMemEligible = false;
         this.routingEligible = false;
-        this.symbolCache = null;
         this.tierColumns.clear();
-        if (symbolTableOverlays != null) {
-            symbolTableOverlays.clear();
-        }
-        // Prior-use overlays are stamped with the previous slot; free them.
+        // Prior-use overlays are stamped with the previous slot; free them. The
+        // shared ones go with the symbolTableSource rebind at the end of of().
         recordA.clearSymbolTables();
         recordB.clearSymbolTables();
+        LiveViewSymbolCache symbolCache = null;
         if (instance != null) {
             LiveViewInMemoryTier candidate = instance.getInMemoryTier();
             if (candidate != null) {
@@ -373,7 +343,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.tier = candidate;
                     this.slotIdx = pin;
                     this.pinnedSlot = candidate.getSlot(pin);
-                    this.symbolCache = candidate.getSymbolCache();
+                    symbolCache = candidate.getSymbolCache();
                     this.inMemEligible = isTierAddressableProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex, tierColumns);
                     // LONG_NULL means the disk cursor exposes no LV-table seqTxn to fence
                     // against at all: it is not a plain forward table scan (an index scan,
@@ -412,7 +382,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // holding the pin there would buy nothing.
                         releaseSlot();
                         this.pinnedSlot = null;
-                        this.symbolCache = null;
+                        symbolCache = null;
                     } else {
                         // schema + direction are fine; serve the slot only when it and
                         // the disk reader share an LV-table seqTxn (same version => rows
@@ -432,6 +402,13 @@ public class LiveViewRecordCursor implements RecordCursor {
                 }
             }
         }
+        // Overlay the lead's symbols only while the read routes: a disk-only read
+        // serves no lead rows, so it has no lead symbols to resolve, and a
+        // pass-through binding also keeps getSymbolTable() off a slot that the
+        // statically-disk-only branch above already released. A version-fence miss
+        // keeps the slot pinned for getCursor's staleness retry but does not route
+        // either, so it binds pass-through too.
+        symbolTableSource.of(diskCursor, routingEligible ? symbolCache : null, pinnedSlot, tierColumns);
         recordA.bindDisk(diskCursor.getRecord(), this, pinnedSlot, tierColumns);
         recordB.bindDisk(diskCursor.getRecordB(), this, pinnedSlot, tierColumns);
     }
@@ -671,30 +648,6 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
         tier = null;
         slotIdx = -1;
-    }
-
-    // Lazily creates (and caches per OUTPUT column) the symbol-resolution overlay for
-    // a SYMBOL column while routing. The overlay borrows the disk cursor's symbol
-    // table (the cursor closes that via diskCursor), so it does not own it. The disk
-    // table is fetched by output column, while the cache and the slot's symbol horizon
-    // key off the tier column the projection resolves to.
-    private LiveViewSymbolTable symbolTableOverlay(int columnIndex) {
-        if (symbolTableOverlays == null) {
-            symbolTableOverlays = new ObjList<>();
-        }
-        LiveViewSymbolTable overlay = columnIndex < symbolTableOverlays.size() ? symbolTableOverlays.getQuick(columnIndex) : null;
-        if (overlay == null) {
-            final int tierColumn = tierColumns.getQuick(columnIndex);
-            overlay = new LiveViewSymbolTable().of(
-                    (StaticSymbolTable) diskCursor.getSymbolTable(columnIndex),
-                    symbolCache,
-                    tierColumn,
-                    pinnedSlot.newSymbolMaxId(tierColumn),
-                    false
-            );
-            symbolTableOverlays.extendAndSet(columnIndex, overlay);
-        }
-        return overlay;
     }
 
     /**
