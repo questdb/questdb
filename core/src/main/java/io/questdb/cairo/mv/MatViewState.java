@@ -991,15 +991,6 @@ public class MatViewState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
-    void requestPendingTaskRetry(int retryFlags) {
-        while (true) {
-            final int currentFlags = pendingTaskRetryFlags;
-            if (PENDING_TASK_RETRY_FLAGS_UPDATER.compareAndSet(this, currentFlags, currentFlags | retryFlags)) {
-                return;
-            }
-        }
-    }
-
     /**
      * Clears the rolling commit and scan latency averages, returning the cost
      * model to its cold-start state. Used by {@code REFRESH MATERIALIZED VIEW
@@ -1068,6 +1059,15 @@ public class MatViewState implements QuietCloseable {
                 null,
                 refreshFinishedTimestampUs - refreshTriggeredTimestampUs
         );
+    }
+
+    void requestPendingTaskRetry(int retryFlags) {
+        while (true) {
+            final int currentFlags = pendingTaskRetryFlags;
+            if (PENDING_TASK_RETRY_FLAGS_UPDATER.compareAndSet(this, currentFlags, currentFlags | retryFlags)) {
+                return;
+            }
+        }
     }
 
     public void setLastPeriodHi(long lastPeriodHi) {
