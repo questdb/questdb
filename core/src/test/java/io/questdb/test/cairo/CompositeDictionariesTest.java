@@ -252,4 +252,29 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Task 8 (Plan 2): companion to {@link #testDropDimensionSourceColumnRejected()} for the other
+     * half of a composite {@link io.questdb.cairo.PartitionSpec} -- cluster (ORDER BY) columns. A
+     * cluster column is pinned by stable WRITER index ({@link io.questdb.cairo.PartitionSpec#getClusterColumn(int)}),
+     * same as a dimension source; dropping it would leave the persisted partition spec dangling (SHOW
+     * CREATE renders cluster columns by writer index), so {@code removeColumn} must reject it the same
+     * way. This table has zero partition dimensions and one cluster column -- a cluster-only composite
+     * table (see class Javadoc of {@link CompositeDictPersistenceTest}, which documents this shape as
+     * composite via {@link io.questdb.cairo.PartitionSpec#isComposite()} even with no dimensions) -- to
+     * prove the guard doesn't accidentally depend on a non-empty dimension list.
+     */
+    @Test
+    public void testDropClusterOrderByColumnRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, price double) " +
+                    "timestamp(ts) partition by day order by exchange wal");
+            try (TableWriter w = getWriter("t")) {
+                try { w.removeColumn("exchange"); Assert.fail("dropping an ORDER BY/cluster column must be rejected"); }
+                catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
+                w.removeColumn("price");                                  // non-cluster column -> allowed
+                Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("price") < 0);
+            }
+        });
+    }
 }

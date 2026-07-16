@@ -3027,8 +3027,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // one line below for tombstoneCoveredColumnInOtherIndexes -- keeps this guard correct by
         // construction rather than by that incidental invariant. Dropping the dimension's source column
         // would leave the dimension dangling -- routing a live table by a column that no longer exists.
-        // Reject before any mutation; the symmetric counterpart of the ADD/ALTER SYMBOL guards in
-        // addColumn(...) and changeColumnType(...).
+        // The same hazard applies to a composite partition's ORDER BY / cluster columns (also pinned by
+        // stable writer index, see PartitionSpec#getClusterColumn(int)): SHOW CREATE renders them by
+        // writer index, so a dropped cluster column would misrender / NPE. Reject both before any
+        // mutation; the symmetric counterpart of the ADD/ALTER SYMBOL guards in addColumn(...) and
+        // changeColumnType(...).
         final int droppedWriterIndex = metadata.getColumnMetadata(index).getWriterIndex();
         final PartitionSpec partitionSpec = metadata.getPartitionSpec();
         for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
@@ -3036,6 +3039,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.nonCritical()
                         .put("cannot drop column '").put(name)
                         .put("' referenced by a composite partition dimension");
+            }
+        }
+        for (int i = 0, n = partitionSpec.getClusterColumnCount(); i < n; i++) {
+            if (partitionSpec.getClusterColumn(i) == droppedWriterIndex) {
+                throw CairoException.nonCritical()
+                        .put("cannot drop column '").put(name)
+                        .put("' referenced by a composite partition ORDER BY column");
             }
         }
 
