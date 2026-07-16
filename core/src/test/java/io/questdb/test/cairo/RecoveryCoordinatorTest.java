@@ -26,15 +26,23 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertTrue;
 
@@ -409,6 +417,128 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
         }
+    }
+
+    /**
+     * SP-B — per-table failure isolation. A genuine I/O error while restoring ONE adaptive table's
+     * durable epoch cut must not strand its healthy siblings or brick boot. {@code recover()} must catch
+     * the failure, SUSPEND just that table (idiomatic to WAL-apply error handling — visible in
+     * {@code wal_tables()} with an error tag/message), and continue rolling the other adaptive tables
+     * forward. Before the fix the unguarded per-table loop let the restore's {@code CairoException}
+     * propagate out of {@code recover()}, so every not-yet-visited table was skipped (came up un-rewound)
+     * or boot failed outright.
+     */
+    @Test
+    public void testRecoverSuspendsTableOnRestoreIoErrorAndRecoversSiblings() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        // A path-targeted copy fault: fail ONLY the target table's live _txn restore (_txn.epoch -> _txn),
+        // reporting ENOSPC (28 -> ErrorTag.DISK_FULL on linux). errno() returns the simulated code exactly
+        // once, right after the failed copy, so no other errno read is poisoned.
+        final int simErrno = 28;
+        final AtomicReference<String> failDirName = new AtomicReference<>();
+        final AtomicBoolean justFailed = new AtomicBoolean(false);
+        final FilesFacade failingFf = new TestFilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                final String dir = failDirName.get();
+                // Match the target table's live _txn restore directly on the UTF-8 path (an LPSZ's
+                // toString is object identity, so match the sequence, not a decoded String). The _cv
+                // restore ("_cv") does not contain "_txn", and the restore dest is never the ".epoch" copy.
+                if (dir != null
+                        && Utf8s.containsAscii(to, dir)
+                        && Utf8s.containsAscii(to, TableUtils.TXN_FILE_NAME)) {
+                    justFailed.set(true);
+                    return -1;
+                }
+                return super.copy(from, to);
+            }
+
+            @Override
+            public int errno() {
+                return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
+            }
+        };
+        final FilesFacade ffBefore = AbstractCairoTest.ff;
+        try {
+            // Two adaptive tables, each with a durable epoch + a lazy gap (live _txn ahead of the epoch),
+            // so recover() attempts a real restore on both.
+            final long okEpochSeqTxn = buildAdaptiveLazyGapTable("t_ok");
+            buildAdaptiveLazyGapTable("t_fail");
+            final TableToken ttOk = engine.verifyTableName("t_ok");
+            final TableToken ttFail = engine.verifyTableName("t_fail");
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Arm the fault on t_fail's _txn restore and inject the facade for the recover() pass only.
+            failDirName.set(ttFail.getDirName());
+            AbstractCairoTest.ff = failingFf;
+
+            // ACT: recover() must NOT throw (pre-fix, the failed copy's CairoException propagates here).
+            new RecoveryCoordinator(engine).recover();
+            AbstractCairoTest.ff = ffBefore;
+
+            // The failing table is suspended with the errno-derived tag + a message, and was NOT rolled
+            // forward (its incarnation stays 0).
+            assertTrue("t_fail must be suspended after a restore I/O error",
+                    engine.getTableSequencerAPI().isSuspended(ttFail));
+            Assert.assertEquals("suspend tag must be derived from the restore errno",
+                    ErrorTag.resolveTag(simErrno),
+                    engine.getTableSequencerAPI().getTxnTracker(ttFail).getErrorTag());
+            Assert.assertFalse("the suspend error message must be populated",
+                    engine.getTableSequencerAPI().getTxnTracker(ttFail).getErrorMessage().isEmpty());
+            Assert.assertEquals("a table that failed to roll forward must not bump recoveryIncarnation",
+                    0L, engine.getTableSequencerAPI().getTxnTracker(ttFail).getRecoveryIncarnation());
+
+            // The healthy sibling was recovered regardless of iteration order: not suspended, rewound to
+            // exactly its durable epoch cut, incarnation bumped once.
+            Assert.assertFalse("t_ok must not be suspended by a sibling's failure",
+                    engine.getTableSequencerAPI().isSuspended(ttOk));
+            Assert.assertEquals("t_ok's recoveryIncarnation must be bumped by its successful restore",
+                    1L, engine.getTableSequencerAPI().getTxnTracker(ttOk).getRecoveryIncarnation());
+            Assert.assertEquals("t_ok must be rewound to exactly its durable epoch cut",
+                    okEpochSeqTxn, readTxnSeqTxn(ttOk));
+        } finally {
+            AbstractCairoTest.ff = ffBefore;
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
+    /**
+     * Builds an adaptive table with a durable epoch taken at seqTxn=K (via {@code fsyncMaterializedState}
+     * + an explicit {@code _snapshot} marker, exactly as {@link #testRecoverRestoresTxnToEpochCut()}),
+     * then applies M more rows LAZILY so the live {@code _txn} sits ahead of the epoch. Returns the epoch
+     * cut's seqTxn. The caller drives recovery.
+     */
+    private long buildAdaptiveLazyGapTable(String name) throws Exception {
+        execute("create table " + name + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+        for (int i = 0; i < 3; i++) {
+            execute("insert into " + name + " values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+        }
+        drainWalQueue();
+
+        final TableToken tt = engine.verifyTableName(name);
+        final long epochSeqTxn;
+        final long epochTxn;
+        try (io.questdb.cairo.TableWriter w = getWriter(tt)) {
+            w.fsyncMaterializedState();
+            epochSeqTxn = w.getSeqTxn();
+            epochTxn = w.getTxn();
+        }
+        try (io.questdb.cairo.SnapshotMarker marker = new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
+             Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
+            marker.of(p.$());
+            marker.write(epochSeqTxn, epochTxn, 1L);
+        }
+
+        for (int i = 3; i < 7; i++) {
+            execute("insert into " + name + " values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+        }
+        drainWalQueue();
+        return epochSeqTxn;
     }
 
     private boolean epochArtifactExists(TableToken tt, CharSequence base, CharSequence suffix) {

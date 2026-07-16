@@ -112,8 +112,46 @@ public class RecoveryCoordinator {
                 if (engine.getTableSequencerAPI().resolveEffectiveCommitMode(token) != CommitMode.ADAPTIVE) {
                     continue;
                 }
-                recoverTable(token, src, dst, dir);
+                try {
+                    recoverTable(token, src, dst, dir);
+                } catch (CairoException | CairoError e) {
+                    // A genuine I/O error while physically restoring this table's durable cut
+                    // (restoreFile/fsyncFile) must NOT strand the healthy siblings still ahead in this
+                    // loop or brick boot. Suspend just this table (idiomatic to WAL-apply error handling —
+                    // visible in wal_tables() with an error tag) and continue; the operator resolves the
+                    // I/O condition and restarts, at which point recover() re-runs the idempotent restore.
+                    // Every LOGICAL bad-state path in recoverTable() already returns gracefully; only a
+                    // real restore I/O failure reaches here. (CrashSimulationError extends Error, not
+                    // CairoError, so a crash-test's simulated crash is never swallowed here.)
+                    suspendTableAfterFailedRecovery(token, e);
+                }
             }
+        }
+    }
+
+    /**
+     * Suspend one table whose durable-epoch roll-forward failed with a real I/O error, mirroring the
+     * WAL-apply suspend idiom ({@code ApplyWal2TableJob}): resolve the {@link ErrorTag} from the errno so
+     * {@code wal_tables()} shows WHY, log it loud, and suspend. The suspend is fail-safe — if suspension
+     * itself throws we log and return rather than let recovery re-brick boot.
+     */
+    private void suspendTableAfterFailedRecovery(TableToken token, Throwable e) {
+        final ErrorTag errorTag;
+        final String errorMessage;
+        if (e instanceof CairoException ce) {
+            errorTag = ErrorTag.resolveTag(ce.getErrno());
+            errorMessage = ce.getFlyweightMessage().toString();
+        } else {
+            errorTag = ErrorTag.NONE;
+            errorMessage = e.getMessage();
+        }
+        LOG.critical().$("adaptive epoch roll-forward failed, table suspended [table=").$(token)
+                .$(", error=").$(e).I$();
+        try {
+            engine.getTableSequencerAPI().suspendTable(token, errorTag, errorMessage);
+        } catch (CairoException | CairoError se) {
+            LOG.critical().$("could not suspend table after failed roll-forward [table=").$(token)
+                    .$(", error=").$((Throwable) se).I$();
         }
     }
 
