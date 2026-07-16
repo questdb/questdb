@@ -154,4 +154,32 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Regression for {@link io.questdb.cairo.CompositeDimensionTransform#hashBucket}: a bug caught in
+     * review passed {@code buckets} straight through as {@link io.questdb.std.Hash#boundedHash}'s
+     * bitmask argument instead of reducing into range with {@link Math#floorMod(int, int)}. That
+     * bitmask bug is invisible for a power-of-two bucket count -- e.g. {@code hash(symbol, 8)} above,
+     * where {@code 8} is {@code 0b1000} and the buggy AND can only ever produce {@code 0} or {@code 8}
+     * (the latter already happening to be caught by nothing, since that test only checks one value) --
+     * so this uses a non-power-of-two count instead: {@code 7} is {@code 0b111}, a full 3-bit mask, so
+     * the buggy form spreads uniformly over {@code {0..7}} inclusive, and {@code 7} itself is out of
+     * the required half-open {@code [0, 7)} range. Interning many distinct values makes hitting that
+     * out-of-range bucket empirically certain under the buggy form (confirmed via negative control:
+     * of "SYM0".."SYM63", 7 of the 64 land on bucket 7 under the bitmask bug).
+     */
+    @Test
+    public void testInternDimensionValueHashNonPowerOfTwoBucketsInRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, symbol symbol) " +
+                    "timestamp(ts) partition by day, hash(symbol, 7) wal");
+            try (TableWriter w = getWriter("t")) {
+                for (int i = 0; i < 64; i++) {
+                    String v = "SYM" + i;
+                    int h = w.internDimensionValue(0, v);                // hash(symbol, 7)
+                    Assert.assertTrue("hash " + h + " out of range for " + v, h >= 0 && h < 7);
+                }
+            }
+        });
+    }
 }
