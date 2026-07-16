@@ -1922,6 +1922,50 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPendingTaskReenqueueScanIsSingleRunner() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final MatViewState state = fixture.state();
+
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            // Arm a claimable retry exactly as a failed finalize wake leaves it: a reason marker plus
+            // the invalidation retry bit.
+            Assert.assertTrue(state.tryLock());
+            try {
+                state.markAsPendingInvalidation("update operation");
+            } finally {
+                state.unlock();
+            }
+            store.requestPendingInvalidationReenqueue(state);
+
+            // A scan entering while another runs must be a no-op. The seam fires inside the first
+            // scan (after the running CAS), so the reentrant call exercises the guard: it must
+            // neither throw nor deliver a duplicate wake.
+            final AtomicInteger seamCalls = new AtomicInteger();
+            try {
+                store.setOnPendingTaskReenqueueScanForTesting(() -> {
+                    seamCalls.incrementAndGet();
+                    // Re-arm the store-wide signal: the outer scan cleared the requested flag before
+                    // this seam fired, and without the re-arm the reentrant call would short-circuit
+                    // on that flag instead of reaching the running-CAS guard under test.
+                    store.requestPendingInvalidationReenqueue(state);
+                    store.reenqueueFailedPendingTasks();
+                });
+                store.reenqueueFailedPendingTasks();
+            } finally {
+                store.setOnPendingTaskReenqueueScanForTesting(null);
+            }
+
+            Assert.assertEquals("the seam must fire once, in the outer scan only", 1, seamCalls.get());
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            Assert.assertTrue("the armed retry must deliver exactly one wake", store.tryDequeueRefreshTask(task));
+            Assert.assertEquals(MatViewRefreshTask.INVALIDATE, task.operation);
+            Assert.assertFalse("the concurrent scan attempt must not deliver a duplicate", store.tryDequeueRefreshTask(task));
+        });
+    }
+
+    @Test
     public void testRangeOnlyPopulatedViewFinalizesDeferredInvalidationToInvalid() throws Exception {
         assertMemoryLeak(() -> {
             // A MANUAL view never auto-refreshes incrementally, so lastRefreshBaseTxn stays -1 even after a

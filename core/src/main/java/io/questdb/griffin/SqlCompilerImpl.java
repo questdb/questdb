@@ -1647,7 +1647,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // is not swallowed. A config-listed table stays suspended until removed from config.
                 engine.removeWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
-                engine.getMatViewStateStore().reenqueuePendingOnResume(tableToken);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             }
             compiledQuery.ofTableResume();
@@ -1658,6 +1657,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .I$();
             ex.position(tableNamePosition);
             throw ex;
+        }
+        if (!executionContext.isValidationOnly()) {
+            try {
+                engine.getMatViewStateStore().reenqueuePendingOnResume(tableToken);
+            } catch (Throwable th) {
+                // The resume itself durably succeeded; a redelivery enqueue failure must not fail
+                // the statement. The store's retry flags keep the surviving facets discoverable by
+                // the next refresh-job tick.
+                LOG.error().$("could not redeliver pending materialized view work after resume [table=").$(tableToken)
+                        .$(", ex=").$(th)
+                        .I$();
+            }
         }
     }
 

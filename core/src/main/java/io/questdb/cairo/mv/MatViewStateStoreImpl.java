@@ -59,14 +59,14 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     private final MicrosecondClock microsecondClock;
-    @TestOnly
-    private volatile Runnable onPendingTaskReenqueueScanForTesting;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final CarrierLocal<MatViewRefreshTask> taskHolder = new CarrierLocal<>(MatViewRefreshTask::new);
     private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
     private final Queue<MatViewTimerTask> timerTaskQueue;
+    @TestOnly
+    private volatile Runnable onPendingTaskReenqueueScanForTesting;
 
     public MatViewStateStoreImpl(CairoEngine engine) {
         this.engine = engine;
@@ -130,6 +130,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         close();
         isPendingTaskReenqueueRequested.set(false);
         isPendingTaskReenqueueRunning.set(false);
+        onPendingTaskReenqueueScanForTesting = null;
         taskQueue.clear();
         stateByTableDirName.clear();
         lastNotifiedTxnByTableName.clear();
