@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -64,21 +65,21 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
-    private final RecordCursorFactory base;
-    private final ObjList<Function> bindVarFunctions;
-    private final MemoryCARW bindVarMemory;
     private final SCSequence collectSubSeq = new SCSequence();
-    private final CompiledCountOnlyFilter compiledCountOnlyFilter;
-    private final CompiledFilter compiledFilter;
-    private final AsyncFilteredRecordCursor cursor;
-    private final Function filter;
     private final ExpressionNode filterExpr;
-    private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
     private final int maxNegativeLimit;
-    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final int sharedQueryWorkerCount;
+    private RecordCursorFactory base;
+    private ObjList<Function> bindVarFunctions;
+    private MemoryCARW bindVarMemory;
+    private CompiledCountOnlyFilter compiledCountOnlyFilter;
+    private CompiledFilter compiledFilter;
+    private AsyncFilteredRecordCursor cursor;
+    private Function filter;
+    private PageFrameSequence<AsyncJitFilterAtom> frameSequence;
+    private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private DirectLongList negativeLimitRows;
 
     public AsyncJitFilteredRecordCursorFactory(
@@ -410,13 +411,57 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(negativeLimitRows);
-        halfClose();
-        Misc.free(compiledFilter);
-        Misc.free(filter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final ObjList<Function> bindVarFunctions = this.bindVarFunctions;
+        this.bindVarFunctions = null;
+        final MemoryCARW bindVarMemory = this.bindVarMemory;
+        this.bindVarMemory = null;
+        final CompiledCountOnlyFilter compiledCountOnlyFilter = this.compiledCountOnlyFilter;
+        this.compiledCountOnlyFilter = null;
+        final CompiledFilter compiledFilter = this.compiledFilter;
+        this.compiledFilter = null;
+        final AsyncFilteredRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final PageFrameSequence<AsyncJitFilterAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = this.negativeLimitCursor;
+        this.negativeLimitCursor = null;
+        final DirectLongList negativeLimitRows = this.negativeLimitRows;
+        this.negativeLimitRows = null;
+
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, negativeLimitRows);
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        failure = Misc.freeBestEffort(failure, compiledCountOnlyFilter);
+        failure = freeRecordsBestEffort(failure, cursor);
+        failure = freeRecordsBestEffort(failure, negativeLimitCursor);
+        failure = Misc.freeBestEffort(failure, compiledFilter);
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, bindVarMemory);
+        failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private static Throwable freeRecordsBestEffort(
+            Throwable failure,
+            AsyncFilteredRecordCursorFactory.RecordFreer recordFreer
+    ) {
+        if (recordFreer != null) {
+            try {
+                recordFreer.freeRecords();
+            } catch (Throwable th) {
+                if (failure == null) {
+                    return th;
+                }
+                if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+        }
+        return failure;
     }
 
     public static class AsyncJitFilterAtom extends AsyncFilterAtom {

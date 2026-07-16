@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.RecordSink;
@@ -60,18 +61,18 @@ import org.jetbrains.annotations.Nullable;
 public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
     private final int columnSplit;
-    private final Function filter;
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private AbstractHashOuterJoinLightRecordCursor cursor;
+    private Function filter;
     private Map joinKeyMap;
     private Map matchIdsMap;
     private LongChain slaveChain;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashOuterJoinFilteredLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -230,15 +231,28 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(filter);
-        Misc.free(joinKeyMap);
-        Misc.free(slaveChain);
-        Misc.free(matchIdsMap);
-        Misc.free(symbolTranslatingRecord);
+        final AbstractHashOuterJoinLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final Map joinKeyMap = this.joinKeyMap;
+        this.joinKeyMap = null;
+        final Map matchIdsMap = this.matchIdsMap;
+        this.matchIdsMap = null;
+        final LongChain slaveChain = this.slaveChain;
+        this.slaveChain = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, joinKeyMap);
+        failure = Misc.freeBestEffort(failure, slaveChain);
+        if (matchIdsMap != joinKeyMap) {
+            failure = Misc.freeBestEffort(failure, matchIdsMap);
+        }
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {

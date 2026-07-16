@@ -32,16 +32,24 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.WhereClauseParser;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.Chars;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -55,6 +63,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -3538,15 +3547,60 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeTimestampHandoffClosesFunctionOnceWhenCloseThrows() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction();
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = throwing_close() AND timestamp = NULL::TIMESTAMP",
+                    new ThrowingCloseFunctionParser(function)
+            );
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.failure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
     public void testTimestampEqualsConstFunction() throws Exception {
         runWhereCompareToModelTest("timestamp = to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
                 "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]");
     }
 
     @Test
+    public void testTimestampEqualsConstFunctionEvaluationFailureClosesFunctionOnce() throws Exception {
+        RuntimeException evaluationFailure = new RuntimeException("injected evaluation failure");
+        RuntimeException closeFailure = new RuntimeException("injected close failure");
+        ThrowingCloseFunction function = new ThrowingCloseFunction(true, false, evaluationFailure, closeFailure);
+        try {
+            modelOfWithFunctionParser("timestamp = throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("evaluation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(evaluationFailure, e);
+            Assert.assertArrayEquals(new Throwable[]{closeFailure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
     public void testTimestampEqualsConstFunctionVarchar() throws Exception {
         runWhereCompareToModelTest("timestamp = to_date('2020-03-01:15:43:21'::varchar, 'yyyy-MM-dd:HH:mm:ss')",
                 "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]");
+    }
+
+    @Test
+    public void testTimestampEqualsFunctionInvalidTypePreservesPrimary() {
+        RuntimeException closeFailure = new RuntimeException("injected close failure");
+        ThrowingCloseIntervalFunction function = new ThrowingCloseIntervalFunction(false, closeFailure);
+        try {
+            modelOfWithFunctionParser("timestamp = throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("invalid date expected");
+        } catch (SqlException e) {
+            TestUtils.assertEquals("Invalid date", e.getFlyweightMessage());
+            Assert.assertArrayEquals(new Throwable[]{closeFailure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.closeCount);
     }
 
     @Test
@@ -3579,6 +3633,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsInspectionFailurePreservesPrimary() throws Exception {
+        RuntimeException inspectionFailure = new RuntimeException("injected inspection failure");
+        RuntimeException closeFailure = new RuntimeException("injected close failure");
+        ThrowingInspectionFunction function = new ThrowingInspectionFunction(inspectionFailure, closeFailure);
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = (SELECT timestamp FROM x)",
+                    new ThrowingCloseFunctionParser(function, true)
+            );
+            Assert.fail("inspection failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(inspectionFailure, e);
+            Assert.assertArrayEquals(new Throwable[]{closeFailure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
     public void testTimestampEqualsOrDynamic() throws Exception {
         // Using = instead of IN with dynamic timestamp
         setCurrentMicros(MicrosTimestampDriver.floor("2018-01-02T12:00:00.000000Z"));
@@ -3592,6 +3664,56 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrConstantFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction(true, false, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = throwing_close() OR timestamp = '2020-01-01'",
+                    new ThrowingCloseFunctionParser(function)
+            );
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.failure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testTimestampEqualsOrConstantFunctionEvaluationFailurePreservesPrimary() throws Exception {
+        RuntimeException evaluationFailure = new RuntimeException("injected evaluation failure");
+        RuntimeException closeFailure = new RuntimeException("injected close failure");
+        ThrowingCloseFunction function = new ThrowingCloseFunction(true, false, evaluationFailure, closeFailure);
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = throwing_close() OR timestamp = '2020-01-01'",
+                    new ThrowingCloseFunctionParser(function)
+            );
+            Assert.fail("evaluation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(evaluationFailure, e);
+            Assert.assertArrayEquals(new Throwable[]{closeFailure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testTimestampEqualsOrNonTimestampFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseStrFunction function = new ThrowingCloseStrFunction(false, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = throwing_close() OR timestamp = '2020-01-01'",
+                    new ThrowingCloseFunctionParser(function)
+            );
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.closeFailure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
     public void testTimestampEqualsOrSingleValues() throws Exception {
         // timestamp = 'value' OR timestamp = 'value2' should use interval scan
         // Values are parsed as point intervals [ts, ts]
@@ -3602,6 +3724,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T00:00:00.000000Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
                 intervalToString(m)
         );
+    }
+
+    @Test
+    public void testTimestampEqualsRejectedSubqueryCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction(false, false, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = (SELECT timestamp FROM x)",
+                    new ThrowingCloseFunctionParser(function, true)
+            );
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.failure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
     }
 
     @Test
@@ -3620,6 +3758,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertNotNull("OR.rhs must survive rollback", m.filter.rhs);
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.lhs.intrinsicValue);
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.rhs.intrinsicValue);
+    }
+
+    @Test
+    public void testTimestampEqualsOrUnsupportedFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction(false, false, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp = throwing_close() OR timestamp = '2020-01-01'",
+                    new ThrowingCloseFunctionParser(function)
+            );
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.failure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
     }
 
     @Test
@@ -3712,6 +3866,63 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampGreaterConstFunctionVarchar() throws SqlException {
         runWhereIntervalTest0("timestamp > to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testTimestampInConstantIntervalFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseIntervalFunction function = new ThrowingCloseIntervalFunction(true, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser("timestamp IN throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.closeFailure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testTimestampInConstantStrFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseStrFunction function = new ThrowingCloseStrFunction(true, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser("timestamp IN throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.closeFailure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testTimestampInConstantStrFunctionEvaluationFailurePreservesPrimary() throws Exception {
+        RuntimeException evaluationFailure = new RuntimeException("injected evaluation failure");
+        RuntimeException closeFailure = new RuntimeException("injected close failure");
+        ThrowingCloseStrFunction function = new ThrowingCloseStrFunction(true, evaluationFailure, closeFailure);
+        try {
+            modelOfWithFunctionParser("timestamp IN throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("evaluation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(evaluationFailure, e);
+            Assert.assertArrayEquals(new Throwable[]{closeFailure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testTimestampInOrConstantFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction(true, false, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser(
+                    "timestamp IN throwing_close() OR timestamp IN '2020-01-01'",
+                    new ThrowingCloseFunctionParser(function)
+            );
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.failure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
     }
 
     @Test
@@ -3811,6 +4022,32 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampInUnsupportedIntervalFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseIntervalFunction function = new ThrowingCloseIntervalFunction(false, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser("timestamp IN throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.closeFailure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testTimestampInUnsupportedStrFunctionCloseFailureClosesOnce() throws Exception {
+        ThrowingCloseStrFunction function = new ThrowingCloseStrFunction(false, null, new RuntimeException("injected close failure"));
+        try {
+            modelOfWithFunctionParser("timestamp IN throwing_close()", new ThrowingCloseFunctionParser(function));
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.closeFailure, e);
+            Assert.assertEquals(0, e.getSuppressed().length);
+        }
+        Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
     public void testTimestampLessConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp <= to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
     }
@@ -3837,6 +4074,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testTimestampNotEqualsConstFunction() throws Exception {
         runWhereIntervalTest0("timestamp != to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
                 "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testTimestampNotEqualsConstFunctionClosesFunctionOnce() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction(true, false, null, null);
+        modelOfWithFunctionParser("timestamp != throwing_close()", new ThrowingCloseFunctionParser(function));
+        Assert.assertEquals(1, function.closeCount);
     }
 
     @Test
@@ -3883,6 +4127,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setTimestamp(0, day);
         runWhereIntervalTest0("timestamp != dateadd('y',1,timestamp)", "");
+    }
+
+    @Test
+    public void testTimestampNotEqualsUnsupportedFunctionClosesFunctionOnce() throws Exception {
+        ThrowingCloseFunction function = new ThrowingCloseFunction(false, false, null, null);
+        modelOfWithFunctionParser("timestamp != throwing_close()", new ThrowingCloseFunctionParser(function));
+        Assert.assertEquals(1, function.closeCount);
     }
 
     @Test
@@ -4394,6 +4645,26 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
+    private void modelOfWithFunctionParser(CharSequence seq, FunctionParser parser) throws SqlException {
+        queryModel.clear();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos;
+            e.extract(
+                    column -> column,
+                    compiler.testParseExpression(seq, queryModel),
+                    m,
+                    null,
+                    m.getTimestampIndex(),
+                    parser,
+                    m,
+                    sqlExecutionContext,
+                    false,
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
+                    false
+            );
+        }
+    }
+
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -4455,8 +4726,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? expected.replaceAll("00000", "00000000")
-                .replaceAll("99999", "99999999")
+                ? expected.replace("00000", "00000000")
+                .replace("99999", "99999999")
                 .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
                 // domain max minus a dateadd shift (1 day / 2h / 1h), used by the wrapping-bound dateadd tests
                 .replaceAll("294247-01-09T04:00:54.775807Z", "2262-04-10T23:47:16.854775807Z")
@@ -4578,6 +4849,184 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     unindexedReader,
                     false
             );
+        }
+    }
+
+    private static class ThrowingCloseFunction extends TimestampFunction {
+        private final RuntimeException closeFailure;
+        private final RuntimeException evaluationFailure;
+        private final RuntimeException failure;
+        private final boolean isConstant;
+        private final boolean isRuntimeConstant;
+        private int closeCount;
+
+        private ThrowingCloseFunction() {
+            this(false, true, null, new RuntimeException("injected close failure"));
+        }
+
+        private ThrowingCloseFunction(
+                boolean isConstant,
+                boolean isRuntimeConstant,
+                RuntimeException evaluationFailure,
+                RuntimeException closeFailure
+        ) {
+            super(ColumnType.TIMESTAMP);
+            this.closeFailure = closeFailure;
+            this.evaluationFailure = evaluationFailure;
+            this.failure = closeFailure;
+            this.isConstant = isConstant;
+            this.isRuntimeConstant = isRuntimeConstant;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            if (closeFailure != null) {
+                throw closeFailure;
+            }
+        }
+
+        @Override
+        public RecordCursorFactory getRecordCursorFactory() {
+            return null;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            if (evaluationFailure != null) {
+                throw evaluationFailure;
+            }
+            return 0;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return isConstant;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return isRuntimeConstant;
+        }
+    }
+
+    private static class ThrowingCloseIntervalFunction extends IntervalFunction {
+        private final RuntimeException closeFailure;
+        private final boolean isConstant;
+        private int closeCount;
+
+        private ThrowingCloseIntervalFunction(boolean isConstant, RuntimeException closeFailure) {
+            super(ColumnType.INTERVAL);
+            this.closeFailure = closeFailure;
+            this.isConstant = isConstant;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            throw closeFailure;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            return new Interval(0, 0);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return isConstant;
+        }
+    }
+
+    private static class ThrowingCloseFunctionParser extends FunctionParser {
+        private final Function function;
+        private final boolean isQueryFunction;
+
+        private ThrowingCloseFunctionParser(Function function) {
+            this(function, false);
+        }
+
+        private ThrowingCloseFunctionParser(Function function, boolean isQueryFunction) {
+            super(configuration, engine.getFunctionFactoryCache());
+            this.function = function;
+            this.isQueryFunction = isQueryFunction;
+        }
+
+        @Override
+        public Function parseFunction(
+                ExpressionNode node,
+                RecordMetadata metadata,
+                SqlExecutionContext executionContext
+        ) throws SqlException {
+            if ((isQueryFunction && node.type == ExpressionNode.QUERY) || Chars.equals("throwing_close", node.token)) {
+                return function;
+            }
+            return super.parseFunction(node, metadata, executionContext);
+        }
+    }
+
+    private static class ThrowingCloseStrFunction extends StrFunction {
+        private final RuntimeException closeFailure;
+        private final RuntimeException evaluationFailure;
+        private final boolean isConstant;
+        private int closeCount;
+
+        private ThrowingCloseStrFunction(boolean isConstant, RuntimeException evaluationFailure, RuntimeException closeFailure) {
+            this.closeFailure = closeFailure;
+            this.evaluationFailure = evaluationFailure;
+            this.isConstant = isConstant;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            throw closeFailure;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            if (evaluationFailure != null) {
+                throw evaluationFailure;
+            }
+            return "2020-01-01";
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStrA(rec);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return isConstant;
+        }
+    }
+
+    private static class ThrowingInspectionFunction extends TimestampFunction {
+        private final RuntimeException closeFailure;
+        private final RuntimeException inspectionFailure;
+        private int closeCount;
+
+        private ThrowingInspectionFunction(RuntimeException inspectionFailure, RuntimeException closeFailure) {
+            super(ColumnType.TIMESTAMP);
+            this.closeFailure = closeFailure;
+            this.inspectionFailure = inspectionFailure;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            throw closeFailure;
+        }
+
+        @Override
+        public RecordCursorFactory getRecordCursorFactory() {
+            throw inspectionFailure;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return 0;
         }
     }
 

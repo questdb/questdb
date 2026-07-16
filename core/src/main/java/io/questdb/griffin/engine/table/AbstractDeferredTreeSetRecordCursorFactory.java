@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
@@ -53,10 +54,6 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
      */
     protected final int columnIndex;
     /**
-     * Functions for deferred symbol resolution.
-     */
-    protected final ObjList<Function> deferredSymbolFuncs;
-    /**
      * Keys for deferred symbols.
      */
     protected final IntHashSet deferredSymbolKeys;
@@ -64,6 +61,10 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
      * Symbol keys that were resolved during construction.
      */
     protected final IntHashSet symbolKeys;
+    /**
+     * Functions for deferred symbol resolution.
+     */
+    protected ObjList<Function> deferredSymbolFuncs;
 
     /**
      * Constructs a new deferred tree set record cursor factory.
@@ -128,8 +129,16 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.freeObjList(deferredSymbolFuncs);
+        final ObjList<Function> deferredSymbolFuncs = this.deferredSymbolFuncs;
+        this.deferredSymbolFuncs = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeObjListBestEffort(failure, deferredSymbolFuncs);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -40,12 +41,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory baseFactory;
     private final ObjList<CharSequence> columnNames;
-    private final UnnestRecordCursor cursor;
-    private final ObjList<Function> functions;
     private final boolean hasOrdinality;
-    private final ObjList<UnnestSource> sources;
+    private RecordCursorFactory baseFactory;
+    private UnnestRecordCursor cursor;
+    private ObjList<Function> functions;
+    private ObjList<UnnestSource> sources;
 
     public UnnestRecordCursorFactory(
             RecordMetadata metadata,
@@ -115,11 +116,22 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(cursor);
-        Misc.free(baseFactory);
-        Misc.freeObjList(functions);
-        Misc.freeObjListIfCloseable(sources);
+        final RecordMetadata metadata = detachMetadata();
+        final RecordCursorFactory baseFactory = this.baseFactory;
+        this.baseFactory = null;
+        final UnnestRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+        final ObjList<UnnestSource> sources = this.sources;
+        this.sources = null;
+
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, baseFactory);
+        failure = Misc.freeObjListBestEffort(failure, functions);
+        failure = Misc.freeObjListIfCloseableBestEffort(failure, sources);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class UnnestRecordCursor implements NoRandomAccessRecordCursor {
