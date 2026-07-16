@@ -256,6 +256,22 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             }
         }
 
+        // Model a fresh-process restart, part 2: evict the pooled TxnScoreboard. The V2 scoreboard is
+        // ANONYMOUS native memory held alive by the engine's scoreboard pool, NOT a file crash() can roll
+        // back, so its monotonic `max` txn high-water mark survives the simulated crash on this live engine
+        // where a real power loss's process death would have discarded it (the next boot re-creates it
+        // empty). This matters ONLY when recovery REWINDS the on-disk _txn below that stale pre-crash max —
+        // exactly what a sustained-lazy-gap epoch rewind does: the pre-crash O3 apply pushed `max` up, then
+        // RecoveryCoordinator rewinds _txn/_cv to the (lower) durable epoch cut and re-applies. A reader then
+        // opening at the rewound txn can never satisfy TxnScoreboardV2.acquireTxn (updateMax fails on
+        // txn < max), spinning to a spurious "Transaction read timeout" that a fresh boot would never see.
+        // (No-op for the epoch-every-batch sweeps, whose _txn is never rewound below max.) Readers/writers
+        // are already released above, so the pooled scoreboards are idle (refCount 0) and removed cleanly;
+        // the post-recovery apply + oracle read then open a FRESH scoreboard, exactly as a booted engine does.
+        for (TableToken tt : tokens) {
+            engine.getTxnScoreboardPool().remove(tt);
+        }
+
         new RecoveryCoordinator(engine).recover();
         for (TableToken tt : tokens) {
             engine.notifyWalTxnRepublisher(tt);
