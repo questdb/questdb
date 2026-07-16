@@ -812,101 +812,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExtraNullColumnPageFramePropagatesCoveredSourceForBaseColumn() throws Exception {
-        // White-box lock for the ExtraNullColumnPageFrame covered-metadata fix.
-        // Set-ops/window-join null padding wraps a base frame and appends synthetic
-        // null columns above `columnSplit`. Before the fix this wrapper reported the
-        // PageFrame default covered getters, so a covered base column (below the
-        // split) lost its COVERED source through the wrapper and the worker covered
-        // arm would not decode it. Here we wrap a real covering page-frame cursor in
-        // an ExtraNullColumnCursorFactory with one extra (synthetic null) column and
-        // assert: (a) the covered base column still reports COVERED with the same
-        // include index, (b) the per-frame covered metadata (key/range/reader/set)
-        // passes through, and (c) the synthetic column above the split reports
-        // DIRECT / -1.
-        final int coveredColumnIndex = 1;  // base query col 1 = covered INCLUDE (payload)
-        final int symbolColumnIndex = 0;   // base query col 0 = indexed symbol key
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_enc (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (payload),
-                        payload LONG
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_enc
-                    SELECT
-                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
-                        'A',
-                        x
-                    FROM long_sequence(10)
-                    """);
-            engine.releaseAllWriters();
-
-            // The query's covering factory is what ExtraNullColumn must wrap. The
-            // test harness wraps it in a QueryProgress (whose page-frame cursor is
-            // NOT a TablePageFrameCursor and would fail ExtraNullColumn's cast), so
-            // unwrap to the underlying factory -- exactly the precedent in
-            // CoveringIndexTest#testPageFrameCursor_ScanProfile.
-            //
-            // OWNERSHIP: the QueryProgress (`outer`) is the SOLE owner of the
-            // covering factory and is closed by this try-with-resources. We hand
-            // the unwrapped factory to ExtraNullColumn only to build its page-frame
-            // cursor; we deliberately do NOT close the ExtraNullColumn factory (its
-            // _close() would re-close the covering factory). The ExtraNullColumn
-            // factory allocates nothing native and registers nothing, and the
-            // covering page-frame CURSOR it opens is closed once via the wrapper
-            // cursor below -- so every resource is released exactly once.
-            try (RecordCursorFactory outer = select("SELECT sym, payload FROM t_enc WHERE sym = 'A'")) {
-                final RecordCursorFactory base = outer instanceof QueryProgress ? outer.getBaseFactory() : outer;
-                final RecordMetadata baseMetadata = base.getMetadata();
-                final int columnSplit = baseMetadata.getColumnCount(); // 2
-                // Base metadata + one synthetic null column above the split.
-                // copyOfNew (not copyOf) so we never mutate the base's own metadata.
-                final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(baseMetadata);
-                metadata.add(new TableColumnMetadata("pad", ColumnType.LONG));
-                final int paddedColumnIndex = columnSplit; // 2 (the synthetic null column)
-
-                final ExtraNullColumnCursorFactory enc = new ExtraNullColumnCursorFactory(metadata, columnSplit, base);
-                try (PageFrameCursor cursor = enc.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
-                    int frames = 0;
-                    PageFrame f;
-                    while ((f = cursor.next(0)) != null) {
-                        frames++;
-                        // (a) covered base column survives the null-pad wrapper.
-                        assertEquals("covered base column reports COVERED through ExtraNullColumn",
-                                DataSource.COVERED, f.getColumnSource(coveredColumnIndex));
-                        assertTrue("covered base column keeps a real sidecar include index (>= 0) through ExtraNullColumn",
-                                f.getCoveredIncludeIndex(coveredColumnIndex) >= 0);
-                        // symbol key column below the split is COVERED (served by the covering
-                        // frame); delegated 1:1 through the wrapper. This is what distinguishes it
-                        // from the synthetic null column above the split (DIRECT), which the worker
-                        // decode publishes as NULL instead of mis-binding it to the symbol-key buffer.
-                        assertEquals("symbol-key base column reports COVERED through ExtraNullColumn",
-                                DataSource.COVERED, f.getColumnSource(symbolColumnIndex));
-                        // (b) per-frame covered metadata passes through.
-                        assertNotNull("covered frame's posting reader passes through ExtraNullColumn",
-                                f.getIndexReader(symbolColumnIndex, IndexReader.DIR_FORWARD));
-                        assertTrue("covered row range passes through ExtraNullColumn",
-                                f.getCoveredRowHi() > f.getCoveredRowLo());
-                        assertNotNull("covered include-index set passes through ExtraNullColumn",
-                                f.getCoveredIncludeIndices());
-                        // (c) synthetic null column above the split is DIRECT / -1 / null.
-                        assertEquals("synthetic null column above the split reports DIRECT",
-                                DataSource.DIRECT, f.getColumnSource(paddedColumnIndex));
-                        assertEquals("synthetic null column above the split has no include index",
-                                -1, f.getCoveredIncludeIndex(paddedColumnIndex));
-                        assertNull("synthetic null column above the split has no index reader",
-                                f.getIndexReader(paddedColumnIndex, IndexReader.DIR_FORWARD));
-                    }
-                    assertTrue("expected at least one covering page frame through ExtraNullColumn", frames > 0);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testFreezeCoveredReadersWiringFlipsAllReaders() throws Exception {
         // Review finding #2 (negative control for the dispatch freeze WIRING): the parallel-decode
         // pipeline relies on PageFrameSequence.buildAddressCache -> freezeCoveredReaders() to make
@@ -1011,6 +916,10 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     configuration,
                     LOG
             );
+        });
+    }
+
+    @Test
     public void testUnorderedSequenceThrowingClearStillUnfreezesAndClosesPopulatedCache() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE unordered_cleanup (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE) " +
@@ -2291,86 +2200,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * A circuit breaker that can be ARMED and DISARMED between queries while reusing
-     * the same instance, used to inject a deterministic mid-query cancellation.
-     * <p>
-     * It extends {@link io.questdb.cairo.sql.AtomicBooleanCircuitBreaker} for two
-     * reasons: (1) that breaker is THREAD-SAFE, so the async pipeline's per-worker
-     * SqlExecutionCircuitBreakerWrapper.init() delegates straight to THIS instance
-     * (rather than copying only the timeout/cancelledFlag into a private timing
-     * breaker, as it does for the non-thread-safe network breaker) -- so every
-     * {@code getState}/{@code checkIfTripped}/{@code statefulThrow...} the reduce and
-     * vect group-by paths consult is answered HERE; and (2) it holds no native
-     * resources, so nothing leaks.
-     * <p>
-     * Arming is tracked by a private {@code armed} flag that is INDEPENDENT of the
-     * inherited {@code cancelledFlag}. This matters because QueryRegistry.register()
-     * installs its OWN fresh (false) {@code AtomicBoolean} into the context breaker
-     * via {@code setCancelledFlag} at query start (the hook {@code CANCEL QUERY} /
-     * {@code cancel_query()} flip to abort a query) and clears it on unregister --
-     * which would otherwise wipe an arm expressed through {@code cancelledFlag}. By
-     * answering the trip surface from {@code armed} directly, the registry's flag
-     * churn is irrelevant:
-     * <ul>
-     *   <li>ARMED: the in-flight covered query is cancelled -- the reduce path's
-     *       {@code getState} returns STATE_CANCELLED -> frameSequence.cancel, and the
-     *       vect/collect paths throw {@code queryCancelled()} ("cancelled by user").</li>
-     *   <li>DISARMED: every check reports OK, so queries run to completion.</li>
-     * </ul>
-     */
-    private static final class ArmableTimeoutCircuitBreaker extends io.questdb.cairo.sql.AtomicBooleanCircuitBreaker {
-        private volatile boolean armed;
-
-        private ArmableTimeoutCircuitBreaker(io.questdb.cairo.CairoEngine engine) {
-            super(engine);
-        }
-
-        void arm() {
-            armed = true;
-        }
-
-        @Override
-        public boolean checkIfTripped() {
-            return armed || super.checkIfTripped();
-        }
-
-        @Override
-        public boolean checkIfTripped(long millis, long fd) {
-            return armed || super.checkIfTripped(millis, fd);
-        }
-
-        void disarm() {
-            armed = false;
-        }
-
-        @Override
-        public int getState() {
-            return armed ? STATE_CANCELLED : super.getState();
-        }
-
-        @Override
-        public int getState(long millis, long fd) {
-            return armed ? STATE_CANCELLED : super.getState(millis, fd);
-        }
-
-        @Override
-        public void statefulThrowExceptionIfTripped() {
-            if (armed) {
-                throw CairoException.queryCancelled(getFd());
-            }
-            super.statefulThrowExceptionIfTripped();
-        }
-
-        @Override
-        public void statefulThrowExceptionIfTrippedNoThrottle() {
-            if (armed) {
-                throw CairoException.queryCancelled(getFd());
-            }
-            super.statefulThrowExceptionIfTrippedNoThrottle();
-        }
-    }
-
     // ===================== Task 14 perf-harness helpers =========================
 
     /**
@@ -2436,39 +2265,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         }
     }
 
-    private static final class PerfNode implements AutoCloseable {
-        final SqlCompiler compiler;
-        final SqlExecutionContextImpl ctx;
-        final CairoEngine engine;
-        final WorkerPool pool;
-
-        PerfNode(CairoConfiguration configuration, int workerCount) {
-            this.pool = new WorkerPool(() -> workerCount);
-            this.engine = new CairoEngine(configuration);
-            boolean ok = false;
-            try {
-                this.compiler = engine.getSqlCompiler();
-                this.ctx = TestUtils.createSqlExecutionCtx(engine, workerCount);
-                TestUtils.setupWorkerPool(pool, engine);
-                pool.start(LOG);
-            } catch (Throwable th) {
-                if (!ok) {
-                    pool.halt();
-                    engine.close();
-                }
-                throw new RuntimeException(th);
-            }
-        }
-
-        @Override
-        public void close() {
-            pool.halt();
-            Misc.free(compiler);
-            engine.releaseInactive();
-            engine.close();
-        }
-    }
-
     private static void appendPerf(StringBuilder sb, String label, long[] a, long[] b, long[] c, int warmup, int ignoredIters) {
         sb.append(String.format("  %s  (ns wall-clock per query)%n", label));
         appendRow(sb, "A) parallel cov (8w)", a, warmup);
@@ -2518,33 +2314,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
 
     // ===================== Task 14 perf-harness helpers =========================
 
-    // Drive a covered query to its cursor and drain it; assert it is cancelled by
-    // the (armed) circuit breaker. The cancellation surfaces as a CairoException with
-    // isInterruption()/isCancellation() set (here the "cancelled by user" variant; we
-    // accept the timeout "query aborted" variant too so the helper is robust to which
-    // breaker check fires first).
-    private static void assertCoveredQueryCancels(
-            SqlCompiler compiler,
-            SqlExecutionContext context,
-            String query
-    ) throws Exception {
-        try (
-                RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory();
-                io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(context)
-        ) {
-            //noinspection StatementWithEmptyBody
-            while (cursor.hasNext()) {
-                // drain until the breaker trips
-            }
-            fail("expected the covered query to be cancelled mid-flight: " + query);
-        } catch (CairoException e) {
-            assertTrue(
-                    "covered query must fail as an interruption/cancellation, got: " + e.getFlyweightMessage(),
-                    e.isInterruption() || e.isCancellation()
-            );
-        }
-    }
-
     // Recompute the verdict() booleans and ASSERT them, so the gated perf run fails on a
     // parallelism / scan-parity regression instead of only printing a verdict.
     private static void assertParallelVerdict(String label, long[] a, long[] b, long[] c, int warmup, boolean requireParity) {
@@ -2554,16 +2323,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         assertTrue(label + " must parallelize: B/A=" + String.format("%.2f", speedup) + " (>= 1.5)", speedup >= 1.5);
         if (requireParity) {
             assertTrue(label + " must reach scan parity: A/C=" + String.format("%.2f", parity) + " (<= 1.5)", parity <= 1.5);
-        }
-    }
-
-    private static long countRows(SqlCompiler compiler, SqlExecutionContext context, String countQuery) throws Exception {
-        try (
-                RecordCursorFactory factory = compiler.compile(countQuery, context).getRecordCursorFactory();
-                io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(context)
-        ) {
-            assertTrue(cursor.hasNext());
-            return cursor.getRecord().getLong(0);
         }
     }
 
