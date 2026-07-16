@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordIdSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.Map;
@@ -50,8 +51,8 @@ import org.jetbrains.annotations.NotNull;
  * and returns all row pairs matching filter plus all unmatched rows from master and slave factory.
  */
 public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final NestedLoopFullRecordCursor cursor;
-    private final Function filter;
+    private NestedLoopFullRecordCursor cursor;
+    private Function filter;
 
     public NestedLoopFullJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -125,11 +126,14 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final NestedLoopFullRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {

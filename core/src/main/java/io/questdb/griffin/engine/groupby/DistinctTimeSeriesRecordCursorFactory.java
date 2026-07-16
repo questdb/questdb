@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -48,8 +49,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final RecordCursorFactory base;
-    private final DistinctTimeSeriesRecordCursor cursor;
+    protected RecordCursorFactory base;
+    private DistinctTimeSeriesRecordCursor cursor;
 
     public DistinctTimeSeriesRecordCursorFactory(
             CairoConfiguration configuration,
@@ -124,8 +125,13 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final DistinctTimeSeriesRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
