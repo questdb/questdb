@@ -50,6 +50,11 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // Offset of the cellKey slot within a COMPOSITE table's 8-long attached-partition record (slots
+    // 5-7 reserved). Plain tables (stride 4) have no such slot -- getPartitionCellKey() always
+    // returns 0 for them without reading this offset. Public: Task 2 (persisting cellKey) and later
+    // Plan 3 tasks reference it from outside this class hierarchy.
+    public static final int PARTITION_CELL_KEY_OFFSET = 4;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
@@ -75,6 +80,11 @@ public class TxReader implements Closeable, Mutable {
     protected final LongList attachedPartitions = new LongList();
     protected final FilesFacade ff;
     private final IntList symbolCountSnapshot = new IntList();
+    // The following two fields give this instance its per-table attached-partition stride: 4 longs
+    // (shl=2) for a plain table (the static default below), 8 longs (shl=3) for a COMPOSITE table.
+    // Set once, before any partition region is loaded, by the owner (TableReader/TableWriter) via
+    // setComposite() -- see that method for why it must run before ofRO()/ofRW() populate the region.
+    protected int attachedPartitionsShl = LONGS_PER_TX_ATTACHED_PARTITION_MSB;
     protected int attachedPartitionsSize = 0;
     protected long columnVersion;
     protected long dataVersion;
@@ -84,6 +94,7 @@ public class TxReader implements Closeable, Mutable {
     protected boolean lagOrdered;
     protected int lagRowCount;
     protected int lagTxnCount;
+    protected int longsPerAttachedPartition = LONGS_PER_TX_ATTACHED_PARTITION;
     protected long maxTimestamp;
     protected long minTimestamp;
     protected int partitionBy;
@@ -173,11 +184,11 @@ public class TxReader implements Closeable, Mutable {
 
     public int findAttachedPartitionIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(attachedPartitionsShl, ts, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
-            return -((-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION) - 1;
+            return -((-index - 1) / longsPerAttachedPartition) - 1;
         }
-        return index / LONGS_PER_TX_ATTACHED_PARTITION;
+        return index / longsPerAttachedPartition;
     }
 
     public int getBaseOffset() {
@@ -253,6 +264,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionFloor(timestamp);
     }
 
+    public int getLongsPerAttachedPartition() {
+        return longsPerAttachedPartition;
+    }
+
     public long getMaxTimestamp() {
         return maxTimestamp;
     }
@@ -270,11 +285,11 @@ public class TxReader implements Closeable, Mutable {
             return Long.MAX_VALUE;
         }
 
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(attachedPartitionsShl, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
             index = -index - 1;
         } else {
-            index += LONGS_PER_TX_ATTACHED_PARTITION;
+            index += longsPerAttachedPartition;
         }
         int nextIndex = index + PARTITION_TS_OFFSET;
         if (nextIndex < attachedPartitions.size()) {
@@ -296,11 +311,11 @@ public class TxReader implements Closeable, Mutable {
             return Long.MAX_VALUE;
         }
 
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(attachedPartitionsShl, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
             index = -index - 1;
         } else {
-            index += LONGS_PER_TX_ATTACHED_PARTITION;
+            index += longsPerAttachedPartition;
         }
         int nextIndex = index + PARTITION_TS_OFFSET;
         if (nextIndex < attachedPartitions.size()) {
@@ -312,8 +327,20 @@ public class TxReader implements Closeable, Mutable {
         return partitionCeilMethod.ceil(timestamp);
     }
 
+    /**
+     * Returns the cellKey of a COMPOSITE table's partition, or always 0 for a plain table (stride 4
+     * has no cellKey slot -- returned without reading attachedPartitions). Task 2 wires up writing /
+     * meaningfully reading this value; this task only establishes the accessor and stride machinery.
+     */
+    public int getPartitionCellKey(int partitionIndex) {
+        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION) {
+            return 0;
+        }
+        return (int) attachedPartitions.getQuick(partitionIndex * longsPerAttachedPartition + PARTITION_CELL_KEY_OFFSET);
+    }
+
     public int getPartitionCount() {
-        return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
+        return attachedPartitions.size() / longsPerAttachedPartition;
     }
 
     public long getPartitionFloor(long timestamp) {
@@ -325,13 +352,13 @@ public class TxReader implements Closeable, Mutable {
     public int getPartitionIndex(long ts) {
         int index = findAttachedPartitionRawIndexByLoTimestamp(getPartitionTimestampByTimestamp(ts));
         if (index > -1) {
-            return index / LONGS_PER_TX_ATTACHED_PARTITION;
+            return index / longsPerAttachedPartition;
         }
         return -1;
     }
 
     public long getPartitionNameTxn(int i) {
-        return getPartitionNameTxnByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return getPartitionNameTxnByRawIndex(i * longsPerAttachedPartition);
     }
 
     public long getPartitionNameTxnByPartitionTimestamp(long ts) {
@@ -351,7 +378,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {
-        final long fileSize = getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        final long fileSize = getPartitionParquetFileSizeByRawIndex(partitionIndex * longsPerAttachedPartition);
         assert fileSize > 0 || !isPartitionParquet(partitionIndex);
         return fileSize;
     }
@@ -365,7 +392,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionSize(int i) {
-        return getPartitionSizeByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return getPartitionSizeByRawIndex(i * longsPerAttachedPartition);
     }
 
     public long getPartitionSizeByRawIndex(int index) {
@@ -373,7 +400,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public int getPartitionSquashCount(int i) {
-        return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return getPartitionSquashCountByRawIndex(i * longsPerAttachedPartition);
     }
 
     public long getPartitionTableVersion() {
@@ -381,7 +408,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionTimestampByIndex(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+        return attachedPartitions.getQuick(i * longsPerAttachedPartition + PARTITION_TS_OFFSET);
     }
 
     public long getPartitionTimestampByTimestamp(long timestamp) {
@@ -433,7 +460,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean hasParquetPartitions() {
-        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += longsPerAttachedPartition) {
             if (isPartitionParquetByRawIndex(i)) {
                 return true;
             }
@@ -449,7 +476,7 @@ public class TxReader implements Closeable, Mutable {
 
         if (!PartitionBy.isPartitioned(partitionBy)) {
             // Add transient row count as the only partition in attached partitions list
-            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            attachedPartitions.setPos(longsPerAttachedPartition);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
         }
     }
@@ -463,7 +490,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean isPartitionParquet(int i) {
-        return isPartitionParquetByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return isPartitionParquetByRawIndex(i * longsPerAttachedPartition);
     }
 
     public boolean isPartitionParquetByRawIndex(int indexRaw) {
@@ -471,11 +498,11 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean isPartitionParquetGenerated(int i) {
-        return isPartitionParquetGeneratedByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return isPartitionParquetGeneratedByRawIndex(i * longsPerAttachedPartition);
     }
 
     public boolean isPartitionReadOnly(int i) {
-        return isPartitionReadOnlyByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return isPartitionReadOnlyByRawIndex(i * longsPerAttachedPartition);
     }
 
     public boolean isPartitionParquetByPartitionTimestamp(long ts) {
@@ -553,6 +580,20 @@ public class TxReader implements Closeable, Mutable {
         return this;
     }
 
+    /**
+     * Sets this instance's attached-partition stride: 8 longs (composite) or 4 longs (plain, the
+     * default). Must be called by the owner (TableReader/TableWriter, which know composite-ness via
+     * {@code metadata.getPartitionSpec().getDimensionCount() > 0}) immediately after construction and
+     * BEFORE {@link #ofRO} / {@code TxWriter.ofRW} -- {@code clear()}/{@code clearData()} never reset
+     * this field, but {@link #getPartitionCount()} and {@code unsafeLoadPartitions0} divide the raw
+     * attached-partitions region by the stride the moment it loads, so the stride must already be
+     * correct by then or the region is misread.
+     */
+    void setComposite(boolean composite) {
+        this.longsPerAttachedPartition = composite ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : LONGS_PER_TX_ATTACHED_PARTITION;
+        this.attachedPartitionsShl = composite ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB : LONGS_PER_TX_ATTACHED_PARTITION_MSB;
+    }
+
     @Override
     public String toString() {
         // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
@@ -561,11 +602,11 @@ public class TxReader implements Closeable, Mutable {
         sink.put("{");
         sink.put("txn: ").put(txn);
         sink.put(", attachedPartitions: [");
-        for (int i = 0; i < attachedPartitions.size(); i += LONGS_PER_TX_ATTACHED_PARTITION) {
-            long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
+        for (int i = 0; i < attachedPartitions.size(); i += longsPerAttachedPartition) {
+            long timestamp = getPartitionTimestampByIndex(i / longsPerAttachedPartition);
             long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
 
-            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionCount()) {
+            if (i / longsPerAttachedPartition == getPartitionCount()) {
                 rowCount = transientRowCount;
             }
 
@@ -580,7 +621,7 @@ public class TxReader implements Closeable, Mutable {
             timestampDriver.append(sink, timestamp);
             sink.put("', rowCount: ").put(rowCount);
             sink.put(", nameTxn: ").put(nameTxn);
-            if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
+            if (isPartitionParquet(i / longsPerAttachedPartition)) {
                 sink.put(", parquetSize: ").put(parquetSize);
             }
             if (isPartitionReadOnlyByRawIndex(i)) {
@@ -774,12 +815,12 @@ public class TxReader implements Closeable, Mutable {
                 } else {
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
                         unsafeLoadPartitions0(
-                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0),
+                                Math.max(attachedPartitionsSize - longsPerAttachedPartition, 0),
                                 txAttachedPartitionsSize
                         );
                     }
                 }
-                int offset = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET;
+                int offset = txAttachedPartitionsSize - longsPerAttachedPartition + PARTITION_MASKED_SIZE_OFFSET;
                 long mask = attachedPartitions.getQuick(offset) & PARTITION_FLAGS_MASK;
                 attachedPartitions.setQuick(offset, mask | (transientRowCount & PARTITION_SIZE_MASK)); // preserve mask
                 attachedPartitions.setPos(txAttachedPartitionsSize);
@@ -790,7 +831,7 @@ public class TxReader implements Closeable, Mutable {
         } else {
             // If partitionBy is NONE, we have no partitions, but we still need to
             // have a single partition with transient row count.
-            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            attachedPartitions.setPos(longsPerAttachedPartition);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
             attachedPartitionsSize = 1;
         }
@@ -843,7 +884,7 @@ public class TxReader implements Closeable, Mutable {
             return indexRaw;
         }
 
-        int prevIndexRaw = -indexRaw - 1 - LONGS_PER_TX_ATTACHED_PARTITION;
+        int prevIndexRaw = -indexRaw - 1 - longsPerAttachedPartition;
         if (prevIndexRaw < 0) {
             return -1;
         }
@@ -857,7 +898,7 @@ public class TxReader implements Closeable, Mutable {
 
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
+        return attachedPartitions.binarySearchBlock(attachedPartitionsShl, ts, Vect.BIN_SEARCH_SCAN_UP);
     }
 
     int getPartitionSquashCountByRawIndex(int indexRaw) {

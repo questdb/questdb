@@ -168,7 +168,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(tableToken)
                     .I$();
-            txFile = new TxReader(ff).ofRO(
+            txFile = new TxReader(ff);
+            txFile.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
+            txFile.ofRO(
                     path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
                     timestampType,
                     partitionBy
@@ -221,7 +223,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", table=").$(tableToken)
                     .$(", srcTxn=").$(srcReader.getTxn())
                     .I$();
-            txFile = new TxReader(ff).ofRO(
+            txFile = new TxReader(ff);
+            txFile.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
+            txFile.ofRO(
                     path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
                     timestampType,
                     partitionBy

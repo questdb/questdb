@@ -116,6 +116,11 @@ public final class TableUtils {
     public static final int INITIAL_TXN = 0;
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    // Stride for a COMPOSITE table's attached-partition record: cellKey lives at slot 4 (slots 5-7
+    // reserved); forced to 8 (not 5) because LongList.binarySearchBlock needs a power-of-2 block
+    // size. Plain tables keep stride 4 / byte-identical layout -- see TxReader.longsPerAttachedPartition.
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE = 8;
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE);
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";

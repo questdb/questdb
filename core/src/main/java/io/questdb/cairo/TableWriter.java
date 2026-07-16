@@ -509,6 +509,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
+            // Must run before initPartitionBy(): a genuinely-partitioned table's initPartitionBy() does
+            // not reload attachedPartitions, so whatever stride was in effect when the region was first
+            // (blindly, pre-metadata) loaded above at ofRW(path) is what sticks. That first load always
+            // uses the plain default (metadata -- and therefore composite-ness -- isn't known yet at
+            // that point); harmless for a freshly-created table (nothing persisted to misread yet), but
+            // see Task 1's report for the reopen-ordering risk this leaves for a later task to close.
+            this.txWriter.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
@@ -11919,6 +11926,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (attachTxReader == null) {
                     attachTxReader = new TxReader(ff);
                 }
+                attachTxReader.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
                 attachTxReader.ofRO(path.$(), timestampType, partitionBy);
                 attachTxReader.unsafeLoadAll();
 
