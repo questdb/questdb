@@ -1292,6 +1292,49 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testOrderByTsDescRunsFilterThroughPageFrames() throws Exception {
+        // ORDER BY ts DESC is pushed into the base as a backward scan, which lead
+        // routing can never serve (the seam split assumes ascending disk rows), so
+        // the read is statically disk-only and LiveViewRecordCursor degenerates
+        // into a pass-through of the base cursor. The factory therefore exposes the
+        // base's page frames, handing the read to the parallel + JIT filter with
+        // LIMIT pushdown - the same execution the identical read over a plain table
+        // gets. The wrapper used to report the supportsPageFrameCursor() default of
+        // false, so a filtered LV read fell back to a single-threaded, interpreted
+        // Filter that could not stop early on the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            assertQuery("SELECT * FROM lv WHERE sym = 'EURUSD' ORDER BY ts DESC LIMIT 10")
+                    .noLeakCheck()
+                    .assertsPlanContaining(
+                            "Async",
+                            "Filter",
+                            "limit: 10",
+                            "filter: sym='EURUSD'",
+                            "LiveView",
+                            "inMemory: false",
+                            "Row backward scan"
+                    );
+            // A timestamp-pruned projection is statically disk-only too, so an
+            // aggregate over the view reaches the parallel filter as well.
+            assertQuery("SELECT count() FROM lv WHERE sym = 'EURUSD'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: false");
+            // A forward, full-schema read CAN route through the tier, so it must keep
+            // the record-cursor path: page frames come from the base scan alone and
+            // would silently drop the un-flushed lead the tier exists to serve.
+            assertQuery("SELECT * FROM lv WHERE sym = 'EURUSD'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Async");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testShowColumnsReflectsLiveViewSchema() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +

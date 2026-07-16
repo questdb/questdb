@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -55,6 +56,14 @@ import org.jetbrains.annotations.TestOnly;
  * back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
  * {@link #toPlan} surfaces the static, query-shape part of this decision as the
  * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
+ * <p>
+ * That same static decision picks the execution path. A read the shape rules out
+ * of routing is disk-only for good, which makes the cursor a pass-through of the
+ * base scan, so the factory exposes the base's page frames
+ * ({@link #supportsPageFrameCursor}) and lets the engine run the read the way it
+ * runs a plain table read - parallel filter, JIT filter, LIMIT pushdown. A
+ * routable read keeps the record-cursor path, since page frames come from the
+ * base scan alone and would drop the un-flushed lead.
  * <p>
  * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
  * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
@@ -98,6 +107,24 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.timestampColumnIndex = base.getMetadata().getTimestampIndex();
         this.inMemRoutable = isInMemRoutable(base, timestampColumnIndex);
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        base.changePageFrameSizes(minRows, maxRows);
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        // The cursor yields rows in the base scan's order - disk-only passes the
+        // base order straight through, and tier routing only engages for a forward
+        // (ascending) base - so whatever advice the base scan followed, this
+        // wrapper still honours. The default (false) claims the wrapper ignored
+        // the advice, which costs a redundant sort on a parent model that reads
+        // the flag: generateOrderBy's own scan-direction check only rescues the
+        // single-column designated-timestamp case, so an LV read ordered by
+        // anything else the base already satisfied sorted for nothing.
+        return base.followedOrderByAdvice();
     }
 
     @Override
@@ -172,6 +199,19 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         return cursor;
     }
 
+    /**
+     * Serves the base scan's page frames directly, bypassing
+     * {@link LiveViewRecordCursor} entirely. Only reachable when
+     * {@link #supportsPageFrameCursor()} holds - i.e. the read is statically
+     * disk-only - where the cursor is a pure pass-through anyway, so the bypass
+     * loses nothing. See {@link #supportsPageFrameCursor()}.
+     */
+    @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        assert !inMemRoutable : "page frames bypass the tier; only a statically disk-only read may take this path";
+        return base.getPageFrameCursor(executionContext, order);
+    }
+
     @Override
     public int getScanDirection() {
         // The cursor yields rows in the base scan's order: disk-only passes the
@@ -193,8 +233,43 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean producesMaterializedPageFrames() {
+        // The frames come from the base scan (see getPageFrameCursor), so the base
+        // is the authority. The inherited default routes through getBaseFactory(),
+        // which this wrapper does not expose, and so would answer a blanket "true"
+        // for a base that only produces metadata-only frames.
+        return base.producesMaterializedPageFrames();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    /**
+     * True only for a read that {@link #isInMemRoutable} statically rules out of
+     * lead routing - in practice an {@code ORDER BY ts DESC} the optimiser pushed
+     * into the base as a backward scan, a timestamp-pruned projection, or an
+     * unsupported column type.
+     * <p>
+     * Such a read is disk-only for the cursor's whole life: {@code isInMemRoutable}
+     * is false on hard disqualifiers that {@link LiveViewRecordCursor#of} enforces
+     * too, where it releases the tier slot outright and degenerates into a
+     * pass-through of the base cursor. Page frames therefore serve exactly the rows
+     * the record cursor would have, and exposing them hands the read back to the
+     * engine's page-frame machinery: the parallel filter, the JIT-compiled filter,
+     * and LIMIT pushdown into that filter. Without this the wrapper reported the
+     * {@code false} default, and every filtered live-view read fell back to a
+     * single-threaded, interpreted {@code Filter} with no limit pushdown - a read
+     * over the same data through the base table is several times quicker.
+     * <p>
+     * A routable ({@code inMemRoutable == true}) read must NOT take this path: its
+     * frames come from the base scan alone, so it would silently drop the
+     * un-flushed lead the tier exists to serve. It keeps the record-cursor path.
+     */
+    @Override
+    public boolean supportsPageFrameCursor() {
+        return !inMemRoutable && base.supportsPageFrameCursor();
     }
 
     @Override

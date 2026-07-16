@@ -589,6 +589,37 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testModeBDisabledForBackwardScanServesEveryDiskRowViaPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createSeamSplitLv();
+            // A backward scan routes disk-only, and there LiveViewRecordCursor is a
+            // pure pass-through of the base cursor - so the factory hands the read
+            // to the base's page frames instead, which is what lets the parallel /
+            // JIT filter and LIMIT pushdown engage. The fixture is the interesting
+            // case for that bypass: the pinned slot holds only the 2 most recent
+            // rows while disk holds all 5, so a page-frame read that mistakenly
+            // served the slot, or stopped at the seam, would drop the 3 rows below
+            // it. Every applied row must come back.
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: false", "Row backward scan");
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
+                    .timestampDesc("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:25.000002Z\t5\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n" +
+                            "2023-11-14T22:13:20.000003Z\t3\n");
+            // The same read with LIMIT, the shape that pushes the limit into the
+            // filter, still stops on the right rows.
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC LIMIT 2")
+                    .timestampDesc("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:25.000002Z\t5\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n");
+        });
+    }
+
+    @Test
     public void testModeBDisabledForIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
