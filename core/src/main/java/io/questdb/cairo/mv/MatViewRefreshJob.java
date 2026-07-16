@@ -962,13 +962,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        if (isViewWriteSuspended(viewToken)) {
-            LOG.debug().$("skipping full refresh, materialized view is suspended [view=").$(viewToken).I$();
-            return false;
-        }
-
         // A fresh queue task publishes a distinct full-refresh owner. A handoff task carries the owner
         // that already lost the latch; if terminal cleanup consumed it, the stale delivery is a no-op.
+        // The owner mint precedes the suspended gate: a suspended exit must leave the request parked
+        // on the marker so RESUME WAL's reenqueuePendingOnResume can redeliver it. Consuming the
+        // ownerless task before the mint silently lost a REFRESH FULL issued while suspended.
         final Object fullRefreshOwner;
         if (refreshTask.fullRefreshOwner == null) {
             fullRefreshOwner = viewState.markAsPendingFullRefreshAndGetOwner();
@@ -979,6 +977,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         }
         refreshTask.fullRefreshOwner = fullRefreshOwner;
+
+        if (isViewWriteSuspended(viewToken)) {
+            // The owner stays parked on the marker; the resume path redelivers it.
+            LOG.debug().$("skipping full refresh, materialized view is suspended [view=").$(viewToken).I$();
+            return false;
+        }
+
         if (!viewState.tryLock()) {
             LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
             return false;

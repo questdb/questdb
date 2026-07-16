@@ -389,7 +389,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void reenqueuePendingOnResume(TableToken matViewToken) {
-        if (engine.isWalApplySuspended(matViewToken)) {
+        // Mirror isViewWriteSuspended: with suspended writes allowed by config, the redelivered
+        // task can complete, so a bare isWalApplySuspended check would park deliverable work.
+        if (engine.isWalApplySuspended(matViewToken) && engine.getConfiguration().isWalApplySuspendedWriteDenied()) {
             return;
         }
 

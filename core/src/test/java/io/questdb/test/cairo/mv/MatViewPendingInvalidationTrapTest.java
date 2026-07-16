@@ -2125,6 +2125,57 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReenqueuePendingOnResumeIgnoresBaseTableToken() throws Exception {
+        assertMemoryLeak(() -> {
+            createAutoPriceViewFixture();
+
+            // Every base-table RESUME WAL routes through reenqueuePendingOnResume with the BASE
+            // token, which has no view state. The call must be a silent no-op.
+            final TableToken baseToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseToken);
+            engine.getMatViewStateStore().reenqueuePendingOnResume(baseToken);
+
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            Assert.assertFalse(
+                    "a base-table resume must not enqueue view work",
+                    engine.getMatViewStateStore().tryDequeueRefreshTask(task)
+            );
+        });
+    }
+
+    @Test
+    public void testReenqueuePendingOnResumeSkipsStillSuspendedView() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // Park a reason marker, hard-suspend the view, then call the redelivery entry point
+            // directly. While writes stay denied the redelivery must keep the marker parked:
+            // enqueueing would bounce the task off the write-denied gate and consume it.
+            Assert.assertTrue(state.tryLock());
+            try {
+                state.markAsPendingInvalidation("update operation");
+            } finally {
+                state.unlock();
+            }
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            engine.getMatViewStateStore().reenqueuePendingOnResume(viewToken);
+
+            Assert.assertTrue("a still-suspended view must keep its marker parked", state.isPendingInvalidation());
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            Assert.assertFalse(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
+
+            // Leave the fixture consistent for teardown.
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainMatViewQueue(engine);
+            drainWalQueue();
+        });
+    }
+
+    @Test
     public void testRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -2824,6 +2875,43 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("the redelivered full refresh must consume the pending owner", state.isPendingInvalidation());
             Assert.assertFalse("the recovered full refresh must leave the view valid", state.isInvalid());
+        });
+    }
+
+    @Test
+    public void testSuspendedFullRefreshRetainsOwnerAndRedeliversOnResume() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+            drainMatViewQueue(engine);
+
+            // The suspended exit must park the request as a pending owner facet. The pre-fix code
+            // consumed the ownerless task before the owner mint, so RESUME WAL had nothing to
+            // redeliver and the user's REFRESH FULL vanished silently.
+            Assert.assertTrue("a suspended REFRESH FULL must park its owner on the marker", state.isPendingInvalidation());
+            Assert.assertNull("the parked facet must be owner-only", state.getPendingInvalidationReason());
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertFalse(state.isLocked());
+
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            Assert.assertFalse("RESUME WAL must redeliver and consume the parked owner", state.isPendingInvalidation());
+            Assert.assertFalse(state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
         });
     }
 
