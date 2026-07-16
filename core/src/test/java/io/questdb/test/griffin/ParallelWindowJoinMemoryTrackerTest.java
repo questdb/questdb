@@ -340,6 +340,16 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // acquires a slot before the owner can take over, then verifies that the cached factory
         // remains reusable.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        // The owner defers to a worker on the reducer's slot-acquire latch only when it reaches the
+        // latch-gated steal branch, and it reaches that branch only once the reduce queue is full.
+        // A queue deeper than the master's page-frame count lets the owner publish every frame and
+        // then drain them itself through the ungated gang-steal loop, so it can reduce the breaching
+        // frame on the owner path - which takes no per-worker slot - before any worker acquires one,
+        // and assertNoSlotLeakOnBreach then fails with "no worker acquired a slot". The native master
+        // fans out into ~40 frames and fills the 32-deep default queue, but the parquet master cuts on
+        // row-group boundaries into only ~8, well under it. Cap the queue below both frame counts so
+        // the gate engages for either master.
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
