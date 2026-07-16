@@ -128,6 +128,10 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                     } catch (LineSenderException e) {
                         thrown = e;
                     }
+                    // A failed flush intentionally retains buffered rows for retry.
+                    // Discard this permanently invalid batch so close() does not
+                    // attempt the same flush again and mask the assertion below.
+                    sender.reset();
 
                     Assert.assertNotNull(
                             "expected flush() to refuse a batch whose wire size exceeds"
