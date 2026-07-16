@@ -68,10 +68,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
-    private final RecordCursorFactory base;
-    private final RegisteredRecordCursor cursor;
+    private RecordCursorFactory base;
+    private RegisteredRecordCursor cursor;
     private final boolean jit;
-    private final RegisteredPageFrameCursor pageFrameCursor;
+    private RegisteredPageFrameCursor pageFrameCursor;
     private final QueryTrace queryTrace = new QueryTrace();
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
@@ -386,8 +386,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public void onResourceReturned(TableReader resource) {
         int index = readers.remove(resource);
         // After our cursor closes, unregisterAndCleanup() has already cleared the list, so a
-        // late return naturally finds nothing -- expected, do not log it.
-        if (index < 0 && (cursor.isOpen || pageFrameCursor.isOpen)) {
+        // late return naturally finds nothing -- expected, do not log it. _close() nulls the
+        // cursor fields before it closes the base factory chain, and that chain returns any
+        // reader still borrowed after a failed cursor open re-entrantly through this method,
+        // so a nulled field also means the query is shutting down and the return is expected.
+        final RegisteredRecordCursor cursor = this.cursor;
+        final RegisteredPageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        final boolean isCursorOpen = (cursor != null && cursor.isOpen)
+                || (pageFrameCursor != null && pageFrameCursor.isOpen);
+        if (index < 0 && isCursorOpen) {
             // Still open but the reader is untracked: our leak bookkeeping is inconsistent.
             // This is NOT pool-entry reuse (a previous hypothesis): R.close() detaches the
             // supervisor (sets it to null) before returnToPool, so a recycled entry cannot
@@ -476,9 +483,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     protected void _close() {
-        cursor.close();
-        base.close();
-        pageFrameCursor.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final RegisteredRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final RegisteredPageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, pageFrameCursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     class RegisteredPageFrameCursor implements PageFrameCursor {

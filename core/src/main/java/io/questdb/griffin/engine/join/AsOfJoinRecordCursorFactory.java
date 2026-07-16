@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -53,12 +54,12 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 
 public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final IntList columnIndex;
-    private final AsOfJoinRecordCursor cursor;
     private final int mapEvacuationThreshold;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final int slaveValueTimestampIndex;
     private final long toleranceInterval;
+    private AsOfJoinRecordCursor cursor;
 
     public AsOfJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -152,10 +153,11 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final AsOfJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {

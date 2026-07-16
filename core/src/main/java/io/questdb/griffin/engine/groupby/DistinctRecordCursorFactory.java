@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -61,12 +62,12 @@ import org.jetbrains.annotations.NotNull;
  */
 public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private final RecordCursorFactory base;
-    private final DistinctRecordCursor cursor;
-    private final Function limitHiFunction;
-    private final Function limitLoFunction;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
+    private RecordCursorFactory base;
+    private DistinctRecordCursor cursor;
+    private Function limitHiFunction;
+    private Function limitLoFunction;
 
     public DistinctRecordCursorFactory(
             CairoConfiguration configuration,
@@ -154,10 +155,22 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(limitLoFunction);
-        Misc.free(limitHiFunction);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final DistinctRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function limitHiFunction = this.limitHiFunction;
+        this.limitHiFunction = null;
+        final Function limitLoFunction = this.limitLoFunction;
+        this.limitLoFunction = null;
+
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, limitLoFunction);
+        if (limitHiFunction != limitLoFunction) {
+            failure = Misc.freeBestEffort(failure, limitHiFunction);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class DistinctRecordCursor implements NoRandomAccessRecordCursor {
