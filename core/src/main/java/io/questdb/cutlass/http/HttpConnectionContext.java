@@ -208,6 +208,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         // pooled connections. Do not make these conditional.
         this.isProtocolSwitched = false;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.resumeHandlerId = NO_RESUME_PROCESSOR;
         if (httpCircuitBreaker != null) {
             httpCircuitBreaker.clear();
         }

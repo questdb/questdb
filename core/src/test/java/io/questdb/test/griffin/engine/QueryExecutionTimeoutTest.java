@@ -46,6 +46,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -221,6 +222,73 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 16,
                 (engine, compiler, sqlExecutionContext) -> testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
         );
+    }
+
+    @Test
+    public void testTimeoutAbortsParallelGroupByDuringPhaseTwoWait() throws Exception {
+        // Every frame is in flight on a worker parked at its frame's first row, so the spinning
+        // owner is the only place query.timeout can fire; the pre-fix Phase-2 loop re-armed the
+        // wrapper timer per iteration and would surface the timeout only after the workers
+        // released, seconds later.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+        Misc.free(circuitBreaker);
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                engine,
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public boolean checkConnection() {
+                        return false;
+                    }
+
+                    @Override
+                    public long getQueryTimeout() {
+                        return 300;
+                    }
+                }
+        );
+        executeWithPool(4, 16, (engine, compiler, sqlExecutionContext) -> {
+            execute(compiler, "create table phase2_timeout_test as (select x from long_sequence(400_000))", sqlExecutionContext);
+
+            final Thread ownerThread = Thread.currentThread();
+            final ThreadLocal<Boolean> hasParked = ThreadLocal.withInitial(() -> Boolean.FALSE);
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (Thread.currentThread() != ownerThread && !hasParked.get()) {
+                        hasParked.set(Boolean.TRUE);
+                        Os.sleep(3_000);
+                    }
+                    return true;
+                }
+            });
+            try (
+                    RecordCursorFactory factory = compiler.compile(
+                            "select sum(x) from phase2_timeout_test where test_latched_counter()",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                circuitBreaker.resetTimer();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    cursor.hasNext();
+                    Assert.fail("query must time out while the owner waits for in-flight frames");
+                } catch (CairoException e) {
+                    // Delivery of the abort is gated on the in-flight frames draining, so wall-clock
+                    // elapsed time cannot discriminate; the runtime recorded at throw time can.
+                    String msg = e.getFlyweightMessage().toString();
+                    TestUtils.assertContains(msg, "timeout, query aborted");
+                    int runtimeStart = msg.indexOf("runtime=");
+                    Assert.assertTrue("no runtime in: " + msg, runtimeStart >= 0);
+                    runtimeStart += "runtime=".length();
+                    long runtimeMs = Long.parseLong(msg.substring(runtimeStart, msg.indexOf("ms", runtimeStart)));
+                    Assert.assertTrue(
+                            "timeout must fire from the owner's Phase-2 wait while the workers hold their frames, got: " + msg,
+                            runtimeMs < 2_000
+                    );
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
     }
 
     @Test

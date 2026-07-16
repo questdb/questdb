@@ -24,15 +24,18 @@
 
 package io.questdb.test.cairo.sql;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestMillisecondClock;
+import io.questdb.test.tools.TestNetworkSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -56,7 +59,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testCheckIfTrippedNoThrottleBypassesWindow() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 Assert.assertFalse(breaker.checkIfTripped());
@@ -74,7 +77,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testCheckIfTrippedThrottlesConnectionProbe() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
 
@@ -98,7 +101,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testGetStateReportsBrokenConnectionOncePerWindow() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, breaker.getState());
@@ -119,7 +122,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testOfKeepsThrottleWindowForSameFd() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 Assert.assertFalse(breaker.checkIfTripped());
@@ -140,7 +143,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testRearmTimerKeepsThrottleWindow() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 1_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 1_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 Assert.assertFalse(breaker.checkIfTripped());
@@ -166,7 +169,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testResetTimerForcesPromptProbe() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 Assert.assertFalse(breaker.checkIfTripped());
@@ -184,7 +187,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testTimeThrottledThrowsOnDisconnectOutsideWindow() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 breaker.isConnectionBroken = true;
@@ -207,7 +210,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     public void testTimeoutAndCancellationBypassProbe() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 clock.millis = 1_101;
@@ -216,7 +219,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
             }
 
             TestMillisecondClock cancelClock = new TestMillisecondClock(1_000);
-            try (ProbeCountingCircuitBreaker breaker = newBreaker(cancelClock, 100_000)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(cancelClock, 100_000)) {
                 AtomicBoolean cancelledFlag = new AtomicBoolean();
                 breaker.setCancelledFlag(cancelledFlag);
                 breaker.of(1);
@@ -231,37 +234,62 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         });
     }
 
-    private static ProbeCountingCircuitBreaker newBreaker(MillisecondClock clock, long queryTimeout) {
-        return new ProbeCountingCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration() {
-            @Override
-            public long getCircuitBreakerConnectionCheckThrottle() {
-                return THROTTLE;
-            }
+    @Test
+    public void testWrapperInitKeepsThrottleWindowAcrossTasks() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            int[] probeCount = new int[1];
+            SqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getCircuitBreakerConnectionCheckThrottle() {
+                    return THROTTLE;
+                }
 
-            @Override
-            public @NotNull MillisecondClock getClock() {
-                return clock;
-            }
+                @Override
+                public @NotNull MillisecondClock getClock() {
+                    return clock;
+                }
 
-            @Override
-            public long getQueryTimeout() {
-                return queryTimeout;
+                @Override
+                public @NotNull NetworkFacade getNetworkFacade() {
+                    return new NetworkFacadeImpl() {
+                        @Override
+                        public boolean testConnection(long fd, long buffer, int bufferSize) {
+                            probeCount[0]++;
+                            return false;
+                        }
+                    };
+                }
+
+                @Override
+                public long getQueryTimeout() {
+                    return 100_000;
+                }
+            };
+            try (
+                    NetworkSqlExecutionCircuitBreaker ownerBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config);
+                    SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, config)
+            ) {
+                ownerBreaker.of(1);
+                ownerBreaker.resetTimer();
+
+                wrapper.init(ownerBreaker);
+                wrapper.statefulThrowExceptionIfTrippedTimeThrottled();
+                Assert.assertEquals(1, probeCount[0]);
+
+                wrapper.init(ownerBreaker);
+                wrapper.statefulThrowExceptionIfTrippedTimeThrottled();
+                Assert.assertEquals("per-task wrapper re-init must not reopen the probe window", 1, probeCount[0]);
+
+                clock.millis += THROTTLE;
+                wrapper.init(ownerBreaker);
+                wrapper.statefulThrowExceptionIfTrippedTimeThrottled();
+                Assert.assertEquals("probe must fire once the window elapses across re-inits", 2, probeCount[0]);
             }
         });
     }
 
-    private static class ProbeCountingCircuitBreaker extends NetworkSqlExecutionCircuitBreaker {
-        boolean isConnectionBroken;
-        int probeCount;
-
-        ProbeCountingCircuitBreaker(CairoEngine engine, SqlExecutionCircuitBreakerConfiguration configuration) {
-            super(engine, configuration);
-        }
-
-        @Override
-        protected boolean testConnection(long fd) {
-            probeCount++;
-            return isConnectionBroken;
-        }
+    private static TestNetworkSqlExecutionCircuitBreaker newBreaker(MillisecondClock clock, long queryTimeout) {
+        return TestNetworkSqlExecutionCircuitBreaker.create(engine, clock, THROTTLE, queryTimeout);
     }
 }

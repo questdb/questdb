@@ -24,15 +24,11 @@
 
 package io.questdb.test.cutlass.parquet;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestMillisecondClock;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.test.tools.TestNetworkSqlExecutionCircuitBreaker;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -47,7 +43,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
     public void testClassifyFailureStatusCancelledOnBrokenConnectionWithinThrottleWindow() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ConnectionAwareCircuitBreaker breaker = newBreaker(clock)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 // A first probe against a live connection opens the throttle window.
@@ -66,7 +62,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
     public void testClassifyFailureStatusCancelledOnCancellation() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ConnectionAwareCircuitBreaker breaker = newBreaker(clock)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 breaker.setCancelledFlag(new AtomicBoolean(true));
@@ -76,10 +72,29 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClassifyFailureStatusCancelledOnTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock)) {
+                breaker.of(1);
+                breaker.resetTimer();
+                Assert.assertEquals(CopyExportRequestTask.Status.FAILED, CopyExportRequestTask.classifyFailureStatus(breaker));
+
+                clock.millis += 100_001;
+                Assert.assertEquals(
+                        "an export failing past query.timeout must classify as CANCELLED",
+                        CopyExportRequestTask.Status.CANCELLED,
+                        CopyExportRequestTask.classifyFailureStatus(breaker)
+                );
+            }
+        });
+    }
+
+    @Test
     public void testClassifyFailureStatusFailedOnHealthyConnection() throws Exception {
         assertMemoryLeak(() -> {
             TestMillisecondClock clock = new TestMillisecondClock(1_000);
-            try (ConnectionAwareCircuitBreaker breaker = newBreaker(clock)) {
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock)) {
                 breaker.of(1);
                 breaker.resetTimer();
                 Assert.assertEquals(CopyExportRequestTask.Status.FAILED, CopyExportRequestTask.classifyFailureStatus(breaker));
@@ -87,35 +102,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
         });
     }
 
-    private static ConnectionAwareCircuitBreaker newBreaker(MillisecondClock clock) {
-        return new ConnectionAwareCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration() {
-            @Override
-            public long getCircuitBreakerConnectionCheckThrottle() {
-                return 100;
-            }
-
-            @Override
-            public @NotNull MillisecondClock getClock() {
-                return clock;
-            }
-
-            @Override
-            public long getQueryTimeout() {
-                return 100_000;
-            }
-        });
-    }
-
-    private static class ConnectionAwareCircuitBreaker extends NetworkSqlExecutionCircuitBreaker {
-        boolean isConnectionBroken;
-
-        ConnectionAwareCircuitBreaker(CairoEngine engine, SqlExecutionCircuitBreakerConfiguration configuration) {
-            super(engine, configuration);
-        }
-
-        @Override
-        protected boolean testConnection(long fd) {
-            return isConnectionBroken;
-        }
+    private static TestNetworkSqlExecutionCircuitBreaker newBreaker(MillisecondClock clock) {
+        return TestNetworkSqlExecutionCircuitBreaker.create(engine, clock, 100, 100_000);
     }
 }

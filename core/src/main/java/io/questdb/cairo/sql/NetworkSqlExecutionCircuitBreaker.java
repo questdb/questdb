@@ -47,8 +47,9 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private boolean isClosed;
     // Wall-clock time (millis) of the last heavy connection probe; gates the throttled probes in
     // statefulThrowExceptionIfTrippedTimeThrottled(), checkIfTripped(long, long) and getState(long, long).
-    // Written without synchronization: consults of a shared instance must stay on the query-owner
-    // thread; worker threads operate on per-worker wrapper copies.
+    // Written without synchronization: consults of a shared instance must never be concurrent - the
+    // thread currently driving the connection owns it (dispatcher handoffs between requests are
+    // sequential); worker threads operate on per-worker wrapper copies.
     private long lastConnectionCheckTime;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;

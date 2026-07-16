@@ -2056,6 +2056,10 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     });
 
                     Assert.assertTrue(
+                            "client never received a batch; the stall-then-resume path was not exercised",
+                            batchCount[0] >= 1
+                    );
+                    Assert.assertTrue(
                             "stalled egress stream ran past query.timeout without an error (batches="
                                     + batchCount[0] + ", ended=" + hasEnded[0] + ")",
                             hasErrored[0]
@@ -2162,6 +2166,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final long startedBefore = metrics.queriesStartedCount();
                 final long erroredBefore = metrics.queriesErroredCounter().getValue();
+                final long suspendedBefore = metrics.creditSuspensionsCount();
 
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
@@ -2191,6 +2196,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     TestUtils.assertEventually(
                             () -> Assert.assertTrue("egress query never started",
                                     metrics.queriesStartedCount() > startedBefore),
+                            10
+                    );
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("stream never credit-suspended",
+                                    metrics.creditSuspensionsCount() > suspendedBefore),
                             10
                     );
 
@@ -2230,18 +2240,18 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "5s"
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "8s"
             )) {
                 serverMain.execute("CREATE TABLE big AS (SELECT x, x * 2 AS y FROM long_sequence(4_000_000))");
                 final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final long startedBefore = metrics.queriesStartedCount();
                 final long erroredBefore = metrics.queriesErroredCounter().getValue();
+                final long suspendedBefore = metrics.creditSuspensionsCount();
 
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
                     QwpWireTestFixtures.performReadHandshake(socket);
 
-                    final AtomicBoolean isReaderDraining = new AtomicBoolean();
                     Thread reader = new Thread(() -> {
                         byte[] chunk = new byte[8192];
                         try {
@@ -2255,7 +2265,6 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                                 seen = sent;
                                 Os.sleep(20);
                             }
-                            isReaderDraining.set(true);
                             InputStream in = socket.getInputStream();
                             //noinspection StatementWithEmptyBody
                             while (in.read(chunk) != -1) {
@@ -2278,13 +2287,13 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             10
                     );
 
-                    awaitCreditSuspended(metrics, isReaderDraining, erroredBefore);
+                    awaitCreditSuspended(metrics, suspendedBefore, erroredBefore);
                     Assert.assertEquals(
                             "egress query errored before it credit-suspended",
                             erroredBefore, metrics.queriesErroredCounter().getValue()
                     );
 
-                    while (System.currentTimeMillis() < querySentMs + 6_000) {
+                    while (System.currentTimeMillis() < querySentMs + 9_000) {
                         Os.sleep(50);
                     }
                     Assert.assertEquals(
@@ -2681,24 +2690,16 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         assertSelectIdReturns(client, "SELECT v FROM schema_cache_retry_t", 1L, label);
     }
 
-    private static void awaitCreditSuspended(QwpEgressMetrics metrics, AtomicBoolean isReaderDraining, long erroredBefore) {
+    private static void awaitCreditSuspended(QwpEgressMetrics metrics, long suspendedBefore, long erroredBefore) {
         long deadlineMs = System.currentTimeMillis() + 15_000;
-        long last = -1;
-        int stable = 0;
         while (System.currentTimeMillis() < deadlineMs) {
             if (metrics.queriesErroredCounter().getValue() > erroredBefore) {
                 Assert.fail("stream aborted before it could credit-suspend; raise query.timeout if this recurs");
             }
-            long sent = metrics.batchesSentCount();
-            if (isReaderDraining.get() && sent > 0 && sent == last) {
-                if (++stable >= 20) {
-                    return;
-                }
-            } else {
-                stable = 0;
+            if (metrics.creditSuspensionsCount() > suspendedBefore) {
+                return;
             }
-            last = sent;
-            Os.sleep(50);
+            Os.sleep(10);
         }
         Assert.fail("stream never credit-suspended");
     }

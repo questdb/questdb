@@ -1912,6 +1912,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", batchSeq=").$(state.getStreamingBatchSeq())
                         .I$();
                 state.markStreamingCreditSuspended();
+                metrics.markStreamingCreditSuspended();
                 return;
             }
             // beginBatch wires the columnDefs + symbol-table source onto the

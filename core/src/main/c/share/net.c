@@ -267,9 +267,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         (JNIEnv *e, jclass cl, jint fd) {
 #if defined(__APPLE__) || defined(__FreeBSD__)
     // Reuse one kqueue per thread instead of creating and destroying one on every probe.
-    // isPeerDisconnected sits on a query hot path -- the parallel work-steal busy-wait probes
-    // the circuit breaker on every spin iteration -- so a per-call kqueue()+close() would add a
-    // syscall pair plus file-descriptor table churn to that loop.
+    // isPeerDisconnected sits on query hot paths -- unthrottled breaker checks fire once per
+    // continuation wake and once per page frame, and every per-worker wrapper keeps its own
+    // throttle window -- so a per-call kqueue()+close() would add a syscall pair plus
+    // file-descriptor table churn to those loops.
     pthread_once(&peer_probe_kq_once, make_peer_probe_kq_key);
     if (!peer_probe_kq_key_ready) {
         return JNI_FALSE;
