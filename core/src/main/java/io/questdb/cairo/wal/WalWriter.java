@@ -703,7 +703,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         0,
                         WAL_DEDUP_MODE_DEFAULT
                 );
-                getSequencerTxn();
+                // ADAPTIVE W=0: make the seed's events durable before getSequencerTxn records it (mirrors
+                // truncateSoft / applyNonStructural). Without this the seq _txnlog is MS_SYNC-flushed while the
+                // seed _event stays in the page cache, so a power loss between them leaves the freshly rebased
+                // (already-live) table's sequencer pointing past a non-durable event -> recovery suspends it.
+                if (walCommitMode() == CommitMode.ADAPTIVE && !deferDeviceFlush()) {
+                    events.sync(walCommitMode());
+                }
+                final long seqTxn = getSequencerTxn();
+                // Deferred 2 (group commit, W>0): carry the seed's events+seq fdatasync in the batched flush
+                // (flushPendingDurable), which cleanupBeforeClose runs when this writer closes after the seeds.
+                if (walCommitMode() == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+                    recordPendingDurable(seqTxn);
+                }
             }
         } catch (Throwable th) {
             rollback0();
