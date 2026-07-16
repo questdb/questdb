@@ -1616,7 +1616,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // The wide gap between the ~1s abort and the 10s no-op run keeps the upper bound
         // robust against a slow CI box while still catching a regression.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startServerWithRetry(
+            try (TestServerMain  _ = startServerWithRetry(
                     PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
                     PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
             )) {
@@ -2240,6 +2240,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     socket.setSoTimeout(60_000);
                     QwpWireTestFixtures.performReadHandshake(socket);
 
+                    final AtomicBoolean readerDraining = new AtomicBoolean();
                     Thread reader = new Thread(() -> {
                         byte[] chunk = new byte[8192];
                         try {
@@ -2253,6 +2254,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                                 seen = sent;
                                 Os.sleep(20);
                             }
+                            readerDraining.set(true);
                             InputStream in = socket.getInputStream();
                             //noinspection StatementWithEmptyBody
                             while (in.read(chunk) != -1) {
@@ -2267,6 +2269,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY,
                             QwpWireTestFixtures.buildQueryRequest(1, "SELECT * FROM big", 8_000_000)));
                     out.flush();
+                    final long querySentMs = System.currentTimeMillis();
 
                     TestUtils.assertEventually(
                             () -> Assert.assertTrue("egress query never started",
@@ -2274,9 +2277,17 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             10
                     );
 
-                    Os.sleep(6_000);
+                    awaitCreditSuspended(metrics, readerDraining, erroredBefore);
                     Assert.assertEquals(
-                            "egress query errored before the CREDIT resume",
+                            "egress query errored before it credit-suspended",
+                            erroredBefore, metrics.queriesErroredCounter().getValue()
+                    );
+
+                    while (System.currentTimeMillis() < querySentMs + 6_000) {
+                        Os.sleep(50);
+                    }
+                    Assert.assertEquals(
+                            "a parked credit-suspended stream must not error before it resumes",
                             erroredBefore, metrics.queriesErroredCounter().getValue()
                     );
 
@@ -2667,6 +2678,28 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
 
     private static void assertSelectReturnsOneRow(QwpQueryClient client, String label) {
         assertSelectIdReturns(client, "SELECT v FROM schema_cache_retry_t", 1L, label);
+    }
+
+    private static void awaitCreditSuspended(QwpEgressMetrics metrics, AtomicBoolean readerDraining, long erroredBefore) {
+        long deadlineMs = System.currentTimeMillis() + 15_000;
+        long last = -1;
+        int stable = 0;
+        while (System.currentTimeMillis() < deadlineMs) {
+            if (metrics.queriesErroredCounter().getValue() > erroredBefore) {
+                Assert.fail("stream aborted before it could credit-suspend; raise query.timeout if this recurs");
+            }
+            long sent = metrics.batchesSentCount();
+            if (readerDraining.get() && sent > 0 && sent == last) {
+                if (++stable >= 20) {
+                    return;
+                }
+            } else {
+                stable = 0;
+            }
+            last = sent;
+            Os.sleep(50);
+        }
+        Assert.fail("stream never credit-suspended");
     }
 
     /**
