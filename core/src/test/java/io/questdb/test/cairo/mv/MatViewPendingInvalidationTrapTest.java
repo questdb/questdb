@@ -372,17 +372,77 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDroppedViewFinalizeSkipsWakeWhenCloseRaces() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger invalidationWakeCount = new AtomicInteger();
+            final TableToken viewToken = new TableToken("dropped_view", "dropped_view~1", null, 1, true, false, false);
+            // Isolates the isDropped clause that testDroppedViewLeavesDeferredInvalidationUntouched
+            // cannot: that job-driven test always has tryCloseIfDropped win the just-freed latch and flip
+            // isClosed() true before the gate runs, so isDropped and isClosed agree there and removing
+            // either one alone still leaves the other standing guard. Model instead the race where
+            // tryCloseIfDropped loses the latch to a concurrent holder -- dropped stays true, but
+            // isClosed() never flips -- by overriding isClosed() to stay false on a synthetic state. With
+            // the view never invalidated either, the isDropped clause is now the ONLY thing stopping
+            // finalize from waking a marker against a dropped view.
+            final MatViewState viewState = new MatViewState(
+                    new MatViewDefinition(),
+                    (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                    }
+            ) {
+                @Override
+                public boolean isClosed() {
+                    return false;
+                }
+            };
+            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
+                @Override
+                public void enqueueInvalidate(
+                        TableToken matViewToken,
+                        String invalidationReason,
+                        TableToken invalidationBaseTableToken,
+                        long invalidationBaseTxn,
+                        boolean isInvalidationForced
+                ) {
+                    invalidationWakeCount.incrementAndGet();
+                }
+            };
+            try {
+                Assert.assertTrue(viewState.tryLock());
+                viewState.markAsPendingInvalidation("update operation");
+                viewState.markAsDropped();
+                MatViewRefreshJob.finalizeAndUnlock(engine, countingStore, viewToken, viewState, false);
+
+                Assert.assertEquals("finalize must not wake the marker for a dropped view", 0, invalidationWakeCount.get());
+                Assert.assertTrue("the marker dies with the dropped state, never consumed", viewState.isPendingInvalidation());
+            } finally {
+                if (viewState.isLocked()) {
+                    viewState.unlock();
+                }
+                viewState.close();
+            }
+        });
+    }
+
+    @Test
     public void testDroppedViewLeavesDeferredInvalidationUntouched() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             final MatViewState state = fixture.state();
 
-            // Pins the post-release handoff's isDropped early-return: a deferral lands mid-hold AND the
-            // view is dropped during the same hold. The store's removeViewState marks the state dropped but
-            // cannot free the parked factory (the refresh holds the latch), so the holder's finalize must
-            // skip the dead deferral -- the counting store must observe zero invalidation wakes -- and its
-            // unlock tail must free the factory via tryCloseIfDropped -- assertMemoryLeak fails if it leaks.
+            // Pins the dropped-view finalize path as a GROUP: a deferral lands mid-hold AND the view is
+            // dropped during the same hold. In this job-driven scenario dropped, closed, and invalid all
+            // end up true by the time finalize reads the gate -- unlockAndTryClose's tryCloseIfDropped
+            // wins the just-freed latch and flips isClosed() before the gate runs, and the refresh itself
+            // independently fails into invalid once its view is gone. The store's removeViewState marks
+            // the state dropped but cannot free the parked factory (the refresh holds the latch), so the
+            // holder's finalize must skip the dead deferral -- the counting store must observe zero
+            // invalidation wakes -- and its unlock tail must free the factory via tryCloseIfDropped --
+            // assertMemoryLeak fails if it leaks. Because all three gate clauses agree here, this test
+            // cannot isolate the isDropped clause on its own (removing it alone still passes, masked by
+            // isClosed/isInvalid); {@link #testDroppedViewFinalizeSkipsWakeWhenCloseRaces()} pins that
+            // clause in isolation with a synthetic state modeling the race where tryCloseIfDropped loses
+            // the latch and isClosed() stays false.
             final AtomicInteger invalidationWakeCount = new AtomicInteger();
             final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
                 @Override
