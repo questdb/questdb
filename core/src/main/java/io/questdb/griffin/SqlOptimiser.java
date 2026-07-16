@@ -597,6 +597,16 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    /**
+     * Reports whether every bound in a timestamp predicate is known at parse time, so that
+     * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
+     * scalar sub-query resolves only at execution time and must stay a residual filter.
+     * <p>
+     * A cast is transparent here rather than dynamic: {@code ::} parses to a "cast" FUNCTION node, so
+     * rejecting it outright would strand a static bound like {@code null::timestamp} in a filter. The
+     * recursion below still walks the cast's operand, so {@code $1::timestamp} and a cast sub-query
+     * stay rejected through their own arms.
+     */
     private static boolean isStaticTimestampPredicate(ExpressionNode node) {
         if (node == null) {
             return true;
@@ -612,6 +622,7 @@ public class SqlOptimiser implements Mutable {
                 && (node.type != FUNCTION
                 || !(isInKeyword(node.token)
                 || isBetweenKeyword(node.token)
+                || isCastKeyword(node.token)
                 || Chars.equalsIgnoreCase(node.token, "and_offset")))) {
             return false;
         }

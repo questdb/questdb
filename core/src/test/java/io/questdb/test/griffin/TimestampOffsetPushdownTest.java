@@ -51,12 +51,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     "(150, '2022-01-02T12:00:00.000000Z'), (200, '2023-01-01T12:00:00.000000Z');");
 
             final String greater = "SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts > null::timestamp";
-            // A cast bound (null::timestamp) is a FUNCTION node, so SqlOptimiser's
-            // isStaticTimestampPredicate() rejects the and_offset rewrite and the predicate stays a
-            // residual filter rather than folding to an "Empty table" scan. The row set is what this
-            // test pins: none, not all.
+            // The unsatisfiable model reaches the code generator as intrinsicValue = FALSE, so the scan
+            // is skipped outright instead of opening an interval scan over an empty interval list.
+            // This also pins isStaticTimestampPredicate() treating the cast bound as static: were the
+            // "cast" FUNCTION node rejected, the predicate would degrade to a residual filter and the
+            // plan would scan every row to return none.
             assertQuery(greater)
                     .timestamp("ts")
+                    .withPlanContaining("Empty table")
                     .returns("ts\tprice\n");
             assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts < null::timestamp")
                     .timestamp("ts")
@@ -64,6 +66,39 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts = cast(null as timestamp)")
                     .timestamp("ts")
                     .returns("ts\tprice\n");
+        });
+    }
+
+    @Test
+    public void testCastWrappedDynamicBoundOffsetPredicateRemainsAsFilter() throws Exception {
+        // isStaticTimestampPredicate() treats a cast as transparent so that a static bound like
+        // null::timestamp still pushes down (see testNullBoundOffsetPushdownReturnsEmpty). That
+        // transparency must not leak a dynamic bound through: the recursion still walks the cast's
+        // operand, so a bind variable under a cast stays a residual filter exactly as the bare one
+        // does in testDynamicBoundOffsetPredicateRemainsAsFilter. Baking the offset into an interval
+        // here would read the bind variable at parse time, before it is set.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T01:00:00.000000Z'),
+                        ('2024-01-02T01:00:00.000000Z'),
+                        ('2024-01-03T01:00:00.000000Z')
+                    """);
+            bindVariableService.setStr(0, "2024-01-02T00:00:00.000000Z");
+
+            assertQuery("""
+                    SELECT shifted
+                    FROM (SELECT dateadd('h', -1, ts) shifted FROM t)
+                    WHERE shifted = $1::timestamp
+                    """)
+                    .noLeakCheck()
+                    .timestamp("shifted")
+                    .withPlanContaining("Filter filter: $0::string::timestamp=shifted")
+                    .returns("""
+                            shifted
+                            2024-01-02T00:00:00.000000Z
+                            """);
         });
     }
 
