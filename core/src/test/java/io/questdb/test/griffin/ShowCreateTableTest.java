@@ -777,6 +777,60 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateCompositeSurvivesWarmAlterAddColumn() throws Exception {
+        // Regression for MetadataCacheWriterImpl.hydrateTable(TableMetadata) -- the in-memory
+        // path TableWriter uses to push a live update into the cache right after a WAL-applied
+        // structural ALTER -- which never copied getPartitionSpec() onto the refreshed
+        // CairoTable. Deliberately does NOT call engine.clear() / engine.releaseInactive()
+        // anywhere in this test: those force a disk re-hydration (hydrateTableStartup), which
+        // was never broken and masks this bug. Immediately after the ALTER, on a warm
+        // (already-cached) engine, SHOW CREATE must still render the full composite clause;
+        // before the fix it silently regressed to plain "PARTITION BY DAY".
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, symbol symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange, hash(symbol, 32) order by symbol wal");
+            execute("alter table trades add column qty int");
+            drainWalQueue();
+
+            assertQuery("show create table trades").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 'trades' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tsymbol SYMBOL,
+                    \tprice DOUBLE,
+                    \tqty INT
+                    ) timestamp(ts) PARTITION BY DAY, exchange, hash(symbol, 32) ORDER BY symbol WAL;
+                    """);
+        });
+    }
+
+    @Test
+    public void testShowCreateCompositeSurvivesWarmAlterDropColumn() throws Exception {
+        // DROP-COLUMN counterpart of testShowCreateCompositeSurvivesWarmAlterAddColumn. Drops a
+        // column AFTER the dimension column in writer-index order (qty's writer index 3 > exchange's
+        // writer index 1), so this is isolated from the separate writer-vs-dense divergence bug
+        // (testShowCreateCompositeAfterDropLowerIndexDimensionColumn) -- exchange's dense position
+        // never shifts here. The only thing under test is whether the warm in-memory cache push
+        // retains the composite spec at all. No engine.clear() / engine.releaseInactive().
+        assertMemoryLeak(() -> {
+            execute("create table trades2 (ts timestamp, exchange symbol, price double, qty int) " +
+                    "timestamp(ts) partition by day, exchange wal");
+            execute("alter table trades2 drop column qty");
+            drainWalQueue();
+
+            assertQuery("show create table trades2").noLeakCheck().noRandomAccess().returns("""
+                    ddl
+                    CREATE TABLE 'trades2' (\s
+                    \tts TIMESTAMP,
+                    \texchange SYMBOL,
+                    \tprice DOUBLE
+                    ) timestamp(ts) PARTITION BY DAY, exchange WAL;
+                    """);
+        });
+    }
+
+    @Test
     public void testShowCreateTableUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 ( ts timestamp, s symbol ) timestamp(ts)");

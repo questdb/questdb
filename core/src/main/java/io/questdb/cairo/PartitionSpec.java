@@ -76,6 +76,35 @@ public final class PartitionSpec implements Mutable {
         clusterColumns.clear();
     }
 
+    /**
+     * Deep-copies {@code src}'s state (naming mode, time unit, dimensions, cluster columns) into
+     * this instance, overwriting whatever it held. {@link PartitionDimension} instances are
+     * immutable, so they are reference-copied; the backing {@link IntList}/{@link ObjList}
+     * containers are always this instance's own, never {@code src}'s, so this instance is fully
+     * independent of {@code src} afterwards.
+     * <p>
+     * This is the safe alternative to storing {@code src} itself: a caller that must not alias a
+     * source it does not own -- e.g. {@link TableWriterMetadata#getPartitionSpec()}, which returns
+     * one long-lived instance that {@code TableWriterMetadata} clears and repopulates in place on
+     * every {@code reload()} -- should copy it with this method rather than hold the reference, or
+     * a later reload would silently mutate (or transiently clear) state an earlier copy still
+     * claims to own.
+     * <p>
+     * Must not be called with {@code this == } {@link #EMPTY} (see {@link #checkMutable()}).
+     */
+    public void copyFrom(PartitionSpec src) {
+        checkMutable();
+        if (src == this) {
+            return;
+        }
+        timeUnit = src.timeUnit;
+        namingMode = src.namingMode;
+        dimensions.clear();
+        dimensions.addAll(src.dimensions);
+        clusterColumns.clear();
+        clusterColumns.addAll(src.clusterColumns);
+    }
+
     public int getClusterColumn(int i) {
         return clusterColumns.getQuick(i);
     }

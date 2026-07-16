@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -753,6 +754,68 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
+        });
+    }
+
+    @Test
+    public void testAlterTableWarmPathCopiesCompositePartitionSpecNotAliased() throws Exception {
+        // Guards MetadataCacheWriterImpl.hydrateTable(TableMetadata) -- the in-memory path
+        // TableWriter uses to push a live update into the cache after a WAL-applied structural
+        // ALTER -- against a naive fix that aliases CairoTable's spec straight to
+        // tableMetadata.getPartitionSpec(). TableWriterMetadata owns ONE long-lived PartitionSpec
+        // instance for its whole life and clears + repopulates it in place on every reload() (see
+        // TableWriterMetadata#reload / #getPartitionSpec javadoc): a second structural ALTER on the
+        // same table reloads that very object. If hydrateTable(TableMetadata) merely stored the
+        // reference, every earlier CairoTable snapshot obtained from this writer would keep
+        // observing whatever the CURRENT reload last wrote into that shared object, instead of the
+        // content that was true when it was cached.
+        assertMemoryLeak(() -> {
+            execute("create table trades (ts timestamp, exchange symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange wal");
+
+            execute("alter table trades add column qty int");
+            drainWalQueue();
+
+            TableToken token = engine.verifyTableName("trades");
+            CairoTable afterFirstAlter;
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                afterFirstAlter = metadataRO.getTable(token);
+            }
+            Assert.assertNotNull(afterFirstAlter);
+            PartitionSpec specAfterFirstAlter = afterFirstAlter.getPartitionSpec();
+            Assert.assertTrue("composite spec must survive the warm ALTER", specAfterFirstAlter.isComposite());
+            Assert.assertEquals(1, specAfterFirstAlter.getDimensionCount());
+            Assert.assertEquals("exchange", specAfterFirstAlter.getDimension(0).getAlias());
+
+            // A second structural ALTER on the SAME table reloads the SAME writer, which reuses
+            // (clears, then repopulates in place) its single PartitionSpec field.
+            execute("alter table trades add column qty2 int");
+            drainWalQueue();
+
+            CairoTable afterSecondAlter;
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                afterSecondAlter = metadataRO.getTable(token);
+            }
+            Assert.assertNotNull(afterSecondAlter);
+            PartitionSpec specAfterSecondAlter = afterSecondAlter.getPartitionSpec();
+
+            // Decisive proof the spec was copied, not aliased: two distinct hydration events must
+            // produce two distinct PartitionSpec instances. A naive
+            // table.setPartitionSpec(tableMetadata.getPartitionSpec()) would make these identical,
+            // since hydrateTable(TableMetadata) allocates a brand-new CairoTable every call but
+            // would still be borrowing the SAME writer-owned PartitionSpec field into both.
+            Assert.assertNotSame(
+                    "CairoTable must own a private copy of the composite spec, not alias the writer's live one",
+                    specAfterFirstAlter, specAfterSecondAlter
+            );
+
+            // The earlier snapshot -- still held here after a later ALTER on the same table has
+            // already reloaded (cleared + repopulated) the writer's shared field -- must still
+            // report its own first-ALTER-time content intact.
+            Assert.assertTrue("earlier snapshot's spec must remain intact after a later ALTER on the same table",
+                    specAfterFirstAlter.isComposite());
+            Assert.assertEquals(1, specAfterFirstAlter.getDimensionCount());
+            Assert.assertEquals("exchange", specAfterFirstAlter.getDimension(0).getAlias());
         });
     }
 

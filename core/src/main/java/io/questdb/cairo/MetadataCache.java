@@ -1061,6 +1061,20 @@ public class MetadataCache implements QuietCloseable {
                     .I$();
 
             table.setPartitionBy(tableMetadata.getPartitionBy());
+            // Surface the composite-partitioning spec, mirroring hydrateTableStartup's disk path.
+            // tableMetadata.getPartitionSpec() is the writer's own, long-lived PartitionSpec (see
+            // TableWriterMetadata#getPartitionSpec): it is reused and reloaded in place on every
+            // subsequent structural ALTER, so it must be deep-copied here, never stored directly --
+            // aliasing it would let a later ALTER on this table silently mutate (or transiently
+            // clear) the spec this CairoTable is supposed to have frozen at this hydration. Only
+            // allocate for composite tables; plain tables keep the shared EMPTY default already set
+            // on the CairoTable, so the common path stays garbage-free.
+            PartitionSpec sourcePartitionSpec = tableMetadata.getPartitionSpec();
+            if (sourcePartitionSpec.isComposite()) {
+                PartitionSpec partitionSpec = new PartitionSpec();
+                partitionSpec.copyFrom(sourcePartitionSpec);
+                table.setPartitionSpec(partitionSpec);
+            }
             table.setMaxUncommittedRows(tableMetadata.getMaxUncommittedRows());
             table.setO3MaxLag(tableMetadata.getO3MaxLag());
             table.setHasParquetPartitions(tableMetadata.hasParquetPartitions());
