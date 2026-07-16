@@ -144,8 +144,13 @@ public final class PartitionDimension {
      * Minimal column-name-by-index accessor for {@link #toSink(CharSink, ColumnNameResolver)}.
      * A {@link RecordMetadata} satisfies this via a method reference (see
      * {@link #toSink(CharSink, RecordMetadata)}); a {@link CairoTable} satisfies it with a small
-     * lambda (e.g. {@code idx -> table.getColumnQuiet(idx).getName()}) without either type needing
-     * to implement the other.
+     * lambda (e.g. {@code idx -> table.getColumnByWriterIndex(idx).getName()}) without either type
+     * needing to implement the other.
+     * <p>
+     * {@code columnIndex} here is always the dimension/cluster-column's stable WRITER index (see
+     * {@link PartitionSpec}), never a dense position -- a {@link CairoTable}-backed resolver MUST
+     * translate via {@link CairoTable#getColumnByWriterIndex}, not {@link CairoTable#getColumnQuiet(int)},
+     * or it will resolve the wrong column (or NPE) once a lower-writer-index column has been dropped.
      */
     @FunctionalInterface
     public interface ColumnNameResolver {

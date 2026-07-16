@@ -107,6 +107,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return partitionBy;
     }
 
+    /**
+     * NOTE: dimension/cluster-column indices on the returned spec are stable WRITER indices, not
+     * dense positions (see {@link TableStructure#getPartitionSpec()}); dense consumers must translate.
+     */
     @Override
     public PartitionSpec getPartitionSpec() {
         return partitionSpec;

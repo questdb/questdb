@@ -109,6 +109,12 @@ public interface TableStructure {
      * never-mutated {@link PartitionSpec#EMPTY} whose {@link PartitionSpec#isComposite()} is false.
      * {@link TableUtils#writeMetadata} persists the additive composite block only when the returned
      * spec is composite.
+     * <p>
+     * NOTE: the dimension {@code columnIndex} and cluster-column indices carried by the returned
+     * spec are stable WRITER indices (create-time physical column index, persisted in {@code
+     * _meta} and unaffected by later {@code DROP COLUMN}s), never dense positions -- a dense-keyed
+     * consumer (e.g. rendering column names off {@link CairoTable}, which is dense-keyed) must
+     * translate writer index to name/position explicitly rather than indexing directly.
      */
     default PartitionSpec getPartitionSpec() {
         return PartitionSpec.EMPTY;

@@ -2721,6 +2721,14 @@ public final class TableUtils {
      * {@code 4 + (len < 0 ? 0 : len*2)} bytes -- do NOT use {@link Vm#getStorageLength(int)} here,
      * which assumes a non-negative length and is wrong by 2 bytes for a null string.
      * <p>
+     * NOTE: the {@code columnIndex} read back for each dimension/cluster column is the column's
+     * stable WRITER index (its physical index at create time), not a dense position -- it is
+     * written verbatim from {@link PartitionDimension#getColumnIndex()}/{@link
+     * PartitionSpec#getClusterColumn(int)} and never renumbered on {@code DROP COLUMN} (dropped
+     * columns are tombstoned in place). Callers that are dense-keyed (e.g. {@link CairoTable})
+     * must translate writer index to name/position themselves; this reader and the persisted
+     * format are intentionally writer-indexed and must not change to "fix" that at this layer.
+     * <p>
      * FORWARD-COMPAT INVARIANT: this gates purely on {@code minorVersion >= COMPOSITE_PARTITIONING (3)}.
      * That is correct ONLY because {@link #writeMetadata} / {@link #writeCompositePartitionBlock}
      * raise the minor version to 3 IFF the table is composite (v3 <=> block present). A future,

@@ -416,8 +416,19 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             }
         }
 
-        private CharSequence getColumnName(int columnIndex) {
-            return table.getColumnQuiet(columnIndex).getName();
+        // partitionSpec dimension/cluster-column indices are stable WRITER indices (see the
+        // contract note on TableReaderMetadata/TableWriterMetadata#getPartitionSpec() and
+        // TableUtils#readCompositePartitionSpec), not dense positions -- unlike
+        // table.getColumnQuiet(int), which is dense-keyed. Writer index == dense index only until
+        // a lower-writer-index column is dropped (dropped columns are tombstoned, not
+        // renumbered), so resolving a writer index through getColumnQuiet would silently name the
+        // wrong column, or NPE once the writer index exceeds the shrunken dense column count.
+        // table.getColumnByWriterIndex translates correctly; it returns null (rather than
+        // throwing) if no column now carries that writer index, which getColumnName mirrors so
+        // callers (PartitionDimension.toSink and the ORDER BY loop below) never NPE either.
+        private CharSequence getColumnName(int writerIndex) {
+            CairoColumn column = table.getColumnByWriterIndex(writerIndex);
+            return column != null ? column.getName() : null;
         }
 
         protected void putTimestamp() {
