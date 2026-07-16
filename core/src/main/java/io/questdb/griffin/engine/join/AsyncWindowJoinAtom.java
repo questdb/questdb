@@ -637,7 +637,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     // Binds the owner group-by functions' args to the slave symbol tables at getCursor() time, so a
     // parent projection over a SYMBOL aggregate can resolve the output column's static symbol table
-    // before the slave time-frame cache is built. initTimeFrameCursors() later re-binds them.
+    // before the slave time-frame cache is built. This is the only place they are bound: the bind
+    // has to happen here because the time-frame cache is built lazily on the first read, and
+    // initTimeFrameCursors() must not repeat it, since init() is stateful for a cursor comparison.
     public void initOwnerGroupByFunctions(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
@@ -667,11 +669,19 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
-        // now we can init groupBy functions and join filters
+        // now we can init the per-worker groupBy function clones and the join filters
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
         joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
 
-        Function.init(ownerGroupByFunctions, joinSymbolTableSource, executionContext, null);
+        // The owner group-by functions are already bound, by initOwnerGroupByFunctions() at
+        // getCursor() time. Re-initializing them here would re-run stateful initialization - a
+        // cursor comparison in an aggregate argument would execute its scalar sub-query a second
+        // time per cursor. Re-binding buys nothing either: this source and the page-frame cursor
+        // the owner is bound to resolve the same symbol tables, because every time-frame cursor
+        // wrapper delegates to that very page-frame cursor (SelectedTimeFrameCursor does not remap
+        // because SelectedPageFrameCursor beneath it already does; the extra-null wrapper applies
+        // the same columnSplit rule on both sides). The per-worker clones below still bind here:
+        // they need the cloned symbol tables and are not initialized anywhere else.
 
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();

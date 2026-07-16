@@ -2321,6 +2321,71 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinSymbolAggregateInProjection() throws Exception {
+        // A SYMBOL-typed aggregate (first over a symbol column) that a parent projection or sort
+        // reads. The parallel horizon join must bind the aggregate's args at getCursor() time so
+        // the parent can resolve the output column's static symbol table; it used to bind them
+        // lazily, on the first read, when it built the slave time-frame cache. With the args still
+        // unbound, SymbolColumn.init tripped its static-symbol-table assert, and the sort resolved
+        // a null table and threw NullPointerException - the latter without assertions enabled, so
+        // it reached production builds too. Cross-checked against the single-threaded path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A'),
+                                ('2000-01-01T00:01:00.000000Z', 'B')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 1.0),
+                                ('2000-01-01T00:01:00.000000Z', 'B', 2.0),
+                                ('2000-01-01T00:02:00.000000Z', 'A', 3.0)
+                            """
+            );
+
+            // A projection over the join. The literal forces a VirtualRecord over the join, whose
+            // SymbolColumn for the aggregate resolves at getCursor() time. Keys and offsets stay
+            // out of the projection so it does not depend on the parameterized timestamp unit.
+            final String projected = "SELECT 'U' AS lit, t.sym AS k, first(p.sym) AS s, count(*) AS n " +
+                    "FROM trades t HORIZON JOIN prices p LIST (0m, 1m) AS h ORDER BY k";
+            // A sort keyed directly on the SYMBOL aggregate, on the keyed (ON clause) path.
+            final String sorted = "SELECT t.sym AS k, first(p.sym) AS s, count(*) AS n " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0m, 1m) AS h ORDER BY s, k";
+
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+                assertQuery(projected)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                lit\tk\ts\tn
+                                U\tA\tA\t2
+                                U\tB\tB\t2
+                                """);
+                assertQuery(sorted)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ts\tn
+                                A\tA\t2
+                                B\tB\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinTimestampOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
@@ -6409,6 +6474,79 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             avg_bid\tavg_ask
                             150.0\t151.0
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinSymbolAggregateInProjection() throws Exception {
+        // The multi-slave counterpart of testHorizonJoinSymbolAggregateInProjection: the parallel
+        // multi horizon join must bind the owner group by and key functions at getCursor() time, so
+        // a parent projection or sort over a SYMBOL aggregate can resolve the output column's
+        // static symbol table. Cross-checked against the single-threaded path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A'),
+                                ('2000-01-01T00:01:00.000000Z', 'B')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 1.0),
+                                ('2000-01-01T00:01:00.000000Z', 'B', 2.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO quotes VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 3.0),
+                                ('2000-01-01T00:01:00.000000Z', 'B', 4.0)
+                            """
+            );
+
+            // The literal forces a VirtualRecord over the join, whose SymbolColumn for the
+            // aggregate resolves at getCursor() time.
+            final String projected = "SELECT 'U' AS lit, t.sym AS k, first(p.sym) AS s, count(*) AS n " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
+                    "HORIZON JOIN quotes q ON (t.sym = q.sym) LIST (0m) AS h ORDER BY k";
+            // A sort keyed directly on the SYMBOL aggregate.
+            final String sorted = "SELECT t.sym AS k, first(q.sym) AS s " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
+                    "HORIZON JOIN quotes q ON (t.sym = q.sym) LIST (0m) AS h ORDER BY s, k";
+
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+                assertQuery(projected)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                lit\tk\ts\tn
+                                U\tA\tA\t1
+                                U\tB\tB\t1
+                                """);
+                assertQuery(sorted)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ts
+                                A\tA
+                                B\tB
+                                """);
+            }
         });
     }
 
