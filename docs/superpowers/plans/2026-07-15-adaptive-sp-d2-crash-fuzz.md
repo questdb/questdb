@@ -19,7 +19,7 @@
   - Drive WAL commits via `fuzzer.applyToWal(txns, table, 1, applyRnd)` **+ the inherited no-arg `drainWalQueue()`**; **never** `fuzzer.applyWal(...)` (its internal `assertFalse(isSuspended)` throws the wrong exception type into the sweep).
   - Build the twin + its `fp[]` history **before** any crash is armed, cache `fp[]` in memory, then **drop** the twin table — `crash(dbRoot)` rolls back every file under dbRoot.
 - **Op/schema scope:** full destructive op library (insert/O3/add-drop-rename-col/type-change/truncate/drop-partition/replace-range-dedup/set-TTL/parquet-native-convert/covering-index); `probabilityOfDropTable = 0`; `equalTsRowsProb = 0` (keeps the `order by ts` fingerprint canonical). Rich multi-type schema = `FuzzRunner`'s fixed schema (symbol/varchar/binary/long128/ipv4/indexed-symbol).
-- **Budget:** CI-fast default = a few fixed seeds + one logged random seed, small counts; nightly override via `-Dfuzz.adaptive.crash.seeds=<n>` (and larger counts). Sweep cap = 200 (`DEFAULT_ADAPTIVE_CRASH_POINT_CAP`), truncation logged.
+- **Budget & runtime (REVISED after Task 3 measured reality — READ THIS):** the sweep costs **~4 s per crash point** (Task 3: 200 truncated points ≈ 805 s), so wall-time is `N × ~4 s` and N is the runtime knob. N (durability ops in one `commit()`) is dominated by *schema columns × epoch cadence*, not op type — at `transactionCount=20` + `CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS=0` (epoch every batch, per-column fsync every apply), Task 3 measured **N≈877** → the cap-200 sweep truncated (silently skipping the `full-at-N` bar, which `assertW0Bars` only checks when `!truncated`) and ran ~13 min/seed. **Two nested targets:** (1) HARD ceiling `N ≤ 200` (`DEFAULT_ADAPTIVE_CRASH_POINT_CAP`) so the sweep never truncates and full-at-N is always asserted; (2) RUNTIME target **N ≈ 40–80** so each seed is ≈ 2–4 min and the CI-fast set (2–3 fixed + 1 random seed ⇒ 3–4 sweeps) stays within ~10 min. The runtime target (2) is the binding one — do not size to the 200 ceiling. **Primary lever = a lagging epoch** (`CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS` > 0, e.g. a few hundred ms): it collapses the per-batch × per-column fsync storm to a handful of epoch fsyncs (the dominant N reduction) *and* creates the lazy gap between the durable epoch and the apply frontier that makes recovery roll-forward load-bearing (an epoch must still fire — verify via the Task-5 negative control; if none fires, back the interval off). **Secondary lever = smaller `transactionCount`** (e.g. ~4–6). The implementer MUST measure N for the chosen counts, confirm `N ≤ 200` (`!truncated`), and confirm per-seed wall-time ≈ 2–4 min. CI-fast default = a small fixed-seed set (2–3) + one logged random seed; nightly override via `-Dfuzz.adaptive.crash.seeds=<n>`. This trades per-seed op-count for shape breadth-across-seeds — the correct trade for D2 (D1 already did exhaustive crash-point depth on fixed shapes).
 - Commit after each task with a `feat(test):`/`test(crash):` message ending with the standard `Co-Authored-By:` trailer.
 
 ---
@@ -316,14 +316,35 @@ Validate the whole sweep machinery with a **minimal** op profile first (inserts 
 
 ---
 
-### Task 4: Full destructive op library at W=0
+### Task 4: Full destructive op library at W=0 (size N ≤ cap so the sweep stays exhaustive)
+
+Task 3 ran with `transactionCount=20` + epoch-every-batch → N≈877 ≫ cap 200 → the sweep **truncated**, which (a) blew runtime (~13 min/seed) and (b) silently skipped the `full-at-N` bar (`assertW0Bars` only checks it when `!truncated`). This task sizes the workload to the runtime target **N ≈ 40–80** (exhaustive sweep since N ≤ 200, full-at-N asserted, ~2–4 min/seed) AND flips on the full destructive op library. See the Budget & runtime constraint above — the lagging epoch is the primary lever.
 
 **Files:**
 - Modify: `.../crash/RandomizedAdaptiveCrashFuzzTest.java`
 
-**Interfaces:** Consumes everything from Task 3. Produces nothing new — flips the profile to full.
+**Interfaces:** Consumes Task 3's `runSeedSweep`, `assertW0Bars`, `FuzzCrashWorkload`. Produces `FIXED_SEEDS0/1`, `testFullLibraryW0`.
 
-- [ ] **Step 1: Add the full-library W=0 sweep test** (a few fixed seeds).
+- [ ] **Step 1: Harden `assertW0Bars` — a truncated sweep is now a FAILURE, not a silent skip.** Change the tail of `assertW0Bars` so `full-at-N` is always required:
+
+```java
+    // W=0 exact RPO: monotone staircase over all swept points + full recovery at k=N.
+    private void assertW0Bars(SweepResult r) {
+        Assert.assertFalse("sweep truncated (N=" + r.n + " > cap): size counts so N <= cap, else full-at-N "
+                + "is never checked", r.truncated);
+        int[] p = r.recoveredByK();
+        int prev = -1;
+        for (int k = 1; k <= r.sweptPoints; k++) {
+            Assert.assertTrue("staircase non-monotone at k=" + k + " (" + p[k] + " < " + prev + ")", p[k] >= prev);
+            prev = p[k];
+        }
+        Assert.assertEquals("k=N must recover the full committed history", r.n, p[r.sweptPoints]);
+    }
+```
+
+- [ ] **Step 2: Lag the epoch (primary lever) and shrink `transactionCount` to hit N ≈ 40–80.** In `runSeedSweep`, change `CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS` from `0` to a lagging value (start at **200** ms) — this is the dominant N reduction (collapses the per-batch × per-column fsync storm) and forms the lazy gap recovery must roll forward. In `configureFuzz`, drop `transactionCount` in `setFuzzCounts` from 20 to a small value (start at **5**). Keep the full profile (`fuzzOverrideMinimal = false`, the default). Target the runtime band N ≈ 40–80 (hard ceiling ≤ 200); measure in Step 4 and adjust. If the epoch lags so far that *none* fires (durable cut never advances — the Task-5 control will show recovery doing nothing), back the interval down.
+
+- [ ] **Step 3: Add the full-library test and MEASURE N.**
 
 ```java
     private static final long[] FIXED_SEEDS0 = {1234L, 22L, 8080L};
@@ -334,15 +355,15 @@ Validate the whole sweep machinery with a **minimal** op profile first (inserts 
         runWithCrashFacade(() -> {
             for (int s = 0; s < FIXED_SEEDS0.length; s++) {
                 SweepResult r = runSeedSweep(FIXED_SEEDS0[s], FIXED_SEEDS1[s], 0);
-                assertW0Bars(r);
+                assertW0Bars(r);   // now hard-fails if truncated
             }
         });
     }
 ```
 
-- [ ] **Step 2: Run to verify.** `mvn -q -pl core test -Dtest=RandomizedAdaptiveCrashFuzzTest#testFullLibraryW0 -DfailIfNoTests=false`. Expected: PASS for all three seeds. A failure is one of: (a) a fingerprint-canonicalization artifact (a truncate/drop-partition producing a state that `order by ts` renders ambiguously) — verify by dumping the mismatch; if so, strengthen the dump's ORDER BY with a deterministic tiebreaker column present across schema versions, or lower the offending op's probability and note it; (b) a **real adaptive durability bug** → stop, capture the seed (`s0,s1`), file a GA-blocker. Do not weaken a bar to get green.
+- [ ] **Step 4: Run, read the logged N, and tune until exhaustive + green.** `mvn -q -pl core test -Dtest=RandomizedAdaptiveCrashFuzzTest#testFullLibraryW0 -DfailIfNoTests=false 2>&1 | tee /tmp/t4.log`. The driver logs `n=<N>`/`sweptPoints`/`truncated` per seed — read them. Tune to the runtime band: if any seed reports `truncated=true` (N > 200) the `assertFalse` in `assertW0Bars` fails outright; more generally, if N is well above ~80 (a seed takes ≳ 5 min) raise the epoch interval and/or lower `transactionCount` until every seed is `!truncated` with N ≈ 40–80 and wall-time ≈ 2–4 min. If N drops so low that the sweep is trivially shallow (< ~20) or the Task-5 control later shows recovery doing nothing, the epoch stopped firing — back the interval down. Record the final `transactionCount`, epoch interval, and per-seed N + wall-time in your report. Then confirm all three seeds are green. Interpreting a real failure: (a) a fingerprint-canonicalization artifact (a truncate/drop-partition rendering ambiguously under `order by ts`) — dump the mismatch; if genuinely an ordering artifact of legitimately-equal rows, add a deterministic tiebreaker to the dump's ORDER BY or lower that op's probability and note it; (b) a **real adaptive durability bug** (a recovered state matching no `fp[P]`) → STOP, capture the seed, file a GA-blocker, do not weaken a bar.
 
-- [ ] **Step 3: Commit.** `git commit -am "test(crash): SP-D D2 full destructive op library at W=0"`
+- [ ] **Step 5: Commit.** `git commit -am "test(crash): SP-D D2 full destructive op library at W=0 (sized N<=cap)"`
 
 ---
 
