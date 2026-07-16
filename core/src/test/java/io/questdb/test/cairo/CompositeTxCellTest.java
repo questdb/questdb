@@ -418,4 +418,115 @@ public class CompositeTxCellTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Plan 3, Task 4: the timestamp-resolving mutators/removers ({@code updatePartitionSizeByTimestamp},
+     * {@code removeAttachedPartitions}, {@code incrementPartitionSquashCounter}) must resolve their raw
+     * index via {@code (ts, cellKey)} (Task 3's {@link TxReader#findAttachedPartitionRawIndexBy}), not
+     * just {@code ts} -- otherwise a mutation aimed at one cell silently lands on a different cell at the
+     * same timestamp (whichever one a ts-only lookup happens to find, i.e. the lowest cellKey present,
+     * since the array is sorted (ts ASC, cellKey ASC)). Builds day1/cell0 (size 10) and day1/cell1 (size
+     * 20) via the tail-append seam, then drives each mutator at cell1 and asserts cell0 is untouched,
+     * before finally removing cell0 and checking cell1 survives alone with its mutations intact.
+     */
+    @Test
+    public void testMutatorsDoNotAliasAcrossCellsAtSameTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day1, 20L, 101L, 1);
+                    Assert.assertEquals(2, txWriter.getPartitionCount());
+                    Assert.assertEquals(10L, txWriter.getPartitionSize(0));
+                    Assert.assertEquals(20L, txWriter.getPartitionSize(1));
+
+                    // Update (day1, cell1)'s size -- must land on cell1, not alias cell0.
+                    txWriter.updatePartitionSizeByTimestamp(day1, 1, 25L);
+                    Assert.assertEquals("cell1 size after targeted update", 25L, txWriter.getPartitionSize(1));
+                    Assert.assertEquals("cell0 size must be unaffected by a cell1 update", 10L, txWriter.getPartitionSize(0));
+
+                    // Squash counter on (day1, cell1) -- must not touch cell0's counter. Both cells still
+                    // present at this point; removal happens last.
+                    Assert.assertTrue(txWriter.incrementPartitionSquashCounter(day1, 1));
+                    Assert.assertEquals("cell1 squash counter incremented", 1, txWriter.getPartitionSquashCount(1));
+                    Assert.assertEquals("cell0 squash counter must be unaffected", 0, txWriter.getPartitionSquashCount(0));
+
+                    // Remove (day1, cell0); only (day1, cell1) must remain, with its mutations intact.
+                    txWriter.removeAttachedPartitions(day1, 0);
+                    Assert.assertEquals(1, txWriter.getPartitionCount());
+                    Assert.assertEquals(day1, txWriter.getPartitionTimestampByIndex(0));
+                    Assert.assertEquals(1, txWriter.getPartitionCellKey(0));
+                    Assert.assertEquals(25L, txWriter.getPartitionSize(0));
+                    Assert.assertEquals(1, txWriter.getPartitionSquashCount(0));
+                }
+            }
+        });
+    }
+
+    /**
+     * Plan 3, Task 4 (Task-3 carry-forward coverage lock): {@link TxReader#findAttachedPartitionRawIndexBy}'s
+     * mid-scan early-exit branch (the {@code thisCellKey > cellKey} check, {@code TxReader.java:223}) fires
+     * when a miss is discovered strictly INSIDE a same-ts run because a later cell's key already exceeds the
+     * query key -- as opposed to running off the end of the run because the timestamp changed (the existing
+     * {@link #testFindRawIndexByTsAndCellKey}'s "missWithinRun" case: querying cellKey 5 against cell0/cell1
+     * only ever hits the ts-changed exit, since 5 is bigger than every cellKey actually present there, and
+     * the run ends at day2). Building day1/cell0, day1/cell1, day1/cell9 -- all the SAME timestamp -- and
+     * querying cellKey 2 forces the scan to reach cell9, still within the day1 run, and observe 9 &gt; 2,
+     * hitting the early-exit branch specifically instead of running off the run's end.
+     */
+    @Test
+    public void testFindRawIndexByTsAndCellKeyMidScanMiss() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day1, 20L, 101L, 1);
+                    txWriter.appendPartitionForTest(day1, 90L, 109L, 9);
+
+                    // Sanity: raw offsets are index * stride (8); all three partitions share timestamp day1.
+                    Assert.assertEquals(0, txWriter.findAttachedPartitionRawIndexBy(day1, 0));
+                    Assert.assertEquals(8, txWriter.findAttachedPartitionRawIndexBy(day1, 1));
+                    Assert.assertEquals(16, txWriter.findAttachedPartitionRawIndexBy(day1, 9));
+
+                    // cellKey 2 is not present; the scan must stop as soon as it reaches cell9 (thisCellKey
+                    // 9 > 2) rather than running to the end of the array -- the mid-scan early-exit branch.
+                    int missRaw = txWriter.findAttachedPartitionRawIndexBy(day1, 2);
+                    Assert.assertEquals(-17, missRaw);
+                    int insertionPoint = -(missRaw) - 1;
+                    Assert.assertEquals(
+                            "insertion point must sit strictly between cell1 (raw 8) and cell9 (raw 16)",
+                            16, insertionPoint
+                    );
+                    Assert.assertTrue(insertionPoint > 8);
+                    Assert.assertTrue(insertionPoint < 24);
+                }
+            }
+        });
+    }
 }

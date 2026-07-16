@@ -259,6 +259,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return true;
     }
 
+    /**
+     * Plan 3 Task 4: {@code (ts, cellKey)}-resolving counterpart of {@link #incrementPartitionSquashCounter(int)}.
+     * Resolves the exact cell via {@link TxReader#findAttachedPartitionRawIndexBy}, then delegates --
+     * production has no timestamp-resolving squash-counter caller today (the sole caller,
+     * {@code TableWriter.squashSplitPartitions}, already tracks the ordinal partition index itself), so
+     * this exists purely so a test can target one cell's squash counter without doing raw-index/stride
+     * arithmetic by hand.
+     */
+    public boolean incrementPartitionSquashCounter(long timestamp, int cellKey) {
+        int indexRaw = findAttachedPartitionRawIndexBy(timestamp, cellKey);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        return incrementPartitionSquashCounter(indexRaw / longsPerAttachedPartition);
+    }
+
     public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
@@ -358,9 +374,21 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public int removeAttachedPartitions(long timestamp) {
+        return removeAttachedPartitions(timestamp, 0);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code (ts, cellKey)}-resolving counterpart of {@link #removeAttachedPartitions(long)},
+     * which is now a thin {@code cellKey = 0} delegate to this method (byte-identical for plain and
+     * dormant-composite tables, mirroring Task 3's {@code findAttachedPartitionRawIndexByLoTimestamp}).
+     * Resolves the exact same-ts cell to remove via {@link TxReader#findAttachedPartitionRawIndexBy}
+     * rather than just the first same-ts entry, so removing one cell cannot delete a sibling cell at the
+     * same timestamp instead.
+     */
+    public int removeAttachedPartitions(long timestamp, int cellKey) {
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
+        int indexRaw = findAttachedPartitionRawIndexBy(partitionTimestampLo, cellKey);
         if (indexRaw > -1) {
             final int size = attachedPartitions.size();
             final int lim = size - longsPerAttachedPartition;
@@ -641,12 +669,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+        // Plain wrapper: every production caller resolves partitionIndex from a plain/dormant-composite
+        // (cellKey 0 always) context -- composite routing (which cell a row lands in) is Plan 4.
+        updateAttachedPartitionSizeByRawIndex(partitionIndex, partitionTimestampLo, partitionSize, partitionNameTxn, 0);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code cellKey}-aware counterpart of {@link #updateAttachedPartitionSizeByRawIndex(int, long, long, long)},
+     * which is now a thin {@code cellKey = 0} delegate to this method. {@code partitionIndex} is still a
+     * RAW index (or its negative insertion-point encoding) already resolved by the caller, so the
+     * update-in-place branch needs no cellKey (a raw index already identifies one exact cell); only the
+     * insert-on-miss branch needs it, to insert the new partition at the caller's actual cellKey instead
+     * of always hardcoding 0.
+     */
+    public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn, int cellKey) {
         if (partitionIndex > -1) {
             updatePartitionSizeByRawIndex(partitionIndex, partitionSize);
         } else {
-            // Real writes only ever produce cellKey 0 today -- composite routing (which cell a row
-            // lands in) is Plan 4.
-            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn, 0);
+            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn, cellKey);
         }
     }
 
@@ -667,6 +707,26 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount, long partitionNameTxn) {
         recordStructureVersion++;
         updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code cellKey}-aware counterpart of {@link #updatePartitionSizeByTimestamp(long, long)}.
+     * The plain overload is a thin {@code cellKey = 0} delegate to {@link #updateAttachedPartitionSizeByTimestamp(long, long, long)}
+     * (unchanged); this one resolves via {@code (ts, cellKey)} instead, so a size update aimed at one
+     * cell cannot silently land on a different cell at the same timestamp.
+     */
+    public void updatePartitionSizeByTimestamp(long timestamp, int cellKey, long rowCount) {
+        recordStructureVersion++;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, txn - 1);
+    }
+
+    /**
+     * Plan 3 Task 4: {@code cellKey}-aware counterpart of {@link #updatePartitionSizeByTimestamp(long, long, long)}.
+     * See {@link #updatePartitionSizeByTimestamp(long, int, long)}.
+     */
+    public void updatePartitionSizeByTimestamp(long timestamp, int cellKey, long rowCount, long partitionNameTxn) {
+        recordStructureVersion++;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, partitionNameTxn);
     }
 
     private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {
@@ -859,8 +919,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
+        // Plain wrapper: byte-identical to calling the cellKey-aware overload below with cellKey 0.
+        updateAttachedPartitionSizeByTimestamp(timestamp, 0, partitionSize, partitionNameTxn);
+    }
+
+    private void updateAttachedPartitionSizeByTimestamp(long timestamp, int cellKey, long partitionSize, long partitionNameTxn) {
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
+        int indexRaw = findAttachedPartitionRawIndexBy(partitionTimestampLo, cellKey);
+        updateAttachedPartitionSizeByRawIndex(indexRaw, partitionTimestampLo, partitionSize, partitionNameTxn, cellKey);
     }
 
     private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
