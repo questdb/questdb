@@ -4946,24 +4946,46 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // chance to advance past the gap - a deploy/upgrade restart followed by a
         // crash, or two crashes in a row.
         //
-        // On restart the head .cp does not advance on its own: firstCp is false (the
-        // head is restored from disk) and neither the row nor the duration cadence
-        // fires for a tiny forward drain, so the head stays pinned at its old base
-        // seqTxn while lvConsumed keeps climbing to the applied point every flush.
-        // Each restart's replayToApplied therefore re-reads the SAME
-        // (headBaseSeqTxn, applied] base WAL, and every intervening WalPurgeJob must
-        // keep retaining it. Pre-fix the second purge - whose floor is lvConsumed,
-        // now advanced FURTHER than after the first restart - deletes the gap
-        // segments, so the second restart's replay cannot open the purged _event
-        // file and the view goes INVALID forever. Post-fix the floor is capped at
-        // headBaseSeqTxn on every sweep, so the gap WAL survives an arbitrary number
-        // of restarts until a checkpoint moves the manifest past it.
+        // While the head stays pinned at its old base seqTxn, lvConsumed keeps
+        // climbing to the applied point on every flush, so each restart's
+        // replayToApplied re-reads the SAME (headBaseSeqTxn, applied] base WAL and
+        // every intervening WalPurgeJob must keep retaining it. Pre-fix the second
+        // purge - whose floor is lvConsumed, now advanced FURTHER than after the
+        // first restart - deletes the gap segments, so the second restart's replay
+        // cannot open the purged _event file and the view goes INVALID forever.
+        // Post-fix the floor is capped at headBaseSeqTxn on every sweep, so the gap
+        // WAL survives an arbitrary number of restarts until a checkpoint moves the
+        // manifest past it.
+        //
+        // What pins the head: the first post-restart flush normally seals a fresh
+        // .cp (design section 3.2's restored-head trigger), which is exactly what
+        // ends this scenario - once the head covers the applied point there is no
+        // gap left to replay and the floor may release the WAL. To hold the view in
+        // the pre-advance state across BOTH restarts, fail the .cp write outright:
+        // that write is derived state and non-fatal by design (see
+        // maybeWriteHeadCheckpoint's catch - "a failure here does not invalidate the
+        // view"), so an unwritable checkpoint directory leaves a live view running
+        // indefinitely with a lagging head. That is the production shape of
+        // "restarts before the head checkpoint has had a chance to advance", and the
+        // purge floor must hold the gap WAL through all of it.
         //
         // Roll a fresh base WAL segment per commit (rollover row count = 1) so the
         // gap seqTxn lands in its own segment; WalPurgeJob purges at segment
         // granularity.
+        final AtomicBoolean failCpWrite = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // While armed, refuse to create the checkpoint's .cp.tmp so no
+                // flush can seal a fresh head and the head stays pinned.
+                if (failCpWrite.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(ff, () -> {
             // Pin the clock past the epoch so the WAL purge interval gate never
             // skips a sweep; data timestamps sit above it so the non-SEED view
             // keeps every row.
@@ -5024,6 +5046,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-06-01T00:00:03.000000Z\ta\t15.0\n" +
                     "2026-06-01T00:00:05.000000Z\ta\t47.0\n";
 
+            // Arm the .cp write failure: from here neither restart can seal a fresh
+            // head, so the head stays pinned at base seqTxn 1 and every restart
+            // replays the same gap - the state this regression is about.
+            failCpWrite.set(true);
+
             // Restart #1: floor held at head base (1) retains the gap segments; the
             // view recovers ACTIVE, replays (1, 2], and drains forward to seqTxn 3.
             drainPurgeJob();
@@ -5039,9 +5066,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance afterFirst = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(afterFirst);
             Assert.assertFalse("view must stay active after the first restart", afterFirst.isInvalid());
-            // The first restart advanced applied/lvConsumed to 3 but did NOT advance
-            // the durable head (the cadence did not fire), so the head still lags and
-            // a second restart must replay the same gap over again.
+            // The first restart advanced applied/lvConsumed to 3 but could NOT
+            // advance the durable head (its .cp write failed), so the head still
+            // lags and a second restart must replay the same gap over again.
             Assert.assertEquals("first restart drained to base seqTxn 3", 3L, afterFirst.getAppliedWatermark());
             Assert.assertEquals("head must still lag after the first restart",
                     1L, afterFirst.getHeadCheckpointBaseSeqTxn());
@@ -5074,7 +5101,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             // The accumulator survived both restarts: a new row continues the running
             // sum from 47, proving the window state (not just the rows) came through
-            // two restarts intact.
+            // two restarts intact. Disarm first so this last cycle runs an ordinary
+            // flush, head write included.
+            failCpWrite.set(false);
             execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:06.000000Z', 'a', 16.0)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -18168,9 +18197,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // state predates the late row lingers on disk below the highest survivor,
         // with an lvSeqTxn <= appliedWatermark (so the orphan check cannot catch
         // it). On restart the retained-checkpoint ring must NOT be rebuilt from
-        // those on-disk files - only the highest survivor is a trusted anchor - so
-        // a later O3 whose trigger sits above the stale entry's maxTs cannot resume
-        // from it and mis-sequence the view; with an empty ring it rebuilds from
+        // those on-disk files - only the highest survivor is a trusted anchor, and
+        // the ring is seeded with that head alone (section 3.1) - so a later O3
+        // whose trigger sits above the stale entry's maxTs cannot resume from it
+        // and mis-sequence the view; finding no eligible anchor it rebuilds from
         // the boundary and stays correct.
         //
         // Without the "trust only highest" rule the ring would re-adopt the poisoned
@@ -18260,10 +18290,24 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue("restore must rehydrate from the highest .cp", reloaded.isCheckpointRestoreSucceeded());
+            // The ring holds exactly the restored head (section 3.1 promotion) and
+            // nothing else: it is seeded from the single trusted head, never by
+            // scanning the surviving on-disk .cp files. The poisoned maxTs=20 file
+            // is still on disk (asserted below) but must not be a ring entry.
             Assert.assertEquals(
-                    "the ring must start empty on restart - never rebuilt from the surviving on-disk .cp files",
-                    0,
+                    "restart must promote the restored head into the ring - and nothing else",
+                    1,
                     reloaded.getRetainedCheckpointCount()
+            );
+            Assert.assertEquals(
+                    "the promoted entry must be the restored head, not a resurrected on-disk .cp",
+                    reloaded.getHeadCheckpointLvSeqTxn(),
+                    reloaded.getRetainedCheckpointLvSeqTxn(0)
+            );
+            Assert.assertNotEquals(
+                    "the poisoned maxTs=20 checkpoint must never re-enter the ring",
+                    poisonedLvSeqTxn,
+                    reloaded.getRetainedCheckpointLvSeqTxn(0)
             );
             // The poisoned maxTs=20 .cp must genuinely survive the failed unlink -
             // otherwise there was nothing on disk to (wrongly) resurrect and the
@@ -18283,8 +18327,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // A later clean cross-commit O3 at ts=25: above the stale maxTs=20
                 // entry, below the restored head (maxTs=30). A ring rebuilt from
-                // disk would resume from the poisoned maxTs=20 anchor; with an empty
-                // ring it falls back to the boundary rebuild and stays gapless.
+                // disk would resume from the poisoned maxTs=20 anchor; a ring
+                // holding only the restored head has no entry below 25 (the head is
+                // at 30), so it falls back to the boundary rebuild and stays gapless.
                 setCurrentMicros(1_200_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
                 drainWalQueue();
@@ -18311,10 +18356,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testO3RestartReDensifiesRingThenResumesFromAnchor() throws Exception {
         // Restart recovery (section 6.3). The retained-checkpoint ring is NOT
         // rebuilt from the surviving on-disk .cp files - only the highest survivor
-        // is trusted as a resume anchor. The ring starts empty after restart and
-        // re-densifies from checkpoints written post-restart, so a later
-        // cross-commit O3 resumes from a fresh near-head anchor and still matches a
-        // from-scratch recompute over the base.
+        // is trusted as a resume anchor. The ring restarts holding that head alone
+        // (section 3.1) and re-densifies from checkpoints written post-restart, so
+        // a later cross-commit O3 resumes from a fresh near-head anchor and still
+        // matches a from-scratch recompute over the base.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush -> dense ring
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -18360,10 +18405,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertTrue("restore must rehydrate from the head .cp", reloaded.isCheckpointRestoreSucceeded());
+            // The pre-restart ring held three entries (maxTs 10/20/30). Only the
+            // head survives the restart: the other two .cp files are still on disk
+            // but are never scanned back in.
             Assert.assertEquals(
-                    "the ring must start empty on restart - never rebuilt from disk",
-                    0,
+                    "restart must seed the ring with the restored head alone - never rebuilt from disk",
+                    1,
                     reloaded.getRetainedCheckpointCount()
+            );
+            Assert.assertEquals(
+                    "the promoted entry must be the restored head",
+                    reloaded.getHeadCheckpointLvSeqTxn(),
+                    reloaded.getRetainedCheckpointLvSeqTxn(0)
             );
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -18403,6 +18456,207 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-11-01T00:00:45.000000Z\t45\t5\n" +
                     "2026-11-01T00:00:50.000000Z\t50\t6\n");
             assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3RestartPromotesRestoredHeadSoApplyAheadResumesFromIt() throws Exception {
+        // Restored-head promotion (section 3.1). The head restored on restart is
+        // already a trusted resume anchor - the head-hit branch replays from it off
+        // the head metadata alone, never consulting the ring - but it stays
+        // invisible to findResumeAnchorBelow until the ring lists it. An
+        // apply-ahead O3 needs exactly that lookup: ApplyWal2TableJob has raced the
+        // base reader past the trigger, so replayFromAnchor must re-anchor at an
+        // entry strictly below min(triggerLowTs, minAheadTs) or abandon the resume
+        // and rebuild the whole view from the lower bound. Against the empty ring a
+        // restart used to leave behind, that lookup always failed - so the first
+        // apply-ahead O3 after every restart cost O(view age).
+        //
+        // A checkpoint-to-applied gap is what makes the case reachable: the head
+        // sits at maxTs=10 while the view has durably applied rows through ts=30,
+        // so tryRestoreFromHead's replay-to-applied lifts latestSeenTs to 30
+        // without sealing a new .cp. A trigger at ts=25 is then both an O3
+        // (25 < 30) and head-hit eligible (25 > 10), and the ahead row at ts=15
+        // drops the ceiling to 15 - still above the restored head, which is the
+        // only entry that can serve it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000); // only firstCp may seal a head
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final long ts10 = MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:10.000000Z");
+            final long ts30 = MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Only the ts=10 commit seals a head (firstCp). The 1M-row cadence
+                // keeps 20 and 30 from writing one, so the head stays at maxTs=10
+                // with the applied point two commits ahead of it - the gap the
+                // restart closes with replay-to-applied.
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals("only the first flush may seal a head at this cadence", 1, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, lv.getHeadCheckpointMaxTs());
+            }
+
+            // Restart: rebuild the registry from disk. The pure-restore tick
+            // restores the maxTs=10 head, replays the (10, 30] gap to lift
+            // latestSeenTs to 30, and promotes the head into the ring.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(800_000L);
+                drainJob(job);
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertTrue("restore must rehydrate from the head .cp", reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals("the restored head must be the ring's sole entry", 1, reloaded.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, reloaded.getRetainedCheckpointMaxTs(0));
+                Assert.assertEquals(reloaded.getHeadCheckpointLvSeqTxn(), reloaded.getRetainedCheckpointLvSeqTxn(0));
+                // The gap replay advanced the O3 detection watermark past the head,
+                // which is what lets the next commit be a head-hit O3 at all.
+                Assert.assertEquals(ts30, reloaded.getLatestSeenTs());
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n0\t0\n");
+
+                // Trigger 25 is head-hit eligible (above head maxTs=10) and an O3
+                // (below latestSeenTs=30); apply then races ahead with minTs=15, so
+                // the resume must re-anchor strictly below 15. Only the promoted
+                // head (maxTs=10) qualifies.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 15)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Resumed from the promoted head, re-emitting only the rows above
+                // it ({15, 20, 25, 30} = 4) and never touching the boundary path.
+                // Without the promotion the ring lookup finds nothing and the whole
+                // view rebuilds from the lower bound: boundary rows go up instead
+                // and resume rows stay 0.
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n4\t0\n");
+                // The ahead row at 15 unseals nothing (the only entry is at 10,
+                // strictly below the ceiling), and the replay seals a fresh head.
+                Assert.assertEquals(2, reloaded.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, reloaded.getRetainedCheckpointMaxTs(0));
+                Assert.assertEquals(ts30, reloaded.getRetainedCheckpointMaxTs(1));
+            }
+
+            // Five rows in ts order, row_number() a gapless 1..5 - identical to a
+            // from-scratch recompute over the applied base {10,15,20,25,30}.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:15.000000Z\t15\t2\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t3\n" +
+                    "2026-11-01T00:00:25.000000Z\t25\t4\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t5\n");
+            assertQuery("SELECT count(*) AS count FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartFirstFlushSealsCheckpointAboveRestoredHead() throws Exception {
+        // Forced first-flush checkpoint (section 3.2). A head restored on restart
+        // carries no write time: the duration cadence has no baseline to measure
+        // against and the row counter restarts from zero, so at a production row
+        // cadence the restored head would stay the ring's ONLY entry until an O3
+        // forced a write or a full rowsCadence accumulated. Until a second entry
+        // exists, every O3 at or below the restored head has no older anchor and
+        // rebuilds from the view's lower bound - O(view age) on a long-lived view.
+        // The first post-restart flush must therefore seal a fresh .cp, and only
+        // the first: the trigger is one-shot per restore, not a cadence override.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000); // the row cadence must never fire on its own
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final long ts10 = MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:10.000000Z");
+            final long ts30 = MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:30.000000Z");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // firstCp seals the head at maxTs=10; the row cadence then goes
+                // quiet, so this is the head the restart restores.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, lv.getHeadCheckpointMaxTs());
+
+                // The control: a second in-order commit at this cadence seals
+                // nothing. This is exactly the behaviour the restored head would
+                // inherit if the first post-restart flush were left to the cadence.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 20)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("the row cadence must not fire here", 1, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, lv.getHeadCheckpointMaxTs());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(600_000L);
+                drainJob(job);
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertEquals("restart seeds the ring with the restored head", 1, reloaded.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, reloaded.getHeadCheckpointMaxTs());
+
+                // The first post-restart flush seals a fresh head even though a
+                // single row landed and the 1M-row cadence is nowhere near firing -
+                // the identical commit before the restart (ts=20 above) wrote
+                // nothing. The ring now holds the restored head plus the fresh one,
+                // so an O3 falling between them has an anchor to resume from.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("the first post-restart flush must seal a head", 2, reloaded.getRetainedCheckpointCount());
+                Assert.assertEquals(ts10, reloaded.getRetainedCheckpointMaxTs(0));
+                Assert.assertEquals(ts30, reloaded.getRetainedCheckpointMaxTs(1));
+                Assert.assertEquals(ts30, reloaded.getHeadCheckpointMaxTs());
+
+                // ... and the next flush goes quiet again: the fresh head carries a
+                // write time now, so the ordinary cadence governs from here.
+                setCurrentMicros(1_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("the restored-head trigger must be one-shot", 2, reloaded.getRetainedCheckpointCount());
+                Assert.assertEquals(ts30, reloaded.getHeadCheckpointMaxTs());
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t3\n" +
+                    "2026-11-01T00:00:40.000000Z\t40\t4\n");
 
             execute("DROP LIVE VIEW lv");
         });

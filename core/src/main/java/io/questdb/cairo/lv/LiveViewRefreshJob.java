@@ -3903,12 +3903,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean durationTrigger = !firstCp
                 && lastWrittenUs != Numbers.LONG_NULL
                 && (nowUs - lastWrittenUs) >= durationCadence;
+        // A head carrying no write time is one THIS process never wrote: either
+        // the startup sweep stamped it from the highest surviving .cp, or
+        // tryRestoreFromHead re-stamped it after restoring that .cp. Both leave
+        // the cadence with no baseline - the duration trigger above disables
+        // itself outright without a lastWrittenUs, and the row counter restarts
+        // from zero - so the restored head would stay the ring's ONLY entry until
+        // an O3 forces a write or a full rowsCadence accumulates. Densify above it
+        // on the first flush instead (design section 3.2): until a second entry
+        // exists, every O3 at or below the restored head has no older anchor to
+        // resume from and rebuilds from the view's lower bound, which is O(view
+        // age) on a long-lived view.
+        //
+        // Gated on a real batchMaxTs because the write seals a ring entry: a
+        // LONG_NULL maxTs anchor undercuts every findResumeAnchorBelow ceiling and
+        // is refused hit-eligibility upstream (see promoteRestoredHeadIntoRing).
+        // The non-force callers already only reach here with rows behind them
+        // (appendedRows > 0 / flushRows > 0), so this holds by construction; state
+        // it locally rather than rely on four call sites keeping it.
+        final boolean restoredHeadFirstFlush = !firstCp
+                && lastWrittenUs == Numbers.LONG_NULL
+                && batchMaxTs != Numbers.LONG_NULL;
         // force fires the write past the row/duration cadence gate. The O3
         // replay paths pass it so an O3 always seals a fresh near-head anchor:
         // a head-hit keeps its (still sealed) prior head as a ring entry rather
         // than clearing it, so firstCp would otherwise stay false and cadence
         // could skip the write, stranding the head at the stale maxTs.
-        if (!(force || firstCp || rowTrigger || durationTrigger)) {
+        if (!(force || firstCp || restoredHeadFirstFlush || rowTrigger || durationTrigger)) {
             return;
         }
 
@@ -4302,11 +4323,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         // Restart-restore trusts only the highest survivor as a resume anchor
-        // (v1, section 6.3). The retained-checkpoint ring is rebuilt exclusively
-        // from checkpoints written after restart, never from the surviving on-disk
-        // .cp files, so it must be empty when this single-shot restore runs. If it
-        // is not, a recovery path has started resurrecting on-disk entries as
-        // anchors, which can poison a later O3 resume - fail loudly in tests.
+        // (v1, section 6.3): the ring is never rebuilt by scanning the surviving
+        // on-disk .cp files, because a stale .cp whose unlink failed is
+        // indistinguishable from a sealed one and would poison a later O3 resume.
+        // The single trusted head IS promoted into the ring once restored (see the
+        // tail of this method), but nothing populates the ring before that, so it
+        // must still be empty when this single-shot restore runs. If it is not,
+        // some path has started resurrecting on-disk entries as anchors - fail
+        // loudly in tests.
         assert instance.getRetainedCheckpointCount() == 0
                 : "retained-checkpoint ring must be empty on restart restore, was "
                 + instance.getRetainedCheckpointCount();
@@ -4366,8 +4390,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // read; the startup sweep stamped placeholders. Done before the replay so
         // that if replayToApplied hands off to o3Replay, its head-hit / head-miss
         // decision reads the real materialized maxTs rather than the placeholder.
-        // writtenUs stays LONG_NULL so the next flush's cadence check treats this
-        // as "first commit" and writes a fresh head soon after.
+        // writtenUs stays LONG_NULL: it marks the head as one this process never
+        // wrote, which is exactly what maybeWriteHeadCheckpoint's restored-head
+        // trigger keys off to seal a fresh .cp on the first post-restart flush.
         instance.setHeadCheckpoint(
                 headLvSeqTxn,
                 manifestBaseSeqTxn,
@@ -4439,7 +4464,56 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // replay re-fed, so subsequent addRowsSinceLastCheckpointWritten calls
         // accumulate against the disk total rather than the (older) head total.
         instance.setLvRowsTotal(restoredHeadState.lvRowsTotal + replayedRows);
+        promoteRestoredHeadIntoRing(instance, headLvSeqTxn, manifestBaseSeqTxn);
         instance.setCheckpointRestoreSucceeded();
+    }
+
+    /**
+     * Seeds the retained-checkpoint ring with the head {@link #tryRestoreFromHead}
+     * just restored, making it the ring's sole entry (design section 3.1).
+     * <p>
+     * This grants the head no trust it did not already hold: the head-hit branch of
+     * {@link #o3Replay} resumes from it directly, off the head metadata, without
+     * consulting the ring at all. Listing it only lets the ring SEARCH
+     * ({@link #findResumeAnchorBelow}) find it. That search is what an apply-ahead
+     * O3 falls back on when {@link ApplyWal2TableJob} has raced the base reader past
+     * the trigger: {@link #replayFromAnchor} then needs an anchor strictly below
+     * {@code min(triggerLowTs, minAheadTs)}, and against an empty ring that lookup
+     * fails and forces an O(view age) rebuild from the view's lower bound - even
+     * when the restored head sits below the ahead floor and would have served.
+     * <p>
+     * The ring's newest entry stays the head, which WalPurgeJob's base WAL
+     * purge floor depends on: it holds the floor at
+     * {@code getHeadCheckpointBaseSeqTxn()}, so an entry the floor does not cover
+     * could not be resumed from. One entry, equal to the head, cannot violate that.
+     * <p>
+     * A LONG_NULL maxTs head must never enter the ring. findResumeAnchorBelow
+     * selects on {@code maxTs < ceilTs}, so LONG_NULL would undercut every ceiling
+     * and anchor a replay at {@code LONG_NULL + 1} - admitting every base row,
+     * including rows below the START FROM boundary this path does not re-apply. The
+     * same value is already refused hit-eligibility in {@link #o3Replay}; refuse it
+     * here for the same reason.
+     */
+    private void promoteRestoredHeadIntoRing(LiveViewInstance instance, long headLvSeqTxn, long manifestBaseSeqTxn) {
+        if (restoredHeadState.maxTimestamp == Numbers.LONG_NULL) {
+            return;
+        }
+        // The .cp this entry names is the one restoreFromHead just read, and
+        // nothing unlinks it: maybeWriteHeadCheckpoint commits the next head with
+        // LONG_NULL, which suppresses commit()'s prior-head unlink, and the ring
+        // governs retirement from here on.
+        instance.addRetainedCheckpoint(
+                headLvSeqTxn,
+                restoredHeadState.maxTimestamp,
+                manifestBaseSeqTxn,
+                restoredHeadState.lvRowsTotal,
+                restoredHeadState.stateBytes
+        );
+        LOG.info().$("live view promoted restored head into checkpoint ring [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", lvSeqTxn=").$(headLvSeqTxn)
+                .$(", baseSeqTxn=").$(manifestBaseSeqTxn)
+                .$(", maxTs=").$(restoredHeadState.maxTimestamp).I$();
     }
 
     /**
