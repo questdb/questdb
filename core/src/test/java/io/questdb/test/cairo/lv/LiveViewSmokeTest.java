@@ -6408,6 +6408,68 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Drives {@code lv} to three committed base rows sealing a {@code .cp} each,
+     * and returns the {@code _lv.s} bytes as they stood after the FIRST of them -
+     * i.e. the durable state a run whose later persists were all lost comes back
+     * to. Writing them over {@code _lv.s} before a restart is what makes the
+     * persists lost rather than merely trailing: the LV table and the {@code .cp}
+     * files stay at base seqTxn 3 while the state file still says 1.
+     * <p>
+     * A FilesFacade cannot stand in here. Failing the persist raises out of
+     * {@code persistState} into the refresh cycle's catch, so the cycle never
+     * reaches its {@code .cp} write and no checkpoint is ever sealed above the
+     * stale watermark - which is the whole shape. A lost persist is one that
+     * <em>reported success</em>, so the cycle carried on; only rewinding the file
+     * afterwards reproduces that.
+     * <p>
+     * With {@code retention.count} at 2 the third checkpoint evicts and unlinks
+     * the first, so every surviving {@code .cp} (2 and 3) sits above the returned
+     * watermark of 1 and the startup sweep is left with no head to stamp.
+     */
+    private byte[] driveViewPastLostStatePersist() throws Exception {
+        final byte[] lostState;
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
+            drainWalQueue();
+            drainJob(job);
+            drainWalQueue();
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(1, lv.getStateReader().getAppliedWatermark());
+            lostState = java.nio.file.Files.readAllBytes(liveViewStatePath());
+
+            for (int seconds = 20; seconds <= 30; seconds += 10) {
+                setCurrentMicros(seconds * 20_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            Assert.assertEquals(3, lv.getStateReader().getAppliedWatermark());
+            Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+            Assert.assertFalse("retention must have unlinked the .cp at 1", existsCheckpointFile(lv, 1));
+            Assert.assertTrue(existsCheckpointFile(lv, 2));
+            Assert.assertTrue(existsCheckpointFile(lv, 3));
+        }
+        assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(
+                "ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                        "2026-11-01T00:00:30.000000Z\t30\t3\n"
+        );
+        return lostState;
+    }
+
+    private java.nio.file.Path liveViewStatePath() {
+        return java.nio.file.Paths.get(
+                engine.getConfiguration().getDbRoot(),
+                engine.verifyTableName("lv").getDirName(),
+                LiveViewState.LIVE_VIEW_STATE_FILE_NAME
+        );
+    }
+
+    /**
      * Reads the live view's durable {@code _checkpoints/_ring} into
      * {@code manifest}. Addresses the file through
      * {@link LiveViewCheckpointRingManifest#ringManifestPath} so the test and
@@ -18850,6 +18912,139 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         engine.getConfiguration().getFilesFacade()
                                 .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$()));
             }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingLostStatePersistRebuildsWithDurableRingOff() throws Exception {
+        // The flag-off twin, and the reason this is a live defect rather than a
+        // Phase 3 one: the retention ring unlinks superseded .cp files whatever
+        // the flag says, so a lost persist strands the sweep with nothing at or
+        // below the raw watermark here too - only without a manifest to exempt
+        // the survivors, so the orphan gate deletes them outright. No head is
+        // stamped, tryRestoreFromHead never runs, and the refresh body drains the
+        // post-watermark commits from COLD accumulators: row_number() restarts at
+        // 1 and the wrong value is durably flushed. Silent - no crash, no
+        // invalidation. The worker must rebuild from the applied base instead.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final byte[] lostState = driveViewPastLostStatePersist();
+
+            engine.getLiveViewRegistry().clear();
+            java.nio.file.Files.write(liveViewStatePath(), lostState);
+            engine.buildViewGraphs();
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            // With no allow-list the orphan gate unlinked both survivors outright,
+            // so the restart has neither a head nor a checkpoint to find one in.
+            Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+            Assert.assertNull(lv.getCheckpointRingCandidate());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+
+                // The rebuild ran: it recomputed the window from identity over the
+                // applied base and sealed a fresh head, so the view is anchored
+                // again rather than left to drain cold.
+                Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(3, lv.getStateReader().getAppliedWatermark());
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // rn=4, not the 1 a cold row_number() accumulator emits.
+            assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(
+                    "ts\tx\trn\n" +
+                            "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                            "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                            "2026-11-01T00:00:30.000000Z\t30\t3\n" +
+                            "2026-11-01T00:00:40.000000Z\t40\t4\n"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingLostStatePersistRestoresFromTrustedManifest() throws Exception {
+        // A LOST _lv.s persist - not the merely trailing one section 11.2 covers,
+        // which reconcileAppliedFloorAfterRestart clamps back up. Every sealed .cp
+        // then sits above the raw watermark the startup sweep gates the head on, so
+        // the sweep returns no head at all. The manifest is trustable the whole
+        // time (covered == the floor the worker is about to reconcile to), but
+        // gating the restore on the sweep's head left it unreachable: nothing ran
+        // rehydrateCheckpointRing, and the view drained on cold accumulators.
+        //
+        // The worker enters the restore on its own account now, so the manifest
+        // names the head the sweep would not - which is what rehydrateCheckpointRing
+        // was always designed to do - and the whole ring comes back.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final byte[] lostState = driveViewPastLostStatePersist();
+
+            engine.getLiveViewRegistry().clear();
+            java.nio.file.Files.write(liveViewStatePath(), lostState);
+            engine.buildViewGraphs();
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            // The state the bug lived in, and the sweep still produces it: the raw
+            // watermark is the lost value, so no .cp counts towards the head. The
+            // sweep's conservatism is deliberate and unchanged - a listed .cp must
+            // never become the fallback head, because only the trust decision tells
+            // a stale-_lv.s false positive from a genuine orphan.
+            Assert.assertEquals(1, lv.getStateReader().getAppliedWatermark());
+            Assert.assertEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+            // ... while the manifest the sweep exempted is fully trustable.
+            Assert.assertNotNull(lv.getCheckpointRingCandidate());
+            Assert.assertEquals(3, lv.getCheckpointRingCandidate().getCoveredBaseSeqTxn());
+            Assert.assertEquals(2, lv.getCheckpointRingCandidate().getEntryCount());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+
+                // covered == the reconciled floor, so the ring is trusted and the
+                // restore resumes from its newest listed entry - no rebuild.
+                Assert.assertEquals(3, lv.getStateReader().getAppliedWatermark());
+                Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(2, lv.getCheckpointRingRecoveredEntries());
+                Assert.assertEquals(0, lv.getCheckpointRingRecoveryFallbackCount());
+                Assert.assertEquals(lv.getRetainedCheckpointLvSeqTxn(1), lv.getHeadCheckpointLvSeqTxn());
+                Assert.assertNull(lv.getCheckpointRingCandidate());
+
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(
+                    "ts\tx\trn\n" +
+                            "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                            "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                            "2026-11-01T00:00:30.000000Z\t30\t3\n" +
+                            "2026-11-01T00:00:40.000000Z\t40\t4\n"
+            );
             execute("DROP LIVE VIEW lv");
         });
     }

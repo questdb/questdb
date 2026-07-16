@@ -4558,6 +4558,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the applied point, then resumes the refresh worker at the applied point so
      * the next incremental refresh rebuilds only the un-flushed lead.
      * <p>
+     * With <em>no</em> anchor to restore from - neither a sweep head nor one a
+     * trusted manifest names - it rebuilds from the applied base instead of
+     * returning. The caller only routes a view here headless once
+     * {@link #needsHeadlessRestartRecovery} has established that it has
+     * materialised rows, and cold accumulators would silently flush wrong
+     * cumulative aggregates over those. So this method restores or rebuilds; it
+     * never hands a caller back a view whose window state it could not account
+     * for.
+     * <p>
      * Which {@code .cp} is the head is {@link #rehydrateCheckpointRing}'s
      * decision, not the startup sweep's: a trusted {@code _ring} manifest
      * repopulates the whole retained-checkpoint ring and names its newest listed
@@ -4609,6 +4618,47 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // watermarks with the head's (potentially older) base seqTxn.
         final long diskAppliedSeqTxn = instance.getAppliedWatermark();
         final long headLvSeqTxn = rehydrateCheckpointRing(instance, diskAppliedSeqTxn);
+        if (headLvSeqTxn == Numbers.LONG_NULL) {
+            // No anchor at all: the sweep found no .cp at or below the RAW _lv.s
+            // watermark, and no trusted manifest named one either. The caller has
+            // already established that this view has materialised rows, so its
+            // accumulators are NOT at identity and a bare return would drain the
+            // post-watermark base commits from cold state and durably flush wrong
+            // cumulative aggregates - the same silent corruption the corrupt-.cp
+            // branch below rebuilds to avoid, reached with no .cp to be corrupt.
+            //
+            // Reachable through a LOST (not merely trailing) _lv.s persist: the
+            // sweep gates the head on the raw watermark, which
+            // reconcileAppliedFloorAfterRestart is about to clamp up, so every
+            // legitimately sealed .cp above the lost value is declined (and, with
+            // no manifest exempting it, unlinked). Rebuild from the applied base
+            // exactly as the corrupt-.cp path does: unconditionally correct and
+            // idempotent, it re-seeds the window from identity, rewrites the tier
+            // with a single REPLACE_RANGE, advances the watermarks and seals a
+            // fresh head.
+            //
+            // This is NOT the rebuild rehydrateCheckpointRing's javadoc tells you
+            // not to re-add. That one refuses a head the sweep DID find, because a
+            // trusted manifest listed nothing; it gates on the verdict. This one
+            // gates on the value rehydrateCheckpointRing returned, so a trusted
+            // empty manifest still restores from the fallback head - there is
+            // simply no head here to refuse.
+            LOG.info().$("live view restart found no checkpoint to restore, rebuilding from the applied base [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", appliedWatermark=").$(diskAppliedSeqTxn).I$();
+            try {
+                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn, true);
+            } catch (Throwable t) {
+                LOG.critical().$("live view restart head-miss replay failed with no checkpoint [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
+                        .$(", error=").$(t).I$();
+                instance.setPendingInvalidationReason("live view restart head-miss replay without a checkpoint failed");
+                return;
+            }
+            instance.setCheckpointRestoreSucceeded();
+            return;
+        }
         if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
             // restoreFromHead failed in one of two distinct ways:
             //  - Compatibility break (LV_*_VERSION_* errno): it stashed a
@@ -4748,6 +4798,63 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.setLvRowsTotal(restoredHeadState.lvRowsTotal + replayedRows);
         promoteRestoredHeadIntoRing(instance, headLvSeqTxn, manifestBaseSeqTxn);
         instance.setCheckpointRestoreSucceeded();
+    }
+
+    /**
+     * Whether a restart that found <b>no</b> head {@code .cp} must still route
+     * through {@link #tryRestoreFromHead} - which rebuilds - rather than fall
+     * through to the caller's incremental drain.
+     * <p>
+     * The drain resumes from the applied watermark with the accumulators at
+     * identity, so it is correct only for a view whose window state really is at
+     * identity. Over a view that has already materialised rows it recomputes the
+     * post-watermark rows from zero and durably flushes wrong cumulative
+     * aggregates ({@code row_number()}, {@code sum() OVER (ORDER BY ts)}) with no
+     * crash and no invalidation. Every ACTIVE view that has emitted a row also
+     * sealed a {@code .cp} for it, so the two normally coincide and this predicate
+     * is false; it separates them on the paths where the {@code .cp} is gone but
+     * the rows are not:
+     * <ul>
+     *     <li>a <b>lost</b> {@code _lv.s} persist - not merely a trailing one -
+     *     puts every sealed {@code .cp} above the raw watermark the startup sweep
+     *     gates the head on, and {@code reconcileAppliedFloorAfterRestart} clamps
+     *     the floor back up only after the sweep has already declined (and,
+     *     without a manifest exempting them, unlinked) the lot;</li>
+     *     <li>a run whose {@code .cp} writes all failed - derived state, non-fatal
+     *     by design.</li>
+     * </ul>
+     * The three exclusions are not defensive:
+     * <ul>
+     *     <li><b>Lead reconstruction</b> - a read-only replica must never write
+     *     disk, and {@code .cp} state does not replicate, so "no head" is its
+     *     resting shape and a rebuild would both corrupt the contract and trip
+     *     {@code o3Replay}'s replica assertion.</li>
+     *     <li><b>SEEDING</b> - the seed sweep owns the resume, from its own
+     *     {@code .scp} namespace and its own floor. Its rows are mid-sweep, not
+     *     abandoned.</li>
+     *     <li><b>Nothing materialised</b> - identity accumulators over a view that
+     *     has emitted nothing and consumed no base commit it owns are simply
+     *     correct, and this is the resting state of an idle view seeded over an
+     *     empty base. Rebuilding it every restart would cost a base scan to
+     *     recompute nothing.</li>
+     * </ul>
+     * The two materialisation probes are deliberately OR'd, and each covers what
+     * the other misses: the row count alone misses a view whose rows a TTL or DROP
+     * PARTITION has since removed while its accumulators stayed advanced, and the
+     * seqTxn comparison alone misses a view whose rows came from the seed, which
+     * completes <em>at</em> {@code subscribeFromSeqTxn - 1}. A false positive costs
+     * one rebuild the view did not need; a false negative is silent corruption.
+     */
+    private boolean needsHeadlessRestartRecovery(LiveViewInstance instance, boolean leadReconstruction) {
+        if (leadReconstruction || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
+            return false;
+        }
+        if (instance.getStateReader().getLastProcessedSeqTxn() >= instance.getStateReader().getSubscribeFromSeqTxn()) {
+            return true;
+        }
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            return lvReader.size() > 0;
+        }
     }
 
     /**
@@ -6596,16 +6703,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // inconsistent accumulators to disk.
             refreshBody:
             try {
-                // First cycle after restart restores from the head
-                // .cp (if any). Single-shot per LV lifetime - the flag flips
-                // true whether the restore succeeded, missed, or failed.
+                // First cycle after restart restores from the head .cp, or - for
+                // a view that has materialised rows but has no anchor at all -
+                // rebuilds, because the drain below would recompute from cold
+                // accumulators and durably flush wrong cumulative aggregates.
+                // Single-shot per LV lifetime - the flag flips true whether the
+                // restore succeeded, missed, or failed.
                 if (!instance.isCheckpointRestoreAttempted()) {
                     instance.setCheckpointRestoreAttempted();
                     // Reconcile a durable floor left behind by a crash between the
                     // inline apply and the trailing _lv.s persist, before the head
                     // .cp restore reads appliedWatermark as disk truth.
                     reconcileAppliedFloorAfterRestart(instance);
-                    if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
+                    if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
+                            || needsHeadlessRestartRecovery(instance, leadReconstruction)) {
                         tryRestoreFromHead(instance, getWindowFactory(instance));
                         if (instance.hasPendingInvalidationReason()) {
                             // The restore could not rebuild a consistent window
