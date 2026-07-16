@@ -1616,7 +1616,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // The wide gap between the ~1s abort and the 10s no-op run keeps the upper bound
         // robust against a slow CI box while still catching a regression.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain  _ = startServerWithRetry(
+            try (TestServerMain _ = startServerWithRetry(
                     PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
                     PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
             )) {
