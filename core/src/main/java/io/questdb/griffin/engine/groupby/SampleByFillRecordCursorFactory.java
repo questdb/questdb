@@ -99,28 +99,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private static final int PREV_CACHE_OFFSET = 2;
     private static final int PREV_ROWID_SLOT = 1;
 
-    private final RecordCursorFactory base;
-    private final ObjList<Function> constantFills;
-    private final SampleByFillCursor cursor;
+    private RecordCursorFactory base;
+    private ObjList<Function> constantFills;
+    private SampleByFillCursor cursor;
     // Slot-cache value for non-keyed runs. Allocated only when there is at
     // least one fixed-size FILL_PREV column to cache; null otherwise. Layout
     // mirrors the keyed MapValue exactly (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT,
     // then per-source PREV cache slots), so the cursor reads through a single
     // Record-typed prevCacheRecord regardless of mode.
-    private final SimpleMapValue nonKeyedPrevCache;
+    private SimpleMapValue nonKeyedPrevCache;
     private final IntList fillModes;
-    private final Function fromFunc;
+    private Function fromFunc;
     private final boolean hasPrevFill;
-    private final Function offsetFunc;
+    private Function offsetFunc;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
     private final int timestampType;
-    private final Function toFunc;
+    private Function toFunc;
     // Non-null only for day-or-larger SAMPLE BY + non-trivial FILL + TIME ZONE
     // (set by SqlOptimiser.rewriteSampleBy). Cursor re-evaluates per of() so a
     // bind-variable TZ picks up its current value. Null means no TZ wrap.
-    private final Function tzFunc;
+    private Function tzFunc;
 
     /**
      * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT
@@ -201,8 +201,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         } catch (Throwable th) {
             // Free what this constructor allocated. Caller still owns its inputs
             // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
-            Misc.free(keysMap);
-            Misc.free(localNonKeyedPrevCache);
+            Misc.free(keysMap, th);
+            Misc.free(localNonKeyedPrevCache, th);
             throw th;
         }
         this.nonKeyedPrevCache = localNonKeyedPrevCache;
@@ -234,7 +234,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -278,14 +278,38 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(base);
-        Misc.free(fromFunc);
-        Misc.free(toFunc);
-        Misc.free(offsetFunc);
-        Misc.free(tzFunc);
-        Misc.free(nonKeyedPrevCache);
-        Misc.freeObjList(constantFills);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final ObjList<Function> constantFills = this.constantFills;
+        this.constantFills = null;
+        final SampleByFillCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function fromFunc = this.fromFunc;
+        this.fromFunc = null;
+        final SimpleMapValue nonKeyedPrevCache = this.nonKeyedPrevCache;
+        this.nonKeyedPrevCache = null;
+        final Function offsetFunc = this.offsetFunc;
+        this.offsetFunc = null;
+        final Function toFunc = this.toFunc;
+        this.toFunc = null;
+        final Function tzFunc = this.tzFunc;
+        this.tzFunc = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, fromFunc);
+        if (toFunc != fromFunc) {
+            failure = Misc.freeBestEffort(failure, toFunc);
+        }
+        if (offsetFunc != fromFunc && offsetFunc != toFunc) {
+            failure = Misc.freeBestEffort(failure, offsetFunc);
+        }
+        if (tzFunc != fromFunc && tzFunc != toFunc && tzFunc != offsetFunc) {
+            failure = Misc.freeBestEffort(failure, tzFunc);
+        }
+        failure = Misc.freeBestEffort(failure, nonKeyedPrevCache);
+        failure = Misc.freeObjListBestEffort(failure, constantFills);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private boolean hasAnyConstantOrNullFill() {
@@ -491,11 +515,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public void close() {
-            baseCursor = Misc.free(baseCursor);
+            final RecordCursor cursor = baseCursor;
+            baseCursor = null;
+            Throwable failure = Misc.freeBestEffort(null, cursor);
             if (isOpen) {
                 isOpen = false;
-                Misc.free(keysMap);
+                failure = Misc.freeBestEffort(failure, keysMap);
             }
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override

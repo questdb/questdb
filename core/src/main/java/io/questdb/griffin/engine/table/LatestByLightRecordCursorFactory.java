@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -57,11 +58,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     private static final int ROW_ID_VALUE_IDX = 0;
     private static final int TIMESTAMP_VALUE_IDX = 1;
 
-    private final RecordCursorFactory base;
-    private final LatestByLightRecordCursor cursor;
     private final boolean orderedByTimestampAsc;
     private final RecordSink recordSink;
     private final int timestampIndex;
+    private RecordCursorFactory base;
+    private LatestByLightRecordCursor cursor;
 
     public LatestByLightRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -141,8 +142,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final LatestByLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class LatestByLightRecordCursor implements RecordCursor {

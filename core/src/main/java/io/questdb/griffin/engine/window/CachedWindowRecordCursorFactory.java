@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordArray;
@@ -52,11 +53,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final ObjList<WindowFunction> allFunctions;
     private final ObjList<WindowFunction> backwardUnorderedFunctions;
-    private final RecordCursorFactory base;
     private final GenericRecordMetadata chainMetadata;
-    private final CachedWindowRecordCursor cursor;
     private final ObjList<WindowFunction> forwardUnorderedFunctions;
     private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
@@ -65,6 +63,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
+    private ObjList<WindowFunction> allFunctions;
+    private RecordCursorFactory base;
+    private CachedWindowRecordCursor cursor;
     private boolean isClosed;
 
     public CachedWindowRecordCursorFactory(
@@ -298,9 +299,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             return;
         }
         isClosed = true;
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.freeObjList(allFunctions);
+        final ObjList<WindowFunction> allFunctions = this.allFunctions;
+        this.allFunctions = null;
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final CachedWindowRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, allFunctions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     class CachedWindowRecordCursor implements RecordCursor {

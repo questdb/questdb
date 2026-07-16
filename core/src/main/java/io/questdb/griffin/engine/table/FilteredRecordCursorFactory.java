@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -38,9 +39,9 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Misc;
 
 public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
-    private final FilteredRecordCursor cursor;
-    private final Function filter;
+    private RecordCursorFactory base;
+    private FilteredRecordCursor cursor;
+    private Function filter;
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         super(base.getMetadata());
@@ -121,8 +122,15 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
-        filter.close();
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, filter);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
