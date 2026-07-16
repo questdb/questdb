@@ -24,8 +24,10 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.BinaryTypeDriver;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -42,7 +44,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -1263,6 +1267,196 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 Assert.assertEquals(0x0000_0044_4444_4444L, r.getLong(2, 4));
 
                 tier.releaseRead(pin);
+            }
+        });
+    }
+
+    @Test
+    public void testFixedWidthRegionExposesAddressesGettersAgreeWith() throws Exception {
+        // dataAddress/dataSize expose a column's region as the (address, used-extent)
+        // pair a page frame column address wants. A fixed-width column's payload lives
+        // wholly in the data region at row << shift, so a raw read at that stride must
+        // return exactly what the buffer getter returns - the frame path would resolve
+        // through the address while every other reader stays on the getter.
+        assertMemoryLeak(() -> {
+            IntList types = wideFixedWidthSchema(); // TIMESTAMP, LONG256, UUID, LONG128
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                // Enough rows to push every region well past the initial page, so the
+                // addresses read below are post-realloc ones.
+                final int rows = 1_024;
+                for (int r = 0; r < rows; r++) {
+                    buf.putLong(r, 0, r * 1_000_000L);
+                    buf.putLong256(r, 1, long256Of(r, r + 1L, r + 2L, r + 3L));
+                    buf.putLong128(r, 2, r, ~r);
+                    buf.putLong128(r, 3, r * 7L, r * 11L);
+                }
+                buf.setRowCount(rows);
+
+                // The extent is rowCount * stride, not the append cursor: a fixed-width
+                // write lands at an absolute offset and never advances the cursor, so a
+                // dataSize wired to getAppendOffset() would report 0 for every column here.
+                Assert.assertEquals((long) rows * Long.BYTES, buf.dataSize(0));
+                Assert.assertEquals((long) rows * 32, buf.dataSize(1));
+                Assert.assertEquals((long) rows * 16, buf.dataSize(2));
+                Assert.assertEquals((long) rows * 16, buf.dataSize(3));
+
+                // A fixed-width column has no aux vector: its auxMem slot is the shared
+                // NullMemory stub, whose addressOf/getAppendOffset throw. Both accessors
+                // must report the 0 sentinel instead of delegating to it.
+                for (int c = 0, n = types.size(); c < n; c++) {
+                    Assert.assertEquals("aux address, col " + c, 0, buf.auxAddress(c));
+                    Assert.assertEquals("aux size, col " + c, 0, buf.auxSize(c));
+                    Assert.assertNotEquals("data address, col " + c, 0, buf.dataAddress(c));
+                }
+
+                final long tsAddr = buf.dataAddress(0);
+                final long uuidAddr = buf.dataAddress(2);
+                for (int r = 0; r < rows; r++) {
+                    Assert.assertEquals(buf.getLong(r, 0), Unsafe.getUnsafe().getLong(tsAddr + ((long) r << 3)));
+                    // UUID / LONG128 store lo first and hi at + 8 - the same 16-byte
+                    // layout PageFrameMemoryRecord.getLong128Lo/Hi read.
+                    Assert.assertEquals(buf.getLong128Lo(r, 2), Unsafe.getUnsafe().getLong(uuidAddr + ((long) r << 4)));
+                    Assert.assertEquals(buf.getLong128Hi(r, 2), Unsafe.getUnsafe().getLong(uuidAddr + ((long) r << 4) + Long.BYTES));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRegionExtentsCollapseWhenEmptyAndAfterReset() throws Exception {
+        // An unfilled region reports a 0 extent (and a 0 address, since nothing is
+        // allocated yet), and reset() must take a filled buffer back to both. reset()
+        // retains the allocated pages and rewinds only the var-size append cursors, so a
+        // dataSize that reported the allocation rather than the written extent - or one
+        // that ignored rowCount for a fixed-width column - would keep reporting the old
+        // fill and hand a Phase 3 frame rows the slot no longer holds.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                for (int c = 0, n = types.size(); c < n; c++) {
+                    Assert.assertEquals("empty data size, col " + c, 0, buf.dataSize(c));
+                    Assert.assertEquals("empty aux size, col " + c, 0, buf.auxSize(c));
+                    Assert.assertEquals("empty data address, col " + c, 0, buf.dataAddress(c));
+                    Assert.assertEquals("empty aux address, col " + c, 0, buf.auxAddress(c));
+                }
+
+                VarSizeRecord rec = new VarSizeRecord();
+                final int rows = 4;
+                for (int r = 0; r < rows; r++) {
+                    rec.of((r + 1) * 1_000_000L, "v" + r, new TestBinarySequence().of(bytesOf(r, 8)));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+                Assert.assertTrue(buf.dataSize(1) > 0);
+                Assert.assertTrue(buf.auxSize(1) > 0);
+
+                buf.reset();
+                for (int c = 0, n = types.size(); c < n; c++) {
+                    Assert.assertEquals("reset data size, col " + c, 0, buf.dataSize(c));
+                    Assert.assertEquals("reset aux size, col " + c, 0, buf.auxSize(c));
+                }
+                // The pages survive reset() (the next refill reuses them), so the regions
+                // stay allocated even though their extents collapsed to 0.
+                Assert.assertNotEquals(0, buf.dataAddress(1));
+                Assert.assertNotEquals(0, buf.auxAddress(1));
+            }
+        });
+    }
+
+    @Test
+    public void testStringBinaryAuxRegionOmitsNativeTerminator() throws Exception {
+        // The buffer's STRING / BINARY aux vector holds exactly one 8-byte start offset
+        // per row, whereas the native layout StringTypeDriver reads - and BinaryTypeDriver
+        // with it, since it extends StringTypeDriver - is the N+1 model, whose trailing
+        // entry bounds the last row's payload. The buffer's own getters never notice: they
+        // resolve a value's length from the payload's own prefix, never from aux[r + 1].
+        // A Phase 3 synthetic frame handing these regions to a native consumer would, so
+        // pin the divergence here rather than let it be discovered as a read past the
+        // region's end on the last row.
+        assertMemoryLeak(() -> {
+            IntList types = strBinSchema(); // TIMESTAMP, STRING, BINARY
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                VarSizeRecord rec = new VarSizeRecord();
+                final int rows = 6;
+                for (int r = 0; r < rows; r++) {
+                    rec.of((r + 1) * 1_000_000L, "s" + r, new TestBinarySequence().of(bytesOf(r, 4)));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                // What the buffer actually stores: N entries, no terminator.
+                Assert.assertEquals((long) rows * Long.BYTES, buf.auxSize(1));
+                Assert.assertEquals((long) rows * Long.BYTES, buf.auxSize(2));
+                // What a native consumer expects: N+1. The gap is exactly one entry, and
+                // it is the last row's payload bound.
+                Assert.assertEquals(
+                        buf.auxSize(1) + Long.BYTES,
+                        StringTypeDriver.INSTANCE.getAuxVectorSize(rows)
+                );
+                Assert.assertEquals(
+                        buf.auxSize(2) + Long.BYTES,
+                        BinaryTypeDriver.INSTANCE.getAuxVectorSize(rows)
+                );
+
+                // Each stored entry is still a real start offset into the data region, in
+                // ascending order and inside the reported extent - the vector is one entry
+                // short, not malformed.
+                final long auxAddr = buf.auxAddress(1);
+                final long dataSize = buf.dataSize(1);
+                long prev = -1;
+                for (int r = 0; r < rows; r++) {
+                    final long off = Unsafe.getUnsafe().getLong(auxAddr + ((long) r << 3));
+                    Assert.assertTrue("offset ascends, row " + r, off > prev);
+                    Assert.assertTrue("offset within data extent, row " + r, off < dataSize);
+                    prev = off;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharRegionAddressesFeedDriverReads() throws Exception {
+        // VARCHAR (like ARRAY) carries a self-describing 16-byte header per row and needs
+        // no trailing terminator, so its regions match the native layout exactly. Prove it
+        // by decoding every row straight from the raw (aux, data) addresses through the
+        // same VarcharTypeDriver entry point a page frame uses, bounding both regions with
+        // the reported extents rather than the allocated limits, and cross-checking against
+        // the buffer getter.
+        assertMemoryLeak(() -> {
+            IntList types = varcharSchema(); // TIMESTAMP, VARCHAR
+            try (LiveViewInMemoryBuffer buf = new LiveViewInMemoryBuffer(types, 0, PAGE_SIZE)) {
+                // varcharValue mixes null, fully-inlined and split (payload-bearing) rows,
+                // so the decode below covers every encoding branch.
+                VarcharRecord rec = new VarcharRecord();
+                final int rows = 32;
+                for (int r = 0; r < rows; r++) {
+                    String v = varcharValue(r);
+                    rec.of((r + 1) * 1_000_000L, v == null ? null : new Utf8String(v));
+                    buf.copyRowFromRecord(rec, r);
+                }
+                buf.setRowCount(rows);
+
+                Assert.assertEquals((long) rows * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES, buf.auxSize(1));
+                Assert.assertEquals(
+                        buf.auxSize(1),
+                        VarcharTypeDriver.INSTANCE.getAuxVectorSize(rows)
+                );
+
+                final long auxAddr = buf.auxAddress(1);
+                final long dataAddr = buf.dataAddress(1);
+                final long auxLim = auxAddr + buf.auxSize(1);
+                final long dataLim = dataAddr + buf.dataSize(1);
+                Utf8SplitString view = new Utf8SplitString();
+                for (int r = 0; r < rows; r++) {
+                    Utf8Sequence actual = VarcharTypeDriver.getSplitValue(auxAddr, auxLim, dataAddr, dataLim, r, view);
+                    String expected = varcharValue(r);
+                    if (expected == null) {
+                        Assert.assertNull("row " + r, actual);
+                    } else {
+                        Assert.assertNotNull("row " + r, actual);
+                        TestUtils.assertEquals(expected, actual);
+                    }
+                }
             }
         });
     }

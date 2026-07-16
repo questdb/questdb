@@ -75,6 +75,19 @@ import io.questdb.std.str.Utf8SplitString;
  * {@code (auxMem, dataMem)} pair, exactly as {@code PageFrameMemoryRecord} does over
  * its page addresses.
  * <p>
+ * {@link #dataAddress}, {@link #dataSize}, {@link #auxAddress} and {@link #auxSize}
+ * expose each column's region as a raw (address, used-byte-extent) pair, the shape a
+ * {@code PageFrame} column address wants. The regions resemble the on-disk native
+ * layout closely but do <em>not</em> match it for every type: a STRING / BINARY column
+ * writes exactly one 8-byte start offset per row, whereas the native layout
+ * {@code StringTypeDriver} (and {@code BinaryTypeDriver}, which extends it) reads is the
+ * N+1 model, carrying a trailing entry that bounds the last row's payload. The buffer's
+ * own getters never need that terminator - they resolve a value's length from the
+ * payload's own prefix - so the divergence is invisible here, but a consumer that sizes
+ * row {@code r} as {@code aux[r + 1] - aux[r]} would read past {@link #auxSize} on the
+ * last row. VARCHAR and ARRAY carry a self-describing 16-byte header per row and need no
+ * terminator, so their regions do match the native layout.
+ * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
  * writes for a row are done, and {@link #setSeamTs(long)} records the lowest
@@ -295,6 +308,43 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             sum += sz != 0 ? sz : 32;
         }
         return sum;
+    }
+
+    /**
+     * Base address of {@code col}'s aux region - the per-row offset/header vector - or
+     * 0 for a fixed-width / SYMBOL column, which stores its payload wholly in
+     * {@link #dataAddress} at an absolute {@code row << shift} offset and has no aux
+     * vector at all (its {@code auxMem} slot is the {@link NullMemory} stub, whose
+     * {@code addressOf} throws, so this must never delegate to it). Returning 0 rather
+     * than throwing matches the page-frame convention, where a fixed-width column's aux
+     * page address is the 0 sentinel.
+     * <p>
+     * Valid only for the {@code [0, rowCount())} rows resident when it is read: the
+     * region is a single contiguous block that reallocates as it grows, so an append
+     * can move the base. A reader holding a slot pin sees a frozen region; the refresh
+     * worker's fast-path append does not.
+     * <p>
+     * A column whose region has not been allocated yet (an empty slot) reports 0 - the
+     * same value a fixed-width column reports. Pair the address with {@link #auxSize},
+     * which is 0 in both cases.
+     */
+    public long auxAddress(int col) {
+        return ColumnType.isVarSize(columnTypes.getQuick(col)) ? auxMem.getQuick(col).addressOf(0) : 0;
+    }
+
+    /**
+     * Used extent of {@code col}'s aux region in bytes - the offset/header vector's
+     * append cursor - or 0 for a fixed-width / SYMBOL column, which has no aux vector.
+     * This is the written extent, not the allocated footprint {@link #footprintBytes}
+     * reports: {@link MemoryCARWImpl} grows by page, so the allocation rounds up past
+     * this bound.
+     * <p>
+     * STRING / BINARY report {@code rowCount * 8} (one start offset per row), which is
+     * one entry short of the N+1 vector the native drivers read - see the class javadoc.
+     * VARCHAR and ARRAY report {@code rowCount * 16} and do match the native layout.
+     */
+    public long auxSize(int col) {
+        return ColumnType.isVarSize(columnTypes.getQuick(col)) ? auxMem.getQuick(col).getAppendOffset() : 0;
     }
 
     public int columnCount() {
@@ -774,6 +824,35 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             rollbackToSavepoint();
             throw t;
         }
+    }
+
+    /**
+     * Base address of {@code col}'s data region - the always-real primary buffer. Carries
+     * the value at the absolute {@code row << shift} offset for a fixed-width / SYMBOL
+     * column, or the appended payload bytes for a var-size column (whose per-row entry
+     * point is the offset/header at {@link #auxAddress}).
+     * <p>
+     * Valid only for the {@code [0, rowCount())} rows resident when it is read; see
+     * {@link #auxAddress} on region relocation. A column whose region has not been
+     * allocated yet (an empty slot) reports 0, which pairs with a {@link #dataSize} of 0.
+     */
+    public long dataAddress(int col) {
+        return dataMem.getQuick(col).addressOf(0);
+    }
+
+    /**
+     * Used extent of {@code col}'s data region in bytes. A fixed-width / SYMBOL column
+     * reports {@code rowCount * stride}: it writes in place at an absolute offset without
+     * moving its append cursor, so {@code getAppendOffset()} stays behind the written
+     * rows and must not be used here. A var-size column reports its payload append cursor,
+     * whose extent is data dependent.
+     * <p>
+     * As with {@link #auxSize} this is the written extent, not the page-rounded
+     * allocation {@link #footprintBytes} reports.
+     */
+    public long dataSize(int col) {
+        final int size = columnTypeSizes.getQuick(col);
+        return size > 0 ? rowCount * size : dataMem.getQuick(col).getAppendOffset();
     }
 
     /**
