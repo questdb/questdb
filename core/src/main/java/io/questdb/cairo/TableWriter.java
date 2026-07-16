@@ -509,14 +509,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
-            // Must run before initPartitionBy(): a genuinely-partitioned table's initPartitionBy() does
-            // not reload attachedPartitions, so whatever stride was in effect when the region was first
-            // (blindly, pre-metadata) loaded above at ofRW(path) is what sticks. That first load always
-            // uses the plain default (metadata -- and therefore composite-ness -- isn't known yet at
-            // that point); harmless for a freshly-created table (nothing persisted to misread yet), but
-            // see Task 1's report for the reopen-ordering risk this leaves for a later task to close.
+            // setComposite() must run before initPartitionBy(): a genuinely-partitioned table's
+            // initPartitionBy() does not reload attachedPartitions, so whatever stride was in effect
+            // when the region was first (blindly, pre-metadata) loaded above at ofRW(path) is what
+            // sticks. That first load always uses the plain default (metadata -- and therefore
+            // composite-ness -- isn't known yet at that point); harmless for a freshly-created table
+            // (nothing persisted to misread yet) or a plain table (the stride was already correct), but
+            // for an already-partitioned COMPOSITE table it leaves reserved slot 5 of the last
+            // partition's record holding stale garbage (Task 1's carry-forward risk) --
+            // reloadAttachedPartitionsAfterComposite() below closes it by redoing the attached-partitions
+            // load at the now-correct stride.
             this.txWriter.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
+            this.txWriter.reloadAttachedPartitionsAfterComposite();
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);

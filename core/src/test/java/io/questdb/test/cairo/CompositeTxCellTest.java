@@ -24,14 +24,26 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 /**
- * Plan 3 (composite partitioning), Task 1: the {@code _txn} attached-partition record gets a
+ * Plan 3 (composite partitioning), Task 1 + Task 2: the {@code _txn} attached-partition record gets a
  * per-table stride -- 4 longs (32 bytes, today's byte-identical layout) for a plain table, 8 longs
  * for a COMPOSITE table (cellKey at slot 4, slots 5-7 reserved; forced to 8 rather than 5 because
  * {@code LongList.binarySearchBlock} needs a power-of-2 block size). Both {@link TableWriter} (via
@@ -39,8 +51,12 @@ import org.junit.Test;
  * derive the stride independently from the same {@code metadata.getPartitionSpec().getDimensionCount()
  * > 0} signal.
  * <p>
- * This task only establishes the stride + cellKey accessor machinery; it does not yet write or
- * meaningfully read a real cellKey (Task 2).
+ * Task 1 established the stride + cellKey accessor machinery only (no real persistence). Task 2 (the
+ * other two tests below) wires up actually writing + reloading a real cellKey, and fixes a
+ * reopen-ordering defect Task 1's review surfaced: TableWriter's constructor blind-loads {@code _txn}
+ * before it knows whether a table is composite, which -- unfixed -- silently corrupts the last
+ * partition's reported size on reopen for an already-partitioned composite table (a stride mismatch,
+ * reproducible even when every partition's cellKey is 0).
  */
 public class CompositeTxCellTest extends AbstractCairoTest {
 
@@ -65,6 +81,154 @@ public class CompositeTxCellTest extends AbstractCairoTest {
                 Assert.assertEquals(8, cr.getTxFile().getLongsPerAttachedPartition());
                 Assert.assertEquals(4, pr.getTxFile().getLongsPerAttachedPartition());
                 Assert.assertEquals(0, pr.getTxFile().getPartitionCellKey(0));
+            }
+        });
+    }
+
+    /**
+     * Steps 1-4: round-trip (timestamp, cellKey, size, nameTxn) through a real composite-stride
+     * {@code _txn} file, using a standalone {@link TxWriter}/{@link TxReader} pair driven by the
+     * {@code *ForTest} seam -- isolated from the TableWriter constructor's blind-load path, so this
+     * test proves ONLY cellKey persistence (the reopen-ordering defect is the next test). Writes three
+     * partitions across two timestamps and two cells: day1/cell0, day1/cell1, day2/cell0.
+     */
+    @Test
+    public void testCellKeyRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive(); // no pooled writer/reader may keep _txn open under our direct use
+
+            final long day1 = 0L;
+            final long day2 = Micros.DAY_MICROS;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.appendPartitionForTest(day1, 20L, 101L, 1);
+                    txWriter.appendPartitionForTest(day2, 30L, 102L, 0);
+                    // The last partition's size normally lives only in transientRowCount, folded back
+                    // into the attached-partitions list on load (see TxWriter#beginPartitionSizeUpdate's
+                    // comment); sync it here so the round-trip below has a real persisted value.
+                    txWriter.updateMaxTimestamp(day2 + 1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.setCompositeForTest(true);
+                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                    txReader.unsafeLoadAll();
+
+                    Assert.assertEquals(3, txReader.getPartitionCount());
+
+                    Assert.assertEquals(day1, txReader.getPartitionTimestampByIndex(0));
+                    Assert.assertEquals(0, txReader.getPartitionCellKey(0));
+                    Assert.assertEquals(10L, txReader.getPartitionSize(0));
+                    Assert.assertEquals(100L, txReader.getPartitionNameTxn(0));
+
+                    Assert.assertEquals(day1, txReader.getPartitionTimestampByIndex(1));
+                    Assert.assertEquals(1, txReader.getPartitionCellKey(1));
+                    Assert.assertEquals(20L, txReader.getPartitionSize(1));
+                    Assert.assertEquals(101L, txReader.getPartitionNameTxn(1));
+
+                    Assert.assertEquals(day2, txReader.getPartitionTimestampByIndex(2));
+                    Assert.assertEquals(0, txReader.getPartitionCellKey(2));
+                    Assert.assertEquals(30L, txReader.getPartitionSize(2));
+                    Assert.assertEquals(102L, txReader.getPartitionNameTxn(2));
+
+                    // Reserved slots 5-7 must always be zero: initPartitionAt() must not trust the
+                    // LongList backing array's previous contents (it's reused across partitions as the
+                    // list grows/shifts), so it explicitly zeroes them rather than relying on that.
+                    LongList raw = new LongList();
+                    txReader.dumpRawTxPartitionInfo(raw);
+                    Assert.assertEquals(24, raw.size()); // 3 partitions * stride 8
+                    for (int p = 0; p < 3; p++) {
+                        int base = p * 8;
+                        Assert.assertEquals("partition " + p + " slot 5", 0L, raw.getQuick(base + 5));
+                        Assert.assertEquals("partition " + p + " slot 6", 0L, raw.getQuick(base + 6));
+                        Assert.assertEquals("partition " + p + " slot 7", 0L, raw.getQuick(base + 7));
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Step 6: the reopen acceptance test for the Task-1 blind-load defect (Step 5's fix). Unlike
+     * {@link #testCellKeyRoundTrip}, this uses real SQL-inserted rows (landing at cellKey 0 -- real
+     * (ts, cellKey) routing is Plan 4) and reopens via a genuine {@link TableWriter}, exercising the
+     * constructor's blind-load path directly. This is the scenario that manifests the bug even though
+     * every cellKey is 0: it is a STRIDE mismatch (plain-4 vs composite-8), not a cellKey-value mismatch.
+     * <p>
+     * Note what this deliberately does NOT assert: {@code getPartitionSize()} of the still-open LAST
+     * partition. That always reads back 0 after a full TableWriter reopen, bug or no bug --
+     * {@code configureAppendPosition()}/{@code initLastPartition()} unconditionally resets it later
+     * regardless, by design (a writer always re-derives the open last partition's size from
+     * transientRowCount going forward, never trusting the persisted slot for it). The fold this task
+     * fixes is real, but by the time a fully-constructed TableWriter is available to a test, its effect
+     * on slot 1 is already overwritten either way -- confirmed empirically while writing this test: an
+     * assertion on getPartitionSize(last) fails identically with the Step-5 fix present AND absent, so it
+     * cannot be the regression signal. The fold's lasting, persistent, and actually-discriminating
+     * casualty is reserved slot 5 of the last partition's record: the misdirected fold leaves real
+     * (non-zero) data there instead of the zero every partition's reserved slots must hold. That's what
+     * this test checks, via a raw dump of the attached-partitions region.
+     * <p>
+     * Confirmed RED before the Step-5 fix and GREEN after (see task report for both captured runs).
+     */
+    @Test
+    public void testReopenAfterCompositeBlindLoad() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c2 (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            execute("insert into c2 values " +
+                    "('2020-01-01T00:00:00.000000Z', 'A', 1.0), " +
+                    "('2020-01-01T01:00:00.000000Z', 'A', 2.0), " +
+                    "('2020-01-02T00:00:00.000000Z', 'A', 3.0), " +
+                    "('2020-01-02T01:00:00.000000Z', 'A', 4.0), " +
+                    "('2020-01-02T02:00:00.000000Z', 'A', 5.0)");
+            engine.releaseInactive(); // fully close so the next getWriter() below is a real cold reopen
+
+            try (TableWriter tw = getWriter("c2")) {
+                TxWriter txWriter = tw.getTxWriter();
+                Assert.assertEquals(8, txWriter.getLongsPerAttachedPartition());
+                Assert.assertEquals(2, txWriter.getPartitionCount());
+
+                Assert.assertEquals(0, txWriter.getPartitionCellKey(0));
+                Assert.assertEquals(0, txWriter.getPartitionCellKey(1));
+
+                // day 1 (2020-01-01): 2 rows, sealed by the switch to day 2 before the commit that
+                // persisted this _txn -- its masked-size slot was correctly written to disk at that
+                // point (switchPartitions syncs it), so it round-trips correctly regardless of this bug.
+                Assert.assertEquals(2L, txWriter.getPartitionSize(0));
+                // day 2 (2020-01-02): 3 rows, still the open/last partition when this _txn was persisted.
+                // The true row count lives only in transientRowCount (the top-level field, read directly
+                // and unaffected by the buggy fold either way) -- NOT in this slot, which
+                // configureAppendPosition() unconditionally zeroes on every reopen by design.
+                Assert.assertEquals(3L, txWriter.getTransientRowCount());
+                Assert.assertEquals(0L, txWriter.getPartitionSize(1));
+
+                // The actual, persistent casualty of the stride-mismatched fold: it misdirects the
+                // transientRowCount write into slot 5 of the last partition's record (reserved, must
+                // always be 0) instead of the real masked-size slot 1. Pre-fix, this reads back 3
+                // (leaked transientRowCount) instead of 0 for day 2; day 1 (not the last partition, so
+                // never targeted by the fold) is unaffected either way.
+                LongList raw = new LongList();
+                txWriter.dumpRawTxPartitionInfo(raw);
+                Assert.assertEquals(16, raw.size()); // 2 partitions * stride 8
+                for (int p = 0; p < 2; p++) {
+                    int base = p * 8;
+                    Assert.assertEquals("partition " + p + " slot 5", 0L, raw.getQuick(base + 5));
+                    Assert.assertEquals("partition " + p + " slot 6", 0L, raw.getQuick(base + 6));
+                    Assert.assertEquals("partition " + p + " slot 7", 0L, raw.getQuick(base + 7));
+                }
             }
         });
     }

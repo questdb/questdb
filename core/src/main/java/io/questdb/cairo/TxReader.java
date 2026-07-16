@@ -477,7 +477,7 @@ public class TxReader implements Closeable, Mutable {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             // Add transient row count as the only partition in attached partitions list
             attachedPartitions.setPos(longsPerAttachedPartition);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L, 0);
         }
     }
 
@@ -592,6 +592,17 @@ public class TxReader implements Closeable, Mutable {
     void setComposite(boolean composite) {
         this.longsPerAttachedPartition = composite ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : LONGS_PER_TX_ATTACHED_PARTITION;
         this.attachedPartitionsShl = composite ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB : LONGS_PER_TX_ATTACHED_PARTITION_MSB;
+    }
+
+    /**
+     * Test-only: exposes {@link #setComposite(boolean)} outside this package. A test that wants a
+     * standalone composite-stride TxReader/TxWriter directly against a table's {@code _txn} file --
+     * bypassing a live TableReader/TableWriter, which otherwise derive this from real table metadata --
+     * has no other way to reach the package-private setter. Same contract as setComposite(): call this
+     * before {@link #ofRO} / {@code TxWriter.ofRW}.
+     */
+    public void setCompositeForTest(boolean composite) {
+        setComposite(composite);
     }
 
     @Override
@@ -832,7 +843,7 @@ public class TxReader implements Closeable, Mutable {
             // If partitionBy is NONE, we have no partitions, but we still need to
             // have a single partition with transient row count.
             attachedPartitions.setPos(longsPerAttachedPartition);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L, 0);
             attachedPartitionsSize = 1;
         }
     }
@@ -906,11 +917,22 @@ public class TxReader implements Closeable, Mutable {
         return (int) ((partitionSizeMasked >>> PARTITION_SQUASH_COUNTER_BIT_OFFSET) & PARTITION_SQUASH_COUNTER_MAX);
     }
 
-    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn, int cellKey) {
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
         attachedPartitions.setQuick(index + PARTITION_MASKED_SIZE_OFFSET, partitionSize & PARTITION_SIZE_MASK);
         attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);
         attachedPartitions.setQuick(index + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
+        // Slot 4 (cellKey) + reserved slots 5-7 only exist at the composite stride (8); a plain table
+        // (stride 4) must not write them -- slot 4 would actually be the NEXT partition's timestamp slot.
+        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+            attachedPartitions.setQuick(index + PARTITION_CELL_KEY_OFFSET, cellKey);
+            // The LongList backing array is reused across partitions (e.g. arrayCopy'd or grown by
+            // insertPartitionSizeByTimestamp), so stale bytes from a previous occupant can otherwise
+            // survive in these reserved slots -- never trust JVM zeroing, always zero explicitly.
+            attachedPartitions.setQuick(index + PARTITION_CELL_KEY_OFFSET + 1, 0L);
+            attachedPartitions.setQuick(index + PARTITION_CELL_KEY_OFFSET + 2, 0L);
+            attachedPartitions.setQuick(index + PARTITION_CELL_KEY_OFFSET + 3, 0L);
+        }
     }
 
     protected void switchRecord(int readBaseOffset, long readRecordSize) {

@@ -265,7 +265,21 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void insertPartition(int index, long partitionTimestamp, long size, long nameTxn) {
-        insertPartitionSizeByTimestamp(index * longsPerAttachedPartition, partitionTimestamp, size, nameTxn);
+        // Real writes only ever produce cellKey 0 today -- composite routing (which cell a row lands
+        // in) is Plan 4.
+        insertPartitionSizeByTimestamp(index * longsPerAttachedPartition, partitionTimestamp, size, nameTxn, 0);
+    }
+
+    /**
+     * Test-only: synthesizes a partition at an explicit (timestamp, cellKey), appended at the tail of
+     * the attached-partitions list. The real write path only ever produces cellKey 0 today (composite
+     * routing is Plan 4); this lets tests build multi-cell scenarios directly -- e.g. two distinct cells
+     * at the same timestamp -- without waiting for real routing to exist. Callers are responsible for
+     * appending in the order they want the persisted record to end up in: this does a raw tail append,
+     * not a (timestamp, cellKey)-aware ordered insert (that lookup/insert logic is Task 3).
+     */
+    public void appendPartitionForTest(long partitionTimestamp, long size, long nameTxn, int cellKey) {
+        insertPartitionSizeByTimestamp(attachedPartitions.size(), partitionTimestamp, size, nameTxn, cellKey);
     }
 
     public boolean isInsideExistingPartition(long timestamp) {
@@ -521,7 +535,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setPos(indexRaw + longsPerAttachedPartition);
         long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1);
+        // Real writes only ever produce cellKey 0 today -- composite routing (which cell a row lands
+        // in) is Plan 4.
+        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, 0);
         transientRowCount = 0L;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -533,7 +549,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(longsPerAttachedPartition);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, 0);
         }
 
         writeAreaSize = calculateWriteSize();
@@ -573,11 +589,47 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
+    /**
+     * Reopen-ordering fix (Plan 3 Task 2). TableWriter's constructor must open this txWriter via the
+     * 1-arg {@link #ofRW(LPSZ)} before table metadata -- and therefore composite-ness -- is known (see
+     * the constructor's comment above its {@code setComposite} call), so the very first
+     * attached-partitions load always runs at the plain (4-long) stride. That's harmless for a plain
+     * table (the stride was already correct) and for a fresh table (nothing persisted yet to misread).
+     * For an ALREADY-PARTITIONED composite table, though, {@link TxReader#unsafeLoadPartitions} mis-folds
+     * the live transientRowCount into slot 5 of the last partition's record (reserved, should stay 0)
+     * instead of the real masked-size slot 1, because it used the wrong (still-plain) stride at fold
+     * time -- and initPartitionBy() does not reload attachedPartitions for an already-partitioned table,
+     * so that corruption sticks. (The last partition's masked-size slot 1 itself is NOT user-visibly
+     * wrong afterward -- TableWriter's own configureAppendPosition()/initLastPartition() unconditionally
+     * resets it to 0 later regardless, by design, since a writer always re-derives the open last
+     * partition's size from transientRowCount. The lasting, real defect is stale non-zero garbage left
+     * behind in reserved slot 5, which a future task giving that slot real meaning would silently
+     * misread.)
+     * <p>
+     * Call this once, right after {@code setComposite(true)} has learned the table is actually
+     * composite; a no-op otherwise (guarded on the stride setComposite just set, so calling it
+     * unconditionally for every table is safe). Forces a full re-copy of the raw attached-partitions
+     * region at the now-correct stride -- healing slot 5 back to its true on-disk value of 0 -- and
+     * re-runs the transient-row-count fold at the correct slot-1 offset.
+     */
+    void reloadAttachedPartitionsAfterComposite() {
+        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+            // attachedPartitionsSize is the "high water mark" unsafeLoadPartitions() uses to decide
+            // whether it needs to (re)copy raw longs from the file; forcing it below the real region
+            // size makes the next unsafeLoadAll() redo that copy (undoing the blind load's stride-4
+            // slot-5 corruption) as well as the transient-row-count fold, both now at the correct stride.
+            attachedPartitionsSize = -1;
+            unsafeLoadAll();
+        }
+    }
+
     public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
         if (partitionIndex > -1) {
             updatePartitionSizeByRawIndex(partitionIndex, partitionSize);
         } else {
-            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);
+            // Real writes only ever produce cellKey 0 today -- composite routing (which cell a row
+            // lands in) is Plan 4.
+            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn, 0);
         }
     }
 
@@ -713,7 +765,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txMemBase.getLong(readBaseOffset + offset);
     }
 
-    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn) {
+    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn, int cellKey) {
         int size = attachedPartitions.size();
         attachedPartitions.setPos(size + longsPerAttachedPartition);
         if (index < size) {
@@ -724,7 +776,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
-        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
+        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, cellKey);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
