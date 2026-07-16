@@ -76,6 +76,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
+    // Owning list for the read-side composite interners (dedicated dictionaries + _cell registry
+    // SymbolMapReaders), opened in openSymbolMaps() and freed in freeSymbolMapReaders(). These have no
+    // owning table column, so unlike symbolMapReaders they are never sized to columnCount / indexed by
+    // column -- see compositeDicts (the dual-mode, dimension-indexed lookup facade over this list).
+    private final ObjList<SymbolMapReader> compositeInternerReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final int dbRootSize;
     private final FilesFacade ff;
@@ -96,6 +101,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
+    // Non-owning, dual-mode lookup facade over compositeInternerReaders; null for a plain/cluster-only
+    // table (no composite interners). Never closed here -- see compositeInternerReaders for ownership.
+    private CompositeDictionaries compositeDicts;
     private boolean hasActiveColumns;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
@@ -358,6 +366,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public ColumnVersionReader getColumnVersionReader() {
         return columnVersionReader;
+    }
+
+    /**
+     * The read-side composite interners (dedicated dictionaries + {@code _cell} registry) for this
+     * table, or {@code null} if the table has no composite interners (plain or cluster-only table).
+     */
+    public CompositeDictionaries getCompositeDictionaries() {
+        return compositeDicts;
     }
 
     public long getDataVersion() {
@@ -1189,6 +1205,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.freeIfCloseable(symbolMapReaders.getQuick(i));
         }
         symbolMapReaders.clear();
+        // Non-owning: just drop the holder. Its dedicated-dict-reader and registry-reader
+        // SymbolMapReaders are entries in compositeInternerReaders and are freed by the loop below
+        // (freeing here too would double-free).
+        compositeDicts = null;
+        for (int i = 0, n = compositeInternerReaders.size(); i < n; i++) {
+            Misc.freeIfCloseable(compositeInternerReaders.getQuick(i));
+        }
+        compositeInternerReaders.clear();
     }
 
     private void freeTempMem() {
@@ -1544,6 +1568,47 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // symbolMapReaders is sparse
                 symbolMapReaders.set(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
+        }
+        // Open the read-side composite interners (dedicated dictionaries + _cell registry), mirroring
+        // TableWriter.configureColumnMemory()'s write-side registration. These are first-class _txn
+        // symbol maps but own no table column, so they are opened into compositeInternerReaders, never
+        // into the column-indexed symbolMapReaders above. The interners are always the LAST
+        // (layout.dedicatedCount() + 1) symbol slots in _txn (the writer appends them after every real
+        // symbol column, and symbol-column DROP compacts real slots but keeps the interners trailing),
+        // so their dense indices are derived from the current getSymbolColumnCount() rather than
+        // assumed fixed.
+        CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec());
+        if (layout.hasInterners()) {
+            final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+            final int internerCount = layout.dedicatedCount() + 1;
+            final int n = txFile.getSymbolColumnCount();
+            ObjList<SymbolMapReader> dedicatedDictReaders = new ObjList<>(dimCount);
+            int s = 0;
+            for (int i = 0; i < dimCount; i++) {
+                if (layout.needsDedicatedDict(i)) {
+                    final int denseIndex = n - internerCount + s;
+                    SymbolMapReaderImpl dictReader = new SymbolMapReaderImpl(
+                            configuration,
+                            path,
+                            layout.dictName(i),
+                            layout.dictColumnNameTxn(i),
+                            txFile.getSymbolValueCount(denseIndex)
+                    );
+                    compositeInternerReaders.add(dictReader);
+                    dedicatedDictReaders.extendAndSet(i, dictReader);
+                    s++;
+                }
+            }
+            final int registryDenseIndex = n - 1;
+            SymbolMapReaderImpl registryReader = new SymbolMapReaderImpl(
+                    configuration,
+                    path,
+                    CompositeInternerLayout.REGISTRY_NAME,
+                    CompositeInternerLayout.REGISTRY_TXN,
+                    txFile.getSymbolValueCount(registryDenseIndex)
+            );
+            compositeInternerReaders.add(registryReader);
+            compositeDicts = new CompositeDictionaries(new CellRegistry(registryReader), dedicatedDictReaders);
         }
     }
 
@@ -1982,6 +2047,18 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue;
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
+        }
+        if (compositeDicts != null) {
+            // The interners are always the LAST compositeInternerReaders.size() (== dedicatedCount() +
+            // 1) symbol slots in _txn -- recompute the base from the current getSymbolColumnCount() on
+            // every reload, since real symbol columns can be added/dropped around them (see
+            // openSymbolMaps()), and compositeInternerReaders' own size (fixed for the table's
+            // lifetime -- composite dimensions aren't alterable) is exactly the interner count.
+            final int internerCount = compositeInternerReaders.size();
+            final int base = txFile.getSymbolColumnCount() - internerCount;
+            for (int i = 0; i < internerCount; i++) {
+                compositeInternerReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(base + i));
+            }
         }
     }
 

@@ -27,8 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CompositeInternerLayout;
 import io.questdb.cairo.PartitionDimension;
 import io.questdb.cairo.PartitionSpec;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -118,6 +120,55 @@ public class CompositeDictPersistenceTest extends AbstractCairoTest {
                         CompositeInternerLayout.REGISTRY_NAME,
                         CompositeInternerLayout.REGISTRY_TXN
                 )));
+            }
+        });
+    }
+
+    /**
+     * Task 6 (Plan 2): the reader-side mirror of {@link CompositeDictionariesTest}'s writer-side
+     * registration. The registry symbol count only becomes durable on {@code commit()}; forcing the
+     * reader to reopen from disk (via {@code engine.releaseInactive()}) proves the reader opens its
+     * own {@link io.questdb.cairo.SymbolMapReaderImpl} over the {@code _cell} file rather than reusing
+     * writer state, and reverse-looks-up the interned ordinal back to the same tuple.
+     * <p>
+     * A row is appended alongside the {@code internCell} call: {@code TableWriter.commit()} is gated
+     * on {@code inTransaction()} (row/O3/column-version activity) and is a no-op when the only change
+     * is a raw registry {@code MapWriter.put} with zero rows appended, which would never persist any
+     * symbol count -- not specific to the composite registry, and not this task's concern to change.
+     * A real row makes the commit non-empty, so {@code storeSymbolCounts} flushes every dense symbol
+     * writer's count, including the registry's.
+     */
+    @Test
+    public void testReaderReadsRegistryAndDictAfterReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            int ord;
+            try (TableWriter w = getWriter("t")) {
+                ord = w.getCompositeDictionaries().cellRegistry().internCell(new int[]{3, 4}, 2);
+                TableWriter.Row row = w.newRow(0);
+                row.append();
+                w.commit();                       // persist the registry symbol count into _txn
+            }
+            engine.releaseInactive();             // force reader to re-open from disk
+            try (TableReader r = getReader("t")) {
+                int[] out = new int[2];
+                r.getCompositeDictionaries().cellRegistry().getTuple(ord, out);
+                Assert.assertArrayEquals(new int[]{3, 4}, out);
+            }
+        });
+    }
+
+    /**
+     * Companion to {@link #testReaderReadsRegistryAndDictAfterReopen()}: a plain (non-composite)
+     * table's reader must not open any interner readers.
+     */
+    @Test
+    public void testPlainTableReaderHasNoCompositeDictionaries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, s symbol) timestamp(ts) partition by day wal");
+            try (TableReader r = getReader("p")) {
+                Assert.assertNull(r.getCompositeDictionaries());
             }
         });
     }
