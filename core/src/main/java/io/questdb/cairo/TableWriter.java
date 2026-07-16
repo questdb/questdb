@@ -10099,7 +10099,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 openPartition(o3TimestampMin, 0);
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
-                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
+                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0L, txWriter.getTxn() - 1);
             } else if (!isLastPartitionParquet()) {
                 throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
                         .put(path).put(']');

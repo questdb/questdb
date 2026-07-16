@@ -714,19 +714,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * The plain overload is a thin {@code cellKey = 0} delegate to {@link #updateAttachedPartitionSizeByTimestamp(long, long, long)}
      * (unchanged); this one resolves via {@code (ts, cellKey)} instead, so a size update aimed at one
      * cell cannot silently land on a different cell at the same timestamp.
+     * <p>
+     * Named {@code updatePartitionSizeByCell} rather than an {@code updatePartitionSizeByTimestamp}
+     * overload on purpose: a same-arity {@code (long, int, long)} overload of that name previously
+     * collided with the pre-existing {@code updatePartitionSizeByTimestamp(long, long, long)}
+     * (rowCount, partitionNameTxn) overload, differing only by the primitive type of the middle
+     * parameter. Per JLS 15.12.2.5 "most specific method," a 3-arg call whose middle argument is
+     * statically {@code int} (e.g. an int literal, as in {@code TableWriter.processWalCommit}'s
+     * {@code updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1)}) silently
+     * rebound from the intended (rowCount, partitionNameTxn) overload to this one -- turning
+     * "create the artificial empty-table partition with 0 rows" into "...with getTxn()-1 rows"
+     * whenever {@code getTxn() != 1}. Renaming removes the collision outright rather than patching
+     * the one call site, so no future caller can rediscover the same landmine.
      */
-    public void updatePartitionSizeByTimestamp(long timestamp, int cellKey, long rowCount) {
+    public void updatePartitionSizeByCell(long timestamp, int cellKey, long rowCount) {
         recordStructureVersion++;
         updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, txn - 1);
-    }
-
-    /**
-     * Plan 3 Task 4: {@code cellKey}-aware counterpart of {@link #updatePartitionSizeByTimestamp(long, long, long)}.
-     * See {@link #updatePartitionSizeByTimestamp(long, int, long)}.
-     */
-    public void updatePartitionSizeByTimestamp(long timestamp, int cellKey, long rowCount, long partitionNameTxn) {
-        recordStructureVersion++;
-        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, rowCount, partitionNameTxn);
     }
 
     private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {

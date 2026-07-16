@@ -454,7 +454,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
                     Assert.assertEquals(20L, txWriter.getPartitionSize(1));
 
                     // Update (day1, cell1)'s size -- must land on cell1, not alias cell0.
-                    txWriter.updatePartitionSizeByTimestamp(day1, 1, 25L);
+                    txWriter.updatePartitionSizeByCell(day1, 1, 25L);
                     Assert.assertEquals("cell1 size after targeted update", 25L, txWriter.getPartitionSize(1));
                     Assert.assertEquals("cell0 size must be unaffected by a cell1 update", 10L, txWriter.getPartitionSize(0));
 
@@ -523,8 +523,69 @@ public class CompositeTxCellTest extends AbstractCairoTest {
                             "insertion point must sit strictly between cell1 (raw 8) and cell9 (raw 16)",
                             16, insertionPoint
                     );
-                    Assert.assertTrue(insertionPoint > 8);
-                    Assert.assertTrue(insertionPoint < 24);
+                }
+            }
+        });
+    }
+
+    /**
+     * Plan 3 Task 4 fix-wave regression (overload-capture guard). Before this fix, {@code TxWriter} had
+     * a public {@code updatePartitionSizeByTimestamp(long, int, long)} cellKey-aware overload with the
+     * same arity as the pre-existing {@code updatePartitionSizeByTimestamp(long, long, long)}
+     * (rowCount, partitionNameTxn), differing only by the primitive type of the middle parameter. Per
+     * JLS 15.12.2.5 "most specific method," any 3-arg call whose middle argument is statically {@code
+     * int} (e.g. an int literal) silently binds to the newer, more-specific overload instead of the
+     * older one -- exactly what {@code TableWriter.processWalCommit}'s empty-table artificial-partition
+     * creation does: {@code updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1)},
+     * intending rowCount=0/partitionNameTxn={@code getTxn()-1} but (pre-fix) actually capturing
+     * cellKey=0/rowCount={@code getTxn()-1} whenever {@code getTxn() != 1}. (The renamed cellKey overload
+     * is {@code updatePartitionSizeByCell}; production is unaffected either way, since real writes are
+     * cellKey 0 only while write-routing is dormant -- this test only guards the overload shape itself.)
+     * <p>
+     * Reproduces the exact {@code (long, int, long)} call shape directly against a standalone
+     * {@code TxWriter} with {@code txn} forced above 1 (the hazard is masked for a brand-new table's
+     * first-ever commit, where {@code getTxn() == 1}), and asserts the partition's size ends up {@code
+     * 0} -- i.e. the call must resolve to the size overload's rowCount=0, not a cellKey overload's
+     * rowCount=5L. Guards against any future overload of these cellKey-aware methods recapturing this
+     * exact call shape.
+     */
+    @Test
+    public void testUpdatePartitionSizeByTimestampThreeArgCallBindsToSizeOverloadNotCellOverload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, x double) timestamp(ts) partition by day");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("p");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    txWriter.appendPartitionForTest(day1, 10L, 100L, 0);
+                    txWriter.updateMaxTimestamp(day1);
+                    txWriter.finishPartitionSizeUpdate();
+                    // Bump txn above 1 -- the hazard is masked for a brand-new table (getTxn() == 1).
+                    txWriter.commit(new ObjList<>());
+                    txWriter.commit(new ObjList<>());
+                    Assert.assertTrue("txn must be forced above 1 for this canary to be meaningful", txWriter.getTxn() > 1);
+
+                    // The exact (long, int, long) call shape used (pre-fix) by TableWriter.processWalCommit's
+                    // artificial empty-table partition creation. Must bind to
+                    // updatePartitionSizeByTimestamp(long timestamp, long rowCount, long partitionNameTxn)
+                    // with rowCount=0, partitionNameTxn=5L -- NOT a cellKey overload's cellKey=0, rowCount=5L.
+                    // (partitionNameTxn is only ever consulted on the insert-on-miss path, not this
+                    // update-in-place path, so it is not independently observable here -- the size check
+                    // alone discriminates the two overloads.)
+                    txWriter.updatePartitionSizeByTimestamp(day1, 0, 5L);
+                    Assert.assertEquals(
+                            "call must bind to the (rowCount, partitionNameTxn) overload (rowCount=0), " +
+                                    "not a cellKey-aware overload that would set size to 5",
+                            0L, txWriter.getPartitionSize(0)
+                    );
                 }
             }
         });
