@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -78,8 +79,8 @@ public class FilesFunctionFactory implements FunctionFactory {
 
     public static class FilesRecordCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(FilesRecordCursorFactory.class);
-        private final FilesRecordCursor cursor;
-        private final Path path = new Path(MemoryTag.NATIVE_PATH);
+        private FilesRecordCursor cursor;
+        private Path path = new Path(MemoryTag.NATIVE_PATH);
 
         public FilesRecordCursorFactory(CairoConfiguration configuration, CharSequence root) {
             super(METADATA);
@@ -107,8 +108,13 @@ public class FilesFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            cursor.close();
-            Misc.free(path);
+            final FilesRecordCursor cursor = this.cursor;
+            this.cursor = null;
+            final Path path = this.path;
+            this.path = null;
+            Throwable failure = Misc.freeBestEffort(null, cursor);
+            failure = Misc.freeBestEffort(failure, path);
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 
