@@ -38,8 +38,13 @@ import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.Timeout;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Randomized adaptive crash-fuzz (SP-D increment D2). Builds on {@link AbstractAdaptiveCrashSweepTest}'s
@@ -52,6 +57,17 @@ import org.junit.Test;
 public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepTest {
 
     private final FuzzRunner fuzzer = new FuzzRunner();
+
+    // testFullLibraryW0 sweeps the full op library at N≈648 durability ops/seed; a full untruncated crash
+    // sweep (assertW0Bars requires cap≥N) is ~85 min/seed, so it is NIGHTLY-only and gets a longer ceiling
+    // than the 20-min default. CI runs the lean testLeanLibraryW0 instead (small N, same op library).
+    private static final String NIGHTLY_PROP = "questdb.fuzz.nightly";
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(Boolean.getBoolean(NIGHTLY_PROP) ? 3 * 60 * 60 * 1000L : 20 * 60 * 1000L, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @Before
     public void setUpFuzzer() {
@@ -151,6 +167,15 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             execute("drop table if exists " + WAL_TABLE);
             txns = generateTxns(new Rnd(s0, s1), WAL_TABLE);          // recreates cf_wal (0 rows), same txns
             walToken = engine.verifyTableName(WAL_TABLE);
+            // createInitialTableWal QUEUES its unconditional "column top" ALTERs in cf_wal's WAL but does not
+            // drain them, so without this drain they remain part of commit()'s crashable WAL. A crash then
+            // rolls the table back to the PRE-alter base schema (a valid empty table, but one the twin never
+            // snapshots — the twin drains these ALTERs before fp[0], Task 2/3), yielding a spurious
+            // membershipP=-1 and a suspend on the torn ALTER segment. Draining here (before the driver's
+            // markDurableBaseline, which runs after setup) makes the durable baseline the fully-materialized
+            // 14-col empty state == fp[0], symmetric with the twin, so the sweep crashes ONLY the fuzz
+            // workload and every recovery lands on a real fp[] snapshot.
+            drainWalQueue();
             if (fp == null) {
                 fp = buildTwinFingerprints(TWIN_TABLE, txns, new Rnd(s0, s1)); // once; drops the twin
             }
@@ -175,23 +200,30 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     private SweepResult runSeedSweep(long s0, long s1, int windowUs) throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, windowUs);
-        return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1));
+        return runSeedSweep(s0, s1, windowUs, DEFAULT_ADAPTIVE_CRASH_POINT_CAP);
     }
 
-    // W=0 bar 3: full-at-N + monotone staircase over the returned per-k P array.
+    private SweepResult runSeedSweep(long s0, long s1, int windowUs, int cap) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // 1h >> any test commit() duration: fresh-table lastEpochTs==0 fires exactly one deterministic
+        // epoch on batch 1 and nothing can reach 1h to fire a second -- see Budget & runtime / Mechanism
+        // in the plan. A small interval is wall-clock-timing-flaky against the sweep's `fired` guard.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, windowUs);
+        return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
+    }
+
+    // W=0 exact RPO: monotone staircase over all swept points + full recovery at k=N.
     private void assertW0Bars(SweepResult r) {
+        Assert.assertFalse("sweep truncated (N=" + r.n + " > cap): size counts so N <= cap, else full-at-N "
+                + "is never checked", r.truncated);
         int[] p = r.recoveredByK();
         int prev = -1;
         for (int k = 1; k <= r.sweptPoints; k++) {
             Assert.assertTrue("staircase non-monotone at k=" + k + " (" + p[k] + " < " + prev + ")", p[k] >= prev);
             prev = p[k];
         }
-        if (!r.truncated) {
-            Assert.assertEquals("k=N must recover the full committed history", r.n, p[r.sweptPoints]);
-        }
+        Assert.assertEquals("k=N must recover the full committed history", r.n, p[r.sweptPoints]);
     }
 
     @Test
@@ -242,15 +274,95 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
     }
 
+    // NIGHTLY-only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema, so N
+    // exceeds the 200 crash-point cap and a full untruncated sweep (assertW0Bars) is a nightly-scale run. CI
+    // validates the sweep machinery with the fast deterministic testConvertPartitionCrashSafeW0 instead.
     @Test
     public void testSelfCheckW0MinimalProfile() throws Exception {
+        Assume.assumeTrue("minimal-profile crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
+                Boolean.getBoolean(NIGHTLY_PROP));
         runWithCrashFacade(() -> {
             fuzzOverrideMinimal = true;               // inserts + O3 only, to validate the sweep machinery
             try {
-                assertW0Bars(runSeedSweep(1234L, 5678L, 0));
+                assertW0Bars(runSeedSweep(1234L, 5678L, 0, 800));
             } finally {
                 fuzzOverrideMinimal = false;
             }
         });
+    }
+
+    private static final long[] FIXED_SEEDS0 = {1234L, 22L, 8080L};
+    private static final long[] FIXED_SEEDS1 = {5678L, 33L, 9090L};
+
+    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true): the full op library gives N≈648 durability ops and
+    // assertW0Bars requires a FULL untruncated sweep (cap≥N), so this is ~85 min for one seed — far past the
+    // 20-min CI ceiling (the @Rule Timeout above lifts to 3h under the nightly flag). One representative seed;
+    // cap 700 > N avoids truncation. CI covers the applyNonStructural ordering fix quickly via the deterministic
+    // testConvertPartitionCrashSafeW0.
+    @Test
+    public void testFullLibraryW0() throws Exception {
+        Assume.assumeTrue("full-library crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
+                Boolean.getBoolean(NIGHTLY_PROP));
+        runWithCrashFacade(() -> assertW0Bars(runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], 0, 700)));
+    }
+
+    // CI-fast regression guard for the applyNonStructural events-before-sequencer ordering fix. Deterministic
+    // and tiny (2-column, 2-partition table + one CONVERT PARTITION), so N is small and the FULL untruncated
+    // crash-point sweep runs in seconds. Before the fix a crash between the convert's sequencer msync and its
+    // events.sync suspended the table (bar 2); after it, every crash point recovers the committed data cleanly.
+    @Test
+    public void testConvertPartitionCrashSafeW0() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, 0);
+        runWithCrashFacade(() -> {
+            SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
+            Assert.assertFalse("convert-partition sweep truncated (N > cap) — raise the cap", r.truncated);
+        });
+    }
+
+    private static final String CVT_TABLE = "cf_cvt";
+
+    // Deterministic non-structural-SQL crash workload: seed a 2-partition table, then CONVERT PARTITION TO
+    // PARQUET — a non-structural WAL command routed through WalWriter.applyNonStructural. The convert preserves
+    // the logical rows, so EVERY crash-recovered state must equal the seeded data and the table must never be
+    // suspended: exactly the bar the applyNonStructural events-before-sequencer ordering fix restores.
+    private final class ConvertPartitionWorkload implements AdaptiveCrashWorkload {
+        private String fp;           // the single valid post-commit fingerprint (convert is data-preserving)
+        private TableToken token;
+
+        @Override
+        public TableToken[] setup(int iteration) throws Exception {
+            execute("drop table if exists " + CVT_TABLE);
+            execute("create table " + CVT_TABLE + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into " + CVT_TABLE + " values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-01T06:00:00.000000Z', 2)," +
+                    " ('2024-01-02T00:00:00.000000Z', 3)," +
+                    " ('2024-01-02T06:00:00.000000Z', 4)");
+            drainWalQueue();                                   // durable baseline == the only valid recovered state
+            token = engine.verifyTableName(CVT_TABLE);
+            if (fp == null) {
+                fp = fingerprint(CVT_TABLE);
+            }
+            return new TableToken[]{token};
+        }
+
+        @Override
+        public void commit() throws Exception {
+            // Non-structural WAL command -> applyNonStructural (appendSql -> events.sync -> getSequencerTxn).
+            execute("alter table " + CVT_TABLE + " convert partition to parquet" +
+                    " where ts > '2023-12-31T23:00:00.000000Z' and ts < '2024-01-01T23:00:00.000000Z'");
+            drainWalQueue();
+        }
+
+        @Override
+        public int oracle(int k, int n) throws Exception {
+            Assert.assertFalse("table suspended after convert-partition crash at k=" + k, anyTableSuspended(token));
+            String recovered = fingerprint(CVT_TABLE);
+            Assert.assertTrue("convert-partition crash at k=" + k + " changed committed data:\n" + recovered,
+                    TestUtils.equals(fp, recovered));
+            return 0;                                          // data-preserving op: single valid snapshot
+        }
     }
 }
