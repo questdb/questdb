@@ -18,7 +18,7 @@ variables:
   # Kept in sync with test-pipeline.yml. These hosted (mac/windows) agents resolve from
   # Maven Central, not the cache, so the retry is a harmless no-op for them; keeping
   # MAVEN_RUN_OPTS identical across pipelines avoids drift. See test-pipeline.yml for rationale.
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 "
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Hosted mac/windows jobs (hosted-jobs.yml) override this to "-pl core -am" and

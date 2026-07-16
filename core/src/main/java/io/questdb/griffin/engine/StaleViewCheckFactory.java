@@ -94,6 +94,9 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Consult the breaker once at open, so a view read whose base cursor is served from a cached
+        // result (and therefore performs no per-frame checks) still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         for (int i = 0, n = viewTokens.length; i < n; i++) {
             var token = viewTokens[i];
             long txn = viewTxns[i];
@@ -125,6 +128,17 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public boolean producesMaterializedPageFrames() {
+        // Must delegate to the immediate base like supportsPageFrameCursor() /
+        // getPageFrameCursor() do: getBaseFactory() here returns base.getBaseFactory()
+        // (it skips this wrapper's own base for top-K peeling), so the default
+        // getBaseFactory()-delegating implementation would step over a metadata-only
+        // producer (e.g. a single-key covering scan) and wrongly report it as
+        // materialized -- re-opening the all-null covered-column parquet export.
+        return base.producesMaterializedPageFrames();
     }
 
     @Override

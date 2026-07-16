@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -211,6 +210,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
     }
 
     private void buildValue() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
@@ -257,8 +258,12 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
 
+            // The atom initializes the group by functions (this cursor's groupByFunctions) in
+            // initGroupByFunctions(), before any frame is dispatched, and donates the owner state
+            // to the per-worker clones. Re-initializing them here would re-run stateful
+            // initialization, such as a cursor comparison re-executing its scalar sub-query, and
+            // could diverge from the state the workers observe.
             recordA.of(atom.getOwnerMapValue());
-            Function.init(groupByFunctions, symbolTableSource, executionContext, null);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
 
 public class CopyExportException extends CairoException implements Sinkable, FlyweightMessageContainer {
 
@@ -37,19 +36,19 @@ public class CopyExportException extends CairoException implements Sinkable, Fly
 
     public static CopyExportException instance(CopyExportRequestTask.Phase phase, CharSequence message, int errno) {
         CopyExportException te = tlException.get();
+        // clear() fully resets the inherited base flags; without it a cancellation/interruption set on
+        // a previous use of this carrier-local flyweight would leak onto an unrelated later error.
+        te.clear(errno);
         te.phase = phase;
-        StringSink sink = te.message;
-        sink.clear();
-        te.errno = errno;
-        sink.put(message);
+        te.message.put(message);
         return te;
     }
 
     public static CopyExportException instance(CopyExportRequestTask.Phase phase, int errno) {
         CopyExportException te = tlException.get();
+        // clear() fully resets the inherited base flags (see the other instance() overload).
+        te.clear(errno);
         te.phase = phase;
-        te.message.clear();
-        te.errno = errno;
         return te;
     }
 

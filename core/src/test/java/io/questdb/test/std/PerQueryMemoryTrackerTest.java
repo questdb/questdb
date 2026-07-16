@@ -36,6 +36,7 @@ import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -48,6 +49,40 @@ public class PerQueryMemoryTrackerTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private static final SecurityContext SEC = AllowAllSecurityContext.INSTANCE;
+
+    @Test
+    public void testAcquireAssertsCleanRecycleOnDirtyRelease() throws Exception {
+        // The init() recycle guard is a Java assertion, so it only fires under -ea. QuestDB CI
+        // runs with assertions enabled; skip cleanly if they are off so the test never false-passes.
+        boolean assertionsEnabled = false;
+        //noinspection AssertWithSideEffects,ConstantConditions
+        assert assertionsEnabled = true;
+        Assume.assumeTrue("requires -ea", assertionsEnabled);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
+                // Charge a tracker and release it without freeing, so it returns to the pool dirty.
+                MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                long p = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT, t);
+                Assert.assertEquals(256, t.getUsed());
+                t.close();
+
+                // Re-acquiring the recycled block must trip the guard at init().
+                try {
+                    provider.acquire(SEC, 2, MemoryTrackerWorkload.QUERY);
+                    Assert.fail("expected AssertionError on dirty recycle");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "tracker recycled with used=256");
+                }
+
+                // The failed acquire popped t and left it un-reset and unpooled. Credit the
+                // leaked block back through t, then recycle t cleanly so provider.close() frees it.
+                Unsafe.free(p, 256, MemoryTag.NATIVE_DEFAULT, t);
+                Assert.assertEquals(0, t.getUsed());
+                t.close();
+            }
+        });
+    }
 
     @Test
     public void testAcquireReadsLimitFromConfigEachAcquire() throws Exception {

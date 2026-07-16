@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -37,6 +38,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -63,9 +65,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     private static final int VAL_MASTER_PREV = 0;
     private static final int VAL_SLAVE_NEXT = 3;
     private static final int VAL_SLAVE_PREV = 2;
-    private final SpliceJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private SpliceJoinLightRecordCursor cursor;
 
     public SpliceJoinLightRecordCursorFactory(
             CairoConfiguration cairoConfiguration,
@@ -154,10 +156,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final SpliceJoinLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {
@@ -169,6 +172,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         private final JoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean dualRecord;
         private boolean fetchMaster = true;
         private boolean fetchSlave = true;
@@ -228,6 +232,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (dualRecord) {
                 slaveRecordLeads();
                 dualRecord = false;
@@ -364,6 +369,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());

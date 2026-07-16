@@ -51,12 +51,12 @@ pub struct ParquetMetaReader<'a> {
 impl<'a> ParquetMetaReader<'a> {
     /// Creates a reader from the committed `_pm` file size.
     ///
-    /// `file_size` is the total committed size of the `_pm` file — the value
-    /// stored in the header at `HEADER_PARQUET_META_FILE_SIZE_OFF`. The caller is
-    /// expected to have read that value from the header before calling here
-    /// (and before sizing any mmap). The last 4 bytes of the committed view
-    /// store the footer length, from which this method derives the footer
-    /// offset as `file_size - 4 - footer_length`.
+    /// `file_size` is the committed size of the `_pm` view to parse. The caller
+    /// may pass the on-disk header value for the latest footer, or an older
+    /// MVCC-resolved committed head when the header points at a dirty-ahead
+    /// footer. The last 4 bytes of the committed view store the footer length,
+    /// from which this method derives the footer offset as
+    /// `file_size - 4 - footer_length`.
     ///
     /// The resulting reader is bound to the first `file_size` bytes of `data`.
     /// Any trailing bytes (e.g. from an in-progress append that hasn't been

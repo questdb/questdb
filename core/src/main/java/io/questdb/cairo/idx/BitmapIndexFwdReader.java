@@ -65,6 +65,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
+        stampOperatingThread();
         if (key >= keyCount) {
             updateKeyCount();
         }
@@ -101,6 +102,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
 
     @Override
     public IndexFrameCursor getFrameCursor(int key, long minRowId, long maxRowId) {
+        stampOperatingThread();
         if (key >= keyCount) {
             updateKeyCount();
         }
@@ -133,7 +135,10 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // Re-pool only on the reader's operating thread; an off-thread close
+            // skips pooling (cursor GC'd, no native memory to strand). See
+            // AbstractBitmapIndexReader.isOperatingThread().
+            if (!isPooled && isOperatingThread() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 freeCursors.add(this);
             }
@@ -258,7 +263,8 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
 
         @Override
         public void close() {
-            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // See Cursor.close(): re-pool only on the reader's operating thread.
+            if (!isPooled && isOperatingThread() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
                 isPooled = true;
                 freeNullCursors.add(this);
             }

@@ -183,6 +183,23 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void statefulThrowExceptionIfTrippedNoThrottle();
 
     /**
+     * Checks cancellation and timeout on every call (both are cheap, so the query stays promptly
+     * cancellable), but throttles only the heavy connection probe by elapsed wall-clock time.
+     * <p>
+     * Use it for coarse, potentially re-scanned sites, e.g. the per-page-frame check of a cursor that a
+     * nested-loop join re-runs once per master row: the cheap cancel/timeout checks keep firing every
+     * frame while the recv() connection probe fires at most once per throttle window. The throttle state
+     * lives on the breaker, which is shared per query via the execution context, so the probe is bounded
+     * for the whole query regardless of how many cursors consult it.
+     * <p>
+     * The default implementation falls back to {@link #statefulThrowExceptionIfTrippedNoThrottle()};
+     * only breakers with a real (syscall-backed) connection probe need to override it.
+     */
+    default void statefulThrowExceptionIfTrippedTimeThrottled() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+    }
+
+    /**
      * Unsets timer reset/power-up time, so it won't time out on any check (unless resetTimer() is called).
      */
     void unsetTimer();

@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -71,12 +72,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer FILTER_AND_FIND_TOP_K = AsyncTopKRecordCursorFactory::filterAndFindTopK;
     private static final UnorderedPageFrameReducer FIND_TOP_K = AsyncTopKRecordCursorFactory::findTopK;
-    private final RecordCursorFactory base;
-    private final AsyncTopKRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private final long lo;
     private final ListColumnFilter orderByFilter;
     private final int workerCount;
+    private RecordCursorFactory base;
+    private AsyncTopKRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
 
     public AsyncTopKRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -139,6 +140,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Consult the breaker at open, so a scan over an empty table still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
         try {
@@ -224,7 +227,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -327,8 +330,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncTopKRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

@@ -468,7 +468,10 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     reenterParquetDecoder.metadata(),
                     pushdownFilterConditions,
                     filterList,
-                    filterValues
+                    filterValues,
+                    // native-table partitions: resolve the Parquet column by stable id so a
+                    // renamed column maps correctly despite the frozen Parquet name.
+                    true
             )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }

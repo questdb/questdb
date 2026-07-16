@@ -61,6 +61,8 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -122,6 +124,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
@@ -4032,6 +4035,35 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonQueryPivotProtectedColumnNames() throws Exception {
+        // Pivot values the compiler wraps in protective quotes internally - operator tokens
+        // ('in', 'and') and dotted names ('FNCL 2.5', the exact shape reported in #6471) - must
+        // surface clean column names in the JSON /exec response the web console renders, with no
+        // embedded double quotes (regression - the quotes used to leak into the headers).
+        getSimpleTester().run((_, _) -> {
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table data (grp int, cat string, val int)");
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into data values (1,'in',10),(1,'and',20),(2,'in',30),(2,'and',40)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp\"," +
+                            "\"columns\":[{\"name\":\"grp\",\"type\":\"INT\"},{\"name\":\"in\",\"type\":\"LONG\"},{\"name\":\"and\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1,\"dataset\":[[1,10,20],[2,30,40]],\"count\":2}",
+                    "data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp"
+            );
+
+            // Dotted pivot values are quote-protected to keep the optimiser from splitting them at the
+            // dot; the JSON headers must be the clean 'FNCL 2.5' / 'FNCL 3.0', not the protective
+            // quotes escaped into the name - the exact #6471 web-console symptom.
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into data values (1,'FNCL 2.5',10),(1,'FNCL 3.0',20),(2,'FNCL 2.5',30),(2,'FNCL 3.0',40)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp\"," +
+                            "\"columns\":[{\"name\":\"grp\",\"type\":\"INT\"},{\"name\":\"FNCL 2.5\",\"type\":\"LONG\"},{\"name\":\"FNCL 3.0\",\"type\":\"LONG\"}]," +
+                            "\"timestamp\":-1,\"dataset\":[[1,10,20],[2,30,40]],\"count\":2}",
+                    "data PIVOT (sum(val) FOR cat IN ('FNCL 2.5','FNCL 3.0') GROUP BY grp) ORDER BY grp"
+            );
+        });
+    }
+
+    @Test
     public void testJsonQueryPreTouchEnabledForFilteredQueryWithHint() throws Exception {
         testJsonQuery(10, "GET /query?query=" + urlEncodeQuery("select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'") + " HTTP/1.1\r\n" + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
                 HTTP/1.1 200 OK\r
@@ -4557,6 +4589,88 @@ public class IODispatcherTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testPooledHttpContextParsesQuotedContentTypeParameter() throws Exception {
+        final String expectedResponse = """
+                HTTP/1.1 200 OK\r
+                Server: questDB/1.0\r
+                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                Transfer-Encoding: chunked\r
+                Content-Type: text/plain\r
+                Connection: close\r
+                \r
+                0f\r
+                Status: Healthy\r
+                00\r
+                \r
+                """;
+        final String warmupRequest = """
+                GET /status HTTP/1.1\r
+                Host: localhost:9001\r
+                Connection: keep-alive\r
+                Accept: */*\r
+                \r
+                """;
+        final String quotedContentTypeRequest = """
+                GET /status HTTP/1.1\r
+                Host: localhost:9001\r
+                Connection: keep-alive\r
+                Content-Type: application/json; charset="utf-8"\r
+                Accept: */*\r
+                \r
+                """;
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withServerKeepAlive(false))
+                .run((engine, sqlExecutionContext) -> {
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, warmupRequest, expectedResponse, 1, 0, false, true);
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, quotedContentTypeRequest, expectedResponse, 1, 0, false, true);
+                });
+    }
+
+    @Test
+    public void testResponseCompressionDoesNotLeakAcrossKeepAliveRequests() throws Exception {
+        final Utf8String contentEncodingHeader = new Utf8String("Content-Encoding");
+        final StringSink sink = new StringSink();
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withAllowDeflateBeforeSend(true)
+                        .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                    try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request gzipRequest = client.newRequest("localhost", 9001);
+                        gzipRequest.GET()
+                                .url("/exec")
+                                .query("query", "select 1")
+                                .header("Accept-Encoding", "gzip");
+                        HttpClient.ResponseHeaders headers = gzipRequest.send();
+                        headers.await();
+                        TestUtils.assertEquals("gzip", headers.getHeader(contentEncodingHeader));
+                        headers.getResponse().discard();
+
+                        HttpClient.Request plainRequest = client.newRequest("localhost", 9001);
+                        plainRequest.GET()
+                                .url("/exec")
+                                .query("query", "select 2");
+                        headers = plainRequest.send();
+                        headers.await();
+                        Assert.assertNull(headers.getHeader(contentEncodingHeader));
+                        sink.clear();
+                        headers.getResponse().copyTextTo(sink);
+                        TestUtils.assertEquals(
+                                "{\"query\":\"select 2\",\"columns\":[{\"name\":\"2\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                                sink
+                        );
+                    }
+                });
     }
 
     @Test

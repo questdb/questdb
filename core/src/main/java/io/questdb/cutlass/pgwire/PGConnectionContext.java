@@ -1281,6 +1281,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
+        // Bound the cancel sentinel to a single query: a cancel for a prior, already-finished query
+        // can leave powerUpTime == MIN_VALUE on this reused per-connection breaker, and the guarded
+        // per-query resets do not clear it. prepareForNewQuery() runs once before each query (every
+        // Sync, both protocols), at which point any sentinel belongs to a finished query.
+        circuitBreaker.clearCancelSentinel();
         Misc.clear(bindVariableService);
         freezeRecvBuffer = false;
         sqlExecutionContext.setCacheHit(false);

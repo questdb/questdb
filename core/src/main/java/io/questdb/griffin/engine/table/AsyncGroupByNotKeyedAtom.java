@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -141,9 +143,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
             }
 
-            // Lazy variant: the allocator's chunk index is allocated by the first
-            // reopen() under the bound per-query tracker, keeping malloc/free symmetric
-            // on the per-query counter from the first cursor.
+            // Lazy variant (openOnInit=false): the chunk index is global-counter bookkeeping;
+            // only the data chunks it hands out are charged to the per-query tracker.
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
@@ -160,7 +161,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
             clear();
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -176,7 +177,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
             }
         }
         Misc.clear(ownerAllocator);
@@ -187,10 +188,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     public void close() {
-        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
-        // in clear()); their final free happens here, after the last query's tracker was
-        // released to the pool. Null the tracker so these frees charge the global counter
-        // only and do not underflow the released per-query block.
+        // clear() already freed the data chunks under the bound tracker (the index is on the
+        // global counter), so close() has nothing tracked to free. Nulling is defensive: any
+        // stray free hits the global counter and cannot underflow an already-recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }
@@ -202,16 +202,28 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 }
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjList(perWorkerAllocators);
-        Misc.free(ownerMapValue);
-        Misc.freeObjList(perWorkerMapValues);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAllocators);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMapValue);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMapValues);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                perWorkerGroupByFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
-        Misc.free(filterCtx);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public int[] getBatchColumnIndexes() {
@@ -266,12 +278,24 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
 
+        // The owner group by functions initialize here, once per query execution; the cursor does
+        // not re-initialize them. Donate the initialized owner state to the aligned per-worker
+        // clones before they initialize. Stateful functions inside aggregate arguments, such as
+        // cursor comparisons caching a scalar sub-query result, must run their expensive and
+        // potentially nondeterministic initialization exactly once per query, not once per worker,
+        // and every worker must observe the same state as the owner.
+        Function.init(ownerGroupByFunctions, symbolTableSource, executionContext, null);
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext, null);
+                    PerWorkerFunctionList.init(
+                            perWorkerGroupByFunctions.getQuick(i),
+                            ownerGroupByFunctions,
+                            symbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);

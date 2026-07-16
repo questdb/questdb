@@ -70,12 +70,12 @@ import java.util.concurrent.atomic.AtomicLong;
 public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
-    private final T atom;
+    private T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final StringSink errorMsg = new StringSink();
-    private final PageFrameAddressCache frameAddressCache;
+    private PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
     private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final MPSequence reducePubSeq;
@@ -91,6 +91,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private PageFrameCursor frameCursor;
     private long id;
     private boolean isCancelled;
+    private boolean isClosing;
     private boolean isInterrupted;
     private boolean isOutOfMemory;
     private boolean isReadyToDispatch;
@@ -125,7 +126,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
             this.reduceSubSeq = messageBus.getUnorderedPageFrameReduceSubSeq();
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -174,10 +175,23 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
     @Override
     public void close() {
-        reset();
-        localRecord = Misc.free(localRecord);
-        workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
-        Misc.free(atom);
+        Throwable cleanupFailure = null;
+        isClosing = true;
+        try {
+            reset();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        final PageFrameMemoryRecord localRecordToFree = localRecord;
+        localRecord = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, localRecordToFree);
+        final SqlExecutionCircuitBreakerWrapper circuitBreakerToFree = workStealCircuitBreaker;
+        workStealCircuitBreaker = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, circuitBreakerToFree);
+        final T atomToFree = atom;
+        atom = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, atomToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -396,9 +410,41 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
-        atom.clear();
-        Misc.free(frameAddressCache);
-        frameCursor = Misc.free(frameCursor);
+
+        Throwable cleanupFailure = null;
+        try {
+            if (atom != null) {
+                atom.clear();
+            }
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        // Unfreeze the covered posting readers frozen in buildAddressCache() BEFORE the
+        // address cache (which holds them) and the frame cursor (which owns them) are
+        // torn down. reset() runs after the sequence has been awaited, so every worker
+        // cursor has finished and the unfreeze is race-free. A reader left frozen would
+        // make its reloadConditionally() a permanent no-op and break the next query
+        // against the same partition.
+        final PageFrameAddressCache frameAddressCacheToFree = frameAddressCache;
+        if (isClosing) {
+            frameAddressCache = null;
+        }
+        if (frameAddressCacheToFree != null) {
+            try {
+                frameAddressCacheToFree.unfreezeCoveredReaders();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameAddressCacheToFree);
+        final PageFrameCursor frameCursorToFree = frameCursor;
+        frameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameCursorToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -440,6 +486,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+
+        // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their
+        // columns on the async workers by iterating detached cursors over the shared
+        // per-partition posting readers, which is only race-free if those readers are
+        // positioned at the query txn, cache-warm, and FROZEN before any worker decodes.
+        // The eager production iteration above already positioned + warmed each reader,
+        // so freeze them now, before dispatch. unfreezeCoveredReaders() in reset()
+        // reverses it once the sequence has been awaited.
+        frameAddressCache.freezeCoveredReaders();
     }
 
     private boolean hasError() {

@@ -154,6 +154,11 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottled() {
+        delegate.statefulThrowExceptionIfTrippedTimeThrottled();
+    }
+
+    @Override
     public void unsetTimer() {
         delegate.unsetTimer();
     }

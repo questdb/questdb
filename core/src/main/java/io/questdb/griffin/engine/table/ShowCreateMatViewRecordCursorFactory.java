@@ -57,7 +57,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
     private static final RecordMetadata METADATA;
     protected final TableToken tableToken;
     protected final int tokenPosition;
-    private final ShowCreateMatViewCursor cursor = new ShowCreateMatViewCursor();
+    private ShowCreateMatViewCursor cursor = new ShowCreateMatViewCursor();
 
     public ShowCreateMatViewRecordCursorFactory(TableToken tableToken, int tokenPosition) {
         super(METADATA);
@@ -67,6 +67,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -83,8 +84,16 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateMatViewCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateMatViewCursor implements NoRandomAccessRecordCursor {
@@ -246,9 +255,9 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 sink.putAscii(')');
             }
-            sink.putAscii(" AS (\n")
-                    .put(viewDefinition.getMatViewSql())
-                    .putAscii('\n');
+            sink.putAscii(" AS (\n");
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getMatViewSql());
+            sink.putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);
             inVolumeToSink(configuration, table, sink);

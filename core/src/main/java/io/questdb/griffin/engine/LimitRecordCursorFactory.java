@@ -210,6 +210,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             ensureReadyToConsume();
             if (remaining <= 0) {
                 return false;

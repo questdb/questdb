@@ -53,7 +53,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
     private static final RecordMetadata METADATA;
     protected final int tokenPosition;
     protected final TableToken viewToken;
-    private final ShowCreateViewCursor cursor = new ShowCreateViewCursor();
+    private ShowCreateViewCursor cursor = new ShowCreateViewCursor();
 
     public ShowCreateViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
         super(METADATA);
@@ -63,6 +63,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, viewToken, tokenPosition);
     }
 
@@ -79,8 +80,16 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
+        final ShowCreateViewCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public static class ShowCreateViewCursor implements NoRandomAccessRecordCursor {
@@ -196,7 +205,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
                     .put(viewToken.getTableName())
                     .putAscii("' AS ( ")
                     .putAscii('\n');
-            sink.put(viewDefinition.getViewSql());
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
             putAdditional();

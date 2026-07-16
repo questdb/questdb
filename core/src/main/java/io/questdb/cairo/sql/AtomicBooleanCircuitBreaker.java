@@ -121,7 +121,9 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
 
     @Override
     public void resetTimer() {
-        // ignore
+        // No timer to reset, but start a fresh throttle window for the new query so the next breaker
+        // consultation performs a real cancellation check.
+        testCount = 0;
     }
 
     @Override
@@ -135,11 +137,13 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void statefulThrowExceptionIfTripped() {
-        if (testCount < throttle) {
-            testCount++;
-        } else {
-            statefulThrowExceptionIfTrippedNoThrottle();
+        // Always perform a real check on the first call after a reset (testCount == 0), so empty/instant
+        // queries that consult the breaker only a handful of times still observe cancellation. Otherwise
+        // test once per throttle window to keep hot per-row/per-frame loops cheap.
+        if (testCount == 0 || testCount >= throttle) {
+            statefulThrowExceptionIfTrippedNoThrottle(); // performs the real test and resets testCount to 0
         }
+        testCount++;
     }
 
     @Override

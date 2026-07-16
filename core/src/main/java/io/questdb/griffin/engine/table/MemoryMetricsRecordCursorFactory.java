@@ -50,7 +50,7 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         collectMetrics(values);
-        cursor.of(KEYS, values);
+        cursor.of(KEYS, values, executionContext.getCircuitBreaker());
         return cursor;
     }
 

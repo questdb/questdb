@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TimestampDriver;
@@ -42,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.FlyweightMapValueFactory;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
@@ -235,8 +237,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            // Lazy allocators (openOnInit=false): reopen() allocates the chunk index under the
-            // per-query tracker it binds there, keeping malloc/free symmetric on that counter.
+            // Lazy allocators (openOnInit=false): the chunk index is global-counter bookkeeping;
+            // only the data chunks the allocators hand out are charged to the per-query tracker.
             this.ownerFunctionAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerFunctionAllocator);
@@ -343,7 +345,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 this.groupByFunctionTypes = null;
             }
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -359,7 +361,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
             }
         }
 
@@ -378,22 +380,23 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     public void close() {
-        Misc.free(ownerJoinFilter);
-        Misc.freeObjList(perWorkerJoinFilters);
-        Misc.free(ownerSlaveTimeFrameCursor);
-        Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
-        Misc.free(compiledMasterFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerMasterFilter);
-        Misc.freeObjList(perWorkerMasterFilters);
-        Misc.free(ownerWindowHiFunc);
-        Misc.free(ownerWindowLoFunc);
-        Misc.freeObjList(perWorkerWindowHiFuncs);
-        Misc.freeObjList(perWorkerWindowLoFuncs);
-        // The chunk index is retained across queries (restoreInitialCapacity() in clear()) and
-        // freed here after the last query's tracker was pooled. Null the tracker so this final
-        // free charges the global counter only and does not underflow the released block.
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerJoinFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerJoinFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledMasterFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, bindVarFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMasterFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMasterFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerWindowHiFunc);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerWindowLoFunc);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerWindowHiFuncs);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerWindowLoFuncs);
+        // clear() already freed the data chunks under the bound tracker (the index is on the
+        // global counter), so close() has nothing tracked to free. Nulling is defensive: any
+        // stray free hits the global counter and cannot underflow an already-recycled block.
         if (ownerFunctionAllocator != null) {
             ownerFunctionAllocator.setMemoryTracker(null);
         }
@@ -416,16 +419,27 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 }
             }
         }
-        Misc.free(ownerFunctionAllocator);
-        Misc.freeObjList(perWorkerFunctionAllocators);
-        Misc.free(ownerTemporaryAllocator);
-        Misc.freeObjList(perWorkerTemporaryAllocators);
-        Misc.freeObjList(ownerGroupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFunctionAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFunctionAllocators);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerTemporaryAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerTemporaryAllocators);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                perWorkerGroupByFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -653,7 +667,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), joinSymbolTableSource, executionContext, null);
+                    PerWorkerFunctionList.init(
+                            perWorkerGroupByFunctions.getQuick(i),
+                            ownerGroupByFunctions,
+                            joinSymbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -732,8 +751,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     public void reopen() {
-        // init() runs before reopen(), so memoryTracker is bound here before the lazy chunk index
-        // is allocated, charging function state and the temporary lists to the per-query limit.
+        // init() runs before reopen(), so memoryTracker is bound here before any data chunk is
+        // allocated, charging function state and the temporary lists to the per-query limit (the
+        // chunk index itself stays on the global counter).
         ownerFunctionAllocator.setMemoryTracker(memoryTracker);
         ownerFunctionAllocator.reopen();
         if (perWorkerFunctionAllocators != null) {

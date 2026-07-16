@@ -120,7 +120,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
                     reader.of(addr, size);
-                    Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                    Assert.assertTrue(reader.resolveLastFooter());
                     reader.clear();
                 } finally {
                     ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
@@ -161,7 +161,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
             Assert.assertNotEquals("openAndMapRO should not skip the file", 0L, addr);
             long size = reader.getFileSize();
             try {
-                reader.resolveFooter(Long.MAX_VALUE);
+                reader.resolveLastFooter();
                 Assert.fail("expected CairoException from CRC verification");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("checksum"));

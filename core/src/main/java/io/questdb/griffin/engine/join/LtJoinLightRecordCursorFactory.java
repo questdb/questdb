@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -52,11 +53,11 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 
 // merge join of two cursors ordered by timestamp plus additional conditions
 public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final LtJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
+    private LtJoinLightRecordCursor cursor;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public LtJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -145,11 +146,14 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(symbolTranslatingRecord);
+        final LtJoinLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class LtJoinLightRecordCursor extends AbstractJoinCursor {
@@ -159,6 +163,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
         private Record masterRecord;
@@ -209,6 +214,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 MapKey key;
@@ -303,6 +309,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }

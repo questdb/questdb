@@ -2,7 +2,9 @@ use std::io::Write;
 
 use futures::{AsyncWrite, AsyncWriteExt};
 
-use parquet_format_safe::{thrift::protocol::TCompactOutputStreamProtocol, FileMetaData, RowGroup};
+use parquet_format_safe::{
+    thrift::protocol::TCompactOutputStreamProtocol, BoundaryOrder, FileMetaData, RowGroup,
+};
 
 use crate::write::indexes::{write_column_index_async, write_offset_index_async};
 use crate::write::page::PageWriteSpec;
@@ -13,7 +15,9 @@ use crate::{
     FOOTER_SIZE, PARQUET_MAGIC,
 };
 
-use super::{row_group::write_row_group_async, RowGroupIter, WriteOptions};
+use super::{
+    row_group::write_row_group_async, type_defined_column_orders, RowGroupIter, WriteOptions,
+};
 
 async fn start_file<W: AsyncWrite + Unpin>(writer: &mut W) -> Result<u64> {
     writer.write_all(&PARQUET_MAGIC).await?;
@@ -160,7 +164,11 @@ impl<W: AsyncWrite + Unpin + Send> FileStreamer<W> {
                 for (column, pages) in group.columns.iter_mut().zip(pages.iter()) {
                     let offset = self.offset;
                     column.column_index_offset = Some(offset as i64);
-                    self.offset += write_column_index_async(&mut self.writer, pages).await?;
+                    // The async streamer carries no sorting_columns, so it cannot
+                    // infer a sorted column; emit UNORDERED (always safe).
+                    self.offset +=
+                        write_column_index_async(&mut self.writer, pages, BoundaryOrder::UNORDERED)
+                            .await?;
                     let length = self.offset - offset;
                     column.column_index_length = Some(length as i32);
                 }
@@ -184,7 +192,7 @@ impl<W: AsyncWrite + Unpin + Send> FileStreamer<W> {
             self.row_groups.clone(),
             key_value_metadata,
             self.created_by.clone(),
-            None,
+            Some(type_defined_column_orders(self.schema.columns().len())),
             None,
             None,
         );

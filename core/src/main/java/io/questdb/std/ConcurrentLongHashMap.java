@@ -771,6 +771,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -791,6 +792,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h && f.key == key    // check first node without acquiring lock
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
@@ -873,6 +877,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
             int n, i, fh;
+            V fv;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
@@ -893,6 +898,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                     break;
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            else if (fh == h && f.key == key    // check first node without acquiring lock
+                    && (fv = f.val) != null)
+                return fv;
             else {
                 boolean added = false;
                 synchronized (f) {
