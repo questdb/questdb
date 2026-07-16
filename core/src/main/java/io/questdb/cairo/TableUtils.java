@@ -103,6 +103,11 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    // Initial symbol-capacity hint for composite dedicated-dictionary and cell-registry symbol maps
+    // (see CompositeInternerLayout). This is only a hash-index sizing hint -- the map auto-grows --
+    // and these interners are dormant infrastructure in this plan (populated by later tasks), so a
+    // modest default is fine here and can be tuned once real workloads exist.
+    public static final int COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY = 256;
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -721,6 +726,36 @@ public final class TableUtils {
                     }
                 }
 
+                // Composite dimension dictionaries + cell registry: dormant infrastructure in this
+                // plan (later tasks open and populate them). Gate on hasInterners(), NOT
+                // isComposite() -- a cluster-only table (ORDER BY only, zero partition dimensions) is
+                // composite but has no dimension tuple, so it needs neither a registry nor dictionaries.
+                PartitionSpec partitionSpec = structure.getPartitionSpec();
+                CompositeInternerLayout compositeLayout = CompositeInternerLayout.of(partitionSpec);
+                if (compositeLayout.hasInterners()) {
+                    for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+                        if (compositeLayout.needsDedicatedDict(i)) {
+                            createSymbolMapFiles(
+                                    ff,
+                                    mem,
+                                    path.trimTo(rootLen),
+                                    compositeLayout.dictName(i),
+                                    compositeLayout.dictColumnNameTxn(i),
+                                    COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY,
+                                    false
+                            );
+                        }
+                    }
+                    createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            CompositeInternerLayout.REGISTRY_NAME,
+                            CompositeInternerLayout.REGISTRY_TXN,
+                            COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY,
+                            false
+                    );
+                }
 
                 mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 createColumnVersionFile(mem);
