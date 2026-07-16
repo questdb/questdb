@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Function;
@@ -63,10 +64,10 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     private final RecordSink masterKeySink;
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final RecordSink slaveKeySink;
-    private final Function slaveRecordFilter;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
     private boolean origHasSlave;
+    private Function slaveRecordFilter;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     /**
      * Creates a new instance with filtered slave record support and optional crossindex projection.
@@ -180,11 +181,14 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(slaveRecordFilter);
-        Misc.free(symbolTranslatingRecord);
+        final Function slaveRecordFilter = this.slaveRecordFilter;
+        this.slaveRecordFilter = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, slaveRecordFilter);
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {

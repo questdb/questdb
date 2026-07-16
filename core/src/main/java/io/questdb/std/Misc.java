@@ -27,6 +27,8 @@ package io.questdb.std;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -104,11 +106,48 @@ public final class Misc {
         return null;
     }
 
+    /**
+     * Closes the object and adds any close failure to {@code primary} as a suppressed
+     * exception. This method lets callers continue a multi-resource cleanup without
+     * masking the primary failure.
+     */
+    public static <T extends Closeable> void free(@Nullable T object, @NotNull Throwable primary) {
+        try {
+            free(object);
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
+    }
+
     public static <T extends Closeable> void free(T[] list) {
         if (list != null) {
             for (int i = 0, n = list.length; i < n; i++) {
                 list[i] = Misc.free(list[i]);
             }
+        }
+    }
+
+    /**
+     * Closes the object while keeping multi-resource cleanup best-effort: a close() failure
+     * folds into the given failure chain instead of propagating, so later resources in the
+     * same cleanup sequence still see a close attempt. The first failure becomes the primary
+     * and later failures attach to it as suppressed. Callers thread the returned chain
+     * through the whole sequence and rethrow it at the appropriate package boundary. Callers
+     * that already have a non-null primary failure should use
+     * {@link #free(Closeable, Throwable)} instead.
+     */
+    public static <T extends Closeable> @Nullable Throwable freeBestEffort(@Nullable Throwable primary, @Nullable T object) {
+        if (primary != null) {
+            free(object, primary);
+            return primary;
+        }
+        try {
+            free(object);
+            return null;
+        } catch (Throwable th) {
+            return th;
         }
     }
 
@@ -124,9 +163,34 @@ public final class Misc {
         return null;
     }
 
+    /**
+     * Closes an optionally-closeable object while keeping multi-resource cleanup best-effort.
+     */
+    public static <T> @Nullable Throwable freeIfCloseableBestEffort(@Nullable Throwable primary, @Nullable T object) {
+        if (object instanceof Closeable closeable) {
+            return freeBestEffort(primary, closeable);
+        }
+        return primary;
+    }
+
     public static <T extends Closeable> void freeObjList(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
+        }
+    }
+
+    /**
+     * Closes every list entry and adds close failures to {@code primary} as suppressed
+     * exceptions. The method nulls each slot before its close attempt and continues after
+     * failures. Do not pass list subclasses that reject {@code setQuick()}.
+     */
+    public static <T extends Closeable> void freeObjList(@Nullable ObjList<T> list, @NotNull Throwable primary) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                free(object, primary);
+            }
         }
     }
 
@@ -147,11 +211,61 @@ public final class Misc {
         }
     }
 
+    /**
+     * Closes every list entry while retaining the entries and keeping cleanup best-effort.
+     */
+    public static <T extends Closeable> @Nullable Throwable freeObjListAndKeepObjectsBestEffort(
+            @Nullable Throwable primary,
+            @Nullable ObjList<T> list
+    ) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                primary = freeBestEffort(primary, list.getQuick(i));
+            }
+        }
+        return primary;
+    }
+
+    /**
+     * Closes every list entry and nulls its slot even when earlier entries throw, folding
+     * close() failures into the given failure chain the same way
+     * {@link #freeBestEffort(Throwable, Closeable)} does. Callers that already have a non-null
+     * primary failure should use {@link #freeObjList(ObjList, Throwable)} instead. Do not pass
+     * list subclasses that reject {@code setQuick()}.
+     */
+    public static <T extends Closeable> @Nullable Throwable freeObjListBestEffort(@Nullable Throwable primary, @Nullable ObjList<T> list) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                primary = freeBestEffort(primary, object);
+            }
+        }
+        return primary;
+    }
+
     // same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
     public static <T> void freeObjListIfCloseable(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
         }
+    }
+
+    /**
+     * Closes every optionally-closeable list entry and nulls its slot while keeping cleanup best-effort.
+     */
+    public static <T> @Nullable Throwable freeObjListIfCloseableBestEffort(
+            @Nullable Throwable primary,
+            @Nullable ObjList<T> list
+    ) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                primary = freeIfCloseableBestEffort(primary, object);
+            }
+        }
+        return primary;
     }
 
     // same as freeObjListIfCloseable() but for arrays

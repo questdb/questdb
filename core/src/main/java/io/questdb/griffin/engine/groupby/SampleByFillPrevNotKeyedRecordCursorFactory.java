@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -37,8 +38,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
-    private final SampleByFillPrevNotKeyedRecordCursor cursor;
-    private final SimpleMapValue value;
+    private SampleByFillPrevNotKeyedRecordCursor cursor;
+    private SimpleMapValue value;
 
     public SampleByFillPrevNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -60,7 +61,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.value = new SimpleMapValue(groupByValueCount);
@@ -83,7 +84,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -98,9 +99,20 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(value);
-        Misc.free(cursor);
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final SimpleMapValue value = this.value;
+        this.value = null;
+        Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeBestEffort(failure, value);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor detachRawCursor() {
+        final SampleByFillPrevNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        return cursor;
     }
 
     @Override
