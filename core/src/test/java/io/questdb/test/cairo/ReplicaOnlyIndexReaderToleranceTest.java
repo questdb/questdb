@@ -41,7 +41,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Verifies the reader-side robustness of Task 13. This test runs with the DEFAULT configuration
+ * Verifies the reader-side robustness of the replica-only index tolerance. This test runs with the DEFAULT configuration
  * ({@link io.questdb.cairo.CairoConfiguration#skipReplicaOnlyIndexes()} returns false), i.e. a
  * non-skipping node (replica/standalone). On such a node a replica-only indexed column is treated
  * as active by the planner, so an index scan may be chosen and the index reader opened.

@@ -24,6 +24,10 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -53,6 +57,31 @@ public class TableWriterReplicaOnlyNoSkipTest extends AbstractCairoTest {
             assertQuery("SELECT s, ts FROM x WHERE s IS NULL")
                     .timestamp("ts")
                     .returns("s\tts\n\t1970-01-01T00:00:03.000000Z\n");
+        });
+    }
+
+    // touch() reads the replication role LIVE at execution (not captured at construction). On a
+    // non-skipping node the replica-only index IS active, so touch() must open its index reader and
+    // report a non-zero index_key_pages -- the complement of the skipping-node touch test.
+    @Test
+    public void testTouchReadsActiveReplicaOnlyIndexOnReplica() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000), ('a', 3, 2_000_000)");
+            Assert.assertTrue("index must be materialized on a non-skipping node", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT touch((SELECT s, v, ts FROM x))", sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                final CharSequence out = cursor.getRecord().getStrA(0);
+                Assert.assertTrue("touch() output must report index pages: " + out, Chars.contains(out, "index_key_pages"));
+                Assert.assertFalse(
+                        "touch() must have touched the active replica-only index (non-zero key pages): " + out,
+                        Chars.contains(out, "index_key_pages\":0")
+                );
+                Assert.assertFalse(cursor.hasNext());
+            }
         });
     }
 }

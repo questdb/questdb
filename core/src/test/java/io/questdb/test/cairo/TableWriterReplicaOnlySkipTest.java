@@ -43,17 +43,18 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * Verifies the write-path behaviour of Task 11: on a "skipping primary" node (one where
+ * Verifies the write-path behaviour: on a "skipping primary" node (one where
  * {@link io.questdb.cairo.CairoConfiguration#skipReplicaOnlyIndexes()} returns true), a SYMBOL column
  * whose index is flagged REPLICA ONLY has no bitmap/posting index built or maintained -- no
  * {@code k./v.} (or posting {@code .pk/.pv}) files are created and no per-row index work runs -- while
  * the metadata still records the {@code indexed} + {@code replicaOnly} flags so a replica or a promoted
  * node can build the index later.
  * <p>
- * Note: full-scan query correctness on a skipping primary is gated on the planner index-eligibility
- * guard (Task 12, {@link io.questdb.cairo.sql.RecordMetadata#isColumnIndexActive}). Until that lands,
- * the planner still keys off {@code isColumnIndexed} and emits an index scan over the (absent) index,
- * so this test asserts the write-path invariants only.
+ * Full-scan query correctness on a skipping primary is provided by the planner index-eligibility guard
+ * ({@link io.questdb.cairo.sql.RecordMetadata#isColumnIndexActive}), which is part of this change: the
+ * planner treats a skipped replica-only column as un-indexed and emits a full scan rather than an index
+ * scan over the absent sidecars. Query-shape coverage lives in {@code ReplicaOnlyIndexPlannerTest}; this
+ * class focuses on the write-path materialization invariants.
  */
 public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
@@ -566,10 +567,11 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
     // changeColumnType removes the source column and re-adds the replacement through addColumnToMeta.
     // On a skipping primary a replica-only source column must not distress the writer or materialize an
-    // index during the conversion, and the replica-only flag must be carried onto the replacement column
-    // (addColumnToMeta now threads it through, matching the changeSymbolCapacity fix) so configureColumn's
-    // skip gate fires. A same-type symbol change is rejected by SQL, so the still-indexed survival path is
-    // not reachable here; this exercises the reachable conversion of a replica-only indexed symbol column.
+    // index during the conversion. NOTE ON SCOPE: the only reachable conversion of an indexed SYMBOL
+    // today is to an UNINDEXED type (a same-type symbol change is rejected by SQL), so the replacement is
+    // never itself a replica-only index. This test therefore does NOT pin the replica-only branches in the
+    // type-change hunk (they are currently defensive/unreachable); it is end-to-end coverage that ALTER
+    // COLUMN TYPE over a replica-only indexed column stays clean (no suspension, no materialization).
     @Test
     public void testChangeColumnTypeReplicaOnlyIndexDoesNotMaterializeOrDistress() throws Exception {
         assertMemoryLeak(() -> {

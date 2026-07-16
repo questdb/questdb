@@ -30,10 +30,10 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * Verifies the read-path behaviour of Task 12: on a "skipping primary" node (one where
+ * Verifies the read-path planner behaviour: on a "skipping primary" node (one where
  * {@link io.questdb.cairo.CairoConfiguration#skipReplicaOnlyIndexes()} returns true), a SYMBOL column
  * whose index is flagged REPLICA ONLY is treated as un-indexed by the query planner. The index is never
- * materialized on such a node (Task 11), so the planner MUST NOT emit an index scan / indexed LATEST BY
+ * materialized on such a node, so the planner MUST NOT emit an index scan / indexed LATEST BY
  * over the absent index -- it must full-scan instead, and queries must still return correct results.
  */
 public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
@@ -83,6 +83,30 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
 
             // plan must NOT use an indexed LATEST BY for s (the index is not materialized on a skipping primary)
             assertQuery("select s, v, ts from y latest on ts partition by s")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Indexed", "Index backward scan", "Index forward scan");
+        });
+    }
+
+    // Multi-key LATEST BY over two replica-only-indexed symbol columns must full-scan on a skipping
+    // primary (neither index is materialized), not emit an indexed multi-column LATEST BY over the absent
+    // sidecars, and still return the correct latest row per (s1, s2) group.
+    @Test
+    public void testMultiColumnLatestByFullScansCorrectly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table z (s1 symbol index replica only, s2 symbol index replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into z values ('a','x',1,0),('a','x',2,1000000),('a','y',3,2000000),('b','y',4,3000000)");
+            drainWalQueue();
+
+            assertQuery("select s1, s2, v, ts from z latest on ts partition by s1, s2")
+                    .noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp()
+                    .returns("s1\ts2\tv\tts\n" +
+                            "a\tx\t2.0\t1970-01-01T00:00:01.000000Z\n" +
+                            "a\ty\t3.0\t1970-01-01T00:00:02.000000Z\n" +
+                            "b\ty\t4.0\t1970-01-01T00:00:03.000000Z\n");
+
+            // plan must NOT use an indexed LATEST BY over either absent replica-only index
+            assertQuery("select s1, s2, v, ts from z latest on ts partition by s1, s2")
                     .noLeakCheck()
                     .assertsPlanNotContaining("Indexed", "Index backward scan", "Index forward scan");
         });

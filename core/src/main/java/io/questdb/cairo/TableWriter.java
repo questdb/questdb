@@ -338,6 +338,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long attachMinTimestamp;
     private long attachPartitionTimestamp;
     private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
+    // Dedicated, writer-lifetime index builder for the non-skipping-ATTACH replica-only self-heal.
+    // Kept separate from attachIndexBuilder (which attachPrepare frees in its finally) so it can be
+    // reused safely after attachPrepare returns; freed only when the writer closes.
+    private IndexBuilder attachReplicaOnlyIndexBuilder;
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
@@ -1025,7 +1029,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // final name of partition folder after attachment
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, getTxn());
+        final long attachedPartitionNameTxn = getTxn();
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, attachedPartitionNameTxn);
         if (ff.exists(path.$())) {
             // Very unlikely since txn is part of the folder name
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
@@ -1100,7 +1105,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
                             final byte indexType = metadata.getColumnIndexType(columnIndex);
                             if (!ff.exists(keyFileName(indexType, path.trimTo(attachedPartitionPathLen), columnName, columnNameTxn))) {
-                                rebuildAttachedPartitionColumnIndex(timestamp, partitionSize, columnName);
+                                path.trimTo(attachedPartitionPathLen);
+                                rebuildReplicaOnlyIndexForAttachedPartition(columnName, columnIndex, timestamp, attachedPartitionNameTxn, partitionSize);
                             }
                             path.trimTo(attachedPartitionPathLen);
                         }
@@ -6633,6 +6639,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
+        Misc.free(attachReplicaOnlyIndexBuilder);
         Misc.free(columnVersionWriter);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
@@ -12202,6 +12209,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return todo;
     }
 
+    // Rebuild a single replica-only index for a partition that has already been renamed into its FINAL
+    // table path (the non-skipping-ATTACH self-heal at the top of attachPartition). Unlike
+    // rebuildAttachedPartitionColumnIndex - which runs at attachPrepare time with an EMPTY-rooted builder
+    // and the detached-partition ColumnVersionReader - this roots the builder at the table dir so
+    // reindexColumn writes into the real partition directory, and drives it from the writer's own
+    // columnVersionWriter (attachColumnVersionReader has already been released by this point).
+    private void rebuildReplicaOnlyIndexForAttachedPartition(
+            CharSequence columnName,
+            int columnIndex,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionSize
+    ) {
+        if (attachReplicaOnlyIndexBuilder == null) {
+            attachReplicaOnlyIndexBuilder = new IndexBuilder(configuration);
+        }
+        final int keep = path.size();
+        try {
+            attachReplicaOnlyIndexBuilder.of(path.trimTo(pathSize));
+            attachReplicaOnlyIndexBuilder.reindexColumn(
+                    ff,
+                    columnVersionWriter,
+                    metadata,
+                    columnIndex,
+                    partitionNameTxn,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionSize
+            );
+            LOG.info().$("attach: rebuilt replica-only index [table=").$(tableToken)
+                    .$(", column=").$safe(columnName)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp).I$();
+        } finally {
+            path.trimTo(keep);
+        }
+    }
+
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, CharSequence columnName) {
         if (attachIndexBuilder == null) {
             attachIndexBuilder = new IndexBuilder(configuration);
@@ -12447,9 +12491,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * on-disk index sidecars (.k/.v) via {@code removeIndexFilesInPartition} per partition - the
      * same primitive {@code rollbackRemoveIndexFiles} uses - and leaves column data and the
      * metadata flags untouched. A raw sidecar unlink is reader-safe here because (a) a skipping
-     * node's planner treats the column as un-indexed (Task 12) so it never opens an index reader,
-     * and (b) a non-skipping reader tolerates a transiently-absent replica-only index file as
-     * "not materialized" rather than corruption (Task 13).
+     * node's planner treats the column as un-indexed so it never opens an index reader, and (b) a
+     * non-skipping reader tolerates a transiently-absent replica-only index file as "not materialized"
+     * rather than corruption.
      */
     private void reconcileReplicaOnlyIndexes() {
         final boolean wantBuilt = !configuration.skipReplicaOnlyIndexes();

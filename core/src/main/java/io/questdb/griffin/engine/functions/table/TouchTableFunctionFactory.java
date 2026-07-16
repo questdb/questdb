@@ -75,7 +75,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
         }
 
-        return new TouchTableFunc(function, configuration.skipReplicaOnlyIndexes());
+        return new TouchTableFunc(function);
     }
 
     private static class TouchTableFunc extends StrFunction implements UnaryFunction {
@@ -84,15 +84,13 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private final boolean skipReplicaOnlyIndexes;
         private long dataPages = 0;
         private long indexKeyPages = 0;
         private long indexValuePages = 0;
         private SqlExecutionContext sqlExecutionContext;
 
-        public TouchTableFunc(Function arg, boolean skipReplicaOnlyIndexes) {
+        public TouchTableFunc(Function arg) {
             this.arg = arg;
-            this.skipReplicaOnlyIndexes = skipReplicaOnlyIndexes;
         }
 
         @Override
@@ -163,6 +161,11 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         private void touchTable() {
             clearCounters();
+            // Read the replication role live at execution rather than capturing it at construction:
+            // the role can flip (hot promote/demote) while this function instance is retained in a
+            // cached/prepared plan, and index eligibility must follow the CURRENT role, not the one
+            // in effect when the factory was compiled.
+            final boolean skipReplicaOnlyIndexes = sqlExecutionContext.getCairoEngine().getConfiguration().skipReplicaOnlyIndexes();
             final long pageSize = Files.PAGE_SIZE;
             // factory belongs to the function, do not close
             final RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory();

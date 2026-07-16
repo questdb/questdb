@@ -859,8 +859,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // native-vs-parquet handling; reporting PARQUET while the buffers
             // are native would break covered-over-parquet queries. `format`
             // still records the genuine base format for diagnostics, but a
-            // PARQUET base is clamped to NATIVE here. (Task 12, which would have
-            // flipped this to PARQUET, was dropped.)
+            // PARQUET base is clamped to NATIVE here.
             return format == PartitionFormat.PARQUET ? PartitionFormat.NATIVE : format;
         }
 

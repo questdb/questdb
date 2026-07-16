@@ -69,7 +69,7 @@ import org.junit.Test;
  * asserted per replica-only column only at a quiescent point (after a drain + writer reopen + tiny
  * apply that is guaranteed to have run a reconcile), to stay robust to the documented lazy window.
  * <p>
- * The Task-13 documented graceful-degradation window ("replica-only index not materialized on this
+ * The documented graceful-degradation window ("replica-only index not materialized on this
  * node") is tolerated WITHOUT weakening the oracle: whenever the filtered query DOES return, the
  * count must still match exactly.
  * <p>
@@ -447,6 +447,13 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                                 if (!Chars.contains(ce.getFlyweightMessage(), "replica-only index not materialized")) {
                                     throw ce;
                                 }
+                                // Contract: the degradation window is a RECOVERABLE (non-critical) error,
+                                // never a critical/corruption one. A critical exception that merely
+                                // happens to carry this text must NOT be swallowed.
+                                Assert.assertFalse(
+                                        "replica-only degradation must be non-critical (seed=" + seed + " op#" + it + ")",
+                                        ce.isCritical()
+                                );
                                 // benign documented degradation window; strong invariants still hold.
                             }
                         }
@@ -477,6 +484,22 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                                     + " seed=" + seed + "]",
                             expectPresent, present
                     );
+                    // Strict per-partition completeness: once the index is materialized, the filtered
+                    // query must SUCCEED and match the index-free reference for EVERY symbol. A missing
+                    // sidecar in any partition would make the reader throw "not materialized" here, so we
+                    // deliberately do NOT tolerate it at this quiescent point.
+                    if (expectPresent) {
+                        for (int s = 0; s < SYMS.length; s++) {
+                            final String val = SYMS[s];
+                            final long rf = scalarLong("select count() from ref where " + col.name + " = '" + val + "'");
+                            final long xf = scalarLong("select count() from x where " + col.name + " = '" + val + "'");
+                            Assert.assertEquals(
+                                    "post-reconcile filtered count must match ref for every partition "
+                                            + "[col=" + col.name + " val=" + val + " seed=" + seed + "]",
+                                    rf, xf
+                            );
+                        }
+                    }
                     if (col.indexed) {
                         assertColumnStillIndexed(col.name);
                     }

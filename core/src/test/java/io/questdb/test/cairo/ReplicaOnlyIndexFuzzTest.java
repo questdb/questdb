@@ -249,7 +249,7 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
                     // path the planner serves from the bitmap/posting index when skip==false, so a
                     // stale/partial index would show up as a WRONG (but non-throwing) count here.
                     //
-                    // Documented graceful-degradation window (Task 13): on a replica the planner may
+                    // Documented graceful-degradation window: on a replica the planner may
                     // pick an index scan for a replica-only column whose sidecars are not yet
                     // materialized on this node for some partition (the just-flipped/just-reconciled
                     // window). The reader then throws a RECOVERABLE non-critical "replica-only index
@@ -272,6 +272,13 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
                                 if (!Chars.contains(ce.getFlyweightMessage(), "replica-only index not materialized")) {
                                     throw ce;
                                 }
+                                // Contract: the degradation window is a RECOVERABLE (non-critical) error,
+                                // never a critical/corruption one. A critical exception that merely
+                                // happens to carry this text must NOT be swallowed.
+                                Assert.assertFalse(
+                                        "replica-only degradation must be non-critical (op#" + it + ")",
+                                        ce.isCritical()
+                                );
                                 // benign documented degradation window; strong invariants still hold.
                             }
                         }
@@ -296,6 +303,22 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
                                     + "[skip=" + skip + " indexed=" + indexed + " col=" + sCol + "]",
                             expectPresent, present
                     );
+                    // Strict per-partition completeness: once reconciliation has materialized the index
+                    // (!skip && indexed), the filtered query must now SUCCEED and match the index-free
+                    // reference for EVERY symbol. If any partition were missing a sidecar the reader would
+                    // throw "not materialized" here, so we deliberately do NOT tolerate it at this point.
+                    if (expectPresent) {
+                        for (int s = 0; s < SYMS.length; s++) {
+                            final String v = SYMS[s];
+                            final long rf = scalarLong("select count() from ref where s = '" + v + "'");
+                            final long xf = scalarLong("select count() from x where " + sCol + " = '" + v + "'");
+                            Assert.assertEquals(
+                                    "post-reconcile filtered count must match ref for every partition "
+                                            + "[col=" + sCol + " val=" + v + "]",
+                                    rf, xf
+                            );
+                        }
+                    }
                     // Metadata flags are node-local-independent: an indexed replica-only column keeps
                     // its flags regardless of skip.
                     if (indexed) {

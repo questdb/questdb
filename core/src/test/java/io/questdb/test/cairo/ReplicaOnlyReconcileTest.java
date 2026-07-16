@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -32,11 +33,15 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -46,7 +51,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Verifies Task 16: node-local reconcile of replica-only indexes on a role change, made
+ * Verifies node-local reconcile of replica-only indexes on a role change, made
  * hot-switch-safe by the engine's role-generation counter.
  * <p>
  * The persisted schema flags ({@code indexed}, {@code replicaOnly}) are identical on every node;
@@ -542,6 +547,84 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
         assertQuery("select s, v, ts from x where s = 'a'")
                 .noLeakCheck()
                 .assertsPlanNotContaining("Index forward scan", "Index backward scan", "DeferredSingleSymbolFilterPageFrame");
+    }
+
+    // C2: ATTACH on a NON-skipping node of an older partition that lacks its replica-only index
+    // sidecars (a backup produced by a skipping primary) must REBUILD the index synchronously before
+    // publishing -- not silently publish an index-less partition. Without the post-rename rebuild the
+    // index-scan query below throws "replica-only index not materialized" for the reattached partition.
+    @Test
+    public void testNonSkippingAttachRebuildsMissingOlderPartitionIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false; // non-skipping node: the index IS materialized and used
+            execute("create table x (s symbol index capacity 32 replica only, v double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            // day0 (older) + day1 (current)
+            execute("insert into x values ('a', 1, 0), ('b', 2, 3600000000), ('a', 3, 86400000000)");
+            engine.releaseAllWriters();
+            Assert.assertTrue("index files must exist on a non-skipping node", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+
+            execute("alter table x detach partition list '1970-01-01'");
+            engine.releaseAllWriters();
+
+            // Simulate a partition copied from a skipping primary: strip its index sidecars AND its
+            // _dmeta/_dcv so ATTACH reaches attachValidateMetadata and the sidecar-tolerance gate.
+            deleteDetachedPartitionIndexFiles("x", "s", "1970-01-01");
+            final TableToken token = engine.verifyTableName("x");
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(token).concat("1970-01-01").put(TableUtils.DETACHED_DIR_MARKER).concat(TableUtils.META_FILE_NAME).$();
+                Assert.assertTrue("remove _dmeta", TestUtils.remove(p.$()));
+                p.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                Assert.assertTrue("remove _dcv", TestUtils.remove(p.$()));
+            }
+            renameDetachedToAttachable("x", "1970-01-01");
+
+            execute("alter table x attach partition list '1970-01-01'");
+            engine.releaseAllWriters();
+
+            // The reattached older partition must now carry a rebuilt index...
+            Assert.assertTrue(
+                    "non-skipping ATTACH must rebuild the missing replica-only index for the older partition",
+                    partitionIndexFilesExist("x", "s", "1970-01-01")
+            );
+            // ...and be transparently index-scannable together with the current partition (a still-missing
+            // sidecar would make the reader throw "not materialized" here).
+            assertMetadataFlagsKept();
+            assertIndexUsed();
+            assertContents("s\tv\tts\n" +
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t3.0\t1970-01-02T00:00:00.000000Z\n");
+        });
+    }
+
+    private boolean partitionIndexFilesExist(String table, String col, String partitionDir) {
+        final boolean[] found = {false};
+        ReplicaOnlyIndexTestUtils.forEachIndexFile(engine, table, col, (ff, fullPath) -> {
+            final String s = fullPath.toString();
+            // tolerate an optional partition-name txn suffix ("1970-01-01" or "1970-01-01.N"); the
+            // detached/attachable staging dirs are already consumed by a successful ATTACH.
+            if (Chars.contains(s, partitionDir) && !Chars.contains(s, TableUtils.DETACHED_DIR_MARKER)) {
+                found[0] = true;
+            }
+        });
+        return found[0];
+    }
+
+    private void deleteDetachedPartitionIndexFiles(String table, String col, String partitionDir) {
+        final String detachedSegment = "/" + partitionDir + TableUtils.DETACHED_DIR_MARKER + "/";
+        ReplicaOnlyIndexTestUtils.forEachIndexFile(engine, table, col, (ff, fullPath) -> {
+            if (Chars.contains(fullPath.toString(), detachedSegment)) {
+                ff.removeQuiet(fullPath.$());
+            }
+        });
+    }
+
+    private void renameDetachedToAttachable(String table, String partition) {
+        final TableToken token = engine.verifyTableName(table);
+        try (Path from = new Path(); Path to = new Path()) {
+            from.of(engine.getConfiguration().getDbRoot()).concat(token).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
+            to.of(engine.getConfiguration().getDbRoot()).concat(token).concat(partition).put(engine.getConfiguration().getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(from.$(), to.$()) > -1);
+        }
     }
 
     // After a role flip the indexed/replicaOnly metadata flags must remain set (only the on-disk
