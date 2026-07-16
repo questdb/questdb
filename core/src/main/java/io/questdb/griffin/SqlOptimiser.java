@@ -2396,8 +2396,8 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode combinedWhere = tableWhere == null
                         ? modelWhere
                         : modelWhere == null
-                        ? tableWhere
-                        : concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, tableWhere, modelWhere);
+                          ? tableWhere
+                          : concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, tableWhere, modelWhere);
                 model.setWhereClause(combinedWhere);
                 model.setNestedModel(table.getNestedModel());
                 model.setSelectModelType(IQueryModel.SELECT_MODEL_NONE);
