@@ -3176,7 +3176,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * cached sparse gen's row (and {@link AbstractPostingIndexReader#warmForKeys}
      * force-builds it via a full traverse), so the worker cursors that share this
      * one memo object over a frozen reader only ever READ it. The {@code frozen}
-     * flag threaded into {@link #baseOrdinal} asserts that no build (or version
+     * flag threaded into {@link SparseGenSidecarPrefixSum#baseOrdinal} asserts that no build (or version
      * drop / grow) happens while frozen — i.e. that priming was complete — turning
      * a would-be silent data race into a deterministic {@code -ea} failure.
      */
