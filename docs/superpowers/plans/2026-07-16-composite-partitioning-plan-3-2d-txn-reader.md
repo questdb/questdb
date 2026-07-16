@@ -75,15 +75,15 @@ public void testStrideDerivedFromComposite() throws Exception {
 
 ---
 
-### Task 2: `_txn` write + load carry cellKey (composite stride 8)
+### Task 2: `_txn` write + load carry cellKey (composite stride 8) + fix Task-1 blind-load reopen
 
-**Files:** Modify `TxReader.java` (`initPartitionAt`, `unsafeLoadPartitions0`), `TxWriter.java` (`insertPartitionSizeByTimestamp`, `saveAttachedPartitionsToTx`, `initPartitionAt` caller sites). Test: `CompositeTxCellTest`.
+**Files:** Modify `TxReader.java` (`initPartitionAt`, `unsafeLoadPartitions`/`unsafeLoadPartitions0`), `TxWriter.java` (`insertPartitionSizeByTimestamp`, `saveAttachedPartitionsToTx`, `initPartitionAt` caller sites), `TableWriter.java` (the constructor blind-load ordering — see the Task-1 carry-forward below). Test: `CompositeTxCellTest`.
 
 **Interfaces:**
-- Consumes Task 1's stride fields + `PARTITION_CELL_KEY_OFFSET`.
-- Produces: `initPartitionAt(int index, long ts, long size, long nameTxn, int cellKey)` (new trailing `cellKey` param; for plain, callers pass 0 and the slot is not written because stride is 4). Ground: `initPartitionAt` is `TxReader.java:868-873` — extend it to also write slot 4 = cellKey **only when `longsPerAttachedPartition == 8`**, and reset slots 5–7 to 0. `insertPartitionSizeByTimestamp(index, ts, size, nameTxn)` gains a `cellKey` param and shifts by the instance stride.
+- Consumes Task 1's stride fields + `PARTITION_CELL_KEY_OFFSET` + `setComposite(boolean)`.
+- Produces: `initPartitionAt(int index, long ts, long size, long nameTxn, int cellKey)` (new trailing `cellKey` param; for plain, callers pass 0 and the slot is not written because stride is 4). Ground: `initPartitionAt` is `TxReader.java:868-873` — extend it to write slot 4 = cellKey **only when `longsPerAttachedPartition == 8`**, and **always zero slots 5–7** for stride 8 (do not rely on JVM zeroing — the `LongList` backing array is reused across partitions, so stale bytes can survive; explicitly `setQuick(base+5..7, 0)`). `insertPartitionSizeByTimestamp(index, ts, size, nameTxn)` gains a `cellKey` param and shifts by the instance stride.
 
-- [ ] **Step 1: Write the failing test** — write a composite `_txn` with three partitions at two timestamps and two cells, close, reopen a `TxReader`, assert each field including cellKey round-trips. Use whatever direct `TxWriter` construction the existing `TxTest` uses (ground it); scenario:
+- [ ] **Step 1: Write the failing round-trip test** — write a composite `_txn` with three partitions at two timestamps and two cells, close, reopen a `TxReader`, assert each field including cellKey round-trips. Use whatever direct `TxWriter` construction existing `TxnTest` uses (ground it); scenario:
 ```java
 // day1/cell0, day1/cell1, day2/cell0  -> after reopen:
 Assert.assertEquals(3, txReader.getPartitionCount());
@@ -98,11 +98,17 @@ Assert.assertEquals(0, txReader.getPartitionCellKey(2));
 
 - [ ] **Step 2: Run** — FAIL.
 
-- [ ] **Step 3: Implement** — thread cellKey through `initPartitionAt` (write slot 4 + zero 5–7 for stride 8) and `insertPartitionSizeByTimestamp`. `saveAttachedPartitionsToTx` (`TxWriter.java:760-770`) already saves `attachedPartitions.size()` longs generically — it needs **no** change (it saves the whole widened array). `unsafeLoadPartitions0` (`TxReader.java:799-806`) already loads `size/8`-count generically — confirm it derives count from the region byte size and the instance stride (`getPartitionCount()` = regionLongs / instanceStride). Fix any spot that divides the loaded region by the static 4.
+- [ ] **Step 3: Implement cellKey persistence** — thread cellKey through `initPartitionAt` (write slot 4 + zero 5–7 for stride 8) and `insertPartitionSizeByTimestamp`. `saveAttachedPartitionsToTx` (`TxWriter.java:760-770`) already saves `attachedPartitions.size()` longs generically — no change (it saves the whole widened array). `unsafeLoadPartitions0` (`TxReader.java:799-806`) already loads generically — confirm `getPartitionCount()` = regionLongs / instanceStride and fix any spot that divides by the static 4.
 
 - [ ] **Step 4: Run** — PASS.
 
-- [ ] **Step 5: Commit** — `feat(cairo): persist + reload composite partition cellKey in _txn`
+- [ ] **Step 5: Fix the Task-1 blind-load reopen defect (reviewer-mandated carry-forward).** `TableWriter`'s constructor opens `txWriter` via the 1-arg `ofRW(path)` (`TableWriter.java:492`) **before** `_meta` is parsed and `setComposite` runs (`~TableWriter.java:518`). That blind load runs `TxReader.unsafeLoadPartitions`, whose transient-row-count fold computes `offset = txAttachedPartitionsSize - longsPerAttachedPartition + PARTITION_MASKED_SIZE_OFFSET` with the still-plain stride 4 — for a composite table (stride 8) with ≥1 committed partition this lands on reserved slot 5 instead of the real masked-size slot 1 → mis-reconciliation/corruption on reopen. `initPartitionBy` does NOT reload the region for an already-partitioned table, so the bad load sticks. **Fix:** after `setComposite` is known in the constructor, for a composite table re-load the attached-partitions region with the correct stride (re-invoke the partition-load path, e.g. `unsafeLoadAll`/the same reload `initPartitionBy` uses when re-reading, now that the stride is 8) — or, if cleaner, defer the stride-dependent transient-fold until after `setComposite`. Ground the minimal correct fix by reading the constructor's open sequence; keep plain tables on exactly today's path (no extra reload for plain).
+
+- [ ] **Step 6: Write the reopen acceptance test** — the scenario the bug needs: create a composite table, write ≥1 partition with real rows and commit (so `attachedPartitions.size() > 0` at stride 8), close the writer fully, then reopen a **`TableWriter`** (exercising the constructor blind-load path, NOT just a raw `TxReader`) and assert the partition count and each partition's size/timestamp/cellKey read back correctly (no slot-5 corruption). This test MUST fail before Step 5's fix and pass after — demonstrate that ordering (run it red pre-fix, green post-fix; capture both).
+
+- [ ] **Step 7: Run** — `mvn -q -pl core test -Dtest=CompositeTxCellTest` green; plus a regression run of `TableWriterTest` + `TxnTest`.
+
+- [ ] **Step 8: Commit** — `feat(cairo): persist + reload composite partition cellKey in _txn; fix reopen blind-load stride`
 
 ---
 
