@@ -2241,9 +2241,16 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     Thread reader = new Thread(() -> {
                         byte[] chunk = new byte[8192];
                         try {
-                            // Hold the socket full so the server write-parks with credit remaining,
-                            // then drain so the resume spends the rest of the budget and suspends.
-                            Os.sleep(300);
+                            // Drain only once the batch count stalls -- the server has write-parked on a
+                            // full socket, which is the ordering the resume path under test needs.
+                            long seen = -1;
+                            int stable = 0;
+                            for (int i = 0; i < 200 && stable < 5; i++) {
+                                long sent = metrics.batchesSentCount();
+                                stable = (sent > 0 && sent == seen) ? stable + 1 : 0;
+                                seen = sent;
+                                Os.sleep(20);
+                            }
                             InputStream in = socket.getInputStream();
                             //noinspection StatementWithEmptyBody
                             while (in.read(chunk) != -1) {
