@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
@@ -810,6 +811,69 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                             "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
                             "a\t99\t2026-01-01T00:00:02.000000Z\t2\n" +
                             "a\t30\t2026-01-01T00:00:03.000000Z\t3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRebuildPurgesBelowFrontierDedupReplacement() throws Exception {
+        // A below-frontier dedup replacement that pushes a row out of the view's WHERE
+        // filter, incorporated by the restart-restore rebuild (not the incremental drain).
+        // The rebuild recomputes the whole view from the applied base, so it must delete
+        // the stale pre-replacement LV row even though the recompute's lowest surviving
+        // row sits above it. Regression for LiveViewFuzzTest#testFuzzDedup
+        // (seed 661975787194049L/1784178587678L, RANGE_SUM variant).
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts " +
+                    "RANGE BETWEEN '9' MINUTE PRECEDING AND CURRENT ROW) AS v FROM base WHERE i > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Emit ts=00:01 (i=297) below the frontier, plus higher-ts rows. The refresh
+                // seals a head checkpoint at this applied point.
+                execute("INSERT INTO base (ts, sym, i) VALUES " +
+                        "('2026-01-01T00:01:00.000000Z', 'a', 297), " +
+                        "('2026-01-01T00:05:00.000000Z', 'a', 500), " +
+                        "('2026-01-01T00:09:00.000000Z', 'a', 900)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                // A zero-row cycle that advances the applied watermark PAST the head
+                // checkpoint, so a later restart takes the checkpoint-lags-applied rebuild
+                // branch: insert a future band and drop it (the LV never emits it).
+                setCurrentMicros(currentMicros + 2_000_000L);
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2030-01-01T00:00:00.000000Z', 'z', 1)");
+                drainWalQueue();
+                execute("ALTER TABLE base DROP PARTITION LIST '2030-01-01'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                // Below-frontier dedup replacement of ts=00:01: i 297 -> -108, which now
+                // fails WHERE i > 0. Apply it to the base but DON'T refresh the LV, so the
+                // restart-restore rebuild is what must incorporate it.
+                setCurrentMicros(currentMicros + 2_000_000L);
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T00:01:00.000000Z', 'a', -108)");
+                drainWalQueue();
+            }
+
+            // Restart: drop the in-memory registry and rebuild from on-disk state, then
+            // refresh. The restore rebuilds the whole view from the applied base (which now
+            // holds i=-108 at 00:01) and must purge the stale i=297 row.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            assertQuery("SELECT ts, sym, i FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tsym\ti\n" +
+                            "2026-01-01T00:05:00.000000Z\ta\t500\n" +
+                            "2026-01-01T00:09:00.000000Z\ta\t900\n");
             execute("DROP LIVE VIEW lv");
         });
     }

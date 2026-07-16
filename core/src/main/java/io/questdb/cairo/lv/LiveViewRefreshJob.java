@@ -2728,7 +2728,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         instance.getRetainedCheckpointMaxTs(anchorIdx)
                 );
             } else {
-                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
+                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo, false);
             }
         }
 
@@ -2845,7 +2845,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // keeps its DELETE authority; it recomputes the ahead floor itself to
                 // retire the ahead-unsealed entries this resume would otherwise drop.
                 reader.close();
-                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo);
+                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo, false);
                 return;
             }
             // Re-anchor to the sealed entry below the ahead floor, commit at the
@@ -3069,13 +3069,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * polls until the reader's {@code getSeqTxn() >= advanceTo}, bounded
      * by {@code cairo.live.view.flush.retry.max.duration} so a stalled
      * apply trips the flush-retry budget rather than spinning forever.
+     * <p>
+     * {@code fullRebuild} distinguishes a wholesale rebuild (restart restore,
+     * corrupt-checkpoint restore, base-metadata-drift / mid-drain recovery, WAL-loss
+     * re-derive) from an incremental O3 trigger. A full rebuild recomputes the entire
+     * view from the applied base, so its REPLACE_RANGE must cover the whole view range
+     * ({@code [viewLowerBoundTimestamp, +inf)}) to purge ANY stale on-disk row - notably
+     * a below-frontier dedup replacement that dropped a row out of the {@code WHERE}
+     * filter, whose stale pre-replacement row sits below the recompute's lowest surviving
+     * ts and would otherwise survive the {@code replayMinTs}-floored replace. The
+     * incremental path ({@code fullRebuild == false}) keeps the trigger-clamped floor so a
+     * non-DATA removal (DROP PARTITION / TTL / TRUNCATE) still freezes its prefix.
      */
     private void o3HeadMissReplay(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             long lateRowTs,
             TableToken baseToken,
-            long advanceTo
+            long advanceTo,
+            boolean fullRebuild
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
@@ -3240,10 +3252,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // and the stale LV row would survive. Extend down to the
                             // trigger ts (lowest triggering DATA-commit ts, clamped to the
                             // view's bound); removals are non-DATA and excluded from it, so
-                            // frozen prefixes stay safe.
-                            final long replaceLowTs = triggerLowTs != Numbers.LONG_NULL
-                                    ? Math.min(replayMinTs, triggerLowTs)
-                                    : replayMinTs;
+                            // frozen prefixes stay safe. A full rebuild has no single
+                            // trigger - it recomputes the whole view - so it replaces the
+                            // entire view range to purge any stale below-frontier row.
+                            final long replaceLowTs = fullRebuild
+                                    ? viewLowerBoundTimestamp
+                                    : triggerLowTs != Numbers.LONG_NULL
+                                            ? Math.min(replayMinTs, triggerLowTs)
+                                            : replayMinTs;
                             fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
@@ -3252,35 +3268,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                 }
-            } else if (triggerLowTs != Numbers.LONG_NULL) {
-                // The probe found no surviving row, but this is a convergent
-                // DATA trigger (a dedup/replacement whose lowest touched ts is
-                // triggerLowTs): the recompute genuinely empties the view from
-                // triggerLowTs upward. Leaving the block a no-op strands the pre-O3
-                // output rows on disk as ghosts - size() over-reports and reads
-                // return stale rows while the watermark advances past the commit
-                // that removed their base rows. Reset the window accumulators to
-                // identity (matching the from-scratch empty recompute) and emit
-                // a pure-delete REPLACE_RANGE over [triggerLowTs, +inf) so the
-                // on-disk range is cleared. Rows below it stay frozen, exactly as
-                // the surviving-row boundary above treats them.
+            } else if (fullRebuild || triggerLowTs != Numbers.LONG_NULL) {
+                // The probe found no surviving row, but the view must still be cleared:
+                //  - a convergent DATA trigger (a dedup/replacement whose lowest touched ts
+                //    is triggerLowTs) genuinely empties the view from triggerLowTs upward; or
+                //  - a full rebuild recomputed the whole view to empty, so every on-disk row
+                //    is stale and the whole range [viewLowerBoundTimestamp, +inf) must go.
+                // Leaving the block a no-op strands the pre-O3 output rows on disk as ghosts -
+                // size() over-reports and reads return stale rows while the watermark advances
+                // past the commit that removed their base rows. Reset the window accumulators to
+                // identity (matching the from-scratch empty recompute) and emit a pure-delete
+                // REPLACE_RANGE over [deleteLowTs, +inf) so the on-disk range is cleared. For the
+                // DATA trigger, rows below triggerLowTs stay frozen, exactly as the surviving-row
+                // boundary above treats them.
                 //
-                // A non-DATA / recovery trigger (lateRowTs == LONG_NULL) keeps the
-                // no-op: without a convergent trigger ts the emptiness is a frozen
-                // prefix (DROP PARTITION / TTL / TRUNCATE / restart), not a deletion
-                // to propagate, and the pre-O3 accumulator state must survive.
+                // A non-DATA / recovery trigger (lateRowTs == LONG_NULL) that is NOT a full
+                // rebuild keeps the no-op: without a convergent trigger ts the emptiness is a
+                // frozen prefix (DROP PARTITION / TTL / TRUNCATE), not a deletion to propagate,
+                // and the pre-O3 accumulator state must survive.
+                final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
                 clearWindowState(windowFactory, anchorWindow);
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                             effectiveSeqTxn,
-                            triggerLowTs,
+                            deleteLowTs,
                             Long.MAX_VALUE
                     ));
                 }
                 deletedGhostRange = true;
                 LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
                         .$(viewName)
-                        .$(", deleteLowTs=").$(triggerLowTs)
+                        .$(", deleteLowTs=").$(deleteLowTs)
                         .$(", effectiveSeqTxn=").$(effectiveSeqTxn).I$();
             }
         } finally {
@@ -4322,7 +4340,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
             try {
-                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn);
+                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn, true);
             } catch (Throwable t) {
                 LOG.critical().$("live view restart head-miss replay failed after corrupt checkpoint [view=")
                         .$(instance.getDefinition().getViewName())
@@ -4370,7 +4388,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // REPLACE_RANGE reproduces the rows disk already holds). o3HeadMissReplay
             // advances the watermarks and writes a fresh head, so restore is complete.
             try {
-                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn);
+                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn, true);
             } catch (Throwable t) {
                 LOG.critical().$("live view dedup restart head-miss replay failed [view=")
                         .$(instance.getDefinition().getViewName())
@@ -4944,7 +4962,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final TableToken baseToken = instance.getDefinition().getBaseTableToken();
             final long writerTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
             instance.setLeadRowCount(0);
-            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, writerTxn);
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, writerTxn, true);
             // REPLACE_RANGE rewrote disk, so the published slot is stale; rebuild it
             // from the rewritten LV table or reads keep serving pre-recompute rows.
             rebuildInMemoryTier(instance);
@@ -5817,7 +5835,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         try {
-            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn);
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn, true);
             // The replay flushed the whole tier to disk and advanced lastProcessed / the applied
             // watermark, so no un-flushed lead remains. Keep refreshedUpTo == lastProcessed so a
             // later ALTER cannot see a phantom lead.
