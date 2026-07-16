@@ -8463,6 +8463,35 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsFollowedByNonUnionSetOperation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("CREATE TABLE tc (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a')");
+            execute("INSERT INTO tb VALUES ('b')");
+            execute("INSERT INTO tc VALUES ('b')");
+
+            final String[] unionOperations = {"UNION", "UNION ALL"};
+            final String[] followingOperations = {"EXCEPT", "EXCEPT ALL", "INTERSECT", "INTERSECT ALL"};
+            for (String unionOperation : unionOperations) {
+                for (String followingOperation : followingOperations) {
+                    final String expected = followingOperation.startsWith("EXCEPT") ? "s\na\n" : "s\nb\n";
+                    final String flatQuery = "SELECT s FROM ta " + unionOperation
+                            + " SELECT s FROM tb " + followingOperation + " SELECT s FROM tc";
+                    final String parenthesisedQuery = "SELECT s FROM (SELECT s FROM ta " + unionOperation
+                            + " SELECT s FROM tb) " + followingOperation + " SELECT s FROM tc";
+
+                    assertQuery("SELECT * FROM (" + flatQuery + ") ORDER BY s")
+                            .noLeakCheck().columnType(0, ColumnType.SYMBOL).returns(expected);
+                    assertQuery("SELECT * FROM (" + parenthesisedQuery + ") ORDER BY s")
+                            .noLeakCheck().columnType(0, ColumnType.SYMBOL).returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsDynamicEqualityDoesNotMaterializeKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta AS (SELECT x::symbol s, x::symbol expected FROM long_sequence(1000))");

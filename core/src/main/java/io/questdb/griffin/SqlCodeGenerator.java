@@ -9978,8 +9978,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param factoryA           is compiled first argument
      * @param executionContext   execution context for authorization and parallel execution purposes
      * @param symbolUnionColumns tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
-     *                           chain; null at the head of a chain (accumulateUnionSymbolColumns seeds it
-     *                           from the first branch) and for EXCEPT / INTERSECT (which never re-symbolise)
+     *                           segment; null at the head of a segment (accumulateUnionSymbolColumns seeds it
+     *                           from the first branch). A pending segment is re-symbolised before an EXCEPT /
+     *                           INTERSECT so the next operation observes the same metadata as a parenthesised union.
      * @return factory that performs a SET operation
      * @throws SqlException when query contains syntax errors
      */
@@ -9995,12 +9996,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
 
+            final int setOperationType = model.getSetOperationType();
+            if (symbolUnionColumns != null
+                    && setOperationType != IQueryModel.SET_OPERATION_UNION
+                    && setOperationType != IQueryModel.SET_OPERATION_UNION_ALL) {
+                // The running UNION is internally STRING-typed. Finalise it before a different set
+                // operation so flat and explicitly parenthesised forms expose identical metadata.
+                final RecordCursorFactory pendingUnionFactory = factoryA;
+                factoryA = null;
+                factoryA = maybeResymboliseUnion(pendingUnionFactory, symbolUnionColumns);
+            }
+
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();
             final int positionB = model.getUnionModel().getModelPosition();
 
-            switch (model.getSetOperationType()) {
+            switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);

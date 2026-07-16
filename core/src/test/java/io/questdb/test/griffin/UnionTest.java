@@ -1192,8 +1192,8 @@ public class UnionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             typeof\tt
-                            STRING\tBICYCLE
-                            STRING\tSCOOTER
+                            SYMBOL\tBICYCLE
+                            SYMBOL\tSCOOTER
                             """);
 
             assertQuery("select typeof(t), t from (x union y union z)")
@@ -1215,9 +1215,9 @@ public class UnionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             typeof\tt
-                            STRING\tCAR
-                            STRING\tVAN
-                            STRING\tPLANE
+                            SYMBOL\tCAR
+                            SYMBOL\tVAN
+                            SYMBOL\tPLANE
                             """);
         });
     }
