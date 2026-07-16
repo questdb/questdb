@@ -28,6 +28,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -487,6 +488,115 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
                     });
                 }
                 Assert.assertEquals(1000, count[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolUnionRoundTrip() throws Exception {
+        // Exercise the actual SYMBOL UNION ALL cursor through QWP. This covers the
+        // union's dynamic dictionary together with egress type metadata, symbol ids,
+        // NULL bitmap, client-side decoding, and a warm connection dictionary.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented()) {
+                serverMain.execute("CREATE TABLE union_a(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE union_b(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO union_a VALUES "
+                        + "('alpha', 1::TIMESTAMP), ('', 2::TIMESTAMP), "
+                        + "(NULL, 3::TIMESTAMP), ('alpha', 4::TIMESTAMP)");
+                serverMain.execute("INSERT INTO union_b VALUES "
+                        + "('beta', 5::TIMESTAMP), ('', 6::TIMESTAMP), "
+                        + "(NULL, 7::TIMESTAMP), ('alpha', 8::TIMESTAMP)");
+                serverMain.awaitTable("union_a");
+                serverMain.awaitTable("union_b");
+
+                final String query = "SELECT s FROM union_a UNION ALL SELECT s FROM union_b";
+                final String[] expected = {"alpha", "", null, "alpha", "beta", "", null, "alpha"};
+                final String[] actual = new String[expected.length];
+                final int[] symbolIds = new int[expected.length];
+                final int[] firstRowIndex = {0};
+                final int[] secondRowIndex = {0};
+                final long[] firstPayloadBytes = {0};
+                final long[] secondPayloadBytes = {0};
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.assertEquals(QwpConstants.TYPE_SYMBOL, batch.getColumnWireType(0));
+                            Assert.assertEquals(3, batch.getSymbolDictSize(0));
+                            firstPayloadBytes[0] += batch.payloadLimit() - batch.payloadAddr();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                final int row = firstRowIndex[0]++;
+                                actual[row] = batch.getSymbol(0, r);
+                                symbolIds[row] = batch.getSymbolId(0, r);
+                                Assert.assertEquals(expected[row] == null, batch.isNull(0, r));
+                                if (symbolIds[row] < 0) {
+                                    Assert.assertNull(actual[row]);
+                                } else {
+                                    Assert.assertSame(actual[row], batch.getSymbolForId(0, symbolIds[row]));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(expected.length, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error on first union query: " + message);
+                        }
+                    });
+
+                    // The second execution uses the same connection and result shape. All
+                    // three symbol entries are already known, so its dictionary delta is empty.
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.assertEquals(QwpConstants.TYPE_SYMBOL, batch.getColumnWireType(0));
+                            Assert.assertEquals(3, batch.getSymbolDictSize(0));
+                            secondPayloadBytes[0] += batch.payloadLimit() - batch.payloadAddr();
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                final int row = secondRowIndex[0]++;
+                                Assert.assertEquals(expected[row], batch.getSymbol(0, r));
+                                Assert.assertEquals(expected[row] == null, batch.isNull(0, r));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.assertEquals(expected.length, totalRows);
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error on second union query: " + message);
+                        }
+                    });
+                }
+
+                Assert.assertArrayEquals(expected, actual);
+                Assert.assertEquals(expected.length, firstRowIndex[0]);
+                Assert.assertEquals(expected.length, secondRowIndex[0]);
+                Assert.assertEquals(-1, symbolIds[2]);
+                Assert.assertEquals(-1, symbolIds[6]);
+                Assert.assertEquals(symbolIds[0], symbolIds[3]);
+                Assert.assertEquals(symbolIds[0], symbolIds[7]);
+                Assert.assertEquals(symbolIds[1], symbolIds[5]);
+                Assert.assertNotEquals(symbolIds[0], symbolIds[1]);
+                Assert.assertNotEquals(symbolIds[0], symbolIds[4]);
+                Assert.assertNotEquals(symbolIds[1], symbolIds[4]);
+                Assert.assertTrue(
+                        "warm union dictionary should emit a smaller payload [first="
+                                + firstPayloadBytes[0] + ", second=" + secondPayloadBytes[0] + ']',
+                        secondPayloadBytes[0] < firstPayloadBytes[0]
+                );
             }
         });
     }

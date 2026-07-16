@@ -8681,6 +8681,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsCreateWalTableAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, ts TIMESTAMP)");
+            execute("CREATE TABLE tb (s SYMBOL, ts TIMESTAMP)");
+            execute("INSERT INTO ta VALUES ('a', 1::TIMESTAMP), (NULL, 2::TIMESTAMP)");
+            execute("INSERT INTO tb VALUES ('b', 3::TIMESTAMP), ('a', 4::TIMESTAMP)");
+
+            // WAL CTAS takes its column type from the union and writes through the WAL
+            // path. Applying the WAL must retain both SYMBOL metadata and the NULL key.
+            execute("CREATE TABLE tu AS (SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            assertQuery("SELECT s FROM tu ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\na\n\nb\na\n");
+            assertQuery("SELECT count(*) c FROM tu WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsInsertIntoTypedTarget() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL)");
@@ -8702,6 +8724,39 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("SELECT s FROM t_sym").noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\n\nb\na\n");
             // The NULL symbol survived as NULL on the SYMBOL target, not as an empty string.
             assertQuery("SELECT count(*) c FROM t_sym WHERE s IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsInsertIntoWalTypedTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, ts TIMESTAMP)");
+            execute("CREATE TABLE tb (s SYMBOL, ts TIMESTAMP)");
+            execute("INSERT INTO ta VALUES ('a', 1::TIMESTAMP), (NULL, 2::TIMESTAMP)");
+            execute("INSERT INTO tb VALUES ('b', 3::TIMESTAMP), ('a', 4::TIMESTAMP)");
+            execute("CREATE TABLE t_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_varchar (s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t_sym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Exercise each SYMBOL-source WAL row-copy conversion, then apply all three
+            // target WALs before checking their persisted types and values.
+            execute("INSERT INTO t_str SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb");
+            execute("INSERT INTO t_varchar SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb");
+            execute("INSERT INTO t_sym SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb");
+            drainWalQueue();
+
+            assertQuery("SELECT s FROM t_str ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_varchar ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.VARCHAR).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT s FROM t_sym ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize().returns("s\na\n\nb\na\n");
+            assertQuery("SELECT count(*) c FROM t_str WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count(*) c FROM t_varchar WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+            assertQuery("SELECT count(*) c FROM t_sym WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
         });
     }
 
@@ -8728,19 +8783,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL)");
             execute("CREATE TABLE tb (s SYMBOL)");
-            execute("INSERT INTO ta VALUES ('a'), (null)");
-            execute("INSERT INTO tb VALUES ('b')");
+            execute("INSERT INTO ta VALUES ('a'), (NULL), ('')");
+            execute("INSERT INTO tb VALUES ('b'), ('')");
 
-            // A NULL symbol survives re-symbolisation as a real NULL, not an empty string: the
-            // result type is SYMBOL, `s IS NULL` matches exactly the null row and `s = ''` matches
-            // none. (A blank cell in a printed table alone cannot tell NULL from an empty string.)
+            // A NULL symbol survives re-symbolisation as a real NULL while actual empty symbols
+            // from both branches retain one shared, non-null dictionary key. The predicates
+            // disambiguate the three blank cells in the printed result.
             assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
                     .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
-                    .returns("s\na\n\nb\n");
+                    .returns("s\na\n\n\nb\n\n");
             assertQuery("SELECT count(*) c FROM (SELECT s FROM ta UNION ALL SELECT s FROM tb) WHERE s IS NULL")
                     .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
             assertQuery("SELECT count(*) c FROM (SELECT s FROM ta UNION ALL SELECT s FROM tb) WHERE s = ''")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n2\n");
         });
     }
 

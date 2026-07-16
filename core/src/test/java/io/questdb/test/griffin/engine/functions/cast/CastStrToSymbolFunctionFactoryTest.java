@@ -96,6 +96,7 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
             arg.valueA = "";
             Assert.assertEquals(100, func.getInt(null));
             Assert.assertEquals("", func.valueOf(100).toString());
+            Assert.assertEquals("", symbolTableView.valueOf(100).toString());
             Assert.assertEquals(100, func.getInt(null));
 
             // NULL maps to the null sentinel and resolves back to null.
