@@ -76,6 +76,18 @@ import io.questdb.std.ObjList;
  * rebuild - so the two are disjoint. A resume count that grows while the boundary
  * count stays flat is the retained-checkpoint ring bounding O3 cost as intended;
  * a growing boundary count flags late rows that predate the whole ring.
+ * Five {@code checkpoint_ring_*} columns close that surface out with the durable
+ * ring's own state - what restart recovered, and what the next restart would
+ * recover. {@code checkpoint_ring_recovered_entries} and
+ * {@code checkpoint_ring_recovery_fallback_count} report the trust verdict
+ * {@code _checkpoints/_ring} got at restart; the two {@code manifest} columns
+ * report the current durable claim, so an operator can watch
+ * {@code checkpoint_ring_manifest_covered_seqtxn} track {@code applied_watermark}
+ * and know the next restart will trust the ring rather than wait for it to not.
+ * {@code checkpoint_ring_manifest_dirty} flags an in-memory ring that has run
+ * ahead of the manifest on disk. All five are inert - NULL, zero, false - while
+ * {@code cairo.live.view.checkpoint.ring.durable.enabled} is off, which publishes
+ * and recovers nothing.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -116,6 +128,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
+        private static final int COLUMN_CHECKPOINT_RING_MANIFEST_COVERED_SEQTXN = 29;
+        private static final int COLUMN_CHECKPOINT_RING_MANIFEST_DIRTY = 30;
+        private static final int COLUMN_CHECKPOINT_RING_MANIFEST_GENERATION = 28;
+        private static final int COLUMN_CHECKPOINT_RING_RECOVERED_ENTRIES = 27;
+        private static final int COLUMN_CHECKPOINT_RING_RECOVERY_FALLBACK_COUNT = 31;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 6;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 7;
         private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 22;
@@ -217,6 +234,18 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
+
+                @Override
+                public boolean getBool(int col) {
+                    // Whether the last _checkpoints/_ring publication failed, leaving
+                    // the in-memory ring ahead of the manifest on disk. Diagnostic
+                    // only: it never gates a replay, and it self-corrects on the next
+                    // successful publication. Needs no stub guard - the field reads
+                    // false there, which is the truth (a stub never publishes) rather
+                    // than a default standing in for one, and BOOLEAN has no NULL to
+                    // report the difference with anyway.
+                    return col == COLUMN_CHECKPOINT_RING_MANIFEST_DIRTY && instance.isCheckpointRingDirty();
+                }
 
                 @Override
                 public long getLong(int col) {
@@ -346,6 +375,40 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // retained-checkpoint ring. In-memory counter, resets on restart.
                         // Disjoint from o3_resume_replay_rows.
                         case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> instance.getO3BoundaryReplayRows();
+                        // Entries the restart rehydrated into the retained-checkpoint
+                        // ring from a trusted _checkpoints/_ring manifest, after
+                        // pruning to the running retention budget - the anchors this
+                        // process came back with. NULL when no recovery decision was
+                        // made: the view never restored (no head checkpoint), or the
+                        // durable ring is disabled and no manifest was ever read.
+                        // Zero splits two ways, and checkpoint_ring_recovery_fallback_count
+                        // is what tells them apart: a fallback recovered nothing,
+                        // while a trusted manifest that listed nothing withheld
+                        // anchors without condemning the sweep's head.
+                        case COLUMN_CHECKPOINT_RING_RECOVERED_ENTRIES -> instance.getCheckpointRingRecoveredEntries();
+                        // Generation the last successful _checkpoints/_ring publication
+                        // stamped, or the one recovery adopted from the manifest it
+                        // trusted - the counter continues across restarts rather than
+                        // restarting at 1. Zero means this process has neither
+                        // published nor adopted, so a real manifest always reads >= 1.
+                        case COLUMN_CHECKPOINT_RING_MANIFEST_GENERATION -> instance.getLastPublishedRingGeneration();
+                        // coveredBaseSeqTxn of that manifest: the base seqTxn at which
+                        // every listed entry is proven sealed. This is what the next
+                        // restart compares against the reconciled applied floor, so a
+                        // value trailing applied_watermark is the view soaking with a
+                        // manifest that would not be trusted. NULL until this process
+                        // publishes or adopts one.
+                        case COLUMN_CHECKPOINT_RING_MANIFEST_COVERED_SEQTXN ->
+                                instance.getLastPublishedRingCoveredBaseSeqTxn();
+                        // Restarts whose ring recovery declined to trust a manifest and
+                        // fell back to the highest checkpoint alone, each costing the
+                        // first in-retention O3 after it a boundary rebuild. Counts
+                        // only with the durable ring enabled - with the flag off there
+                        // is no manifest to decline. Recovery is single-shot per view
+                        // per process, so this reads 0 or 1; sum() it across the
+                        // catalogue for a deployment-wide tally.
+                        case COLUMN_CHECKPOINT_RING_RECOVERY_FALLBACK_COUNT ->
+                                instance.getCheckpointRingRecoveryFallbackCount();
                         default -> 0;
                     };
                 }
@@ -423,6 +486,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 24
             metadata.add(new TableColumnMetadata("o3_resume_replay_rows", ColumnType.LONG));                // 25
             metadata.add(new TableColumnMetadata("o3_boundary_replay_rows", ColumnType.LONG));              // 26
+            metadata.add(new TableColumnMetadata("checkpoint_ring_recovered_entries", ColumnType.LONG));    // 27
+            metadata.add(new TableColumnMetadata("checkpoint_ring_manifest_generation", ColumnType.LONG));  // 28
+            metadata.add(new TableColumnMetadata("checkpoint_ring_manifest_covered_seqtxn", ColumnType.LONG)); // 29
+            metadata.add(new TableColumnMetadata("checkpoint_ring_manifest_dirty", ColumnType.BOOLEAN));    // 30
+            metadata.add(new TableColumnMetadata("checkpoint_ring_recovery_fallback_count", ColumnType.LONG)); // 31
             METADATA = metadata;
         }
     }

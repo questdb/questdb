@@ -4814,7 +4814,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (candidate == null || !candidate.isStructurallyValid()) {
             // No manifest on disk, unreadable, or the durable ring is disabled -
             // the sweep's read is gated on the flag, so a null candidate is the
-            // kill switch too, and this method is inert without it.
+            // kill switch too, and this method is inert without it. Which is also
+            // why the fallback only counts under the flag: with the ring disabled
+            // there was no manifest to decline, so every legacy restart would
+            // count one and bury the shape worth alerting on. The absent and
+            // corrupt manifests are indistinguishable here - the sweep nulls the
+            // candidate for both - and both count, being equally a fallback the
+            // first post-restart O3 pays for. The read logs which at its own site.
+            if (engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
+                instance.recordCheckpointRingRecoveryFallback();
+            }
             return fallbackHeadLvSeqTxn;
         }
         final long covered = candidate.getCoveredBaseSeqTxn();
@@ -4828,6 +4837,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", reconciledFloor=").$(reconciledFloor)
                     .$(", entries=").$(entryCount)
                     .$(", fallbackHeadLvSeqTxn=").$(fallbackHeadLvSeqTxn).I$();
+            instance.recordCheckpointRingRecoveryFallback();
             discardCheckpointRingManifest(instance);
             return fallbackHeadLvSeqTxn;
         }
@@ -4855,6 +4865,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         );
         pruneRehydratedCheckpointRing(instance, covered);
         final int retainedCount = instance.getRetainedCheckpointCount();
+        // The trust verdict, for live_views(). Post-prune rather than the
+        // manifest's entryCount: what an operator wants to know is how many
+        // anchors this process came back with, and a lowered retention budget
+        // drops some of what the manifest listed. Recorded on the empty path too -
+        // a trusted manifest listing nothing is not a fallback, and only the pair
+        // (entries=0, fallbacks=0) tells the two apart.
+        instance.recordCheckpointRingRecovery(retainedCount);
         if (retainedCount == 0) {
             // Trusted, but it offers no anchor - so the sweep's head stands, and
             // the restore validates it the way it does without any manifest.

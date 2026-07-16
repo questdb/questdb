@@ -227,6 +227,34 @@ public class LiveViewInstance implements QuietCloseable {
     // from then. Mutated only on the refresh worker under the refresh latch;
     // volatile for the catalogue thread. See lastPublishedRingGeneration.
     private volatile boolean checkpointRingDirty;
+    // Number of entries restart rehydrated into the retained-checkpoint ring from
+    // a trusted _checkpoints/_ring manifest, after pruning it to the running
+    // retention budget. Numbers.LONG_NULL until the restore decides, which covers
+    // a view that never restored (no head .cp) and every view when the durable
+    // ring is disabled - the sweep does not even read a manifest then, so there is
+    // no recovery to report rather than a recovery that found nothing. Zero means
+    // the restore ran and the ring came back empty: either it fell back
+    // (checkpointRingRecoveryFallbackCount says which) or it trusted a manifest
+    // that listed nothing, which withholds anchors without condemning the sweep's
+    // head. Written once on the refresh worker under the refresh latch; volatile
+    // for the catalogue thread. See lastPublishedRingGeneration.
+    private volatile long checkpointRingRecoveredEntries = Numbers.LONG_NULL;
+    // Count of restarts whose ring recovery declined to trust a manifest and took
+    // the highest-.cp-only fallback: none on disk, unreadable, version-skewed,
+    // naming a checkpoint that is gone, a coveredBaseSeqTxn that does not match
+    // the reconciled applied floor, or an entry this code could not have written.
+    // Each one costs the first in-retention O3 after the restart a boundary
+    // rebuild, so this is the deployment-wide signal for how often the feature is
+    // not paying out - sum() it across live_views(). Counts only what happens with
+    // the durable ring enabled: with the flag off there is no manifest to decline,
+    // and counting the whole fleet's legacy restarts as fallbacks would drown the
+    // shape worth alerting on. A trusted-but-empty manifest is not a fallback
+    // either - it was trusted. Recovery is single-shot per LV lifetime (see
+    // checkpointRestoreAttempted), so this reads 0 or 1 for as long as the process
+    // lives; it is a counter so that a later path recovering more than once stays
+    // countable rather than silently overwriting. Written once on the refresh
+    // worker under the refresh latch; volatile for the catalogue thread.
+    private volatile long checkpointRingRecoveryFallbackCount;
     // Wall-clock (micros) of the most recent head-checkpoint commit. Numbers.LONG_NULL
     // until the first cycle that writes a .cp. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -743,6 +771,20 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public LiveViewCheckpointRingCandidate getCheckpointRingCandidate() {
         return checkpointRingCandidate;
+    }
+
+    /**
+     * See {@link #checkpointRingRecoveredEntries}.
+     */
+    public long getCheckpointRingRecoveredEntries() {
+        return checkpointRingRecoveredEntries;
+    }
+
+    /**
+     * See {@link #checkpointRingRecoveryFallbackCount}.
+     */
+    public long getCheckpointRingRecoveryFallbackCount() {
+        return checkpointRingRecoveryFallbackCount;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -1440,6 +1482,30 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointRingPublicationFailure() {
         checkpointRingDirty = true;
+    }
+
+    /**
+     * Records a restart that trusted a {@code _checkpoints/_ring} manifest and
+     * rehydrated {@code recoveredEntries} of its entries into the ring - the count
+     * after the prune to the running retention budget, not the manifest's own
+     * {@code entryCount}, because the pruned entries are not anchors this process
+     * has. Zero is a real outcome: a trusted manifest may list nothing.
+     * Runs on the refresh worker under the refresh latch. See
+     * {@link #checkpointRingRecoveredEntries}.
+     */
+    public void recordCheckpointRingRecovery(long recoveredEntries) {
+        checkpointRingRecoveredEntries = recoveredEntries;
+    }
+
+    /**
+     * Records a restart whose ring recovery took the highest-{@code .cp}-only
+     * fallback instead of trusting a manifest, leaving the ring empty. Call only
+     * when the durable ring is enabled - see
+     * {@link #checkpointRingRecoveryFallbackCount}.
+     */
+    public void recordCheckpointRingRecoveryFallback() {
+        checkpointRingRecoveredEntries = 0;
+        checkpointRingRecoveryFallbackCount++;
     }
 
     /**

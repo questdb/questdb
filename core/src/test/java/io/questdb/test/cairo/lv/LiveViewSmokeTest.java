@@ -13533,8 +13533,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
         // Columns appear in the documented order so clients binding by
         // ordinal see a stable shape. The documented columns come first;
-        // the three head_checkpoint_* columns and the two o3_*_replay_rows
-        // columns trail as debug surface.
+        // the three head_checkpoint_* columns, the two o3_*_replay_rows
+        // columns and the five checkpoint_ring_* columns trail as debug
+        // surface.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13547,7 +13548,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
                         + "view_lower_bound_timestamp\twriter_stall_micros\tseed_target_seqtxn\t"
                         + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\t"
-                        + "o3_resume_replay_rows\to3_boundary_replay_rows\n");
+                        + "o3_resume_replay_rows\to3_boundary_replay_rows\t"
+                        + "checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t"
+                        + "checkpoint_ring_manifest_covered_seqtxn\tcheckpoint_ring_manifest_dirty\t"
+                        + "checkpoint_ring_recovery_fallback_count\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -19310,6 +19314,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // reject the whole ring.
             Assert.assertFalse(existsCheckpointFile(lv, evictedLvSeqTxn));
             Assert.assertFalse(lv.isCheckpointRingDirty());
+            // The catalogue reports the anchors this process came back with, so
+            // the prune counts: the manifest listed three entries and only two
+            // are anchors here.
+            assertQuery("SELECT checkpoint_ring_recovered_entries FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\n2\n");
 
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
@@ -19323,6 +19333,193 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     2,
                     reloaded.getRetainedCheckpointCount()
             );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewsCatalogueReportsCheckpointRingRecovery() throws Exception {
+        // The catalogue half of the acceptance signal. A restart that trusted the
+        // manifest must be legible without the logs: the entries the ring came
+        // back with, the generation continued from the on-disk counter rather than
+        // restarted at 1, and a covered that still equals the applied floor - the
+        // comparison the NEXT restart's trust rule makes.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final long generationBeforeRestart;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                generationBeforeRestart = lv.getLastPublishedRingGeneration();
+                Assert.assertTrue(generationBeforeRestart > 0);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            // The sweep has read the manifest but the refresh worker has not
+            // decided yet, and the columns say exactly that: no verdict, rather
+            // than a verdict of nothing.
+            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_recovery_fallback_count\n" +
+                            "null\t0\n");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
+            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_manifest_generation, " +
+                    "checkpoint_ring_manifest_dirty, checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t" +
+                            "checkpoint_ring_manifest_dirty\tcheckpoint_ring_recovery_fallback_count\n" +
+                            "3\t" + generationBeforeRestart + "\tfalse\t0\n");
+            // The adopted manifest still covers the floor, so this view would be
+            // trusted again on the next restart. This equality is the whole soak
+            // signal, so assert it as one rather than pinning two seqTxn literals.
+            assertQuery("SELECT checkpoint_ring_manifest_covered_seqtxn = applied_watermark AS covers_floor FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("covers_floor\ntrue\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewsCatalogueReportsCheckpointRingRecoveryFallback() throws Exception {
+        // The other verdict, and the one an operator alerts on: a fallback costs
+        // the first in-retention O3 after the restart a boundary rebuild. The
+        // shape is testCheckpointRingNotTrustedWhenCoveredLagsFloor's - a failed
+        // publication parks covered below the floor the cycle then walks past -
+        // read through the catalogue instead of the instance.
+        final AtomicBoolean failRingPublish = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failRingPublish.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 20; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                assertQuery("SELECT checkpoint_ring_manifest_dirty FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_ring_manifest_dirty\nfalse\n");
+
+                // _ring goes unwritable and the cycle carries on regardless, so the
+                // in-memory ring runs ahead of the manifest: dirty, by definition.
+                failRingPublish.set(true);
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT checkpoint_ring_manifest_dirty, " +
+                        "checkpoint_ring_manifest_covered_seqtxn < applied_watermark AS covered_lags FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_ring_manifest_dirty\tcovered_lags\n" +
+                                "true\ttrue\n");
+            }
+            failRingPublish.set(false);
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            // Highest-only: the sweep's head alone, and the columns account for it.
+            // Generation and covered stay at their never-published sentinels - the
+            // fallback discarded the manifest, so this process holds no durable
+            // claim at all, which is a different state from having published one.
+            Assert.assertEquals(1, reloaded.getRetainedCheckpointCount());
+            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_manifest_generation, " +
+                    "checkpoint_ring_manifest_covered_seqtxn, checkpoint_ring_manifest_dirty, " +
+                    "checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t" +
+                            "checkpoint_ring_manifest_covered_seqtxn\tcheckpoint_ring_manifest_dirty\t" +
+                            "checkpoint_ring_recovery_fallback_count\n" +
+                            "0\t0\tnull\tfalse\t1\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewsCatalogueCheckpointRingColumnsInertWhenDurableRingDisabled() throws Exception {
+        // The flag is a kill switch and the catalogue must not imply otherwise.
+        // The restore genuinely runs here and genuinely recovers the head alone,
+        // so every column below is inert by rule rather than because nothing
+        // happened. The fallback count especially: with no manifest to decline,
+        // counting one per restart would bury the shape worth alerting on under
+        // the whole fleet's legacy restarts.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getRetainedCheckpointCount());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+            Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_manifest_generation, " +
+                    "checkpoint_ring_manifest_covered_seqtxn, checkpoint_ring_manifest_dirty, " +
+                    "checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t" +
+                            "checkpoint_ring_manifest_covered_seqtxn\tcheckpoint_ring_manifest_dirty\t" +
+                            "checkpoint_ring_recovery_fallback_count\n" +
+                            "null\t0\tnull\tfalse\t0\n");
             execute("DROP LIVE VIEW lv");
         });
     }
