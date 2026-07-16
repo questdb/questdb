@@ -997,7 +997,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             try (TableWriter w = getWriter(mvToken)) {
                 Assert.assertTrue(
                         "day-1 partition conversion to parquet must succeed",
-                        w.convertPartitionNativeToParquet(day1, null, 0)
+                        // Pass NaN (not 0) for the bloom-filter fpp: with no bloom-filter columns the
+                        // encoder normalizes NaN to the configured default, whereas a literal 0 reaches
+                        // the native encoder's fpp-in-(0,1) assertion and aborts the JVM. This matches the
+                        // convention used elsewhere (e.g. TableReaderReloadFuzzTest, ALTER ... CONVERT).
+                        w.convertPartitionNativeToParquet(day1, null, Double.NaN)
                 );
             }
             assertQuery("select isParquet from table_partitions('mv') where name = '1970-01-01'")
