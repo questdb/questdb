@@ -139,10 +139,26 @@ public class NetTest {
                 serverFd = Net.accept(acceptFd);
                 Net.configureNonBlocking(serverFd);
                 Assert.assertFalse(Net.isPeerDisconnected(serverFd));
-                // Probe-resource churn: a regression to one kqueue()/close() per call would
-                // exhaust the fd table long before 12k iterations (macOS default ulimit 10240).
+                // Probe-resource churn: a probe that leaks a descriptor per call (instead of
+                // reusing the per-thread kqueue) would exhaust the fd table during this loop
+                // (macOS default ulimit 10240). The probe fails open on kqueue() failure, so the
+                // in-loop assertFalse cannot catch it -- the headroom check below does.
                 for (int i = 0; i < 12_000; i++) {
                     Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+                }
+                final long[] headroomFds = new long[64];
+                try {
+                    for (int i = 0; i < headroomFds.length; i++) {
+                        headroomFds[i] = Net.socketTcp(true);
+                        Assert.assertTrue("fd table exhausted after probe churn -- the probe leaks descriptors",
+                                headroomFds[i] > 0);
+                    }
+                } finally {
+                    for (int i = 0; i < headroomFds.length; i++) {
+                        if (headroomFds[i] > 0) {
+                            Net.close(headroomFds[i]);
+                        }
+                    }
                 }
                 clientFd = closeFd(clientFd);
                 serverFd = closeFd(serverFd);

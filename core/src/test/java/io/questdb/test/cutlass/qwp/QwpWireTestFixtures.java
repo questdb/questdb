@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import org.junit.Assert;
 
 import java.io.InputStream;
@@ -167,6 +168,8 @@ final class QwpWireTestFixtures {
     static byte[] readServerFrame(InputStream in) throws Exception {
         int b0 = readByte(in);
         Assert.assertNotEquals("unexpected fragmented server frame", 0, b0 & 0x80);
+        Assert.assertEquals("server must reply with a BINARY frame, not opcode 0x" + Integer.toHexString(b0 & 0x0F),
+                WebSocketOpcode.BINARY, b0 & 0x0F);
         int b1 = readByte(in);
         Assert.assertEquals("server frames must not be masked", 0, b1 & 0x80);
         long payloadLen = b1 & 0x7F;

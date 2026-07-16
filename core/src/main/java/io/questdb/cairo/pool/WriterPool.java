@@ -116,7 +116,8 @@ public class WriterPool extends AbstractPool {
             if (owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("table is still busy [table=").$(e.writer.getTableToken())
+                final TableWriter w = e.writer;
+                LOG.info().$("table is still busy [table=").$(w != null ? w.getTableToken() : null)
                         .$(", owner=").$(owner)
                         .I$();
             }

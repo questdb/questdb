@@ -31,6 +31,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestMillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -45,7 +46,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
     @Test
     public void testClassifyFailureStatusCancelledOnBrokenConnectionWithinThrottleWindow() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ConnectionAwareCircuitBreaker breaker = newBreaker(clock)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -64,7 +65,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
     @Test
     public void testClassifyFailureStatusCancelledOnCancellation() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ConnectionAwareCircuitBreaker breaker = newBreaker(clock)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -77,7 +78,7 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
     @Test
     public void testClassifyFailureStatusFailedOnHealthyConnection() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ConnectionAwareCircuitBreaker breaker = newBreaker(clock)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -88,6 +89,11 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
 
     private static ConnectionAwareCircuitBreaker newBreaker(MillisecondClock clock) {
         return new ConnectionAwareCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getCircuitBreakerConnectionCheckThrottle() {
+                return 100;
+            }
+
             @Override
             public @NotNull MillisecondClock getClock() {
                 return clock;
@@ -110,19 +116,6 @@ public class CopyExportRequestTaskTest extends AbstractCairoTest {
         @Override
         protected boolean testConnection(long fd) {
             return isConnectionBroken;
-        }
-    }
-
-    private static class TestClock implements MillisecondClock {
-        long millis;
-
-        TestClock(long millis) {
-            this.millis = millis;
-        }
-
-        @Override
-        public long getTicks() {
-            return millis;
         }
     }
 }

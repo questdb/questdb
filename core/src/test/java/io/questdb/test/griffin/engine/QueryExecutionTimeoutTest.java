@@ -145,9 +145,9 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     @Override
                     public boolean onGet(Record rec, int count) {
                         if (count == 100_000 && isClientClosed.compareAndSet(false, true)) {
+                            closedAtMs.set(System.currentTimeMillis());
                             Net.send(clientFdToClose, bufToSend, 1);
                             Net.close(clientFdToClose);
-                            closedAtMs.set(System.currentTimeMillis());
                         }
                         return true;
                     }

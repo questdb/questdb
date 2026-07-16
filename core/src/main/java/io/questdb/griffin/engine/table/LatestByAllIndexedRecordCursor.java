@@ -305,7 +305,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // process our own queue
                 // this should fix deadlock with 1 worker configuration
                 while (!doneLatch.done(queuedCount)) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     long seq = subSeq.next();
                     if (seq > -1) {
                         try {

@@ -519,39 +519,6 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
         };
     }
 
-    private static byte[] readBinaryFrame(InputStream in) throws Exception {
-        int b0 = readByte(in);
-        int opcode = b0 & 0x0F;
-        Assert.assertEquals("server must reply with a BINARY frame, not opcode 0x" + Integer.toHexString(opcode),
-                WebSocketOpcode.BINARY, opcode);
-        int b1 = readByte(in);
-        Assert.assertEquals("server frames must not be masked", 0, b1 & 0x80);
-        int payloadLen = b1 & 0x7F;
-        if (payloadLen == 126) {
-            payloadLen = (readByte(in) << 8) | readByte(in);
-        } else if (payloadLen == 127) {
-            long extended = 0;
-            for (int i = 0; i < 8; i++) {
-                extended = (extended << 8) | readByte(in);
-            }
-            payloadLen = (int) extended;
-        }
-        byte[] payload = new byte[payloadLen];
-        int read = 0;
-        while (read < payloadLen) {
-            int n = in.read(payload, read, payloadLen - read);
-            Assert.assertNotEquals("Unexpected end of stream while reading frame payload", -1, n);
-            read += n;
-        }
-        return payload;
-    }
-
-    private static int readByte(InputStream in) throws Exception {
-        int b = in.read();
-        Assert.assertNotEquals("Unexpected end of stream", -1, b);
-        return b & 0xFF;
-    }
-
     /**
      * Reads binary WebSocket frames until one whose QWP msg_kind (the byte at
      * {@link QwpConstants#HEADER_SIZE}) equals {@code kind}, skipping earlier
@@ -559,7 +526,7 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
      */
     private static byte[] readFrameUntilKind(InputStream in, byte kind) throws Exception {
         for (int attempt = 0; attempt < 8; attempt++) {
-            byte[] payload = readBinaryFrame(in);
+            byte[] payload = QwpWireTestFixtures.readServerFrame(in);
             if (payload.length > QwpConstants.HEADER_SIZE && payload[QwpConstants.HEADER_SIZE] == kind) {
                 return payload;
             }

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestMillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -54,7 +55,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testCheckIfTrippedNoThrottleBypassesWindow() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -72,7 +73,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testCheckIfTrippedThrottlesConnectionProbe() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -96,7 +97,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testGetStateReportsBrokenConnectionOncePerWindow() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -117,7 +118,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testOfKeepsThrottleWindowForSameFd() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -138,7 +139,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testRearmTimerKeepsThrottleWindow() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 1_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -164,7 +165,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testResetTimerForcesPromptProbe() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -182,7 +183,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testTimeThrottledThrowsOnDisconnectOutsideWindow() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100_000)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -205,7 +206,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
     @Test
     public void testTimeoutAndCancellationBypassProbe() throws Exception {
         assertMemoryLeak(() -> {
-            TestClock clock = new TestClock(1_000);
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(clock, 100)) {
                 breaker.of(1);
                 breaker.resetTimer();
@@ -214,7 +215,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 Assert.assertEquals("timeout must trip without a connection probe", 0, breaker.probeCount);
             }
 
-            TestClock cancelClock = new TestClock(1_000);
+            TestMillisecondClock cancelClock = new TestMillisecondClock(1_000);
             try (ProbeCountingCircuitBreaker breaker = newBreaker(cancelClock, 100_000)) {
                 AtomicBoolean cancelledFlag = new AtomicBoolean();
                 breaker.setCancelledFlag(cancelledFlag);
@@ -232,6 +233,11 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
 
     private static ProbeCountingCircuitBreaker newBreaker(MillisecondClock clock, long queryTimeout) {
         return new ProbeCountingCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getCircuitBreakerConnectionCheckThrottle() {
+                return THROTTLE;
+            }
+
             @Override
             public @NotNull MillisecondClock getClock() {
                 return clock;
@@ -256,19 +262,6 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
         protected boolean testConnection(long fd) {
             probeCount++;
             return isConnectionBroken;
-        }
-    }
-
-    private static class TestClock implements MillisecondClock {
-        long millis;
-
-        TestClock(long millis) {
-            this.millis = millis;
-        }
-
-        @Override
-        public long getTicks() {
-            return millis;
         }
     }
 }

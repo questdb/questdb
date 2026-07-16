@@ -1698,6 +1698,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final long startedBefore = metrics.queriesStartedCount();
                 final long erroredBefore = metrics.queriesErroredCounter().getValue();
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
 
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
@@ -1717,7 +1718,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     );
                     TestUtils.assertEventually(
                             () -> Assert.assertTrue("sleep continuation never parked",
-                                    serverMain.getEngine().getTimerShards().size() >= 1),
+                                    serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
                             10
                     );
 
@@ -2076,11 +2077,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
 
     @Test
     public void testStreamingAbortedWhenClientHalfCloses() throws Exception {
-        // Row-16 pin: a client that half-closes (shutdown of its write side) while still
-        // reading an active stream must abort the query via the between-batch breaker
-        // probe -- the shape the old recv(MSG_PEEK) probe could never see, because the
-        // stream keeps the socket readable in both directions. A throttled reader keeps
-        // the stream alive for seconds so the half-close lands mid-stream.
+        // A client that half-closes (shutdown of its write side) while still reading an
+        // active stream must abort the query via the between-batch breaker probe. Master
+        // never consulted the breaker on the page-frame streaming path at all, so a
+        // mid-stream disconnect went undetected until the stream finished. A throttled
+        // reader keeps the stream alive for seconds so the half-close lands mid-stream.
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
@@ -2240,7 +2241,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     socket.setSoTimeout(60_000);
                     QwpWireTestFixtures.performReadHandshake(socket);
 
-                    final AtomicBoolean readerDraining = new AtomicBoolean();
+                    final AtomicBoolean isReaderDraining = new AtomicBoolean();
                     Thread reader = new Thread(() -> {
                         byte[] chunk = new byte[8192];
                         try {
@@ -2254,7 +2255,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                                 seen = sent;
                                 Os.sleep(20);
                             }
-                            readerDraining.set(true);
+                            isReaderDraining.set(true);
                             InputStream in = socket.getInputStream();
                             //noinspection StatementWithEmptyBody
                             while (in.read(chunk) != -1) {
@@ -2277,7 +2278,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             10
                     );
 
-                    awaitCreditSuspended(metrics, readerDraining, erroredBefore);
+                    awaitCreditSuspended(metrics, isReaderDraining, erroredBefore);
                     Assert.assertEquals(
                             "egress query errored before it credit-suspended",
                             erroredBefore, metrics.queriesErroredCounter().getValue()
@@ -2680,7 +2681,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         assertSelectIdReturns(client, "SELECT v FROM schema_cache_retry_t", 1L, label);
     }
 
-    private static void awaitCreditSuspended(QwpEgressMetrics metrics, AtomicBoolean readerDraining, long erroredBefore) {
+    private static void awaitCreditSuspended(QwpEgressMetrics metrics, AtomicBoolean isReaderDraining, long erroredBefore) {
         long deadlineMs = System.currentTimeMillis() + 15_000;
         long last = -1;
         int stable = 0;
@@ -2689,7 +2690,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 Assert.fail("stream aborted before it could credit-suspend; raise query.timeout if this recurs");
             }
             long sent = metrics.batchesSentCount();
-            if (readerDraining.get() && sent > 0 && sent == last) {
+            if (isReaderDraining.get() && sent > 0 && sent == last) {
                 if (++stable >= 20) {
                     return;
                 }

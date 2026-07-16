@@ -126,6 +126,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
                 final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
                 final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
                 // Capture the sleep's query id at registration; the text is stable at
                 // that instant, so we avoid reading the pooled query sink concurrently
                 // during the poll loop.
@@ -162,7 +163,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     final long queryId = sleepQueryId.get();
                     TestUtils.assertEventually(
                             () -> Assert.assertTrue("sleep continuation never parked",
-                                    serverMain.getEngine().getTimerShards().size() >= 1),
+                                    serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
                             10
                     );
                     // Pin against a vacuous pass: a breaker false-positive that killed the
@@ -215,6 +216,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
                 final QueryRegistry registry = serverMain.getEngine().getQueryRegistry();
                 final String sleepSql = "sleep(3600)";
+                final long timerShardsBefore = serverMain.getEngine().getTimerShards().size();
                 final AtomicLong sleepQueryId = new AtomicLong(Long.MIN_VALUE);
                 registry.setListener((query, queryId, executionContext) -> {
                     if (Chars.contains(query, sleepSql)) {
@@ -241,7 +243,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         final long queryId = sleepQueryId.get();
                         TestUtils.assertEventually(
                                 () -> Assert.assertTrue("sleep continuation never parked",
-                                        serverMain.getEngine().getTimerShards().size() >= 1),
+                                        serverMain.getEngine().getTimerShards().size() > timerShardsBefore),
                                 10
                         );
                         Assert.assertNotNull("sleep ended before the client disconnected", registry.getEntry(queryId));
