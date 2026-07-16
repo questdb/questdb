@@ -72,6 +72,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // Plan 3 (composite partitioning) Task 6: was a reserved/padding slot; now carries the partition's
+    // cellKey (0 for plain/dormant tables), mirroring TxReader#getPartitionCellKey(int). No stride
+    // change -- PARTITIONS_SLOT_SIZE was already 8.
+    private static final int PARTITIONS_SLOT_OFFSET_CELL_KEY = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -485,6 +489,24 @@ public class TableReader implements Closeable, SymbolTableSource {
     public long getParquetMetadataSize(int partitionIndex) {
         MemoryCMR mem = parquetMetadataPartitions.getQuick(partitionIndex);
         return mem != null && mem.isOpen() ? mem.size() : 0;
+    }
+
+    /**
+     * Plan 3 (composite partitioning) Task 6: returns the cellKey this reader recorded for the given
+     * physical partition index (0 for a plain/dormant table), mirroring {@link TxReader#getPartitionCellKey(int)}.
+     */
+    public int getPartitionCellKey(int partitionIndex) {
+        return (int) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_CELL_KEY);
+    }
+
+    /**
+     * Test-only: exposes the raw {@code PARTITIONS_SLOT_OFFSET_COLUMN_VERSION} slot (the value
+     * {@code columnVersionReader.getMaxPartitionVersion(...)} resolved for this partition) so a test can
+     * assert directly on the reader's own resolved state instead of independently recomputing it.
+     */
+    @TestOnly
+    public long getPartitionColumnVersion(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
     }
 
     public int getPartitionCount() {
@@ -1339,12 +1361,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int baseOffset = i * PARTITIONS_SLOT_SIZE;
             final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
             final boolean isParquet = txFile.isPartitionParquet(i);
+            final int cellKey = txFile.getPartitionCellKey(i);
             openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
-            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp, cellKey));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_CELL_KEY, cellKey);
         }
         return openPartitionInfo;
     }
@@ -1512,6 +1536,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             path.trimTo(rootLen);
             final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            // Plan 3 Task 6: source this partition's own cellKey (0 for plain/dormant) so the
+            // column-version resolved below doesn't alias another cell sharing this timestamp.
+            final int cellKey = txFile.getPartitionCellKey(partitionIndex);
 
             if (txFile.isPartitionParquet(partitionIndex)) {
                 Path path = pathGenParquetPartition(partitionIndex, partitionNameTxn);
@@ -1528,7 +1555,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp, cellKey));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
 
                         final long parquetFileSize = openParquetMetadata(partitionIndex, partitionNameTxn);
@@ -1582,7 +1609,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp, cellKey));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
