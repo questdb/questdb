@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -84,8 +85,18 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
-        filter = Misc.free(filter);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -49,11 +50,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final int columnIndex;
-    private final Function filter;
     private final Record.CharSequenceFunction func;
     private final boolean indexed;
-    private final RecordCursorFactory recordCursorFactory;
     private final IntHashSet symbolKeys;
+    private Function filter;
+    private RecordCursorFactory recordCursorFactory;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -120,10 +121,22 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(recordCursorFactory);
-        Misc.free(filter);
-        Misc.free(cursor);
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, recordCursorFactory);
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {

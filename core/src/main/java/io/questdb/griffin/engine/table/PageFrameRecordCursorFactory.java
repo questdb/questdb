@@ -47,15 +47,15 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final CairoConfiguration configuration;
-    private final PageFrameRecordCursor cursor;
-    private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
-    private final RowCursorFactory rowCursorFactory;
     private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    private PageFrameRecordCursor cursor;
+    private Function filter;
+    private RowCursorFactory rowCursorFactory;
     private TimeFrameCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(
@@ -197,13 +197,34 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(cursor);
-        Misc.free(filter);
-        Misc.free(fwdPageFrameCursor);
-        Misc.free(bwdPageFrameCursor);
-        Misc.free(timeFrameCursor);
-        Misc.free(rowCursorFactory);
+        final TablePageFrameCursor bwdPageFrameCursor = this.bwdPageFrameCursor;
+        this.bwdPageFrameCursor = null;
+        final PageFrameRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final TablePageFrameCursor fwdPageFrameCursor = this.fwdPageFrameCursor;
+        this.fwdPageFrameCursor = null;
+        final RowCursorFactory rowCursorFactory = this.rowCursorFactory;
+        this.rowCursorFactory = null;
+        final TimeFrameCursorImpl timeFrameCursor = this.timeFrameCursor;
+        this.timeFrameCursor = null;
+
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, fwdPageFrameCursor);
+        if (bwdPageFrameCursor != fwdPageFrameCursor) {
+            failure = Misc.freeBestEffort(failure, bwdPageFrameCursor);
+        }
+        failure = Misc.freeBestEffort(failure, timeFrameCursor);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(

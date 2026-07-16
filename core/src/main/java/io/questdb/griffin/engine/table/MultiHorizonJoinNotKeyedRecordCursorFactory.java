@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -69,13 +70,13 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * (single output row).
  */
 public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final MultiHorizonJoinNotKeyedRecordCursor cursor;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private MultiHorizonJoinNotKeyedRecordCursor cursor;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private RecordCursorFactory masterFactory;
     private final long[] offsets;
-    private final ObjList<HorizonJoinSlaveState> slaveStates;
-    private final SimpleMapValue value;
+    private ObjList<HorizonJoinSlaveState> slaveStates;
+    private SimpleMapValue value;
 
     public MultiHorizonJoinNotKeyedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -122,7 +123,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     columnIndexes
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -174,12 +175,26 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
     @Override
     protected void _close() {
-        Misc.free(value);
-        Misc.free(cursor);
-        Misc.free(masterFactory);
-        Misc.freeObjList(slaveStates);
-        Misc.free(horizonJoinMetadata);
-        Misc.freeObjList(groupByFunctions);
+        final MultiHorizonJoinNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final ObjList<HorizonJoinSlaveState> slaveStates = this.slaveStates;
+        this.slaveStates = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, value);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, slaveStates);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private class MultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
