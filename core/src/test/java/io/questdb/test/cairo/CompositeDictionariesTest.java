@@ -24,10 +24,14 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CompositeDictionaries;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -85,6 +89,47 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
                 Assert.assertNotNull(d.dedicatedDictFor(1));            // truncate -> dedicated dict
                 Assert.assertNotNull(d.cellRegistry());
                 Assert.assertEquals(2 + 2, w.getDenseSymbolMapCount()); // 2 real symbols + dict + registry
+            }
+        });
+    }
+
+    /**
+     * Reviewer-mandated CRITICAL fix: appending a new per-column {@link io.questdb.cairo.SymbolMapWriter}
+     * after the interners (as {@code ADD COLUMN ... SYMBOL} does today) desyncs the {@code _txn}
+     * symbol-count slot order on the next writer reopen ({@code TableWriter.configureColumnMemory()}
+     * always rebuilds as {@code [realSymbols..., x, dedicatedDicts..., registry]}), corrupting counts
+     * silently. Until ordering is fixed (later plan), this must be rejected outright on
+     * composite-partitioned tables.
+     */
+    @Test
+    public void testAddSymbolColumnRejectedOnComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            try (TableWriter w = getWriter("t")) {
+                try {
+                    w.addColumn("x", ColumnType.SYMBOL, AllowAllSecurityContext.INSTANCE);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "composite");
+                }
+            }
+        });
+    }
+
+    /**
+     * Companion to {@link #testAddSymbolColumnRejectedOnComposite()}: the guard must be narrow.
+     * Non-symbol ADD COLUMN never touches {@code denseSymbolMapWriters} ordering, so it stays safe
+     * and allowed on composite-partitioned tables.
+     */
+    @Test
+    public void testAddNonSymbolColumnAllowedOnComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            try (TableWriter w = getWriter("t")) {
+                w.addColumn("y", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+                Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("y") >= 0);
             }
         });
     }

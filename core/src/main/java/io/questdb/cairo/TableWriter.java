@@ -738,6 +738,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.duplicateColumn(columnName);
         }
 
+        // A new symbol writer is appended at denseSymbolMapWriters.size(), i.e. AFTER the composite
+        // interners (dedicated dicts + _cell registry). On next writer reopen configureColumnMemory()
+        // always rebuilds the dense order as [realSymbols..., <new column>, dedicatedDicts..., registry],
+        // which does not match the order the _txn symbol-count slots were written under at ALTER time.
+        // That desyncs the counts silently. Reject until interner-aware ordering is implemented.
+        if (ColumnType.isSymbol(columnType) && metadata.getPartitionSpec().getDimensionCount() > 0) {
+            throw CairoException.nonCritical()
+                    .put("ADD COLUMN of type SYMBOL is not yet supported on composite-partitioned tables [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
         commit();
 
         long columnNameTxn = getTxn();
@@ -1211,6 +1222,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // It only makes sense to change symbol parameters
             // It has to be another type of ALTER command since it's non-structural change in WAL tables
             throw CairoException.nonCritical().put("cannot change column type, new type is the same as existing [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
+        // Same interner slot-order hazard as addColumn(): converting to SYMBOL creates a brand-new
+        // SymbolMapWriter that createSymbolMapWriter() appends after the composite interners, which
+        // configureColumnMemory() will reorder ahead of them on next reopen. Reject until interner-aware
+        // ordering is implemented.
+        if (ColumnType.isSymbol(newType) && metadata.getPartitionSpec().getDimensionCount() > 0) {
+            throw CairoException.nonCritical()
+                    .put("ALTER COLUMN TYPE SYMBOL is not yet supported on composite-partitioned tables [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
         }
 
@@ -13124,11 +13145,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } catch (Throwable th) {
                 if (quiet) {
                     distressed = true;
-                    CharSequence columnName = metadata.getColumnName(i);
-                    LOG.error().$("could not rollback symbol table [table=").$(tableToken)
-                            .$(", columnName=").$safe(columnName)
-                            .$(", exception=").$(th)
-                            .I$();
+                    // i can index a composite interner slot (dedicated dict / _cell registry), which is
+                    // appended to denseSymbolMapWriters past columnCount and owns no table column, so
+                    // metadata.getColumnName(i) would throw and mask th. Log the dense slot index instead.
+                    if (i < columnCount) {
+                        CharSequence columnName = metadata.getColumnName(i);
+                        LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                                .$(", columnName=").$safe(columnName)
+                                .$(", exception=").$(th)
+                                .I$();
+                    } else {
+                        LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                                .$(", denseSymbolIndex=").$(i)
+                                .$(", exception=").$(th)
+                                .I$();
+                    }
                 } else {
                     throw th;
                 }
