@@ -3971,6 +3971,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the log line and {@code checkpointRingDirty} distinguish the two.
      */
     private boolean publishCheckpointRing(LiveViewInstance instance, long coveredBaseSeqTxn) {
+        // Read-only replicas must not publish, for the reason maybeWriteHeadCheckpoint
+        // spells out at its own copy of this assert: _ring is an allow-list over local
+        // .cp files a replica never writes, so a replica reaching a publication means a
+        // primary-only path lost its gate. Ahead of the flag check on purpose - the
+        // invariant is about the caller, not about whether this build persists the
+        // ring, and Phase 4 removes the flag.
+        assert !isLeadReconstruction() : "read-only replica must not publish the live view checkpoint ring";
         if (!engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
             return false;
         }
@@ -4089,6 +4096,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long appendedRows,
             boolean force
     ) {
+        // A read-only replica must never seal a .cp. The primary owns the durable
+        // tier and replicates the result, and neither .cp nor _ring ever ships
+        // (WalEvents.reconstructLiveViewFiles carries _lv alone), so a replica that
+        // wrote one would be minting local resume anchors for window state it does
+        // not own. Every refresh-cycle route here is primary-only already:
+        // incrementalRefresh and drainAppliedBase reach it past the leadMode early
+        // return, flushLead is gated on !isLeadReconstruction(), and runSeedSweep is
+        // skipped outright. But three of those gates are overridable hooks
+        // (drainLeadOverride, onLeadO3Detected, onLeadPublishStalled) that deflect the
+        // replica by dynamic dispatch rather than by structure, so pin the invariant
+        // here rather than re-derive it per site.
+        //
+        // The one route that bypasses every gate is the single-shot restore:
+        // tryRestoreFromHead runs before refreshInstance branches on the role, and its
+        // replayToApplied / o3HeadMissReplay both reach this hook. It needs a local
+        // .cp to enter (getHeadCheckpointLvSeqTxn() != LONG_NULL), which a node that
+        // has only ever been a replica never has - .cp does not replicate. A node
+        // restarted as a replica over an ex-primary's files does, and would trip this.
+        // That is a static trace, not a reproduction: no test builds that shape, and
+        // it is the assert doing its job if one ever does.
+        assert !isLeadReconstruction() : "read-only replica must not write a live view checkpoint";
         if (!instance.isSnapshotCapabilityComputed()) {
             instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
         }
