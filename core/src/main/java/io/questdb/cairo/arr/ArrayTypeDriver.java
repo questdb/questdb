@@ -88,7 +88,7 @@ import org.jetbrains.annotations.Nullable;
  *           Readers that walk the shape by hand rely on this - see
  *           {@code PageFrameMemoryRecord.getArrayDimLen0} and {@code getArrayDouble1d2d0}.
  *         * Each dimension size is a 32-bit int, but uses only 28 bits: {@link ArrayView#DIM_MAX_LEN}
- *           caps it at (1 << 28) - 1.
+ *           caps it at {@code (1 << 28) - 1}.
  *     * Padding:
  *         * enough padding to satisfy the datatype alignment requirements.
  *         * e.g. for 64-bit numeric types, the following section starts on an
