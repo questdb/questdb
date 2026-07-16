@@ -6608,6 +6608,61 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringQueryArrayDimLenAndElementOverUnavailableSidecar() throws Exception {
+        // A sidecar the reader cannot map makes getVarSidecarArray() hand back a Java null for a row
+        // whose array is not null at all. This drives the missing-file guard: ensureSidecarOpen()
+        // returns quietly and leaves the slot at size 0 when the .pc file is not there to be mapped.
+        // The sibling guard reaches the identical reader state from a published zero end offset,
+        // which PostingIndexWriter's in-place reseal window can produce over a sidecar that exists.
+        // CoveringRecord.getArray() has to turn that into a NULL ArrayView: getArrayDimLen() and
+        // getArrayDouble1d2d() dereference whatever getArray() hands them, so a Java null takes the
+        // whole query down.
+        final AtomicBoolean hideSidecar = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ name) {
+                // Arm only after the write side has published the sidecar, so the index is built
+                // normally and only the covered read finds the .pc missing.
+                if (hideSidecar.get() && name != null && Utf8s.containsAscii(name, ".pc0.")) {
+                    return false;
+                }
+                return super.exists(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_arr_sidecar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr_sidecar VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0, 3.0], 1),
+                    ('2024-01-01T01:00:00', 'A', ARRAY[4.0, 5.0], 2)
+                    """);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            hideSidecar.set(true);
+            // Every array stored here is non-null, so a null length or element can only have come
+            // from the unmappable sidecar, never from the data.
+            assertQuery("SELECT extra, dim_length(vals, 1) len, vals[1] first FROM t_arr_sidecar WHERE sym = 'A'")
+                    .withPlanContaining("CoveringIndex on: sym with: extra, vals")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            extra\tlen\tfirst
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveringQueryBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

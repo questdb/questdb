@@ -3171,6 +3171,12 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLengthOverParquetOneDimension() throws Exception {
+        testLengthOverParquetOneDimension(true);
+        testLengthOverParquetOneDimension(false);
+    }
+
+    @Test
     public void testLengthReadsShapeWithoutMaterializingArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
@@ -4687,5 +4693,61 @@ public class ArrayTest extends AbstractCairoTest {
         for (int i : values) {
             list.add(i);
         }
+    }
+
+    private void testLengthOverParquetOneDimension(boolean rawArrayEncoding) throws Exception {
+        // A 1D double array's length comes from the aux entry's data size rather than from its shape
+        // header (see PageFrameMemoryRecord.getArrayDimLen0): the entry is Double.BYTES * (length + 1)
+        // bytes wide, so reading the shape - and with it a data-vector cache line per row - is
+        // avoidable. Every other page-frame dim_length() test stores DOUBLE[][], which takes the
+        // shape path, so nothing exercised this.
+        // Both parquet array encodings are covered: the raw one copies the native entry verbatim,
+        // while the levels one rebuilds it in the decoder, so only the latter could drift from the
+        // layout the fast path assumes. The last row stays native, putting both frame types in one
+        // scan.
+        // The empty array is pinned on a native frame below rather than here, because the levels
+        // encoding loses it: an ARRAY[] stored in a partition that also holds a NULL array reads back
+        // as a one-element [null]. That is the decoder writing a shape of 1, not this path
+        // misreading it - the fast path's assert agrees with the shape header, and plain SELECT arr
+        // reproduces it on an unmodified master without going near getArrayDimLen0() at all. The raw
+        // encoding, which is the default, round-trips ARRAY[] correctly.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tango VALUES
+                    ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0, 3.0]),
+                    ('1970-01-01T00:00:01.000000Z', ARRAY[9.0]),
+                    ('1970-01-01T00:00:02.000000Z', NULL),
+                    ('1970-01-02T00:00:00.000000Z', ARRAY[4.0, 5.0])
+                    """);
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            assertQuery("SELECT dim_length(arr, 1) d1, arr[1] first FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d1\tfirst
+                            3\t1.0
+                            1\t9.0
+                            null\tnull
+                            2\t4.0
+                            """);
+
+            // The empty array pins the +1 in the size-to-length conversion: its data entry is the
+            // bare shape-plus-padding, so it must read back as 0 rather than as 1.
+            execute("CREATE TABLE tango_native (arr DOUBLE[])");
+            execute("INSERT INTO tango_native VALUES (ARRAY[]), (ARRAY[7.0]), (NULL)");
+            assertQuery("SELECT dim_length(arr, 1) d1 FROM tango_native")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d1
+                            0
+                            1
+                            null
+                            """);
+            execute("DROP TABLE tango_native");
+            execute("DROP TABLE tango");
+        });
     }
 }

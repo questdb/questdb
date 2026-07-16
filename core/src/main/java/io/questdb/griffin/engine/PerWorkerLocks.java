@@ -52,6 +52,10 @@ public class PerWorkerLocks {
     private final int workerCount;
 
     public PerWorkerLocks(@NotNull CairoConfiguration configuration, int workerCount) {
+        // Every parallel operator that builds locks is gated on sharedQueryWorkerCount > 0
+        // (SqlExecutionContextImpl), so a zero-slot lock is unreachable. It would also be unusable:
+        // acquireSlot() folds with workerId % workerCount and probes one slot per worker.
+        assert workerCount > 0;
         this.rnd = new Rnd(
                 configuration.getNanosecondClock().getTicks(),
                 configuration.getMicrosecondClock().getTicks()
@@ -66,10 +70,23 @@ public class PerWorkerLocks {
         this.workerCount = locks.workerCount;
     }
 
+    /**
+     * Acquires a slot for the given worker, spinning until one frees up. A successful acquire must be
+     * paired with a {@link #releaseSlot(int)} in a finally: there is no reset here, and an atom
+     * outlives the query that borrowed it, so a slot leaked on an error path stays lost for as long
+     * as the owning factory sits in the SQL cache. Once every slot has leaked, each later execution
+     * spins here forever for a slot nobody will release. That is why a reducer must keep every
+     * statement that can throw - decoding a frame, charging the per-query memory tracker - inside the
+     * try that releases the slot.
+     *
+     * @throws io.questdb.cairo.CairoException when the circuit breaker has tripped
+     */
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
         // A shared pool has more workers than an atom has slots, so the incoming worker id can be
-        // >= workerCount. Fold it into [0, workerCount) up front: the single conditional subtraction
-        // in the loop only wraps a sum that stays under 2 * workerCount.
+        // >= workerCount. Folding it up front hoists the wrap out of the probe: the loop then only
+        // needs a conditional subtraction, because i + workerId stays under 2 * workerCount. That
+        // bound is also what keeps the sum from overflowing to a negative slot index.
+        // Wrapping inside the loop instead is correct for every id a caller can actually pass.
         workerId = workerId == -1
                 ? rnd.nextInt(workerCount)
                 : workerId >= workerCount ? workerId % workerCount : workerId;
@@ -89,9 +106,8 @@ public class PerWorkerLocks {
     }
 
     public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
-        // A shared pool has more workers than an atom has slots, so the incoming carrier id can be
-        // >= workerCount. Fold it into [0, workerCount) up front: the single conditional subtraction
-        // in the loop only wraps a sum that stays under 2 * workerCount.
+        // See acquireSlot(int, SqlExecutionCircuitBreaker): the fold hoists the wrap out of the
+        // probe and keeps i + carrierId from overflowing to a negative slot index.
         carrierId = carrierId == -1
                 ? rnd.nextInt(workerCount)
                 : carrierId >= workerCount ? carrierId % workerCount : carrierId;

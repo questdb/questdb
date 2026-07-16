@@ -56,11 +56,14 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
+    // Shared by the owner, every reducing worker and every work-stealing thread: a thread-safe
+    // filter hands out no slots, so there is no per-thread identity to key stats on. Concurrent
+    // updates are safe, see SelectivityStats.
+    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
-    private final ObjList<SelectivityStats> threadSafeSelectivityStats;
     private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
@@ -74,8 +77,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             @NotNull IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull IntList columnTypes,
-            boolean preTouchEnabled,
-            int workerCount
+            boolean preTouchEnabled
     ) {
         this.filter = filter;
         this.filterUsedColumnIndexes = filterUsedColumnIndexes;
@@ -87,20 +89,9 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             for (int i = 0; i < slotCount; i++) {
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
-            // Only the query owner reaches the thread-safe stats once per-worker filters exist:
-            // maybeAcquireFilter() hands every other thread a slot, and a slot reads its own bucket.
-            // So the owner bucket is the whole list, and getSelectivityStats() folds onto it.
-            threadSafeSelectivityStats = new ObjList<>(1);
-            threadSafeSelectivityStats.extendAndSet(0, new SelectivityStats());
         } else {
             perWorkerLocks = null;
             perWorkerSelectivityStats = null;
-            // No slots to hand out, so every thread lands here: one bucket per reducing worker plus
-            // a trailing one for workerId == -1.
-            threadSafeSelectivityStats = new ObjList<>(workerCount + 1);
-            for (int i = 0; i <= workerCount; i++) {
-                threadSafeSelectivityStats.extendAndSet(i, new SelectivityStats());
-            }
         }
         this.columnTypes = columnTypes;
         this.preTouchEnabled = preTouchEnabled;
@@ -115,8 +106,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     @Override
     public void clear() {
+        ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
-        Misc.clearObjList(threadSafeSelectivityStats);
         memoryTracker = null;
         lateMatSkipColumnIndexes = null;
     }
@@ -155,6 +146,13 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     public MemoryTracker getMemoryTracker() {
         return memoryTracker;
+    }
+
+    public SelectivityStats getSelectivityStats(int slotId) {
+        if (slotId == -1 || perWorkerSelectivityStats == null) {
+            return ownerSelectivityStats;
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
     }
 
     @Override
@@ -329,7 +327,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, int workerId, boolean isParquetFrame, boolean isCountOnly) {
+    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
         if (!isParquetFrame) {
             return false;
         }
@@ -339,10 +337,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         if (isCountOnly) {
             return true;
         }
-        // Foreign query-owner threads all have workerId -1 and may steal concurrently, so
-        // updateSelectivityStats() keeps them out of the owner bucket. Reading it is still safe:
-        // the owner is the only writer, and a stale sample only skews a heuristic.
-        return getSelectivityStats(slotId, workerId).shouldUseLateMaterialization();
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
     }
 
     @Override
@@ -353,27 +348,4 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public void updateSelectivityStats(int slotId, int workerId, boolean owner, long filteredRowCount, long totalRowCount) {
-        // See shouldUseLateMaterialization(): foreign owner threads have no stable reducer identity.
-        if (slotId != -1 || workerId != -1 || owner) {
-            getSelectivityStats(slotId, workerId).update(filteredRowCount, totalRowCount);
-        }
-    }
-
-    private SelectivityStats getSelectivityStats(int slotId, int workerId) {
-        if (slotId == -1 || perWorkerSelectivityStats == null) {
-            // The reducing pool is sized independently of this atom, so the incoming worker id can
-            // be >= workerCount. Fold it into [0, workerCount), the same way PerWorkerLocks does.
-            // The trailing bucket is reserved for workerId == -1.
-            final int workerBuckets = threadSafeSelectivityStats.size() - 1;
-            final int statsId;
-            if (workerId > -1 && workerBuckets > 0) {
-                statsId = workerId >= workerBuckets ? workerId % workerBuckets : workerId;
-            } else {
-                statsId = workerBuckets;
-            }
-            return threadSafeSelectivityStats.getQuick(statsId);
-        }
-        return perWorkerSelectivityStats.getQuick(slotId);
-    }
 }

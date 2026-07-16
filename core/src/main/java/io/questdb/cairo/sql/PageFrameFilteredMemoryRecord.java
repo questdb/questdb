@@ -111,7 +111,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     @Override
     public int getArrayDimLen(int columnIndex, int columnType, int dim) {
         assert dim >= 1 && dim <= ColumnType.decodeArrayDimensionality(columnType);
-        return getArrayDimLen0(columnIndex, dim, getRowIndex(columnIndex));
+        return getArrayDimLen0(columnIndex, columnType, dim, getRowIndex(columnIndex));
     }
 
     @Override

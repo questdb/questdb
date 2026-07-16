@@ -98,7 +98,14 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
 
         @Override
         public boolean shouldSteal(int finishedCount) {
-            assert atom.awaitTestSlotAcquire() : "timed out waiting for a worker slot acquisition";
+            // This wait is the coordination the latch-gated tests are built on, not a check on one:
+            // it holds the owner off until a worker has taken a slot. An assert would carry it only
+            // under -ea and drop it everywhere else, taking the tests' precondition with it. Only
+            // of() builds this class, and only once a test installs a latch, so production pays
+            // nothing for it.
+            if (!atom.awaitTestSlotAcquire()) {
+                throw new AssertionError("timed out waiting for a worker slot acquisition");
+            }
             return super.shouldSteal(finishedCount);
         }
     }

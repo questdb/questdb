@@ -79,10 +79,8 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
-            // Backwards: probeBatch emits rows in ascending rowId order, so a forward scan rewrites
-            // a key's entry for every later non-null row - O(N) writes against O(K) for K keys.
-            // Same result either way: only a key's highest-rowId non-null can win, and the isNew
-            // row is the key's first, so backwards it is visited last and loses to the entry.
+            // Backwards: last-wins, so a forward scan would rewrite a key's entry for every later
+            // non-null row. See GroupByFunction.computeKeyedBatch().
             for (long i = rowCount - 1; i >= 0; i--) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);

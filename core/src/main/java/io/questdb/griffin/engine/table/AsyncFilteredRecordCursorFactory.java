@@ -109,8 +109,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 filterUsedColumnIndexes,
                 perWorkerFilters,
                 columnTypes,
-                enablePreTouch,
-                workerCount
+                enablePreTouch
         );
         this.frameSequence = new PageFrameSequence<>(
                 engine,
@@ -298,12 +297,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         // The slot is held from here on, so everything below belongs inside the try that releases
-        // it. populateFrameMemory() navigates to the frame, which decodes parquet and can breach the
-        // per-query memory limit. PerWorkerLocks has no reset and the atom belongs to the factory, so
-        // a slot leaked here would be lost for as long as the factory stayed in the SQL cache, and
-        // once every slot had leaked each later execution would spin in acquireSlot forever.
+        // it: populateFrameMemory() navigates to the frame, which decodes parquet and can breach the
+        // per-query memory limit. See PerWorkerLocks.acquireSlot().
         try {
-            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, workerId, isParquetFrame, task.isCountOnly());
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
 
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -335,7 +332,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 }
 
                 if (isParquetFrame) {
-                    atom.updateSelectivityStats(filterId, workerId, owner, rows.size(), frameRowCount);
+                    atom.getSelectivityStats(filterId).update(rows.size(), frameRowCount);
                 }
                 if (useLateMaterialization && task.populateRemainingColumns(atom.getLateMaterializationSkipColumnIndexes(), rows, true)) {
                     record.init(frameMemory);

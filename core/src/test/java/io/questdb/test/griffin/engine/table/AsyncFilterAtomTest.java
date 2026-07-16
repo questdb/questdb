@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.std.IntHashSet;
@@ -35,81 +36,43 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class AsyncFilterAtomTest extends AbstractCairoTest {
-    private static final int WORKER_COUNT = 2;
+    private static final int SLOT_COUNT = 2;
 
     @Test
-    public void testForeignOwnerReadsButDoesNotWriteOwnerStatistics() {
-        final AsyncFilterAtom atom = newAtom();
-
-        atom.updateSelectivityStats(-1, -1, true, 100, 100);
-        atom.updateSelectivityStats(-1, -1, true, 100, 100);
-        // Owner and foreign stealers alike consult the owner bucket, rather than defaulting to
-        // the first-sample choice on every stolen frame.
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, -1, true, false));
-
-        final AsyncFilterAtom freshAtom = newAtom();
-        freshAtom.updateSelectivityStats(-1, -1, false, 100, 100);
-        freshAtom.updateSelectivityStats(-1, -1, false, 100, 100);
-        // Foreign stealers share no mutable state: the owner bucket is still unsampled.
-        Assert.assertTrue(freshAtom.shouldUseLateMaterialization(-1, -1, true, false));
-    }
-
-    @Test
-    public void testOutOfRangeWorkerIdDoesNotPolluteOwnerStatistics() {
-        final AsyncFilterAtom atom = newAtom();
-
-        // The reducing pool can hand out worker ids the atom was not sized for. A worker id of
-        // exactly workerCount lands on the owner bucket unless it is folded into range.
-        atom.updateSelectivityStats(-1, WORKER_COUNT, false, 100, 100);
-        atom.updateSelectivityStats(-1, WORKER_COUNT, false, 100, 100);
-
-        // The owner bucket must still be on its first-sample choice.
-        Assert.assertTrue(atom.shouldUseLateMaterialization(-1, -1, true, false));
-    }
-
-    @Test
-    public void testPerWorkerFiltersKeepOwnerStatisticsReachable() {
+    public void testPerWorkerFiltersUseSlotStatistics() {
         final AsyncFilterAtom atom = newAtomWithPerWorkerFilters();
 
         // maybeAcquireFilter() returns -1 for the owner even when it hands out slots, so the owner
-        // still reads the thread-safe stats. Every other thread holds a slot and reads its own
-        // per-worker bucket.
-        atom.updateSelectivityStats(-1, -1, true, 100, 100);
-        atom.updateSelectivityStats(-1, -1, true, 100, 100);
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, -1, true, false));
+        // reads the shared stats. Every other thread holds a slot and reads its own.
+        atom.getSelectivityStats(-1).update(100, 100);
+        atom.getSelectivityStats(-1).update(100, 100);
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, true, false));
 
         // A slot holder is unaffected by what the owner sampled.
-        Assert.assertTrue(atom.shouldUseLateMaterialization(0, 0, true, false));
+        Assert.assertTrue(atom.shouldUseLateMaterialization(0, true, false));
     }
 
     @Test
-    public void testThreadSafeWorkerStatisticsAreIndependent() {
+    public void testThreadSafeFilterSharesOneSelectivityEma() {
         final AsyncFilterAtom atom = newAtom();
 
-        atom.updateSelectivityStats(-1, 0, false, 100, 100);
-        atom.updateSelectivityStats(-1, 0, false, 100, 100);
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, 0, true, false));
-        Assert.assertTrue(atom.shouldUseLateMaterialization(-1, 1, true, false));
+        // A thread-safe filter builds no locks, so maybeAcquireFilter() hands -1 to the owner, to
+        // every reducing worker and to every work-stealing thread alike: no caller on this path
+        // has a slot to key statistics on.
+        Assert.assertEquals(-1, atom.maybeAcquireFilter(0, false, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+        Assert.assertEquals(-1, atom.maybeAcquireFilter(-1, true, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
 
-        atom.updateSelectivityStats(-1, 1, false, 0, 100);
-        atom.updateSelectivityStats(-1, 1, false, 0, 100);
-        Assert.assertTrue(atom.shouldUseLateMaterialization(-1, 1, true, false));
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, 0, true, false));
-    }
+        // They must all reduce against one EMA. Keying the statistics on the caller instead would
+        // restart warm-up per worker, and a reducing pool spreads a short parquet scan so thinly
+        // that no single bucket would ever reach MIN_SAMPLES -- forcing late materialization on
+        // every frame of the scan, on every execution.
+        Assert.assertSame(atom.getSelectivityStats(-1), atom.getSelectivityStats(0));
+        Assert.assertSame(atom.getSelectivityStats(-1), atom.getSelectivityStats(7));
 
-    @Test
-    public void testWorkerIdBeyondWorkerCountStaysInBounds() {
-        final AsyncFilterAtom atom = newAtom();
-
-        // PageFrameReduceJob passes the shared reducing pool's carrier id, which is unrelated to
-        // the atom's compile-time workerCount and can exceed it by any margin.
-        atom.updateSelectivityStats(-1, WORKER_COUNT + 5, false, 0, 100);
-        atom.updateSelectivityStats(-1, WORKER_COUNT + 5, false, 0, 100);
-        Assert.assertTrue(atom.shouldUseLateMaterialization(-1, WORKER_COUNT + 5, true, false));
-
-        atom.updateSelectivityStats(-1, WORKER_COUNT + 64, false, 100, 100);
-        atom.updateSelectivityStats(-1, WORKER_COUNT + 64, false, 100, 100);
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, WORKER_COUNT + 64, true, false));
+        // So MIN_SAMPLES frames settle the heuristic for the whole scan, whichever thread saw them.
+        atom.getSelectivityStats(-1).update(100, 100);
+        atom.getSelectivityStats(-1).update(100, 100);
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, true, false));
     }
 
     private AsyncFilterAtom newAtom() {
@@ -127,14 +90,13 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
                 filterColumns,
                 perWorkerFilters,
                 columnTypes,
-                false,
-                WORKER_COUNT
+                false
         );
     }
 
     private AsyncFilterAtom newAtomWithPerWorkerFilters() {
         final ObjList<Function> perWorkerFilters = new ObjList<>();
-        for (int i = 0; i < WORKER_COUNT; i++) {
+        for (int i = 0; i < SLOT_COUNT; i++) {
             perWorkerFilters.add(BooleanConstant.TRUE);
         }
         return newAtom(perWorkerFilters);

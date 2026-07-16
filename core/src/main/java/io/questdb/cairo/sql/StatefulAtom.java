@@ -100,6 +100,15 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
         return false;
     }
 
+    /**
+     * Installs a latch that a test can wait on until a worker has taken a slot, or removes it when
+     * given null. An implementor swaps its {@link io.questdb.griffin.engine.PerWorkerLocks} for an
+     * instrumented one, so the field holding them cannot be final, and reducers read it on the hot
+     * path without synchronizing. That is safe because of when this runs, not because of the field:
+     * a test installs the latch before dispatching any reduce task, and the reduce queue publishes
+     * everything the owner wrote before dispatch to every worker that picks a task up. Installing a
+     * latch on an atom whose sequence is already dispatching would race, and no caller does it.
+     */
     @TestOnly
     default void setTestSlotAcquireLatch(CountDownLatch latch) {
     }

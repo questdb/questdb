@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
+import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -87,45 +88,28 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * @see WindowJoinRecordCursorFactory for the single-threaded variant
  */
 public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final NamedPageFrameReducer AGGREGATE = new NamedPageFrameReducer(
-            "AGGREGATE", AsyncWindowJoinRecordCursorFactory::aggregate);
-    private static final NamedPageFrameReducer AGGREGATE_DYNAMIC = new NamedPageFrameReducer(
-            "AGGREGATE_DYNAMIC", AsyncWindowJoinRecordCursorFactory::aggregateDynamic);
-    private static final NamedPageFrameReducer AGGREGATE_DYNAMIC_PREVAILING = new NamedPageFrameReducer(
-            "AGGREGATE_DYNAMIC_PREVAILING", AsyncWindowJoinRecordCursorFactory::aggregateDynamicWithPrevailing);
-    private static final NamedPageFrameReducer AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
-            "AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED", AsyncWindowJoinRecordCursorFactory::aggregateDynamicWithPrevailingJoinFiltered);
-    private static final NamedPageFrameReducer AGGREGATE_PREVAILING = new NamedPageFrameReducer(
-            "AGGREGATE_PREVAILING", AsyncWindowJoinRecordCursorFactory::aggregateWithPrevailing);
-    private static final NamedPageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
-            "AGGREGATE_PREVAILING_JOIN_FILTERED", AsyncWindowJoinRecordCursorFactory::aggregateWithPrevailingJoinFiltered);
-    private static final NamedPageFrameReducer AGGREGATE_VECT = new NamedPageFrameReducer(
-            "AGGREGATE_VECT", AsyncWindowJoinRecordCursorFactory::aggregateVect);
-    private static final NamedPageFrameReducer AGGREGATE_VECT_PREVAILING = new NamedPageFrameReducer(
-            "AGGREGATE_VECT_PREVAILING", AsyncWindowJoinRecordCursorFactory::aggregateVectWithPrevailing);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE", AsyncWindowJoinRecordCursorFactory::filterAndAggregate);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_DYNAMIC", AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamic);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING", AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamicWithPrevailing);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED", AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamicWithPrevailingJoinFiltered);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_PREVAILING", AsyncWindowJoinRecordCursorFactory::filterAndAggregateWithPrevailing);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED", AsyncWindowJoinRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_VECT = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_VECT", AsyncWindowJoinRecordCursorFactory::filterAndAggregateVect);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_VECT_PREVAILING", AsyncWindowJoinRecordCursorFactory::filterAndAggregateVectWithPrevailing);
+    private static final PageFrameReducer AGGREGATE = AsyncWindowJoinRecordCursorFactory::aggregate;
+    private static final PageFrameReducer AGGREGATE_DYNAMIC = AsyncWindowJoinRecordCursorFactory::aggregateDynamic;
+    private static final PageFrameReducer AGGREGATE_DYNAMIC_PREVAILING = AsyncWindowJoinRecordCursorFactory::aggregateDynamicWithPrevailing;
+    private static final PageFrameReducer AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::aggregateDynamicWithPrevailingJoinFiltered;
+    private static final PageFrameReducer AGGREGATE_PREVAILING = AsyncWindowJoinRecordCursorFactory::aggregateWithPrevailing;
+    private static final PageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::aggregateWithPrevailingJoinFiltered;
+    private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::aggregateVect;
+    private static final PageFrameReducer AGGREGATE_VECT_PREVAILING = AsyncWindowJoinRecordCursorFactory::aggregateVectWithPrevailing;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncWindowJoinRecordCursorFactory::filterAndAggregate;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC = AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamic;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamicWithPrevailing;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamicWithPrevailingJoinFiltered;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateWithPrevailing;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVect;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
     private final SCSequence collectSubSeq = new SCSequence();
     private AsyncWindowJoinRecordCursor cursor;
     private PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
     private JoinRecordMetadata joinMetadata;
     private RecordCursorFactory masterFactory;
-    private final String reducerName;
     private RecordCursorFactory slaveFactory;
     private final int workerCount;
 
@@ -226,7 +210,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 workerCount
         );
 
-        NamedPageFrameReducer reducer;
+        PageFrameReducer reducer;
         if (isDynamicWindow) {
             if (includePrevailing) {
                 if (joinFilter != null) {
@@ -254,13 +238,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         : (atom.isVectorized() ? AGGREGATE_VECT : AGGREGATE);
             }
         }
-        this.reducerName = reducer.getName();
         this.frameSequence = new PageFrameSequence<>(
                 engine,
                 configuration,
                 messageBus,
                 atom,
-                reducer.getReducer(),
+                reducer,
                 reduceTaskFactory,
                 workerCount,
                 PageFrameReduceTask.TYPE_WINDOW_JOIN
@@ -304,17 +287,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             cursor.close();
             throw th;
         }
-    }
-
-    /**
-     * Names the reduce phase this factory routed to. A slot-leak test needs it: sixteen reducers
-     * each own their acquire/release pair, which one runs follows from five compile-time flags the
-     * query's output never reveals, and a test pinning only the factory class would follow the
-     * optimizer silently onto a reducer other than the one it meant to cover.
-     */
-    @TestOnly
-    public String getReducerName() {
-        return reducerName;
     }
 
     @Override
@@ -392,10 +364,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         // The slot is held from here on. clearTemporaryData() drops the temporary allocator's
         // chunks, so every of() below mallocs a fresh one through the per-query memory tracker and
-        // can breach the limit. They must therefore sit inside the try that releases the slot:
-        // PerWorkerLocks has no reset and the atom belongs to the factory, so a slot leaked here is
-        // lost for as long as the factory stays in the SQL cache, and once every slot has leaked
-        // each later execution spins in acquireSlot for a slot nobody will release.
+        // can breach the limit; they must therefore sit inside the try that releases the slot, see
+        // PerWorkerLocks.acquireSlot().
         try {
             atom.clearTemporaryData(slotId);
             final GroupByLongList slaveRowIds = atom.getLongList(slotId);

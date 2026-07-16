@@ -249,7 +249,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public int getArrayDimLen(int columnIndex, int columnType, int dim) {
         assert dim >= 1 && dim <= ColumnType.decodeArrayDimensionality(columnType);
-        return getArrayDimLen0(columnIndex, dim, rowIndex);
+        return getArrayDimLen0(columnIndex, columnType, dim, rowIndex);
     }
 
     @Override
@@ -902,8 +902,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (Unsafe.getInt(auxEntryAddr + Long.BYTES) == 0) {
             return 0;
         }
-        final long dataOffset = Unsafe.getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
-        return pageAddresses.get(columnOffset + columnIndex) + dataOffset;
+        return shapeAddr(columnIndex, auxEntryAddr);
     }
 
     private ColumnTypeConverter.Fixed2VarConverter cacheTypeCastConverter(int columnIndex, int srcType, int dstType) {
@@ -1350,6 +1349,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
+    /**
+     * Resolves the address of an array's shape header, which the data entry opens with. The caller
+     * must have established that the entry is not a NULL array.
+     */
+    private long shapeAddr(int columnIndex, long auxEntryAddr) {
+        final long dataOffset = Unsafe.getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
+        return pageAddresses.get(columnOffset + columnIndex) + dataOffset;
+    }
+
     private @NotNull StringSink stringSinkA(int columnIndex) {
         StringSink sink = stringSinks.getQuiet(columnIndex);
         if (sink != null) {
@@ -1430,12 +1438,34 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
      * {@link #getArray} does, so a column top or a NULL entry reads as NULL rather than as
      * a length.
      */
-    protected int getArrayDimLen0(int columnIndex, int dim, long rowIdx) {
-        final long shapeAddr = arrayDataAddr(columnIndex, rowIdx);
-        if (shapeAddr == 0) {
+    protected int getArrayDimLen0(int columnIndex, int columnType, int dim, long rowIdx) {
+        final long auxAddr = auxPageAddresses.get(columnOffset + columnIndex);
+        if (auxAddr == 0) {
             return Numbers.INT_NULL;
         }
-        return Unsafe.getInt(shapeAddr + (long) (dim - 1) * Integer.BYTES);
+        final long auxEntryAddr = auxAddr + ArrayTypeDriver.getAuxVectorOffsetStatic(rowIdx);
+        // Read the size half only, the way arrayDataAddr() and the native readers do: the aux entry
+        // reserves the 32 bits above it, so widening the load would fold whatever lands there into
+        // the size.
+        final long dataSize = Unsafe.getInt(auxEntryAddr + Long.BYTES) & 0xffff_ffffL;
+        if (dataSize == 0) {
+            return Numbers.INT_NULL;
+        }
+        if (ColumnType.decodeArrayDimensionality(columnType) == 1
+                && ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
+            // The aux entry already carries the answer for a 1D double array: ArrayTypeDriver lays
+            // the data entry out as a 4-byte shape, 4 bytes of padding up to the 8-byte element
+            // alignment, then the values, so its size is exactly Double.BYTES * (length + 1).
+            // Reading the shape instead would touch the data vector, which is a separate cache line
+            // per row once an array outgrows one, where the aux vector packs four rows into each.
+            // ArrayTypeDriver owns the layout; the assert re-reads the shape so that every array
+            // test fails here if it ever moves.
+            final int dimLen = (int) ((dataSize >>> 3) - 1);
+            assert dimLen == Unsafe.getInt(shapeAddr(columnIndex, auxEntryAddr))
+                    : "1D double array length disagrees with its shape header";
+            return dimLen;
+        }
+        return Unsafe.getInt(shapeAddr(columnIndex, auxEntryAddr) + (long) (dim - 1) * Integer.BYTES);
     }
 
     protected double getArrayDouble1d2d0(int columnIndex, int columnType, int idx0, int idx1, long rowIdx) {

@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
+import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -88,29 +89,18 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilt
  * @see WindowJoinFastRecordCursorFactory for the single-threaded variant
  */
 public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final NamedPageFrameReducer AGGREGATE = new NamedPageFrameReducer(
-            "AGGREGATE", AsyncWindowJoinFastRecordCursorFactory::aggregate);
-    private static final NamedPageFrameReducer AGGREGATE_PREVAILING = new NamedPageFrameReducer(
-            "AGGREGATE_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailing);
-    private static final NamedPageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
-            "AGGREGATE_PREVAILING_JOIN_FILTERED", AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailingJoinFiltered);
-    private static final NamedPageFrameReducer AGGREGATE_VECT = new NamedPageFrameReducer(
-            "AGGREGATE_VECT", AsyncWindowJoinFastRecordCursorFactory::aggregateVect);
-    private static final NamedPageFrameReducer AGGREGATE_VECT_PREVAILING = new NamedPageFrameReducer(
-            "AGGREGATE_VECT_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::aggregateVectWithPrevailing);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregate);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailing);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_VECT = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_VECT", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVect);
-    private static final NamedPageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = new NamedPageFrameReducer(
-            "FILTER_AND_AGGREGATE_VECT_PREVAILING", AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing);
+    private static final PageFrameReducer AGGREGATE = AsyncWindowJoinFastRecordCursorFactory::aggregate;
+    private static final PageFrameReducer AGGREGATE_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailing;
+    private static final PageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinFastRecordCursorFactory::aggregateWithPrevailingJoinFiltered;
+    private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinFastRecordCursorFactory::aggregateVect;
+    private static final PageFrameReducer AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::aggregateVectWithPrevailing;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregate;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailing;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVect;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final String reducerName;
     private final int workerCount;
     private AsyncWindowJoinRecordCursor cursor;
     private PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
@@ -199,7 +189,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 slaveTsScale,
                 workerCount
         );
-        NamedPageFrameReducer reducer;
+        PageFrameReducer reducer;
         if (includePrevailing) {
             if (masterFilter != null) {
                 reducer = atom.isVectorized()
@@ -216,13 +206,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                     : (masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE);
         }
 
-        this.reducerName = reducer.getName();
         this.frameSequence = new PageFrameSequence<>(
                 engine,
                 configuration,
                 messageBus,
                 atom,
-                reducer.getReducer(),
+                reducer,
                 reduceTaskFactory,
                 workerCount,
                 PageFrameReduceTask.TYPE_WINDOW_JOIN
@@ -266,16 +255,6 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             cursor.close();
             throw th;
         }
-    }
-
-    /**
-     * Names the reduce phase this factory routed to. See
-     * {@link AsyncWindowJoinRecordCursorFactory#getReducerName()} - ten reducers here, each owning
-     * its own slot acquire/release pair.
-     */
-    @TestOnly
-    public String getReducerName() {
-        return reducerName;
     }
 
     @Override
@@ -363,11 +342,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectIntIntHashMap slaveSymbolLookupMap = atom.getSlaveSymbolLookupMap();
         final Function joinFilter = atom.getJoinFilter(slotId);
 
-        // The slot is held from here on. clearTemporaryData() and every of() below must sit inside
-        // the try that releases it: PerWorkerLocks has no reset and the atom belongs to the factory,
-        // so a slot leaked here is lost for as long as the factory stays in the SQL cache, and once
-        // every slot has leaked each later execution spins in acquireSlot for a slot nobody will
-        // release. The getters above the try are ObjList lookups and cannot throw.
+        // The slot is held from here on: clearTemporaryData() and every of() below must sit inside
+        // the try that releases it, see PerWorkerLocks.acquireSlot(). The getters above the try are
+        // ObjList lookups and cannot throw.
         try {
             atom.clearTemporaryData(slotId);
             final DirectIntMultiLongHashMap slaveData = atom.getSlaveData(slotId);

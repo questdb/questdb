@@ -326,8 +326,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // inside the try that releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
@@ -552,8 +551,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // inside the try that releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             record.init(frameMemory);

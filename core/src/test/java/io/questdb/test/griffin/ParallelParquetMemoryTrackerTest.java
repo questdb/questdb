@@ -261,6 +261,11 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                         // The filtered parallel top-K reducer acquires a slot the same way.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT s FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' ORDER BY s LIMIT 5");
+                        // Dropping the filter routes to findTopK instead, the fourth reducer: the atom
+                        // builds its locks whether or not a filter exists, so this one acquires and
+                        // releases a slot of its own on a path the filtered variant never enters.
+                        TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
+                                "SELECT s FROM tab ORDER BY s LIMIT 5");
                         // A plain parallel filter - no GROUP BY, no ORDER BY - takes
                         // AsyncFilteredRecordCursorFactory.filter(), the most common parallel query
                         // shape there is. It acquires a filter slot and only then navigates to the

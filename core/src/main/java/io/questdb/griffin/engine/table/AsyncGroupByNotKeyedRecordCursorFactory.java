@@ -300,8 +300,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         // navigateTo() decodes the frame and can throw, so it must sit inside the try that
-        // releases the slot. PerWorkerLocks has no reset and the atom outlives the query, so a
-        // slot leaked here is lost until the cached factory is evicted, and the pool starves.
+        // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             record.init(frameMemory);

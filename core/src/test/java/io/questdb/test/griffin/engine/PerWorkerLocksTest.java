@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine;
 
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.Os;
@@ -56,9 +57,9 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     @Test
     public void testAcquireCountOnlyGrows() {
         // The companion oracle: unlike the held-slot count, this tally survives the release, which is
-        // what lets a leak test tell "took a slot and gave it back" apart from "never took one". The
-        // two answers come from the same int - parity for held, value for the tally - so a release
-        // that reset the slot to 0 instead of counting it up would read back 0 here.
+        // what lets a leak test tell "took a slot and gave it back" apart from "never took one".
+        // The two answers come from different state - the slot's own 0/1 flag for held, a separate
+        // tally for the count - so releasing must move the first without rewinding the second.
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4)
                 .withTestAcquireLatch(new CountDownLatch(0));
         Assert.assertEquals(0, locks.getSlotAcquireCount());
@@ -107,6 +108,39 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAcquireSlotFoldsExtremeIdsWithoutOverflow() {
+        // Folding the incoming id into [0, workerCount) before the probe is what bounds i + workerId.
+        // Wrapping with a modulo inside the probe instead only looks equivalent: once the sum passes
+        // Integer.MAX_VALUE it turns negative, and Java's % keeps the dividend's sign, so the probe
+        // indexes the lock array below zero. Seeing it takes contention - an uncontended probe
+        // returns on its first iteration, before the sum has grown at all.
+        final int workerCount = 3;
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
+        // Declared as the base interface on purpose: AtomicBooleanCircuitBreaker implements the Sql
+        // sub-interface, so a narrower declared type binds the SqlExecutionCircuitBreaker overload
+        // and leaves the carrier one untouched.
+        final ExecutionCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+
+        // Integer.MAX_VALUE % 3 == 1, so holding slot 1 forces the probe to a second iteration.
+        int held = locks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertEquals(1, held);
+        int slot = locks.acquireSlot(Integer.MAX_VALUE, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertEquals(2, slot);
+        locks.releaseSlot(held);
+        locks.releaseSlot(slot);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+
+        // The carrier-id overload folds the same way.
+        held = locks.acquireSlot(1, circuitBreaker);
+        Assert.assertEquals(1, held);
+        slot = locks.acquireSlot(Integer.MAX_VALUE, circuitBreaker);
+        Assert.assertEquals(2, slot);
+        locks.releaseSlot(held);
+        locks.releaseSlot(slot);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testAcquiresEverySlot() {
         final int workerCount = 4;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
@@ -126,7 +160,11 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     public void testCarrierIdsOutsideSlotRangeAreNormalized() {
         final int workerCount = 4;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
-        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+        // Declared as the base interface so this actually reaches the carrier-id overload:
+        // AtomicBooleanCircuitBreaker implements the Sql sub-interface, so a narrower declared type
+        // would bind the SqlExecutionCircuitBreaker overload and make this a duplicate of the
+        // worker-id test wearing a carrier-id name.
+        final ExecutionCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
 
         final int boundarySlot = locks.acquireSlot(workerCount, circuitBreaker);
         Assert.assertEquals(0, boundarySlot);
@@ -144,10 +182,9 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     @Test
     public void testConcurrentAcquireReleaseHoldsMutualExclusion() throws Exception {
         // The one property the tests above cannot reach. They run on the JUnit thread, so the CAS in
-        // acquireSlot never actually loses a race, and the parity protocol - the whole point of the
-        // counter encoding - is never exercised against a competing acquirer. The safety argument
-        // ("the holder is the only thread that can write a held slot") is asserted in a comment; this
-        // is what exercises it.
+        // acquireSlot never actually loses a race, and the 0/1 protocol is never exercised against a
+        // competing acquirer. The safety argument ("the holder is the only thread that can write a
+        // held slot") is asserted in a comment; this is what exercises it.
         //
         // More threads than slots, so the acquire loop genuinely runs out and spins. workerId = -1
         // makes each thread start its probe at a random slot, which is the work-stealing path.
