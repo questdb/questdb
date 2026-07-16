@@ -74,8 +74,9 @@ public class IntersectAllRecordCursorFactory extends AbstractSetRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        super._close();
+        final AbstractSetRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        closeSetOwnersBestEffort(cursor);
     }
 
     @Override

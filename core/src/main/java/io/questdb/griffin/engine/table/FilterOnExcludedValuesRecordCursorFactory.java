@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -53,20 +54,20 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final int columnIndex;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
-    private final PageFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx; // used to disable unneeded factories if there are duplicate excluded keys
     private final boolean dynamicExcludedKeys;
     private final IntHashSet excludedKeys = new IntHashSet();
-    private final Function filter;
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
     private final IntHashSet includedKeys = new IntHashSet();
     private final int indexDirection;
-    private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final int maxSymbolNotEqualsCount;
     private final int orderDirection;
+    private PageFrameRecordCursorImpl cursor;
+    private Function filter;
+    private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private StaticSymbolTable symbolMapReader;
 
     public FilterOnExcludedValuesRecordCursorFactory(
@@ -250,11 +251,24 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.free(cursor.getRowCursorFactory());
-        Misc.free(cursor);
-        Misc.freeObjList(keyExcludedValueFunctions);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
+        final ObjList<Function> keyExcludedValueFunctions = this.keyExcludedValueFunctions;
+        this.keyExcludedValueFunctions = null;
+        final var rowCursorFactory = cursor != null ? cursor.getRowCursorFactory() : null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, filter);
+        failure = Misc.freeBestEffort(failure, rowCursorFactory);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeObjListBestEffort(failure, keyExcludedValueFunctions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
