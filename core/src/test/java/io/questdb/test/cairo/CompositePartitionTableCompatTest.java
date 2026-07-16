@@ -98,6 +98,13 @@ public class CompositePartitionTableCompatTest extends AbstractCairoTest {
             try (TxReader r1 = openFreshTxReader("p1", ff, false)) {
                 Assert.assertEquals("p1 must report the plain (4-long) stride", 4, r1.getLongsPerAttachedPartition());
                 r1.dumpRawTxPartitionInfo(raw1);
+                // Accessor-contract sanity check ONLY -- NOT a byte-identity proof. getPartitionCellKey()
+                // short-circuits to a hard-coded 0 for ANY reader opened at the plain (4-long) stride,
+                // without ever reading attachedPartitions (see TxReader#getPartitionCellKeyByRawIndex).
+                // It would therefore pass identically even if the on-disk region were corrupt or carried
+                // a stray fifth slot. The real byte-identity guarantee -- that no cellKey slot exists on
+                // disk at all -- is carried by the exact longword-count assertion and the offset-4
+                // field-level check below, not by these two lines.
                 Assert.assertEquals(0, r1.getPartitionCellKey(0));
                 Assert.assertEquals(0, r1.getPartitionCellKey(1));
             }
@@ -107,7 +114,10 @@ public class CompositePartitionTableCompatTest extends AbstractCairoTest {
             }
 
             // The discriminating property: EXACT byte count for the region. 2 partitions * stride 4 =
-            // 8 longs = 64 bytes. A stride-8 plain table would be 16 longs / 128 bytes instead.
+            // 8 longs = 64 bytes. A stride-8 plain table would be 16 longs / 128 bytes instead. This is
+            // what genuinely proves no cellKey slot exists in a plain record -- the getPartitionCellKey()
+            // calls above cannot prove that, since they short-circuit to 0 without consulting the disk
+            // bytes at all.
             Assert.assertEquals("p1 attached-partitions region must be exactly partitionCount(2) * stride(4) longs",
                     8, raw1.size());
             Assert.assertEquals("p2 attached-partitions region must match p1's shape", 8, raw2.size());
@@ -192,9 +202,9 @@ public class CompositePartitionTableCompatTest extends AbstractCairoTest {
                 // (TableWriter.addColumn's unconditional upsertDefaultTxnName) must ALSO pack cellKey=0
                 // byte-identically.
                 int defaultRecordIndex = cvReader.getRecordIndex(ColumnVersionReader.COL_TOP_DEFAULT_PARTITION, yIndex);
-                Assert.assertTrue(defaultRecordIndex > -1);
+                Assert.assertTrue("the sentinel COL_TOP_DEFAULT_PARTITION record for the new column must exist", defaultRecordIndex > -1);
                 long defaultRawPacked = cvReader.getCachedColumnVersionList().getQuick(defaultRecordIndex + ColumnVersionReader.COLUMN_INDEX_OFFSET);
-                Assert.assertEquals((long) yIndex, defaultRawPacked);
+                Assert.assertEquals("sentinel record's cellKey=0 must also pack to the bare columnIndex", (long) yIndex, defaultRawPacked);
             }
         });
     }
