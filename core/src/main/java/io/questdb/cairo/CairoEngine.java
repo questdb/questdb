@@ -32,6 +32,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.lv.LiveViewCheckpointRingCandidate;
+import io.questdb.cairo.lv.LiveViewCheckpointRingManifestReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -751,6 +753,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // Reusable scratch for the per-LV checkpoint sweep (see the LV
             // branch below). Allocated once per buildViewGraphs() call.
             final StringSink sweepNameSink = new StringSink();
+            // Parse scratch for the _ring manifest, reused across views. The
+            // per-view candidate cannot share it - the refresh worker reads the
+            // candidate long after this loop has moved on - so it copies out of
+            // this reader and only the copy is retained.
+            final LiveViewCheckpointRingManifestReader ringManifestReader = new LiveViewCheckpointRingManifestReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -985,38 +992,65 @@ public class CairoEngine implements Closeable, WriterSource {
                             // over the same base.
                             dependentViewGraph.addLiveView(tableToken, definition.getBaseTableName());
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+                            // Read the _checkpoints/_ring manifest, if any, and
+                            // stash it on the instance as a candidate. The trust
+                            // decision - covered == the reconciled applied floor -
+                            // belongs to the refresh worker: this thread sees only
+                            // the raw _lv.s, which trails the view's real durable
+                            // position by design, and reconcileAppliedFloorAfterRestart
+                            // clamps it back up long after buildViewGraphs has
+                            // returned. Deciding here would discard the ring on
+                            // exactly the crash restarts it exists for.
+                            //
+                            // The manifest is an allow-list, never an inventory,
+                            // which is what makes rebuilding the ring safe at all:
+                            // a selective O3 invalidation drops unsealed entries
+                            // with best-effort removeQuiet, so a stale (poisoned)
+                            // .cp whose unlink failed lingers below the highest
+                            // survivor with lvSeqTxn <= appliedWatermark,
+                            // indistinguishable on disk from a sealed one.
+                            // Scanning the directory would resurrect it as an
+                            // anchor and let a later O3 resume from pre-late-row
+                            // window state; an unlisted .cp is garbage by
+                            // construction.
+                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
+                            LiveViewCheckpointRingCandidate ringCandidate = null;
+                            if (configuration.isLiveViewCheckpointRingDurableEnabled()) {
+                                ringCandidate = new LiveViewCheckpointRingCandidate();
+                                LiveViewRecovery.readRingCandidate(
+                                        configuration.getFilesFacade(),
+                                        sweepPath,
+                                        liveViewDirPath,
+                                        tableToken,
+                                        reader,
+                                        ringManifestReader,
+                                        ringCandidate
+                                );
+                                if (ringCandidate.isStructurallyValid()) {
+                                    instance.setCheckpointRingCandidate(ringCandidate);
+                                } else {
+                                    // Absent, corrupt, version-skewed, or naming a
+                                    // .cp that is gone. Sweep without an allow-list,
+                                    // which is the legacy behaviour exactly.
+                                    ringCandidate = null;
+                                }
+                            }
                             // Startup sweep: clean .cp.tmp orphans
                             // and any .cp whose lvSeqTxn outran the applied
-                            // watermark, then retain only the highest survivor.
-                            // Stamp the survivor's lvSeqTxn on the instance so
-                            // the first refresh cycle knows to attempt restore;
-                            // maxTs / stateBytes stay LONG_NULL / 0 until that
-                            // cycle reads the manifest.
-                            //
-                            // Retained-checkpoint ring recovery (v1): only the
-                            // highest survivor is trusted as a resume anchor. The
-                            // in-memory ring is deliberately NOT rebuilt from the
-                            // surviving on-disk .cp files here (nothing calls
-                            // addRetainedCheckpoint from the recovery path) - it
-                            // starts empty and re-densifies from checkpoints
-                            // written after restart, since every post-restart O3
-                            // head-hit / resume seals a fresh near-head entry.
-                            // Rebuilding the ring from disk would be unsafe: a
-                            // selective O3 invalidation drops unsealed entries with
-                            // best-effort removeQuiet, so a stale (poisoned) .cp
-                            // whose runtime unlink failed can linger below the
-                            // highest survivor with lvSeqTxn <= appliedWatermark,
-                            // indistinguishable from a sealed entry. Resurrecting
-                            // it as an anchor would let a later O3 resume from
-                            // pre-late-row window state and serve wrong results.
-                            // See LiveViewRefreshJob.tryRestoreFromHead.
+                            // watermark, then retain only the highest survivor
+                            // plus whatever the manifest lists. Stamp the
+                            // survivor's lvSeqTxn on the instance so the first
+                            // refresh cycle knows to attempt restore; maxTs /
+                            // stateBytes stay LONG_NULL / 0 until that cycle reads
+                            // the manifest.
                             liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
                             final long headSeqTxn = LiveViewRecovery.sweepCheckpoints(
                                     configuration.getFilesFacade(),
                                     sweepPath,
                                     liveViewDirPath,
                                     stateReader.getAppliedWatermark(),
-                                    sweepNameSink
+                                    sweepNameSink,
+                                    ringCandidate
                             );
                             if (headSeqTxn != Numbers.LONG_NULL) {
                                 // The head base seqTxn is only known once the first refresh

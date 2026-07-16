@@ -39,6 +39,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
 import io.questdb.cairo.lv.LiveViewCheckpointManifest;
 import io.questdb.cairo.lv.LiveViewCheckpointReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRingCandidate;
 import io.questdb.cairo.lv.LiveViewCheckpointRingManifest;
 import io.questdb.cairo.lv.LiveViewCheckpointRingManifestReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
@@ -75,6 +76,7 @@ import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -6357,6 +6359,54 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
     // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
     // on the non-version branch.
+    /**
+     * Counts the {@code .cp} files in a live view's {@code _checkpoints/},
+     * ignoring {@code _ring} and any {@code .cp.tmp} orphan.
+     */
+    private int countCheckpointFiles(LiveViewInstance lv) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        int count = 0;
+        try (Path dir = new Path()) {
+            dir.of(engine.getConfiguration().getDbRoot())
+                    .concat(lv.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+            final long findPtr = ff.findFirst(dir.$());
+            if (findPtr == 0) {
+                return 0;
+            }
+            final StringSink nameSink = new StringSink();
+            try {
+                do {
+                    final long namePtr = ff.findName(findPtr);
+                    if (namePtr == 0) {
+                        continue;
+                    }
+                    nameSink.clear();
+                    if (!Utf8s.utf8ToUtf16Z(namePtr, nameSink)) {
+                        continue;
+                    }
+                    if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_FILE_EXT)) {
+                        count++;
+                    }
+                } while (ff.findNext(findPtr) > 0);
+            } finally {
+                ff.findClose(findPtr);
+            }
+        }
+        return count;
+    }
+
+    private boolean existsCheckpointFile(LiveViewInstance lv, long lvSeqTxn) {
+        try (Path cpPath = new Path()) {
+            cpPath.of(engine.getConfiguration().getDbRoot())
+                    .concat(lv.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .slash();
+            LiveViewCheckpointWriter.appendCpFileName(cpPath, lvSeqTxn);
+            return engine.getConfiguration().getFilesFacade().exists(cpPath.$());
+        }
+    }
+
     /**
      * Reads the live view's durable {@code _checkpoints/_ring} into
      * {@code manifest}. Addresses the file through
@@ -17871,6 +17921,106 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     previousLvSeqTxn = currentLvSeqTxn;
                 }
             }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingCandidateNotStashedWhenDurableRingDisabled() throws Exception {
+        // With the durable ring off the sweep must behave exactly as it did
+        // before recovery learned to read _ring: no candidate, and the older
+        // .cp files retire down to the head. A stale manifest from an earlier
+        // run with the flag on must not resurrect the allow-list either, which
+        // is what makes the flag a real kill switch rather than a write toggle.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getRetainedCheckpointCount());
+            }
+
+            // Restart with the ring disabled, leaving the valid _ring on disk.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "false");
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertNull("no candidate when the durable ring is disabled", lv.getCheckpointRingCandidate());
+            // Legacy sweep: everything below the head retires.
+            final long head = lv.getHeadCheckpointLvSeqTxn();
+            Assert.assertTrue(head != Numbers.LONG_NULL);
+            Assert.assertEquals(1, countCheckpointFiles(lv));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingCandidateStashedOnRestart() throws Exception {
+        // End-to-end for the sweep's half of recovery: a restart reads _ring,
+        // stashes it as a candidate, and keeps every listed .cp alive for the
+        // refresh worker to rehydrate. Without the allow-list the second sweep
+        // pass retires all but the head, which is every entry the ring exists to
+        // offer as a resume anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LongList expectedRing = new LongList();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                lv.copyRetainedCheckpointsTo(expectedRing);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            final LiveViewCheckpointRingCandidate candidate = lv.getCheckpointRingCandidate();
+            Assert.assertNotNull("the sweep must stash the manifest it validated", candidate);
+            Assert.assertTrue(candidate.isStructurallyValid());
+            // The candidate is the pre-restart ring, verbatim.
+            TestUtils.assertEquals(expectedRing, candidate.getEntries());
+            Assert.assertEquals(3, candidate.getEntryCount());
+            // covered == the floor the worker will reconcile to, which is the
+            // trust rule's equality. Asserting it here would be the trust
+            // decision; Step 8 owns that. The sweep only carries the claim.
+            Assert.assertEquals(lv.getStateReader().getAppliedWatermark(), candidate.getCoveredBaseSeqTxn());
+
+            // Every listed .cp survived, head included.
+            Assert.assertEquals(3, countCheckpointFiles(lv));
+            for (int i = 0; i < candidate.getEntryCount(); i++) {
+                Assert.assertTrue(
+                        "listed .cp must survive the sweep: " + candidate.getEntryLvSeqTxn(i),
+                        existsCheckpointFile(lv, candidate.getEntryLvSeqTxn(i))
+                );
+            }
+            // The fallback head is still the highest survivor, and the in-memory
+            // ring is still empty: rehydration is Step 8's, not the sweep's.
+            Assert.assertEquals(candidate.getEntryLvSeqTxn(2), lv.getHeadCheckpointLvSeqTxn());
+            Assert.assertEquals(0, lv.getRetainedCheckpointCount());
             execute("DROP LIVE VIEW lv");
         });
     }

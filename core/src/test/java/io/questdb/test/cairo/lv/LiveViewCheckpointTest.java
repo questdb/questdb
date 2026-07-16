@@ -395,7 +395,8 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                         scratch,
                         liveViewDir,
                         100L,
-                        nameSink
+                        nameSink,
+                        null
                 );
                 Assert.assertEquals(Numbers.LONG_NULL, head);
             }
@@ -417,7 +418,8 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                         scratch,
                         liveViewDir,
                         5L,
-                        nameSink
+                        nameSink,
+                        null
                 );
                 Assert.assertEquals(3L, head);
                 Assert.assertTrue("highest .cp survives", existsCp(liveViewDir, 3L));
@@ -440,7 +442,8 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                         scratch,
                         liveViewDir,
                         10L,
-                        nameSink
+                        nameSink,
+                        null
                 );
                 // 15 was ahead of the watermark (lost _txn advance scenario);
                 // sweep removes it. 7 survives as the head.
@@ -465,7 +468,8 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                         scratch,
                         liveViewDir,
                         100L,
-                        nameSink
+                        nameSink,
+                        null
                 );
                 Assert.assertEquals(4L, head);
                 Assert.assertFalse(".cp.tmp orphan unlinked", existsRaw(liveViewDir, "0000000000000004.cp.tmp"));

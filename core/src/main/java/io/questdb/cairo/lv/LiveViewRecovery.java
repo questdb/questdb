@@ -24,6 +24,10 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
@@ -32,6 +36,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Static helpers for live-view restart recovery. Concerned strictly with
@@ -51,7 +56,106 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class LiveViewRecovery {
 
+    private static final Log LOG = LogFactory.getLog(LiveViewRecovery.class);
+
     private LiveViewRecovery() {
+    }
+
+    /**
+     * Reads and structurally validates a live view's
+     * {@code _checkpoints/_ring} manifest into {@code candidateOut}, leaving it
+     * cleared - and so {@link LiveViewCheckpointRingCandidate#isStructurallyValid()
+     * invalid} - when there is nothing to trust later.
+     * <p>
+     * Makes <em>no</em> trust decision: that compares the manifest's
+     * {@code coveredBaseSeqTxn} against the reconciled applied floor, which does
+     * not exist until {@code reconcileAppliedFloorAfterRestart} runs on the
+     * refresh worker. Everything this method knows about {@code _lv.s} is the
+     * raw and legitimately stale value.
+     * <p>
+     * Validation is structural and cheap by design (design section 7.2): the
+     * codec's own invariants, plus {@link FilesFacade#exists} per listed entry.
+     * It opens no {@code .cp} file. CRCing each one would cost the full
+     * retention byte budget per view on the startup thread, to validate state
+     * only an O3 needs; a listed checkpoint that turns out corrupt is evicted
+     * lazily at use time, without disturbing its neighbours. The
+     * {@code exists()} check is not mere hygiene: the add path unlinks pruned
+     * checkpoints even when their publication failed, so a manifest naming a
+     * missing file is a reachable state that must fall back rather than promise
+     * an anchor that is gone.
+     * <p>
+     * Every failure - absent, corrupt, version-skewed, or naming a missing
+     * checkpoint - is non-fatal and costs a boundary rebuild at most. Ring state
+     * is derived; it never invalidates the view.
+     *
+     * @param ff              files-facade
+     * @param ringPath        reusable {@link Path}, re-based on entry
+     * @param liveViewDir     absolute path to the LV directory, without the
+     *                        {@code _checkpoints/} suffix
+     * @param liveViewToken   the LV, for log lines and codec rejection messages
+     * @param blockFileReader reusable block-file reader
+     * @param manifestReader  reusable parse scratch; cleared by the codec on
+     *                        entry, and copied out of before it is reused for
+     *                        the next view
+     * @param candidateOut    populated on success, cleared otherwise
+     */
+    public static void readRingCandidate(
+            @NotNull FilesFacade ff,
+            @NotNull Path ringPath,
+            @NotNull Path liveViewDir,
+            @NotNull TableToken liveViewToken,
+            @NotNull BlockFileReader blockFileReader,
+            @NotNull LiveViewCheckpointRingManifestReader manifestReader,
+            @NotNull LiveViewCheckpointRingCandidate candidateOut
+    ) {
+        candidateOut.clear();
+        LiveViewCheckpointRingManifest.ringManifestPath(ringPath, liveViewDir);
+        if (!ff.exists(ringPath.$())) {
+            // Legacy, never published, or published under a flag that is now
+            // off. Not a fault: highest-.cp-only recovery is the fallback the
+            // whole design keeps permanently.
+            return;
+        }
+        try {
+            blockFileReader.of(ringPath.$());
+            manifestReader.of(blockFileReader, liveViewToken);
+        } catch (Throwable th) {
+            // Two shapes land here and both mean the same thing. The codec
+            // rejects a truncated / version-skewed / invariant-violating
+            // payload with LV_CHECKPOINT_RING_MANIFEST_INVALID, while the block
+            // file layer throws its own critical exception on a checksum
+            // mismatch or torn region - it selects a region by version parity
+            // and has no automatic fallback to the prior one. Do not filter on
+            // the errno.
+            LOG.error().$("could not read live view checkpoint ring manifest, falling back to highest checkpoint [view=")
+                    .$(liveViewToken)
+                    .$(", error=").$(th).I$();
+            candidateOut.clear();
+            return;
+        }
+        for (int i = 0, n = manifestReader.getEntryCount(); i < n; i++) {
+            final long lvSeqTxn = manifestReader.getEntryLvSeqTxn(i);
+            ringPath.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+            LiveViewCheckpointWriter.appendCpFileName(ringPath, lvSeqTxn);
+            if (!ff.exists(ringPath.$())) {
+                // Reject the manifest whole rather than entry by entry: a
+                // partial ring is a claim nothing on disk backs, and the
+                // membership is what makes the surviving entries meaningful.
+                LOG.error().$("live view checkpoint ring manifest references a missing checkpoint, falling back to highest checkpoint [view=")
+                        .$(liveViewToken)
+                        .$(", lvSeqTxn=").$(lvSeqTxn)
+                        .$(", entryIndex=").$(i)
+                        .$(", entryCount=").$(n).I$();
+                candidateOut.clear();
+                return;
+            }
+        }
+        candidateOut.of(manifestReader);
+        LOG.info().$("live view checkpoint ring manifest read [view=")
+                .$(liveViewToken)
+                .$(", generation=").$(candidateOut.getGeneration())
+                .$(", coveredBaseSeqTxn=").$(candidateOut.getCoveredBaseSeqTxn())
+                .$(", entries=").$(candidateOut.getEntryCount()).I$();
     }
 
     /**
@@ -74,6 +178,31 @@ public final class LiveViewRecovery {
      *     pattern - foreign noise.</li>
      * </ul>
      * <p>
+     * {@code ringCandidate}, when structurally valid, is an <b>allow-list that
+     * exempts its members from both retirement rules</b>. Neither rule can tell
+     * a live ring entry from garbage on its own: {@code _lv.s} is a stale lower
+     * bound by design - {@code persistState} cannot persist-then-publish, and
+     * {@code reconcileAppliedFloorAfterRestart} clamps the floor back up on the
+     * refresh worker - so the orphan gate would delete the very entry the
+     * reconciled floor is about to validate; and every entry below the head is
+     * older than the highest survivor by construction, so the second pass would
+     * delete the rest of the ring. Both would leave the restart with the one
+     * anchor it already had, which is the gap the manifest exists to close.
+     * <p>
+     * <b>Exemption keeps the file; it never promotes it to the head.</b> A
+     * listed {@code .cp} above {@code appliedWatermark} survives but does not
+     * count towards the returned head, because the head is the <em>fallback</em>
+     * - the anchor used precisely when the manifest is not trusted. Only the
+     * trust decision separates a stale-{@code _lv.s} false positive from a
+     * genuine orphan whose commit never landed, and it runs on the refresh
+     * worker; a genuine orphan restored as the head would walk the applied
+     * watermark up over base commits the LV table never materialised. So the
+     * head keeps today's conservative raw-watermark gate, and the manifest
+     * carries the entries the reconciled floor can vouch for.
+     * <p>
+     * The manifest itself needs no special case: it is not named {@code *.cp},
+     * so both passes already leave it alone.
+     * <p>
      * Failure to unlink any single file is logged through
      * {@link FilesFacade#removeQuiet} (best-effort); the sweep continues so
      * a transient FS error does not block startup. The first post-restart
@@ -90,9 +219,13 @@ public final class LiveViewRecovery {
      *                         {@code _checkpoints/} suffix)
      * @param appliedWatermark base seqTxn position from {@code _lv.s}; any
      *                         {@code .cp} ahead of this is an orphan and gets
-     *                         unlinked
+     *                         unlinked unless {@code ringCandidate} lists it
      * @param nameSink         reusable sink for filename decoding; cleared
      *                         on entry
+     * @param ringCandidate    the {@code _ring} manifest {@link #readRingCandidate}
+     *                         produced, or null to sweep without an allow-list
+     *                         (no manifest, or the durable ring is disabled) -
+     *                         which is exactly the legacy behaviour
      * @return the highest surviving {@code <lvSeqTxn>.cp}'s {@code lvSeqTxn},
      * or {@link Numbers#LONG_NULL} when no head survives
      */
@@ -101,7 +234,8 @@ public final class LiveViewRecovery {
             @NotNull Path sweepPath,
             @NotNull Path liveViewDir,
             long appliedWatermark,
-            @NotNull StringSink nameSink
+            @NotNull StringSink nameSink,
+            @Nullable LiveViewCheckpointRingCandidate ringCandidate
     ) {
         sweepPath.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
         if (!ff.exists(sweepPath.$())) {
@@ -145,7 +279,14 @@ public final class LiveViewRecovery {
                     continue;
                 }
                 if (appliedWatermark != Numbers.LONG_NULL && lvSeqTxn > appliedWatermark) {
-                    unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
+                    if (!isListed(ringCandidate, lvSeqTxn)) {
+                        unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
+                    }
+                    // A listed .cp above the raw watermark survives - _lv.s
+                    // trails the view's real durable position, so this may be a
+                    // sealed entry the reconciled floor will vouch for - but it
+                    // does not become the head: only the trust decision tells
+                    // that apart from an orphan whose commit never landed.
                     continue;
                 }
                 if (highest == Numbers.LONG_NULL || lvSeqTxn > highest) {
@@ -180,6 +321,13 @@ public final class LiveViewRecovery {
                 }
                 final long lvSeqTxn = parseLvSeqTxn(nameSink);
                 if (lvSeqTxn == Numbers.LONG_NULL || lvSeqTxn == highest) {
+                    continue;
+                }
+                if (isListed(ringCandidate, lvSeqTxn)) {
+                    // The ring's older entries are below the head by
+                    // construction; retiring them here would empty the manifest
+                    // of everything but its newest entry before the refresh
+                    // worker ever sees it.
                     continue;
                 }
                 unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
@@ -298,6 +446,10 @@ public final class LiveViewRecovery {
             ff.findClose(findPtr2);
         }
         return highest;
+    }
+
+    private static boolean isListed(@Nullable LiveViewCheckpointRingCandidate ringCandidate, long lvSeqTxn) {
+        return ringCandidate != null && ringCandidate.isListed(lvSeqTxn);
     }
 
     private static long parseKeyBeforeExt(StringSink name, int extLen) {

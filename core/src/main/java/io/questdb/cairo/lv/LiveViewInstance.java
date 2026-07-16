@@ -203,6 +203,18 @@ public class LiveViewInstance implements QuietCloseable {
     // restore from the replay fallback for observability and tests. Mutated only
     // under the refresh latch; volatile for the catalogue thread.
     private volatile boolean checkpointRestoreSucceeded;
+    // The _checkpoints/_ring manifest the startup sweep read and structurally
+    // validated, awaiting the trust decision; null when there is no manifest, it
+    // did not validate, or the durable ring is disabled. Not a ring: trust
+    // compares its coveredBaseSeqTxn against the reconciled applied floor, which
+    // exists only on the refresh worker, so the sweep stashes the claim here and
+    // decides nothing. Written once during catalogue load and read (then cleared)
+    // by the refresh worker on the first cycle; volatile for that hand-off, and
+    // treated as immutable once stashed. The write lands after registerView, so
+    // it rests on the same guarantee setHeadCheckpoint does - buildViewGraphs
+    // runs before any refresh worker exists - and a torn read would cost nothing
+    // regardless: a null candidate is the conservative fallback.
+    private volatile LiveViewCheckpointRingCandidate checkpointRingCandidate;
     // Set true when a _checkpoints/_ring publication fails, cleared by the next
     // successful one. Diagnostic only: it never gates a replay (a failed
     // publication is safe by construction - coveredBaseSeqTxn advances only on a
@@ -690,6 +702,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getBelowLowerBoundCount() {
         return belowLowerBoundCount;
+    }
+
+    /**
+     * The structurally validated {@code _checkpoints/_ring} manifest the startup
+     * sweep stashed, or null when there is none to consider. See
+     * {@link #checkpointRingCandidate}.
+     */
+    public LiveViewCheckpointRingCandidate getCheckpointRingCandidate() {
+        return checkpointRingCandidate;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -1494,6 +1515,15 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setCheckpointRestoreSucceeded() {
         this.checkpointRestoreSucceeded = true;
+    }
+
+    /**
+     * Stashes the manifest the startup sweep validated, or clears it with null
+     * once the refresh worker has consumed it. See
+     * {@link #checkpointRingCandidate}.
+     */
+    public void setCheckpointRingCandidate(@Nullable LiveViewCheckpointRingCandidate candidate) {
+        this.checkpointRingCandidate = candidate;
     }
 
     public void setCompiledFactory(RecordCursorFactory factory) {
