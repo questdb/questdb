@@ -182,4 +182,74 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Task 8 (Plan 2): byte-identity for a plain (non-composite) table -- both writer and reader
+     * sides. Companion to {@link #testPlainTableRegistersNoInterners()} (writer-only) and
+     * {@link CompositeDictPersistenceTest#testPlainTableReaderHasNoCompositeDictionaries()}
+     * (reader-only): this consolidates both into one round-trip so a regression that nulls one side
+     * but not the other cannot slip through either existing test alone.
+     */
+    @Test
+    public void testPlainTableNoInternersTxnByteIdentical() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, a symbol, b symbol) timestamp(ts) partition by day wal");
+            try (TableWriter w = getWriter("p")) {
+                Assert.assertNull(w.getCompositeDictionaries());      // no interners for a plain table
+                Assert.assertEquals(2, w.getDenseSymbolMapCount());   // exactly the 2 SYMBOL columns
+            }
+            try (TableReader r = getReader("p")) {
+                Assert.assertNull(r.getCompositeDictionaries());
+                Assert.assertEquals(2, r.getTxFile().getSymbolColumnCount()); // _txn symbol region unchanged vs pre-feature
+            }
+        });
+    }
+
+    /**
+     * Task 8 (Plan 2): a composite dimension pins its source SYMBOL column by stable WRITER index
+     * ({@link io.questdb.cairo.PartitionDimension#getColumnIndex()}). Dropping that column would leave
+     * the dimension dangling, so {@code removeColumn} must reject it -- the DROP-side mirror of
+     * {@link #testAddSymbolColumnRejectedOnComposite()}.
+     * <p>
+     * This drops a lower-index non-dimension column ({@code foo}) first before attempting the
+     * dimension-source drops, to exercise the guard across a mixed drop sequence rather than in
+     * isolation. <b>Verified empirically (negative control) that this ordering does NOT, in the
+     * current codebase, make dense position diverge from writer index within a live
+     * {@code TableWriter}</b>: {@code TableWriterMetadata.removeColumn} only tombstones a column in
+     * place ({@code markDeleted()}), it never renumbers survivors, and {@code addColumn} always
+     * assigns a fresh slot via {@code metadata.getColumnCount()} -- so a column's dense position and
+     * its {@code getWriterIndex()} are the same value for the life of a writer instance regardless of
+     * how many other columns are dropped first. Temporarily swapping the guard's writer-index lookup
+     * for the plain dense {@code index} still passed this exact test (confirmed by re-running it under
+     * that swap). The dense/writer divergence {@link io.questdb.cairo.PartitionDimension}'s javadoc
+     * warns about is real, but it is a reader/metadata-cache-side phenomenon
+     * ({@code TableReaderMetadata} compacts tombstoned columns out of its dense list on reload via
+     * {@code buildColumnListFromMetadataFile}, while {@code writerIndex} is preserved) -- not something
+     * reachable from {@code TableWriter.removeColumn} today. The guard still resolves via
+     * {@code getWriterIndex()} rather than the raw dense index: that is the documented, self-explaining
+     * contract for comparing against {@code PartitionDimension.getColumnIndex()}, matches the existing
+     * {@code tombstoneCoveredColumnInOtherIndexes} call one line below, and remains correct by
+     * construction rather than by this incidental writer-side invariant. This test therefore stands as
+     * a solid behavioral regression test (reject dimension sources, allow everything else, across a
+     * mixed-order drop sequence) rather than as a proven discriminator of a reachable dense-vs-writer
+     * bug.
+     */
+    @Test
+    public void testDropDimensionSourceColumnRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, foo double, exchange symbol, symbol symbol, price double) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            try (TableWriter w = getWriter("t")) {
+                // Drop a lower-index non-dimension column first to exercise a mixed drop sequence (see
+                // class Javadoc above for why this does not, in fact, diverge dense from writer index).
+                w.removeColumn("foo");                                // foo = double, writer idx 1, non-dim -> allowed
+                try { w.removeColumn("symbol"); Assert.fail("dropping truncate-dim source must be rejected"); }
+                catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
+                try { w.removeColumn("exchange"); Assert.fail("dropping identity-dim source must be rejected"); }
+                catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
+                w.removeColumn("price");                              // non-dimension double -> allowed
+                Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("price") < 0);
+            }
+        });
+    }
 }

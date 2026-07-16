@@ -3018,6 +3018,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final byte indexType = metadata.getColumnIndexType(index);
         String columnName = metadata.getColumnName(index);
 
+        // A composite partition dimension pins its source SYMBOL column by stable WRITER index
+        // (PartitionDimension.getColumnIndex() is documented as a writer index, never a dense
+        // position -- see its javadoc). Resolve via getWriterIndex() rather than comparing the dense
+        // `index` above directly: TableWriterMetadata never actually renumbers a live column's dense
+        // slot after a drop (removeColumn() only tombstones in place, see below), so the two happen to
+        // coincide today, but going through the documented writer-index accessor -- mirroring its use
+        // one line below for tombstoneCoveredColumnInOtherIndexes -- keeps this guard correct by
+        // construction rather than by that incidental invariant. Dropping the dimension's source column
+        // would leave the dimension dangling -- routing a live table by a column that no longer exists.
+        // Reject before any mutation; the symmetric counterpart of the ADD/ALTER SYMBOL guards in
+        // addColumn(...) and changeColumnType(...).
+        final int droppedWriterIndex = metadata.getColumnMetadata(index).getWriterIndex();
+        final PartitionSpec partitionSpec = metadata.getPartitionSpec();
+        for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+            if (partitionSpec.getDimension(i).getColumnIndex() == droppedWriterIndex) {
+                throw CairoException.nonCritical()
+                        .put("cannot drop column '").put(name)
+                        .put("' referenced by a composite partition dimension");
+            }
+        }
+
         LOG.info().$("removing [column=").$safe(name).$(", path=").$substr(pathRootSize, path).I$();
 
         // check if we are moving timestamp from a partitioned table

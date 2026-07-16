@@ -206,4 +206,56 @@ public class CompositeDictPersistenceTest extends AbstractCairoTest {
             }
         });
     }
+
+    /**
+     * Task 8 (Plan 2): the core "trust {@code _txn}, not files" crash-safety guarantee. An
+     * {@code internCell} call alone (no row appended) never makes {@link TableWriter#inTransaction()}
+     * true, so {@link TableWriter#commit()} -- called implicitly on close, and explicitly everywhere
+     * else in this file -- takes its {@code !inTransaction()} short-circuit and never reaches
+     * {@code storeSymbolCounts}. The registry's on-disk {@code .o}/{@code .c} files may already carry
+     * the interned value, but the durable {@code _txn} symbol count for that slot is never bumped.
+     * Forcing a reopen from disk (via {@code engine.releaseInactive()}) proves the reader trusts only
+     * the persisted {@code _txn} count, not whatever the underlying symbol-map files happen to contain.
+     */
+    @Test
+    public void testUncommittedInternsDiscardedOnReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            try (TableWriter w = getWriter("t")) {
+                w.getCompositeDictionaries().cellRegistry().internCell(new int[]{1, 2}, 2);
+            }                                                        // writer closed WITHOUT commit
+            engine.releaseInactive();
+            try (TableReader r = getReader("t")) {
+                // _txn registry count was never advanced -> reopen sees zero (uncommitted intern gone)
+                Assert.assertEquals(0, r.getCompositeDictionaries().cellRegistry().size());
+            }
+        });
+    }
+
+    /**
+     * Companion to {@link #testUncommittedInternsDiscardedOnReopen()}: this time a real row is
+     * appended alongside the {@code internCell} call, so {@link TableWriter#inTransaction()} is true
+     * and {@link TableWriter#rollback()} actually engages (rather than being a no-op over an empty
+     * transaction). {@code rollbackSymbolTables} truncates every dense symbol map writer -- including
+     * composite interner slots, which it addresses purely by dense position, agnostic to whether a
+     * slot backs a real column or an interner -- back to the count last recorded in {@code _txn} (zero,
+     * since nothing was ever committed), discarding both the row and the interned cell in one motion.
+     */
+    @Test
+    public void testRollbackDiscardsInterns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, exchange symbol, symbol symbol) " +
+                    "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
+            try (TableWriter w = getWriter("t")) {
+                w.getCompositeDictionaries().cellRegistry().internCell(new int[]{1, 2}, 2);
+                TableWriter.Row row = w.newRow(0);                   // a real row -> inTransaction() true, so rollback engages
+                row.putSym(1, "AAA");
+                row.putSym(2, "BBB");
+                row.append();
+                w.rollback();                                        // discard the whole transaction (row + interns)
+                Assert.assertEquals(0, w.getCompositeDictionaries().cellRegistry().size());  // registry truncated to _txn count 0
+            }
+        });
+    }
 }
