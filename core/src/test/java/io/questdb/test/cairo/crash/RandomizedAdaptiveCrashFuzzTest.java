@@ -36,7 +36,9 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.FuzzRunner;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -50,6 +52,21 @@ import org.junit.Test;
 public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepTest {
 
     private final FuzzRunner fuzzer = new FuzzRunner();
+
+    @Before
+    public void setUpFuzzer() {
+        fuzzer.withDb(engine, sqlExecutionContext);
+        fuzzer.clearSeeds();
+    }
+
+    @After
+    public void tearDownFuzzer() {
+        fuzzer.after();
+    }
+
+    // Default = full destructive op library; the machinery self-check (Task 3) flips this to run a
+    // minimal insert/O3 profile. Field lives here; Task 3 only toggles it.
+    private boolean fuzzOverrideMinimal = false;
 
     // Canonical committed-state fingerprint: full ordered dump to a String.
     private String fingerprint(String table) throws SqlException {
@@ -66,6 +83,49 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             }
         }
         return -1;
+    }
+
+    // Uses the 22-arg overload (FuzzRunner.java:757) — the ONLY one that enables partitionToParquet
+    // (12th), partitionToNative (13th), setParquetEncoding (20th), and addCoveringIndex (22nd). The
+    // 16-arg overload silently leaves those at 0, so parquet/covering-index would NOT be exercised.
+    private void configureFuzz() {
+        if (fuzzOverrideMinimal) {
+            //   cancel notSet null  rollbk cAdd cRem cRen cTyp  data eqTs pDrop pPq  pNat trunc tDrop ttl  repl symV qry  pEnc tFmt cIdx
+            fuzzer.setFuzzProbabilities(
+                    0.05, 0.2, 0.05, 0.0,  0, 0, 0, 0,   0.6, 0.0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0);
+        } else {
+            fuzzer.setFuzzProbabilities(
+                    0.05, 0.2, 0.05, 0.0,       // cancelRows, notSet, nullSet, rollback(=0: clean seqTxn map)
+                    0.1, 0.05, 0.05, 0.05,      // colAdd, colRemove, colRename, colTypeChange
+                    0.5, 0.0, 0.05, 0.03,       // dataAdd, equalTsRows(=0: canonical dump), partitionDrop, partitionToParquet
+                    0.03, 0.05, 0.0, 0.05,      // partitionToNative, truncate, tableDrop(=0), setTtl
+                    0.1, 0.0, 0.0, 0.02,        // replaceInsert(dedup), symbolAccessValidation, query, setParquetEncoding
+                    0.0, 0.03);                 // setTableFormat(=0), addCoveringIndex
+        }
+        //                     isO3, fuzzRowCount, txns, strLen, symStrLen, symCount, initialRows=0, partitions
+        fuzzer.setFuzzCounts(true, 200, 20, 4, 4, 4, 0, 3);
+    }
+
+    private ObjList<FuzzTransaction> generateTxns(Rnd rnd, String walTableName) throws Exception {
+        configureFuzz();
+        fuzzer.createInitialTableWal(walTableName, 0);   // 0 initial rows → deterministic (no nondeterministic data_temp seed)
+        return fuzzer.generateTransactions(walTableName, rnd);
+    }
+
+    private ObjList<String> buildTwinFingerprints(String twinName, ObjList<FuzzTransaction> txns, Rnd applyRnd) throws Exception {
+        fuzzer.createInitialTableWal(twinName, 0);
+        ObjList<String> history = new ObjList<>();
+        history.add(fingerprint(twinName));                          // fp[0] = empty
+        final ObjList<FuzzTransaction> one = new ObjList<>();
+        for (int i = 0, n = txns.size(); i < n; i++) {
+            one.clear();
+            one.add(txns.getQuick(i));
+            fuzzer.applyToWal(one, twinName, 1, applyRnd);
+            drainWalQueue();
+            history.add(fingerprint(twinName));                      // fp[i+1] = state after txn i
+        }
+        execute("drop table " + twinName);                          // crash(dbRoot) must not see the twin
+        return history;
     }
 
     @Test
@@ -85,6 +145,34 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             Assert.assertEquals(1, lastMatch(history, history.getQuick(1)));
             // a fabricated state matches nothing
             Assert.assertEquals(-1, lastMatch(history, "not a real dump"));
+
+            // lastMatch must return the LARGEST matching index, not merely the first: append a second
+            // snapshot coincident with history[1] at a higher index and confirm the match follows it
+            // there (Tasks 5-7 rely on "largest match", not "first match").
+            int coincidentIndex = history.size();
+            history.add(history.getQuick(1));
+            Assert.assertEquals(coincidentIndex, lastMatch(history, history.getQuick(1)));
         });
+    }
+
+    @Test
+    public void testTwinFingerprintsDeterministic() throws Exception {
+        assertMemoryLeak(() -> {
+            final long s0 = 42L, s1 = 99L;
+            ObjList<String> h1 = runTwinOnce("wal_a", "twin_a", s0, s1);
+            ObjList<String> h2 = runTwinOnce("wal_b", "twin_b", s0, s1);
+            Assert.assertEquals("fp history length must be deterministic", h1.size(), h2.size());
+            for (int i = 0; i < h1.size(); i++) {
+                Assert.assertTrue("fp[" + i + "] must be identical across two runs of the same seed",
+                        TestUtils.equals(h1.getQuick(i), h2.getQuick(i)));
+            }
+            Assert.assertTrue("fp history must be non-trivial", h1.size() > 3);
+        });
+    }
+
+    private ObjList<String> runTwinOnce(String walName, String twinName, long s0, long s1) throws Exception {
+        Rnd genRnd = new Rnd(s0, s1);
+        ObjList<FuzzTransaction> txns = generateTxns(genRnd, walName);
+        return buildTwinFingerprints(twinName, txns, new Rnd(s0, s1));
     }
 }
