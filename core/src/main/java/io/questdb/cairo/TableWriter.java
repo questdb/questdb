@@ -336,6 +336,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int columnCount;
     private long commitRowCount;
     private long committedMasterRef;
+    // Non-owning holder for a composite table's write-side interners (dedicated dicts + _cell
+    // registry). Null for plain/cluster-only tables. The interner SymbolMapWriters themselves live
+    // in denseSymbolMapWriters and are freed there (freeSymbolMapWriters); this reference is merely
+    // dropped on teardown -- never closed here, which would double-free.
+    private CompositeDictionaries compositeDicts;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -2337,6 +2342,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    /**
+     * The write-side composite interners (dedicated dictionaries + {@code _cell} registry) for this
+     * table, or {@code null} if the table has no composite interners (plain or cluster-only table).
+     */
+    public CompositeDictionaries getCompositeDictionaries() {
+        return compositeDicts;
+    }
+
     public long getDataAppendPageSize() {
         return dataAppendPageSize;
     }
@@ -2347,6 +2360,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getDedupRowsRemovedSinceLastCommit() {
         return dedupRowsRemovedSinceLastCommit.sum();
+    }
+
+    @TestOnly
+    public int getDenseSymbolMapCount() {
+        return denseSymbolMapWriters.size();
     }
 
     @TestOnly
@@ -5186,6 +5204,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        // Register the composite interners as first-class _txn symbol maps, in layout order: the
+        // per-dimension dedicated dictionaries (TRUNCATE/EXPRESSION dims) first, then the _cell
+        // registry. Their _txn slots were reserved at CREATE (TableUtils bumps symbolMapCount), so
+        // txWriter.getSymbolValueCount(slot) reads a valid (zero) count for each. Constructed by
+        // mirroring the per-column SymbolMapWriter above, except the name/name-txn come from the
+        // layout and columnIndex is -1 (the interners own no table column -- scaleSymbolCapacities
+        // and other column-index consumers already skip columnIndex <= -1). Interners are added ONLY
+        // to the dense list, never the sparse (column-indexed) symbolMapWriters. Gated on !isView()
+        // to mirror the per-column construction and the create-path file provisioning (both skip
+        // views), keeping _txn.symbolColumnCount == denseSymbolMapWriters.size().
+        if (!tableToken.isView()) {
+            CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec());
+            if (layout.hasInterners()) {
+                final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+                ObjList<MapWriter> dedicatedDicts = new ObjList<>(dimCount);
+                for (int i = 0; i < dimCount; i++) {
+                    if (layout.needsDedicatedDict(i)) {
+                        final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
+                        SymbolMapWriter dictWriter = new SymbolMapWriter(
+                                configuration,
+                                path.trimTo(pathSize),
+                                layout.dictName(i),
+                                layout.dictColumnNameTxn(i),
+                                txWriter.getSymbolValueCount(symbolIndexInTxWriter),
+                                symbolIndexInTxWriter,
+                                txWriter,
+                                -1
+                        );
+                        denseSymbolMapWriters.add(dictWriter);
+                        dedicatedDicts.extendAndSet(i, dictWriter);
+                    }
+                }
+                final int registryIndexInTxWriter = denseSymbolMapWriters.size();
+                SymbolMapWriter registryWriter = new SymbolMapWriter(
+                        configuration,
+                        path.trimTo(pathSize),
+                        CompositeInternerLayout.REGISTRY_NAME,
+                        CompositeInternerLayout.REGISTRY_TXN,
+                        txWriter.getSymbolValueCount(registryIndexInTxWriter),
+                        registryIndexInTxWriter,
+                        txWriter,
+                        -1
+                );
+                denseSymbolMapWriters.add(registryWriter);
+                compositeDicts = new CompositeDictionaries(dedicatedDicts, new CellRegistry(registryWriter));
+            }
+        }
         if (isDeduplicationEnabled()) {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
             // Set dedup column count, excluding designated timestamp
@@ -6951,6 +7016,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void freeSymbolMapWriters() {
+        // Non-owning: just drop the holder. Its dedicated-dict and registry SymbolMapWriters are
+        // entries in denseSymbolMapWriters and are freed by the loop below (freeing here too would
+        // double-free).
+        compositeDicts = null;
         if (denseSymbolMapWriters != null) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 Misc.freeIfCloseable(denseSymbolMapWriters.getQuick(i));

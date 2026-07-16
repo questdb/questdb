@@ -755,6 +755,12 @@ public final class TableUtils {
                             COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY,
                             false
                     );
+                    // The dedicated dicts + the registry are first-class _txn symbol maps: count
+                    // them so createTxn(mem, symbolMapCount, ...) below reserves a zero-count slot
+                    // for each (dedicatedCount() dicts + 1 registry). The writer registers matching
+                    // SymbolMapWriters into denseSymbolMapWriters at open, keeping
+                    // _txn.symbolColumnCount == denseSymbolMapWriters.size().
+                    symbolMapCount += compositeLayout.dedicatedCount() + 1;
                 }
 
                 mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
