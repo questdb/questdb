@@ -1088,6 +1088,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // finalizeAndUnlock0 suppresses exactly that identity and still wakes a newer FULL
                 // publication. The retained owner waits for out-of-band redelivery (a later
                 // lock-holder's finalize, RESUME WAL, a fresh REFRESH FULL, or promote-time rebuild).
+                // The refresh gates key on hasPendingInvalidationReason(), so an owner-only marker
+                // does not freeze the view: the next ordinary refresh holder IS the redelivery.
                 isFullRefreshDeferred = true;
                 authRefusedOwner = fullRefreshOwner;
                 LOG.debug().$("materialized view full refresh deferred, node is read-only [view=").$(viewToken).I$();
@@ -2005,7 +2007,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final boolean periodRefresh = rangeFrom == Numbers.LONG_NULL;
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
+        if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
             return false;
         }
 
@@ -2171,7 +2173,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewState viewState = stateStore.getViewState(viewToken);
-            if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
+            if (viewState != null && !viewState.hasPendingInvalidationReason() && !viewState.isInvalid() && !viewState.isDropped()) {
                 if (isRefreshBlocked(viewToken)) {
                     // View is in the configured refresh block list (e.g. its refresh keeps crashing);
                     // skip it without invalidating. The base table WAL retention can stay pinned at
@@ -2330,7 +2332,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggerTimestamp) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
+        if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
             return false;
         }
 
@@ -2601,7 +2603,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final TableToken viewToken = refreshTask.matViewToken;
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
+        if (viewState != null && !viewState.hasPendingInvalidationReason() && !viewState.isInvalid() && !viewState.isDropped()) {
             if (isViewWriteSuspended(viewToken)) {
                 // The view is hard-suspended and writes are denied. Skip the cached-interval update (which
                 // persists via a WAL state mint) rather than fail into invalidation; the intervals refresh

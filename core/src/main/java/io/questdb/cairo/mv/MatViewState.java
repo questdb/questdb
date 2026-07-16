@@ -653,6 +653,17 @@ public class MatViewState implements QuietCloseable {
         return getPendingFullRefreshOwner(pendingInvalidationMarker) != null;
     }
 
+    /**
+     * Returns true only when the pending marker carries an invalidation reason. The refresh and
+     * WAL-purge gates use this reason-only view: a full-refresh-only marker must not freeze a
+     * valid view's refreshes -- those refreshes' post-release finalize is the redelivery channel
+     * for a retained full-refresh owner. Use {@link #isPendingInvalidation()} when either facet
+     * matters.
+     */
+    public boolean hasPendingInvalidationReason() {
+        return pendingInvalidationMarker instanceof PendingInvalidation pending && pending.reason != null;
+    }
+
     public void incrementRefreshIntervalsSeq() {
         refreshIntervalsSeq.incrementAndGet();
     }

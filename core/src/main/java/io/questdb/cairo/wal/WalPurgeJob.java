@@ -508,7 +508,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 // may delete WAL segments required for the second incremental refresh. Yet the refresh job is able
                 // to recover from this by falling back to a full table scan, we don't want that to happen.
 
-                final boolean invalid = state.isPendingInvalidation() || state.isInvalid();
+                final boolean invalid = state.hasPendingInvalidationReason() || state.isInvalid();
                 if (state.isLocked() && (state.getLastRefreshBaseTxn() == -1 || invalid)) {
                     // The first refresh must be running.
                     return 0;

@@ -2592,6 +2592,55 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStickyWriterRefusalRecoversViaNextRefreshHoldersFinalize() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The enterprise aborted-demote window: the writer chokepoint refuses while the engine
+            // still reports writable, the refused FULL defers (owner retained, wake suppressed,
+            // nothing re-enqueued), and the store stays alive -- no promote-time rebuild will run.
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+
+                Assert.assertTrue("the refused full refresh must be deferred (owner pending)", state.isPendingInvalidation());
+                Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertFalse(state.isLocked());
+
+                // The refusal clears (the heal path of the aborted role switch). NO explicit
+                // redelivery call: recovery must come from ordinary refresh traffic alone. The
+                // owner-only marker must not gate the incremental holder off the latch; that
+                // holder's post-release finalize is the redelivery channel for the retained owner.
+                walRefusalToken.set(null);
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.423, '2024-09-10T15:00')");
+                drainWalQueue();
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "ordinary refresh traffic must redeliver and consume the deferred owner",
+                    state.isPendingInvalidation()
+            );
+            Assert.assertFalse(state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testStickyWriterRefusalStillWakesConcurrentPublication() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
