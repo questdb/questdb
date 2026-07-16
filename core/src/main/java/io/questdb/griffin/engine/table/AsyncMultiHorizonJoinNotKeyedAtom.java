@@ -27,14 +27,10 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -66,13 +62,7 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            AsyncHorizonJoinResources resources,
             int workerCount
     ) {
         super(
@@ -87,13 +77,7 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
+                resources,
                 workerCount
         );
 
@@ -108,7 +92,7 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
             // Initialize values to empty state
             resetMapValues();
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }

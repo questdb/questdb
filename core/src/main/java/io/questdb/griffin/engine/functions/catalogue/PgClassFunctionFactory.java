@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -131,7 +132,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
     private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
         private final PgClassRecordCursor cursor;
-        private final Path path;
+        private Path path;
         private long tempMem;
 
         public PgClassCursorFactory(RecordMetadata metadata) {
@@ -165,8 +166,21 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            Misc.free(path);
-            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            final Path path = this.path;
+            this.path = null;
+            final long tempMem = this.tempMem;
+            this.tempMem = 0;
+            Throwable failure = Misc.freeBestEffort(null, path);
+            try {
+                Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else if (failure != th) {
+                    failure.addSuppressed(th);
+                }
+            }
+            CairoException.rethrowCleanupFailure(failure);
         }
     }
 

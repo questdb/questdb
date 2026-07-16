@@ -134,8 +134,8 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         }
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0));
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0));
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
     }
 
     @Override

@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
@@ -99,12 +100,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
     private final int workerCount;
+    private AsyncWindowJoinRecordCursor cursor;
+    private PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
 
     public AsyncWindowJoinFastRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -2232,10 +2233,24 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(frameSequence);
-        Misc.free(cursor);
-        Misc.free(joinMetadata);
+        final AsyncWindowJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable failure = Misc.freeBestEffort(null, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinMetadata);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

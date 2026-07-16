@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -46,9 +47,9 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
-    protected final ObjList<GroupByFunction> groupByFunctions;
+    protected ObjList<GroupByFunction> groupByFunctions;
     // factory keeps a reference but allocation lifecycle is governed by cursor
-    protected final Map map;
+    protected Map map;
     protected final RecordSink mapSink;
 
     public AbstractSampleByFillRecordCursorFactory(
@@ -60,9 +61,13 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            Function timezoneNameFunc,
+            Function offsetFunc,
+            Function sampleFromFunc,
+            Function sampleToFunc
     ) {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             this.groupByFunctions = groupByFunctions;
             // sink will be storing record columns to map key
@@ -73,7 +78,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             // map's malloc and the matching free at cursor close balance on the per-query counter.
             map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -105,12 +110,45 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             Misc.free(cursor);
             throw th;
         }
-        return initFunctionsAndCursor(executionContext, baseCursor);
+        try {
+            // Init all record functions for this cursor, in case functions require metadata and/or symbol tables.
+            Function.init(recordFunctions, baseCursor, executionContext, null);
+        } catch (Throwable th) {
+            try {
+                Misc.free(baseCursor);
+            } catch (Throwable cleanupTh) {
+                if (cleanupTh != th) {
+                    th.addSuppressed(cleanupTh);
+                }
+            }
+            // The cursor's map was reopened before record-function initialization. Release it on
+            // init failure so the tracker stays balanced and the cached cursor can reopen safely.
+            try {
+                Misc.free(cursor);
+            } catch (Throwable cleanupTh) {
+                if (cleanupTh != th) {
+                    th.addSuppressed(cleanupTh);
+                }
+            }
+            throw th;
+        }
+
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
+        }
     }
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(getRawCursor());
+        final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        this.groupByFunctions = null; // groupByFunctions are included in recordFunctions
+        this.map = null; // the cursor owns the map allocation lifecycle
+        Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }
