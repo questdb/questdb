@@ -1663,6 +1663,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isLiveViewCheckpointRingDurableEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isLiveViewEnabled() {
         return true;
     }

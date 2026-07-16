@@ -1158,6 +1158,20 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    /**
+     * Enables durable publication of the live-view retained-checkpoint ring to
+     * {@code _checkpoints/_ring}. The refresh worker publishes the manifest
+     * ahead of every commit that advances the view, so a restart can recover
+     * the whole ring instead of trusting only the highest {@code .cp} and
+     * rebuilding the first out-of-order replay from the view boundary.
+     * <p>
+     * The manifest is derived state: publication failures log and continue, and
+     * a missing, corrupt or version-skewed {@code _ring} costs a boundary
+     * rebuild rather than invalidating the view. Disabling this leaves recovery
+     * on the highest-{@code .cp}-only path.
+     */
+    boolean isLiveViewCheckpointRingDurableEnabled();
+
     boolean isLiveViewEnabled();
 
     boolean isMatViewCoveringIndexEnabled();

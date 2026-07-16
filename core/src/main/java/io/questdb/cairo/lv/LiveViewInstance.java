@@ -203,6 +203,18 @@ public class LiveViewInstance implements QuietCloseable {
     // restore from the replay fallback for observability and tests. Mutated only
     // under the refresh latch; volatile for the catalogue thread.
     private volatile boolean checkpointRestoreSucceeded;
+    // Set true when a _checkpoints/_ring publication fails, cleared by the next
+    // successful one. Diagnostic only: it never gates a replay (a failed
+    // publication is safe by construction - coveredBaseSeqTxn advances only on a
+    // successful publication, so the on-disk manifest always holds a
+    // (membership, covered) pair that was valid when written, and restart either
+    // finds covered equal to the reconciled applied floor and trusts it, or does
+    // not and falls back). It exists so later code does not mistake the
+    // in-memory ring for a durable one, and to surface in live_views(). Stays
+    // false when the durable ring is disabled - there is no manifest to diverge
+    // from then. Mutated only on the refresh worker under the refresh latch;
+    // volatile for the catalogue thread. See lastPublishedRingGeneration.
+    private volatile boolean checkpointRingDirty;
     // Wall-clock (micros) of the most recent head-checkpoint commit. Numbers.LONG_NULL
     // until the first cycle that writes a .cp. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -216,6 +228,23 @@ public class LiveViewInstance implements QuietCloseable {
     // ingestion produces batched commits at FLUSH EVERY cadence rather than one
     // commit per base notification.
     private volatile long lastFlushTimeUs = Numbers.LONG_NULL;
+    // coveredBaseSeqTxn of the most recent successful _checkpoints/_ring
+    // publication - the base seqTxn at which every listed entry was proven
+    // sealed. Numbers.LONG_NULL until this process publishes. Restart trusts the
+    // on-disk ring only when its covered value equals the reconciled applied
+    // floor, so this mirrors what that comparison will see for as long as the
+    // process lives. Same write discipline as lastPublishedRingGeneration.
+    private volatile long lastPublishedRingCoveredBaseSeqTxn = Numbers.LONG_NULL;
+    // Generation stamped by the most recent successful _checkpoints/_ring
+    // publication; the next one stamps this + 1. 0 means this process has not
+    // published, so a real manifest always carries a generation >= 1. Recovery
+    // seeds it from the manifest it recovers, keeping the counter monotone
+    // across restarts. Diagnostic: nothing selects on it - the block checksum
+    // already catches the corruption a stale generation would signal - but it is
+    // the handle crash-injection tests use to name a publication. Mutated only
+    // on the refresh worker under the refresh latch; volatile because the
+    // catalogue thread reads it off-latch.
+    private volatile long lastPublishedRingGeneration;
     // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Maximum base-row timestamp the refresh worker has observed so far, across
@@ -567,6 +596,29 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Appends the whole retained-checkpoint ring to {@code dest} as packed
+     * records - the snapshot a {@code _checkpoints/_ring} publication lists.
+     * {@code dest} keeps whatever it already held; callers clear it first.
+     * <p>
+     * The record layout the ring holds is the manifest's entry layout, so this
+     * is a straight {@link LongList} copy rather than a field-by-field
+     * transcription. The copy is what keeps the ring itself worker-private: the
+     * publication then reads a stable snapshot rather than the live list. Runs
+     * on the refresh worker under the refresh latch. See
+     * {@link #retainedCheckpoints}.
+     */
+    public void copyRetainedCheckpointsTo(LongList dest) {
+        assert RETAINED_CHECKPOINT_RECORD_SIZE == LiveViewCheckpointRingManifest.ENTRY_SIZE
+                && RETAINED_CHECKPOINT_LV_SEQ_TXN == LiveViewCheckpointRingManifest.ENTRY_LV_SEQ_TXN
+                && RETAINED_CHECKPOINT_MAX_TS == LiveViewCheckpointRingManifest.ENTRY_MAX_TS
+                && RETAINED_CHECKPOINT_BASE_SEQ_TXN == LiveViewCheckpointRingManifest.ENTRY_BASE_SEQ_TXN
+                && RETAINED_CHECKPOINT_LV_ROWS_TOTAL == LiveViewCheckpointRingManifest.ENTRY_LV_ROWS_TOTAL
+                && RETAINED_CHECKPOINT_STATE_BYTES == LiveViewCheckpointRingManifest.ENTRY_STATE_BYTES
+                : "ring record layout has diverged from the manifest entry layout";
+        dest.add(retainedCheckpoints);
+    }
+
+    /**
      * Companion to {@link #startCheckpoint(long)}. Clears the freeze gate so
      * the refresh worker resumes on its next turn and wakes any thread blocked
      * in {@link #waitForUnfrozen()}. Idempotent.
@@ -788,6 +840,20 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getLastProcessedSeqTxn() {
         return stateReader.getLastProcessedSeqTxn();
+    }
+
+    /**
+     * See {@link #lastPublishedRingCoveredBaseSeqTxn}.
+     */
+    public long getLastPublishedRingCoveredBaseSeqTxn() {
+        return lastPublishedRingCoveredBaseSeqTxn;
+    }
+
+    /**
+     * See {@link #lastPublishedRingGeneration}.
+     */
+    public long getLastPublishedRingGeneration() {
+        return lastPublishedRingGeneration;
     }
 
     public long getLastRefreshTimeUs() {
@@ -1108,6 +1174,17 @@ public class LiveViewInstance implements QuietCloseable {
         return checkpointRestoreSucceeded;
     }
 
+    /**
+     * @return {@code true} when the last {@code _checkpoints/_ring} publication
+     * failed, so the in-memory ring is ahead of the durable manifest. Purely a
+     * diagnostic - the next publication clears it, and a restart in the
+     * meantime falls back rather than trusting stale membership. See
+     * {@link #checkpointRingDirty}.
+     */
+    public boolean isCheckpointRingDirty() {
+        return checkpointRingDirty;
+    }
+
     public boolean isInvalid() {
         return stateReader.isInvalid();
     }
@@ -1255,6 +1332,31 @@ public class LiveViewInstance implements QuietCloseable {
             totalBytes -= getRetainedCheckpointStateBytes(0);
             retainedCheckpoints.removeIndexBlock(0, RETAINED_CHECKPOINT_RECORD_SIZE);
         }
+    }
+
+    /**
+     * Records a successful {@code _checkpoints/_ring} publication that stamped
+     * {@code generation} and listed every entry as sealed at
+     * {@code coveredBaseSeqTxn}, and clears the dirty flag. The two values only
+     * ever advance together, so the caller must invoke this after the manifest
+     * is durable, never before. Runs on the refresh worker under the refresh
+     * latch. See {@link #lastPublishedRingGeneration}.
+     */
+    public void recordCheckpointRingPublication(long generation, long coveredBaseSeqTxn) {
+        lastPublishedRingGeneration = generation;
+        lastPublishedRingCoveredBaseSeqTxn = coveredBaseSeqTxn;
+        checkpointRingDirty = false;
+    }
+
+    /**
+     * Records a failed {@code _checkpoints/_ring} publication. Leaves the last
+     * published generation and covered seqTxn where they are - they describe
+     * what is durable, and nothing became durable - so the next publication
+     * stamps the same generation the failed one would have. See
+     * {@link #checkpointRingDirty}.
+     */
+    public void recordCheckpointRingPublicationFailure() {
+        checkpointRingDirty = true;
     }
 
     /**

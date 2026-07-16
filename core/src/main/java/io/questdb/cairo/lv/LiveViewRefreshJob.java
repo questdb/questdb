@@ -202,6 +202,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // restoreFromHead calls. Avoids per-call allocations on the restart and O3
     // head-hit paths.
     private final RestoredHeadState restoredHeadState = new RestoredHeadState();
+    // Publishes _checkpoints/_ring. Lazily allocated on this worker's first
+    // publication and held for the worker's life, so a per-cycle publication
+    // costs the manifest rewrite plus one mmap/munmap and nothing else. Null
+    // when cairo.live.view.checkpoint.ring.durable.enabled is off, or before the
+    // first view on this worker publishes.
+    private LiveViewCheckpointRingManifestWriter ringManifestWriter;
+    // Ring membership snapshot handed to a _checkpoints/_ring publication, packed
+    // as LiveViewCheckpointRingManifest entry records. Worker-owned; cleared
+    // before each use.
+    private final LongList ringSnapshot = new LongList();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
     // Reusable ARRAY read flyweight for the O3-rebuild disk stager
@@ -288,6 +298,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(applyJob);
         checkpointReader = Misc.free(checkpointReader);
         checkpointWriter = Misc.free(checkpointWriter);
+        ringManifestWriter = Misc.free(ringManifestWriter);
         stagingBuffer = Misc.free(stagingBuffer);
     }
 
@@ -3844,6 +3855,79 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reader = engine.getReader(baseToken);
         }
         return reader;
+    }
+
+    /**
+     * Rewrites {@code <lvDir>/_checkpoints/_ring} with the instance's current
+     * retained-checkpoint ring as the set of checkpoints proven sealed at
+     * {@code coveredBaseSeqTxn} - the single durable-publication point for the
+     * ring, so that ring membership, the generation counter and the dirty flag
+     * only ever move together and only ever here.
+     * <p>
+     * {@code coveredBaseSeqTxn} is a claim about the listed entries, not about
+     * what the view has consumed: every entry incorporates every base row at or
+     * below its own {@code maxTs} from every base commit through
+     * {@code coveredBaseSeqTxn}. Both replay paths prove exactly that before
+     * they commit - each survivor of the retire sits strictly below
+     * {@code min(triggerLowTs, minAheadTs)} - which is why a publication runs
+     * <em>ahead</em> of the commit it names and needs no ordering relationship
+     * to {@code _lv.s}.
+     * <p>
+     * Never unlinks: the manifest is an allow-list, so a caller retiring or
+     * pruning {@code .cp} files orders its unlinks after the publication that
+     * drops them, and a file the manifest does not list is garbage whether or
+     * not its unlink lands.
+     * <p>
+     * Failure logs and returns {@code false}; it never blocks the cycle.
+     * {@code coveredBaseSeqTxn} advances only on success, so the on-disk
+     * manifest always holds a {@code (membership, covered)} pair that was valid
+     * when written, and a restart either finds {@code covered} equal to the
+     * reconciled applied floor (the membership really is sealed there, trust it)
+     * or does not (fall back to the highest {@code .cp}). Refusing the replay
+     * instead would buy nothing and would stall the view outright while
+     * {@code _ring} is unwritable.
+     *
+     * @return {@code true} when the manifest is durable at
+     * {@code coveredBaseSeqTxn}. {@code false} covers both a failed publication
+     * and a disabled durable ring, so it means "not published", not "error" -
+     * the log line and {@code checkpointRingDirty} distinguish the two.
+     */
+    private boolean publishCheckpointRing(LiveViewInstance instance, long coveredBaseSeqTxn) {
+        if (!engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
+            return false;
+        }
+        // The generation a successful publication will stamp. A failed one
+        // leaves it unclaimed for the next attempt: nothing selects on
+        // generation, so gaps would be harmless, but a monotone counter with no
+        // gaps makes a publication countable from the logs.
+        final long generation = instance.getLastPublishedRingGeneration() + 1;
+        try {
+            if (ringManifestWriter == null) {
+                ringManifestWriter = new LiveViewCheckpointRingManifestWriter(engine.getConfiguration());
+            }
+            // Snapshot the ring rather than publish off the live list: the ring
+            // is worker-private with no volatile publication, and the copy is
+            // the retention count times ENTRY_SIZE longs (8 x 5 by default).
+            ringSnapshot.clear();
+            instance.copyRetainedCheckpointsTo(ringSnapshot);
+            path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
+            ringManifestWriter.publish(path, generation, coveredBaseSeqTxn, ringSnapshot);
+        } catch (Throwable t) {
+            instance.recordCheckpointRingPublicationFailure();
+            LOG.critical().$("could not publish live view checkpoint ring [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", generation=").$(generation)
+                    .$(", coveredBaseSeqTxn=").$(coveredBaseSeqTxn)
+                    .$(", entries=").$(instance.getRetainedCheckpointCount())
+                    .$(", error=").$(t).I$();
+            // The writer is reusable after a fault - publish() re-opens through
+            // BlockFileWriter.of(), which closes and re-initialises whatever the
+            // fault left behind - so it is kept rather than dropped the way the
+            // half-open .cp writer is.
+            return false;
+        }
+        instance.recordCheckpointRingPublication(generation, coveredBaseSeqTxn);
+        return true;
     }
 
     /**

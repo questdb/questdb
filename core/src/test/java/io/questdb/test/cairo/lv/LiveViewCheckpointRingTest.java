@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointRingManifest;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.std.LongList;
@@ -71,6 +72,60 @@ public class LiveViewCheckpointRingTest {
         Assert.assertEquals(70, instance.getRetainedCheckpointStateBytes(2));
 
         Assert.assertEquals(50 + 60 + 70, instance.getRetainedCheckpointsTotalStateBytes());
+    }
+
+    @Test
+    public void testCopyRetainedCheckpointsToAppendsPackedRecords() {
+        LiveViewInstance instance = newStubInstance();
+        instance.addRetainedCheckpoint(1, 10, 100, 1000, 50);
+        instance.addRetainedCheckpoint(2, 20, 200, 2000, 60);
+
+        // The manifest publishes off this copy, so the packed layout it produces
+        // is the manifest's entry layout: ENTRY_SIZE longs per record, oldest
+        // first, fields in (lvSeqTxn, maxTs, baseSeqTxn, lvRowsTotal, stateBytes)
+        // order. A field reordered on either side turns anchors into garbage
+        // silently, which is what the assert in copyRetainedCheckpointsTo guards.
+        LongList snapshot = new LongList();
+        instance.copyRetainedCheckpointsTo(snapshot);
+
+        Assert.assertEquals(2 * LiveViewCheckpointRingManifest.ENTRY_SIZE, snapshot.size());
+        assertEntry(snapshot, 0, 1, 10, 100, 1000, 50);
+        assertEntry(snapshot, 1, 2, 20, 200, 2000, 60);
+    }
+
+    @Test
+    public void testCopyRetainedCheckpointsToEmptyRing() {
+        LiveViewInstance instance = newStubInstance();
+
+        // A boundary rebuild retires the whole ring and publishes an empty
+        // manifest, so an empty copy is a normal outcome, not an error.
+        LongList snapshot = new LongList();
+        instance.copyRetainedCheckpointsTo(snapshot);
+
+        Assert.assertEquals(0, snapshot.size());
+    }
+
+    @Test
+    public void testCopyRetainedCheckpointsToTracksRingMutation() {
+        LiveViewInstance instance = newStubInstance();
+        instance.addRetainedCheckpoint(1, 10, 100, 1000, 50);
+        instance.addRetainedCheckpoint(2, 20, 200, 2000, 60);
+
+        LongList snapshot = new LongList();
+        instance.copyRetainedCheckpointsTo(snapshot);
+
+        // The copy must be a snapshot, not a view: a later retire cannot reach
+        // back into a publication that already read it.
+        instance.invalidateRetainedCheckpointsFrom(20, null);
+        Assert.assertEquals(1, instance.getRetainedCheckpointCount());
+        Assert.assertEquals(2 * LiveViewCheckpointRingManifest.ENTRY_SIZE, snapshot.size());
+
+        // Re-taking it after the retire sees the survivors only - the membership
+        // the next publication lists.
+        snapshot.clear();
+        instance.copyRetainedCheckpointsTo(snapshot);
+        Assert.assertEquals(LiveViewCheckpointRingManifest.ENTRY_SIZE, snapshot.size());
+        assertEntry(snapshot, 0, 1, 10, 100, 1000, 50);
     }
 
     @Test
@@ -213,6 +268,48 @@ public class LiveViewCheckpointRingTest {
     }
 
     @Test
+    public void testRecordCheckpointRingPublication() {
+        LiveViewInstance instance = newStubInstance();
+
+        // Nothing published yet: generation 0 (a real manifest always carries
+        // >= 1) and no covered seqTxn to compare a reconciled floor against.
+        Assert.assertEquals(0, instance.getLastPublishedRingGeneration());
+        Assert.assertEquals(Numbers.LONG_NULL, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertFalse(instance.isCheckpointRingDirty());
+
+        instance.recordCheckpointRingPublication(1, 100);
+        Assert.assertEquals(1, instance.getLastPublishedRingGeneration());
+        Assert.assertEquals(100, instance.getLastPublishedRingCoveredBaseSeqTxn());
+        Assert.assertFalse(instance.isCheckpointRingDirty());
+
+        instance.recordCheckpointRingPublication(2, 140);
+        Assert.assertEquals(2, instance.getLastPublishedRingGeneration());
+        Assert.assertEquals(140, instance.getLastPublishedRingCoveredBaseSeqTxn());
+    }
+
+    @Test
+    public void testRecordCheckpointRingPublicationFailureHoldsCovered() {
+        LiveViewInstance instance = newStubInstance();
+        instance.recordCheckpointRingPublication(1, 100);
+
+        // covered describes what is durable, so a failed publication must not
+        // advance it: that is exactly what makes the failure safe. A restart here
+        // finds covered (100) unequal to a reconciled floor that moved past it,
+        // and falls back instead of trusting stale membership.
+        instance.recordCheckpointRingPublicationFailure();
+        Assert.assertTrue(instance.isCheckpointRingDirty());
+        Assert.assertEquals(1, instance.getLastPublishedRingGeneration());
+        Assert.assertEquals(100, instance.getLastPublishedRingCoveredBaseSeqTxn());
+
+        // The next success claims the generation the failed attempt did not, and
+        // clears the flag.
+        instance.recordCheckpointRingPublication(2, 180);
+        Assert.assertFalse(instance.isCheckpointRingDirty());
+        Assert.assertEquals(2, instance.getLastPublishedRingGeneration());
+        Assert.assertEquals(180, instance.getLastPublishedRingCoveredBaseSeqTxn());
+    }
+
+    @Test
     public void testRemoveRetainedCheckpointNewest() {
         LiveViewInstance instance = newStubInstance();
         instance.addRetainedCheckpoint(1, 10, 100, 1000, 50);
@@ -227,6 +324,23 @@ public class LiveViewCheckpointRingTest {
         Assert.assertEquals(1, instance.getRetainedCheckpointLvSeqTxn(0));
         Assert.assertEquals(2, instance.getRetainedCheckpointLvSeqTxn(1));
         Assert.assertEquals(20, instance.getRetainedCheckpointMaxTs(1));
+    }
+
+    private static void assertEntry(
+            LongList snapshot,
+            int index,
+            long lvSeqTxn,
+            long maxTs,
+            long baseSeqTxn,
+            long lvRowsTotal,
+            long stateBytes
+    ) {
+        final int base = index * LiveViewCheckpointRingManifest.ENTRY_SIZE;
+        Assert.assertEquals(lvSeqTxn, snapshot.getQuick(base + LiveViewCheckpointRingManifest.ENTRY_LV_SEQ_TXN));
+        Assert.assertEquals(maxTs, snapshot.getQuick(base + LiveViewCheckpointRingManifest.ENTRY_MAX_TS));
+        Assert.assertEquals(baseSeqTxn, snapshot.getQuick(base + LiveViewCheckpointRingManifest.ENTRY_BASE_SEQ_TXN));
+        Assert.assertEquals(lvRowsTotal, snapshot.getQuick(base + LiveViewCheckpointRingManifest.ENTRY_LV_ROWS_TOTAL));
+        Assert.assertEquals(stateBytes, snapshot.getQuick(base + LiveViewCheckpointRingManifest.ENTRY_STATE_BYTES));
     }
 
     private static LiveViewInstance newStubInstance() {
