@@ -61,10 +61,11 @@ import org.jetbrains.annotations.TestOnly;
  * dictionary once per source dictionary and then served from a query-accounted native cache.
  */
 public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final IntList columnToFunctionIndex;
-    private final UnionSymbolCastRecordCursor cursor;
-    private final ObjList<Function> functions;
+    // _close() detaches these three before releasing them, so they are not final.
+    private RecordCursorFactory base;
+    private UnionSymbolCastRecordCursor cursor;
+    private ObjList<Function> functions;
 
     /**
      * @param metadata              result metadata, exposing the re-symbolised columns as SYMBOL
@@ -188,8 +189,21 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.freeObjList(functions);
-        Misc.free(base);
+        // AbstractRecordCursorFactory runs this at most once, so detach every owned reference before
+        // the first close and attempt them all, rethrowing the first failure with the rest suppressed.
+        // The cursor goes first: it owns the per-source native key maps, and its close() calls back
+        // into the function list, which must still be populated when it does.
+        final UnionSymbolCastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final ObjList<Function> functions = this.functions;
+        this.functions = null;
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeObjListBestEffort(failure, functions);
+        failure = Misc.freeBestEffort(failure, base);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class KeyValueSymbolTable implements SymbolTable {
@@ -199,6 +213,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             this.delegate = delegate;
         }
 
+        // The union answers for the whole result, but its cost is per leg: a leg backed by a table
+        // dictionary translates by key and never touches text, while a dynamic leg has to intern its
+        // text to mint one. True is the better approximation - the text fallback re-encodes UTF-8 on
+        // every row, which the key path does only on first sight of a key - and it is what keeps a
+        // static leg on two int probes per row. It costs an all-dynamic union the merged dictionary
+        // it would otherwise never build.
         @Override
         public boolean supportsKeyValueAccess() {
             return true;

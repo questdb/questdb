@@ -56,6 +56,33 @@ import org.junit.Test;
 public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
 
     @Test
+    public void testFactoryCloseReleasesCursorOwnedState() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
+            final TrackingCursorFactory base = new TrackingCursorFactory(new String[][]{{"alpha"}, {"beta"}});
+            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try {
+                final UnionSymbolCastRecordCursorFactory factory = newFactory(base, functions);
+                // Read a key so the cursor builds the per-source native key map it owns, then close
+                // only the factory. A factory owns its cursor, so closing it has to release
+                // everything the cursor holds - the cursor's own close() is not the only path.
+                final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(0, cursor.getRecord().getInt(0));
+                Assert.assertTrue(tracker.getUsed() > 0);
+
+                factory.close();
+                Assert.assertEquals("closing the factory must release the cursor's native state", 0, tracker.getUsed());
+                Assert.assertEquals(1, base.cursor.closeCount);
+                Assert.assertEquals(1, function.cursorClosedCount);
+            } finally {
+                releaseTracker(tracker);
+            }
+        });
+    }
+
+    @Test
     public void testFunctionInitFailureClosesBaseCursorAndFunctions() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
