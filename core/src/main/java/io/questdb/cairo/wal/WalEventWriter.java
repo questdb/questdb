@@ -87,8 +87,15 @@ class WalEventWriter implements Closeable {
     }
 
     public void close(boolean truncate, byte truncateMode) {
-        eventMem.close(truncate, truncateMode);
-        eventIndexMem.close(truncate, truncateMode);
+        // Close BOTH memories even if the first throws (e.g. a close-time fd-sync fault, real or crash-
+        // simulated): MemoryCMARWImpl.close unmaps before its fd sync, so a throw from eventMem would otherwise
+        // leave eventIndexMem mapped and leak its MMAP_TABLE_WAL_WRITER memory. The finally closes it too; the
+        // original fault still propagates.
+        try {
+            eventMem.close(truncate, truncateMode);
+        } finally {
+            eventIndexMem.close(truncate, truncateMode);
+        }
     }
 
     @TestOnly

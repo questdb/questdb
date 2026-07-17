@@ -1367,25 +1367,57 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void doClose(boolean truncate) {
         if (open) {
             open = false;
+            // Release every native resource even if one step throws. A power loss (simulated by the crash
+            // harness, or a genuine disk fault in production) can fire on a close-time durability op; doClose has
+            // already cleared `open`, so any resource skipped by an aborting throw would never be reclaimed (a
+            // retry finds open==false and no-ops) and its memory would leak until the process exits. Run each
+            // step in turn, keep the FIRST fault, and rethrow it after everything is released so callers/pools
+            // still observe the failure.
+            Throwable closeError = null;
             // Deferred 2 (group commit): ensure this writer is never left in the background flush queue past
             // its own lifetime. cleanupBeforeClose already flushed (clean) or dropped (distressed) it; this
             // is the belt-and-suspenders for any close path that bypasses cleanupBeforeClose (e.g. a
             // constructor failure before the writer ever committed). Use dropPendingDurable() (synchronized)
             // so pending is cleared under the monitor BEFORE the fd-close loop below — closing the
-            // use-after-close race even on this fallback path (doClose is not itself synchronized).
-            dropPendingDurable();
+            // use-after-close race even on this fallback path (doClose is not itself synchronized). Wrapped so a
+            // fault here (it can perform a device flush) still lets the memory frees below run.
+            try {
+                dropPendingDurable();
+            } catch (Throwable th) {
+                closeError = th;
+            }
             if (metadata != null) {
-                metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                try {
+                    metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                } catch (Throwable th) {
+                    closeError = closeError != null ? closeError : th;
+                }
             }
             if (events != null) {
-                events.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                try {
+                    events.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                } catch (Throwable th) {
+                    closeError = closeError != null ? closeError : th;
+                }
             }
             if (columnarAppender != null) {
-                columnarAppender.close();
+                try {
+                    columnarAppender.close();
+                } catch (Throwable th) {
+                    closeError = closeError != null ? closeError : th;
+                }
                 columnarAppender = null;
             }
-            freeSymbolMapReaders();
-            freeColumns(truncate);
+            try {
+                freeSymbolMapReaders();
+            } catch (Throwable th) {
+                closeError = closeError != null ? closeError : th;
+            }
+            try {
+                freeColumns(truncate);
+            } catch (Throwable th) {
+                closeError = closeError != null ? closeError : th;
+            }
 
             if (minSegmentLocked > -1) {
                 notifySegmentClosure(lastSegmentTxn, minSegmentLocked);
@@ -1402,6 +1434,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             notifyWalClosure();
             columnVersionReader = Misc.free(columnVersionReader);
             txReader = Misc.free(txReader);
+
+            // All native resources are now released; surface the first close-time fault (if any) to the caller.
+            throwFirstCloseError(closeError);
         }
     }
 
@@ -1417,12 +1452,37 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void freeColumns(boolean truncate) {
         // null check is because this method could be called from the constructor
         if (columns != null) {
+            Throwable closeError = null;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final MemoryMA m = columns.getQuick(i);
                 if (m != null) {
-                    m.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                    try {
+                        m.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                    } catch (Throwable th) {
+                        // A close-time durability fault on one column (e.g. a power loss the crash harness
+                        // simulates by throwing on its fd sync, or a genuine disk error) must not strand the
+                        // REST mapped: MemoryCMARWImpl.close unmaps before that fd sync, so the faulting column
+                        // is already released -- keep going so every other column is unmapped too (doClose has
+                        // cleared `open`, so no retry would ever reach them). Rethrow the first fault after.
+                        if (closeError == null) {
+                            closeError = th;
+                        }
+                    }
                 }
             }
+            throwFirstCloseError(closeError);
+        }
+    }
+
+    private static void throwFirstCloseError(Throwable closeError) {
+        if (closeError != null) {
+            if (closeError instanceof Error) {
+                throw (Error) closeError;
+            }
+            if (closeError instanceof RuntimeException) {
+                throw (RuntimeException) closeError;
+            }
+            throw new RuntimeException(closeError);
         }
     }
 

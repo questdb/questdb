@@ -283,21 +283,34 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     protected void release(long address) {
         if (address != 0) {
-            int commitMode = configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC;
-            // applyLazy (adaptive table partition column) skips the page-release msync — the column is
-            // a rebuildable cache of the durable WAL, made durable only by the epoch + recovery. WAL
-            // segment columns never set applyLazy, so their explicit per-commit fdatasync is unaffected.
-            if (commitMode != CommitMode.NOSYNC && !applyLazy) {
-                ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+            // The munmap MUST run even if the page-release msync throws (a genuine disk fault, or a power loss
+            // the crash harness simulates by throwing on msync): memory reclamation cannot depend on the
+            // durability sync succeeding. Doing the msync inside a try/finally-munmap mirrors
+            // MemoryCMARWImpl.close (which unmaps before its fd sync); without it a sync fault here strands the
+            // mapped page until process exit (the MMAP_TABLE_WAL_WRITER leak a crash mid drop-close produced).
+            try {
+                int commitMode = configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC;
+                // applyLazy (adaptive table partition column) skips the page-release msync — the column is
+                // a rebuildable cache of the durable WAL, made durable only by the epoch + recovery. WAL
+                // segment columns never set applyLazy, so their explicit per-commit fdatasync is unaffected.
+                if (commitMode != CommitMode.NOSYNC && !applyLazy) {
+                    ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(address, getPageSize(), memoryTag);
             }
-            ff.munmap(address, getPageSize(), memoryTag);
         }
     }
 
     void releaseCurrentPage() {
         if (pageAddress != 0) {
-            release(pageAddress);
-            pageAddress = 0;
+            // Clear pageAddress even if release() rethrows its msync fault (the page is unmapped in release()'s
+            // finally), so a later close cannot double-munmap the same address.
+            try {
+                release(pageAddress);
+            } finally {
+                pageAddress = 0;
+            }
         }
     }
 }
