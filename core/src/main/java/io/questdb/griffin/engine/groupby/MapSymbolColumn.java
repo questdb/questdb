@@ -112,6 +112,11 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
+    public boolean supportsKeyValueAccess() {
+        return symbolTable != null && symbolTable.supportsKeyValueAccess();
+    }
+
+    @Override
     public boolean supportsParallelism() {
         return true;
     }

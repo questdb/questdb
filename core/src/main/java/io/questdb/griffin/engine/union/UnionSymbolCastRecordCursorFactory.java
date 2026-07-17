@@ -105,21 +105,6 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         return base;
     }
 
-    @TestOnly
-    public Function getFunction(int index) {
-        return functions.getQuick(index);
-    }
-
-    @TestOnly
-    public int getFunctionCount() {
-        return functions.size();
-    }
-
-    @TestOnly
-    public void setCursorTestHook(@Nullable CursorTestHook testHook) {
-        cursor.testHook = testHook;
-    }
-
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -129,6 +114,9 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             return cursor;
         } catch (Throwable th) {
             try {
+                // cursor.of() may have taken baseCursor before throwing; drop that reference so a
+                // later cursor close does not free the same instance a second time.
+                cursor.baseCursor = null;
                 Misc.free(baseCursor);
             } finally {
                 for (int i = 0, n = functions.size(); i < n; i++) {
@@ -137,6 +125,16 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             }
             throw th;
         }
+    }
+
+    @TestOnly
+    public Function getFunction(int index) {
+        return functions.getQuick(index);
+    }
+
+    @TestOnly
+    public int getFunctionCount() {
+        return functions.size();
     }
 
     @Override
@@ -152,6 +150,11 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @TestOnly
+    public void setCursorTestHook(@Nullable CursorTestHook testHook) {
+        cursor.testHook = testHook;
     }
 
     @Override
@@ -204,6 +207,15 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         failure = Misc.freeObjListBestEffort(failure, functions);
         failure = Misc.freeBestEffort(failure, base);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private static boolean isProjectionOfColumn(Function function, int column) {
+        return symbolFunction(function).getArg() instanceof StrColumn strColumn
+                && strColumn.getColumnIndex() == column;
+    }
+
+    private static CastStrToSymbolFunctionFactory.Func symbolFunction(Function function) {
+        return (CastStrToSymbolFunctionFactory.Func) function;
     }
 
     private static class KeyValueSymbolTable implements SymbolTable {
@@ -489,23 +501,6 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             return new KeyValueSymbolTable(symbolTable);
         }
 
-        private void of(RecordCursor baseCursor, MemoryTracker memoryTracker) {
-            // getCursor() re-runs Function.init(), which releases each re-symbolising dictionary
-            // (CastStrToSymbolFunctionFactory.Func.init). The per-source key caches translate source
-            // keys into those dictionaries, so they must be discarded in lockstep: a reused cursor
-            // (getCursor() without an intervening close()) would otherwise resolve a stale cached key
-            // against the emptied dictionary and silently return null. close() clears them on the
-            // normal path; clearing here keeps the two reset points symmetric with init()'s release.
-            closeSourceStates();
-            this.baseCursor = baseCursor;
-            this.memoryTracker = memoryTracker;
-            if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
-                sourceCursor.bindSymbolSourceTracker(sourceTracker, 0);
-            }
-            this.record.of(baseCursor.getRecord());
-            toTop();
-        }
-
         @Override
         public long preComputedStateSize() {
             return baseCursor.preComputedStateSize();
@@ -575,15 +570,23 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             currentSourceIndex = sourceIndex;
             return currentSourceState = sourceState;
         }
-    }
 
-    private static boolean isProjectionOfColumn(Function function, int column) {
-        return symbolFunction(function).getArg() instanceof StrColumn strColumn
-                && strColumn.getColumnIndex() == column;
-    }
-
-    private static CastStrToSymbolFunctionFactory.Func symbolFunction(Function function) {
-        return (CastStrToSymbolFunctionFactory.Func) function;
+        private void of(RecordCursor baseCursor, MemoryTracker memoryTracker) {
+            // getCursor() re-runs Function.init(), which releases each re-symbolising dictionary
+            // (CastStrToSymbolFunctionFactory.Func.init). The per-source key caches translate source
+            // keys into those dictionaries, so they must be discarded in lockstep: a reused cursor
+            // (getCursor() without an intervening close()) would otherwise resolve a stale cached key
+            // against the emptied dictionary and silently return null. close() clears them on the
+            // normal path; clearing here keeps the two reset points symmetric with init()'s release.
+            closeSourceStates();
+            this.baseCursor = baseCursor;
+            this.memoryTracker = memoryTracker;
+            if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
+                sourceCursor.bindSymbolSourceTracker(sourceTracker, 0);
+            }
+            this.record.of(baseCursor.getRecord());
+            toTop();
+        }
     }
 
     @TestOnly

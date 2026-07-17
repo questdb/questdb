@@ -55,12 +55,6 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        cursorA.calculateSize(circuitBreaker, counter);
-        cursorB.calculateSize(circuitBreaker, counter);
-    }
-
-    @Override
     public int bindSymbolSourceTracker(SymbolSourceTracker tracker, int nextSourceIndex) {
         symbolSourceTracker = tracker;
         if (cursorA instanceof UnionSymbolSourceCursor sourceCursor) {
@@ -76,6 +70,12 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
             symbolSourceIndexB = nextSourceIndex++;
         }
         return nextSourceIndex;
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        cursorA.calculateSize(circuitBreaker, counter);
+        cursorB.calculateSize(circuitBreaker, counter);
     }
 
     @Override
@@ -150,17 +150,11 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     private boolean nextA() {
-        if (cursorA.hasNext()) {
-            return true;
-        }
-        return switchToSlaveCursor();
+        return cursorA.hasNext() || switchToSlaveCursor();
     }
 
     private boolean nextB() {
-        if (cursorB.hasNext()) {
-            return true;
-        }
-        return false;
+        return cursorB.hasNext();
     }
 
     private boolean switchToSlaveCursor() {

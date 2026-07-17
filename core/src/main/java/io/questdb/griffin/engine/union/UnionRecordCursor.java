@@ -142,10 +142,7 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     }
 
     private boolean nextB() {
-        if (cursorB.hasNext()) {
-            return true;
-        }
-        return false;
+        return cursorB.hasNext();
     }
 
     private boolean switchToCursorB() {

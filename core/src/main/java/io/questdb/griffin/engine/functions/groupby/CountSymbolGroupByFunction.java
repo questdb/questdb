@@ -46,8 +46,7 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SYMBOL);
         // FunctionParser guarantees a SymbolFunction for count(K). Keep the fallback for
         // synthetic test functions and preserve the integer fast path for static tables.
-        this.symbolTableStatic = !(arg instanceof SymbolFunction)
-                || ((SymbolFunction) arg).isSymbolTableStatic();
+        this.symbolTableStatic = !(arg instanceof SymbolFunction sf) || sf.isSymbolTableStatic();
     }
 
     @Override

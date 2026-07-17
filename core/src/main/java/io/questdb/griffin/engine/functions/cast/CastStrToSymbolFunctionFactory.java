@@ -119,6 +119,28 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             return intern(arg.getStrA(rec));
         }
 
+        @Override
+        public CharSequence getSymbol(Record rec) {
+            // Pass-through: getSymbol never needs the dictionary (it returns the string
+            // directly). Only getInt/valueOf build one. Interning here would grow an
+            // unnecessary cardinality-dependent dictionary for values no key consumer uses.
+            return arg.getStrA(rec);
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            return arg.getStrB(rec);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            // init() may be called again on a cached factory. The normal path releases in
+            // cursorClosed(); this defensive release also keeps failed/abandoned cursors safe.
+            releaseDictionary();
+            arg.init(symbolTableSource, executionContext);
+            memoryTracker = executionContext.getMemoryTracker();
+        }
+
         public int intern(@Nullable CharSequence value) {
             if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
@@ -162,28 +184,6 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             textSize = requiredTextSize;
             Unsafe.putInt(hashAddress + ((long) slot << 2), next++);
             return key;
-        }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            // Pass-through: getSymbol never needs the dictionary (it returns the string
-            // directly). Only getInt/valueOf build one. Interning here would grow an
-            // unnecessary cardinality-dependent dictionary for values no key consumer uses.
-            return arg.getStrA(rec);
-        }
-
-        @Override
-        public CharSequence getSymbolB(Record rec) {
-            return arg.getStrB(rec);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            // init() may be called again on a cached factory. The normal path releases in
-            // cursorClosed(); this defensive release also keeps failed/abandoned cursors safe.
-            releaseDictionary();
-            arg.init(symbolTableSource, executionContext);
-            memoryTracker = executionContext.getMemoryTracker();
         }
 
         @Override
@@ -284,17 +284,6 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             textCapacity = newCapacity;
         }
 
-        private int findSlot(CharSequence value, int hash) {
-            int slot = Hash.spread(hash) & hashMask;
-            while (true) {
-                final int storedKey = Unsafe.getInt(hashAddress + ((long) slot << 2));
-                if (storedKey == 0 || equalsValue(value, storedKey - 1, hash)) {
-                    return slot;
-                }
-                slot = (slot + 1) & hashMask;
-            }
-        }
-
         private boolean equalsValue(CharSequence value, int key, int hash) {
             final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
             if (Unsafe.getInt(textAddress + offset) != hash) {
@@ -311,6 +300,17 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
                 }
             }
             return true;
+        }
+
+        private int findSlot(CharSequence value, int hash) {
+            int slot = Hash.spread(hash) & hashMask;
+            while (true) {
+                final int storedKey = Unsafe.getInt(hashAddress + ((long) slot << 2));
+                if (storedKey == 0 || equalsValue(value, storedKey - 1, hash)) {
+                    return slot;
+                }
+                slot = (slot + 1) & hashMask;
+            }
         }
 
         private int hashValue(int key) {
