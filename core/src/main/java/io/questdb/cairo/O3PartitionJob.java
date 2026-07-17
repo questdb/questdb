@@ -615,15 +615,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isRewrite
                 );
 
-                // Publish the new _pm last: patch its header (the MVCC commit
-                // signal) and fsync. Done after the index build so any failure
-                // before the header patch leaves the committed header intact,
-                // with the new footer an invisible dead tail past it that the
-                // next update overwrites. commitParquetMeta patches the header
-                // before its fsync, so a throw from the fsync alone still
-                // publishes the header; that is safe because _txn is unchanged
-                // and a pinned reader walks back to the committed footer (see
-                // commit_parquet_meta).
+                // Publish the new _pm last. In sync modes an incremental update
+                // first fsyncs the appended footer while the old header is still
+                // authoritative, patches the header (the MVCC commit signal),
+                // then fsyncs again before _txn can commit. A first-barrier
+                // failure leaves the old header intact. After the patch, the
+                // appended footer is already durable, so a second-barrier failure
+                // is safe whether the old or new header reaches disk: _txn is
+                // unchanged and a pinned reader can walk back to the committed
+                // footer (see commit_parquet_meta).
                 partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
             } catch (Throwable e) {
                 if (isRewrite) {
@@ -671,11 +671,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (parquetMetaReader.getAddr() != 0) {
                     // Leave _pm un-truncated, header unrestored. A failure before
                     // commitParquetMeta leaves the header at the committed footer;
-                    // a failure inside it (header patched, then fsync threw)
-                    // leaves the header at the new footer. Either way the
-                    // committed _txn size is unchanged, so a reader walks the MVCC
-                    // chain back to the committed footer and the failed update's
-                    // bytes sit past it as a dead tail the next update overwrites.
+                    // a failure inside it either leaves the old header (tail
+                    // barrier failed) or may leave the header at the new, already
+                    // durable footer (header barrier failed). Either way the
+                    // committed _txn size is unchanged, so a reader walks the
+                    // MVCC chain back to the committed footer and the failed
+                    // update's bytes sit past it as a dead tail the next update
+                    // overwrites.
                     // Truncating would pull pages from under a concurrent reader's
                     // mmap and SIGBUS the JVM -- the hazard this change removes.
                     path.of(pathToTable);

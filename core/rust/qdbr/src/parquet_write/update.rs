@@ -178,11 +178,17 @@ fn publish_parquet_meta_with_sync<S>(
     parquet_meta_file: &mut File,
     new_file_size: u64,
     sync: bool,
-    sync_data: S,
+    sync_tail_before_publish: bool,
+    mut sync_data: S,
 ) -> ParquetResult<()>
 where
-    S: FnOnce(&File) -> std::io::Result<()>,
+    S: FnMut(&File) -> std::io::Result<()>,
 {
+    if sync && sync_tail_before_publish {
+        sync_data(parquet_meta_file)
+            .map_err(ParquetError::from)
+            .context("could not fsync appended _pm snapshot before publication")?;
+    }
     parquet_meta_file
         .seek(SeekFrom::Start(
             crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF as u64,
@@ -195,7 +201,7 @@ where
     if sync {
         sync_data(parquet_meta_file)
             .map_err(ParquetError::from)
-            .context("could not fsync _pm file")?;
+            .context("could not fsync published _pm header")?;
     }
     Ok(())
 }
@@ -1536,10 +1542,11 @@ impl ParquetUpdater {
                 // patches it after the index build. So any failure before that
                 // header patch lands leaves the committed header and footer
                 // intact, with the new bytes an invisible dead tail past the
-                // header. Once the patch lands the snapshot is published even if
-                // commit_parquet_meta's own fsync then throws (see its doc); the
-                // committed `_txn` size is unchanged, so readers walk the MVCC
-                // chain back to the committed footer regardless.
+                // header. In sync modes commit_parquet_meta durably flushes this
+                // tail before patching the header, then flushes the header before
+                // the `_txn` commit. If that second flush throws, the tail is
+                // already durable and the committed `_txn` size is unchanged, so
+                // readers can walk the MVCC chain back to the committed footer.
                 parquet_meta_file
                     .seek(SeekFrom::Start(append_base))
                     .map_err(ParquetError::from)?;
@@ -1559,16 +1566,27 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
-    /// Publishes the new `_pm` snapshot: patches the committed
-    /// `parquet_meta_file_size` into the header (the MVCC commit signal), then
-    /// fsyncs when `sync` is set. The caller must invoke this after `end()` wrote
-    /// the new footer and the index build mapped it, and before the matching
-    /// `_txn` commit. The header patch is the last `_pm` write, so a failure
-    /// before it leaves the committed header and footer intact; the fsync
-    /// (skipped in NOSYNC commit mode) stops a power loss from leaving `_txn`
-    /// pointing at a footer the page cache lost. A no-op when no `_pm` fd is
-    /// attached.
+    /// Publishes the new `_pm` snapshot. For an in-place incremental update in a
+    /// sync mode, first flushes the appended snapshot while the old header is
+    /// still authoritative, then patches the new `parquet_meta_file_size` into
+    /// the header (the MVCC commit signal), and flushes again before the matching
+    /// `_txn` commit. The first barrier prevents a power loss from exposing a
+    /// header whose newest footer is torn; the second prevents `_txn` from
+    /// outliving the new header. Full-create/rewrite paths write a non-authoritative
+    /// file and need only the final barrier. NOSYNC deliberately skips both. A
+    /// no-op when no `_pm` fd is attached.
     pub fn commit_parquet_meta(&mut self, sync: bool) -> ParquetResult<()> {
+        self.commit_parquet_meta_with_sync_data(sync, File::sync_data)
+    }
+
+    fn commit_parquet_meta_with_sync_data<S>(
+        &mut self,
+        sync: bool,
+        sync_data: S,
+    ) -> ParquetResult<()>
+    where
+        S: FnMut(&File) -> std::io::Result<()>,
+    {
         let new_file_size = self.result_parquet_meta_size;
         if let Some(ref mut parquet_meta_file) = self.parquet_meta_fd {
             debug_assert!(
@@ -1579,7 +1597,8 @@ impl ParquetUpdater {
                 parquet_meta_file,
                 new_file_size as u64,
                 sync,
-                File::sync_data,
+                !self.is_rewrite && self.existing_parquet_file_size > 0,
+                sync_data,
             )?;
         }
         Ok(())
@@ -2303,20 +2322,61 @@ mod tests {
         Ok(u64::from_le_bytes(bytes))
     }
 
+    fn publish_test_updater(
+        allocator: &crate::allocator::TestAllocatorState,
+        pm: &NamedTempFile,
+        is_rewrite: bool,
+        existing_parquet_file_size: i64,
+    ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+        let (source, _partition) = write_initial_zstd_file()?;
+        let source_len = source.as_file().metadata()?.len();
+        let output = NamedTempFile::new()?;
+        let writer = if is_rewrite {
+            output.reopen()?
+        } else {
+            source.reopen()?
+        };
+        let write_file_size = if is_rewrite { 0 } else { source_len };
+        let mut updater = super::ParquetUpdater::new(
+            allocator.allocator(),
+            source.reopen()?,
+            source_len,
+            writer,
+            write_file_size,
+            None,
+            true,
+            false,
+            CompressionOptions::Zstd(None),
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            existing_parquet_file_size,
+            SeqTxn::UNSET,
+        )?;
+        updater.result_parquet_meta_size = 42;
+        Ok(updater)
+    }
+
     #[test]
-    fn commit_parquet_meta_sync_error_is_propagated_after_publication() -> Result<(), Box<dyn Error>>
-    {
+    fn commit_parquet_meta_tail_sync_error_does_not_publish_header() -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
         let pm = NamedTempFile::new()?;
         pm.as_file().set_len(64)?;
-        let mut file = pm.reopen()?;
-        let err = super::publish_parquet_meta_with_sync(&mut file, 42, true, |_| {
-            Err(std::io::Error::other("injected sync failure"))
-        })
-        .unwrap_err();
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
+        let err = updater
+            .commit_parquet_meta_with_sync_data(true, |_| {
+                Err(std::io::Error::other("injected sync failure"))
+            })
+            .unwrap_err();
 
-        assert_eq!(read_pm_header(&pm)?, 42);
+        assert_eq!(read_pm_header(&pm)?, 0);
         assert!(
-            err.to_string().contains("could not fsync _pm file"),
+            err.to_string()
+                .contains("could not fsync appended _pm snapshot before publication"),
             "unexpected error: {err}"
         );
         assert!(
@@ -2328,11 +2388,12 @@ mod tests {
 
     #[test]
     fn commit_parquet_meta_sync_false_skips_sync() -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
         let pm = NamedTempFile::new()?;
         pm.as_file().set_len(64)?;
-        let mut file = pm.reopen()?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
         let sync_calls = Cell::new(0);
-        super::publish_parquet_meta_with_sync(&mut file, 42, false, |_| {
+        updater.commit_parquet_meta_with_sync_data(false, |_| {
             sync_calls.set(sync_calls.get() + 1);
             Err(std::io::Error::other("sync must be skipped"))
         })?;
@@ -2343,24 +2404,89 @@ mod tests {
     }
 
     #[test]
-    fn commit_parquet_meta_sync_true_invokes_sync_after_publication() -> Result<(), Box<dyn Error>>
-    {
+    fn commit_parquet_meta_sync_true_orders_footer_before_header_publication(
+    ) -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
         let pm = NamedTempFile::new()?;
         pm.as_file().set_len(64)?;
-        let mut file = pm.reopen()?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
         let sync_calls = Cell::new(0);
-        super::publish_parquet_meta_with_sync(&mut file, 42, true, |file| {
-            sync_calls.set(sync_calls.get() + 1);
+        updater.commit_parquet_meta_with_sync_data(true, |file| {
+            let sync_call = sync_calls.get();
             let mut published = file.try_clone()?;
             published.seek(SeekFrom::Start(0))?;
             let mut bytes = [0u8; size_of::<u64>()];
             published.read_exact(&mut bytes)?;
-            assert_eq!(u64::from_le_bytes(bytes), 42);
+            let expected_header = if sync_call == 0 { 0 } else { 42 };
+            assert_eq!(u64::from_le_bytes(bytes), expected_header);
+            sync_calls.set(sync_call + 1);
             Ok(())
         })?;
 
-        assert_eq!(sync_calls.get(), 1);
+        assert_eq!(sync_calls.get(), 2);
         assert_eq!(read_pm_header(&pm)?, 42);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_header_sync_error_is_propagated_after_publication(
+    ) -> Result<(), Box<dyn Error>> {
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let pm = NamedTempFile::new()?;
+        pm.as_file().set_len(64)?;
+        let mut updater = publish_test_updater(&allocator, &pm, false, 1)?;
+        let sync_calls = Cell::new(0);
+        let err = updater
+            .commit_parquet_meta_with_sync_data(true, |_| {
+                let sync_call = sync_calls.get();
+                sync_calls.set(sync_call + 1);
+                if sync_call == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other("injected sync failure"))
+                }
+            })
+            .unwrap_err();
+
+        assert_eq!(sync_calls.get(), 2);
+        assert_eq!(read_pm_header(&pm)?, 42);
+        assert!(
+            err.to_string()
+                .contains("could not fsync published _pm header"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("injected sync failure"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_parquet_meta_non_authoritative_files_sync_only_after_publication(
+    ) -> Result<(), Box<dyn Error>> {
+        for (mode, is_rewrite, existing_parquet_file_size) in
+            [("first-create", false, -1), ("rewrite", true, 1)]
+        {
+            let allocator = crate::allocator::TestAllocatorState::new();
+            let pm = NamedTempFile::new()?;
+            pm.as_file().set_len(64)?;
+            let mut updater =
+                publish_test_updater(&allocator, &pm, is_rewrite, existing_parquet_file_size)?;
+            let sync_calls = Cell::new(0);
+            updater.commit_parquet_meta_with_sync_data(true, |file| {
+                sync_calls.set(sync_calls.get() + 1);
+                let mut published = file.try_clone()?;
+                published.seek(SeekFrom::Start(0))?;
+                let mut bytes = [0u8; size_of::<u64>()];
+                published.read_exact(&mut bytes)?;
+                assert_eq!(u64::from_le_bytes(bytes), 42, "mode={mode}");
+                Ok(())
+            })?;
+
+            assert_eq!(sync_calls.get(), 1, "mode={mode}");
+            assert_eq!(read_pm_header(&pm)?, 42, "mode={mode}");
+        }
         Ok(())
     }
 

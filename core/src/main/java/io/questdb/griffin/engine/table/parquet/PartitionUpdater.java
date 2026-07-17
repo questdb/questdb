@@ -68,14 +68,14 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
-     * Publishes the new {@code _pm} snapshot and makes it durable: patches the
-     * committed {@code parquet_meta_file_size} into the header (the MVCC commit
-     * signal), then fsyncs. The caller MUST invoke this after
+     * Publishes the new {@code _pm} snapshot. In sync modes, an in-place
+     * incremental update first fsyncs its appended footer while the old header
+     * remains authoritative, patches the header (the MVCC commit signal), then
+     * fsyncs the header before the matching {@code _txn} commit. Full creates and
+     * rewrites target a non-authoritative file and need only the final fsync.
+     * NOSYNC skips both barriers. The caller MUST invoke this after
      * {@link #updateFileMetadata()} and the index build, and before the matching
-     * {@code _txn} commit. The header patch is the last {@code _pm} write, so a
-     * failure before it leaves the committed header and footer intact; the fsync
-     * (skipped when {@code sync} is false, i.e. NOSYNC commit mode) stops a power
-     * loss from leaving {@code _txn} pointing at a footer the page cache lost.
+     * {@code _txn} commit.
      */
     public void commitParquetMeta(boolean sync) {
         assert ptr != 0;

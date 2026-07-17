@@ -470,8 +470,19 @@ impl<'a> ParquetMetaReader<'a> {
             let bloom_section_size = compute_bloom_section_size(&header, footer_data)?;
             let footer = Footer::new(footer_data, footer_length, bloom_section_size)?;
 
-            let pq_size =
-                footer.parquet_footer_offset() + footer.parquet_footer_length() as u64 + 8;
+            let parquet_footer_offset = footer.parquet_footer_offset();
+            let parquet_footer_length = footer.parquet_footer_length();
+            let pq_size = parquet_footer_offset
+                .checked_add(parquet_footer_length as u64)
+                .and_then(|size| size.checked_add(8))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "parquet file size overflow [footer_offset={}, footer_length={}]",
+                        parquet_footer_offset,
+                        parquet_footer_length
+                    )
+                })?;
             if pq_size == target_parquet_size {
                 validate_footer_feature_flags(footer.feature_flags())?;
                 return Ok((current_offset, footer));
@@ -623,6 +634,28 @@ mod tests {
         let footer_length =
             u32::from_le_bytes(trailer.try_into().expect("slice is 4 bytes")) as u64;
         parquet_meta_file_size - FOOTER_TRAILER_SIZE as u64 - footer_length
+    }
+
+    #[test]
+    fn find_footer_rejects_parquet_size_overflow() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.parquet_footer(u64::MAX, 0);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        let err = match ParquetMetaReader::find_footer_for_parquet_size(
+            &bytes,
+            parquet_meta_file_size,
+            7,
+        ) {
+            Ok(_) => panic!("overflowing parquet size must not select a corrupt footer"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind, ParquetMetaErrorKind::InvalidValue);
+        assert_eq!(
+            err.msg,
+            "parquet file size overflow [footer_offset=18446744073709551615, footer_length=0]"
+        );
     }
 
     #[test]
