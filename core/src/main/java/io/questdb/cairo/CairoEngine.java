@@ -586,6 +586,12 @@ public class CairoEngine implements Closeable, WriterSource {
      * poll below is the promptness half of that contract.
      */
     public void hydrateMatViewStateStore(MatViewStateStore target) {
+        if (isClosing()) {
+            // Same abort as the per-token poll below, taken BEFORE the first engine-state read
+            // (getTableTokens walks the tableNameRegistry): a close that already won the race
+            // must not see this loader touch registry state at all.
+            throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
+        }
         final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         getTableTokens(tableTokenBucket, false);
         try (
@@ -602,10 +608,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     // SIGTERM/close landed mid-promote hydrate. Abort so the caller can unwind its
                     // private, not-yet-installed target store: the enterprise close waits, bounded,
                     // for this loop to exit before freeing engine-owned state (tableNameRegistry,
-                    // sequencers), so no free races this loop over native memory. signalClose() sets
-                    // closing before freeOnExit reaches the engine, so it is observable here. The
-                    // poll stays in the loop body, not loadMatViewIntoStore, because that method's
-                    // catch(Throwable) would swallow the abort.
+                    // sequencers), and on budget expiry it LEAKS its teardown to process exit
+                    // rather than freeing under a wedged loader. The gate is advisory rather than
+                    // an absolute no-free guarantee: the in-flight flag rises just before this
+                    // loader starts, so a close whose flag read wins that publication race
+                    // proceeds. signalClose() sets closing before freeOnExit reaches the engine,
+                    // so it is observable here. The poll stays in the loop body, not
+                    // loadMatViewIntoStore, because that method's catch(Throwable) would swallow
+                    // the abort.
                     throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
                 }
                 final TableToken tableToken = tableTokenBucket.get(i);

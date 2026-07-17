@@ -272,6 +272,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
         return registryByName.get(name);
     }
 
+    /**
+     * Test-only view of the installed pre-join cancel hook; see {@link #setPreJoinCancelHook(Runnable)}.
+     */
+    @TestOnly
+    public Runnable getPreJoinCancelHookForTest() {
+        return preJoinCancelHook;
+    }
+
     public void register(Component component) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only register components before run");
@@ -326,14 +334,6 @@ public class LifecycleOrchestrator implements QuietCloseable {
             }
             throw new LifecycleStartupException("boot-essential component(s) failed");
         }
-    }
-
-    /**
-     * Test-only view of the installed pre-join cancel hook; see {@link #setPreJoinCancelHook(Runnable)}.
-     */
-    @TestOnly
-    public Runnable getPreJoinCancelHookForTest() {
-        return preJoinCancelHook;
     }
 
     /**
