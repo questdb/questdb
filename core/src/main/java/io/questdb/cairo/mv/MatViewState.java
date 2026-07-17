@@ -587,9 +587,17 @@ public class MatViewState implements QuietCloseable {
         return getPendingFullRefreshOwner(pendingInvalidationMarker);
     }
 
+    TableToken getPendingInvalidationBaseTableToken(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.invalidationBaseTableToken : null;
+    }
+
     @TestOnly
     public TableToken getPendingInvalidationBaseTableTokenForTesting() {
         return getPendingInvalidationBaseTableToken(pendingInvalidationMarker);
+    }
+
+    long getPendingInvalidationBaseTxn(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.invalidationBaseTxn : Numbers.LONG_NULL;
     }
 
     @TestOnly
@@ -597,20 +605,13 @@ public class MatViewState implements QuietCloseable {
         return getPendingInvalidationBaseTxn(pendingInvalidationMarker);
     }
 
-    public String getPendingInvalidationReason() {
-        return getPendingInvalidationReason(pendingInvalidationMarker);
-    }
-
-    TableToken getPendingInvalidationBaseTableToken(Object marker) {
-        return marker instanceof PendingInvalidation pending ? pending.invalidationBaseTableToken : null;
-    }
-
-    long getPendingInvalidationBaseTxn(Object marker) {
-        return marker instanceof PendingInvalidation pending ? pending.invalidationBaseTxn : Numbers.LONG_NULL;
-    }
-
     Object getPendingInvalidationMarker() {
         return pendingInvalidationMarker;
+    }
+
+    @TestOnly
+    public String getPendingInvalidationReason() {
+        return getPendingInvalidationReason(pendingInvalidationMarker);
     }
 
     String getPendingInvalidationReason(Object marker) {
@@ -721,6 +722,7 @@ public class MatViewState implements QuietCloseable {
         return getPendingFullRefreshOwner(pendingInvalidationMarker) == expectedOwner;
     }
 
+    @TestOnly
     public boolean isPendingInvalidation() {
         return pendingInvalidationMarker != null;
     }
@@ -1091,16 +1093,33 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshFinishTimestampUs = timestampUs;
     }
 
+    /**
+     * Test seam: runs once at the start of {@code clearPendingFullRefresh}, before it reads the pending
+     * marker. Tests use it to race a marker replacement against the clear.
+     * One-shot: the seam clears itself before firing.
+     */
     @TestOnly
     public void setOnClearPendingFullRefreshForTesting(Runnable onClearPendingFullRefreshForTesting) {
         this.onClearPendingFullRefreshForTesting = onClearPendingFullRefreshForTesting;
     }
 
+    /**
+     * Test seam: runs once inside {@code markAsPendingFullRefreshAndGetOwner}'s CAS loop, after it reads
+     * the pending marker but before it builds the replacement. Tests use it to race a concurrent marker
+     * update against the CAS.
+     * One-shot: the seam clears itself before firing.
+     */
     @TestOnly
     public void setOnPendingFullRefreshMarkerReadForTesting(Runnable onPendingFullRefreshMarkerReadForTesting) {
         this.onPendingFullRefreshMarkerReadForTesting = onPendingFullRefreshMarkerReadForTesting;
     }
 
+    /**
+     * Test seam: runs once inside {@code markAsPendingInvalidationAndGetMarker}'s CAS loop, after it reads
+     * the pending marker but before it builds the replacement. Tests use it to race a concurrent marker
+     * update against the CAS.
+     * One-shot: the seam clears itself before firing.
+     */
     @TestOnly
     public void setOnPendingInvalidationMarkerReadForTesting(Runnable onPendingInvalidationMarkerReadForTesting) {
         this.onPendingInvalidationMarkerReadForTesting = onPendingInvalidationMarkerReadForTesting;

@@ -169,7 +169,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * valid-but-stale. The deliberate exceptions are the auth-refusal self-deferrals: {@code invalidateView}
      * routes through {@link #finalizeAndUnlock0} with the marker its refused mint attempt consumed, and
      * {@code fullRefresh} with the owner its refused pass carried, so the wake each would otherwise queue
-     * cannot feed the refusal loop (see there).
+     * cannot feed the refusal loop (see {@link #finalizeAndUnlock0}).
      * {@code shouldIncrementRefreshSeq} additionally bumps
      * {@link MatViewState#incrementRefreshSeq()}
      * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
@@ -225,6 +225,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Test seam: runs after a full refresh fixes its base-table reader snapshot but before it resets
      * the view state. A test can apply a newer base transaction here to pin snapshot ownership.
+     * Persistent: fires on every pass until reset.
      */
     @TestOnly
     public void setOnBaseReaderSnapshotForTesting(Runnable onBaseReaderSnapshotForTesting) {
@@ -234,6 +235,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Test seam: runs after full refresh records a missing-base failure but before it releases the
      * view latch. Tests use it to stop a broken self-requeue deterministically.
+     * Persistent: fires on every pass until reset.
      */
     @TestOnly
     public void setOnFullRefreshTerminalFailureForTesting(Runnable onFullRefreshTerminalFailureForTesting) {
@@ -245,6 +247,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * letting a test mark the view pending mid-hold exactly as a losing concurrent {@code invalidateView}
      * would, so the holder's completion must finalize it. Production never sets it and {@code cloneInstance}
      * does not copy it, so pool workers read {@code null}; {@code volatile} only matches the house seam idiom.
+     * Persistent: fires on every pass until reset.
      */
     @TestOnly
     public void setOnHoldingLockForTesting(Runnable onHoldingLockForTesting) {
@@ -254,6 +257,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Test seam: runs once after an invalidation publishes its marker but before it attempts the view latch.
      * Tests use it to let a concurrent full refresh consume a covered marker before the publisher locks.
+     * One-shot: the seam clears itself before firing.
      */
     @TestOnly
     public void setOnInvalidationPublishedForTesting(Runnable onInvalidationPublishedForTesting) {
@@ -263,6 +267,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Test seam: runs once for each task removed from the refresh queue, before the task executes.
      * Tests use it to put a deterministic upper bound on self-republishing contender paths.
+     * Persistent: fires on every pass until reset.
      */
     @TestOnly
     public void setOnRefreshTaskDequeuedForTesting(Runnable onRefreshTaskDequeuedForTesting) {
@@ -1827,7 +1832,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Publish intent before attempting the latch. This ordering forms a two-sided handoff with
             // finalizeAndUnlock's post-release marker read: either this attempt acquires the free latch, or
             // the holder that kept it observes the marker after release and wakes one retry. Contending
-            // invalidators only replace the marker; they do not each amplify the shared queue.
+            // invalidators only replace the marker; they do not each amplify the shared queue (at most
+            // one bounded duplicate wake can slip through when a holder unlocks between a publisher's
+            // marker CAS and its lock attempt; the identity checks make the duplicate a no-op).
             final Object requestedMarker = viewState.markAsPendingInvalidationAndGetMarker(
                     invalidationReason,
                     invalidationBaseTableToken,
@@ -1909,7 +1916,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // and persisted nothing -- leaving the view invalid in memory but valid on
                                 // disk. Roll that flag back to valid before deferring so the in-memory state
                                 // matches disk and the deferred invalidation is a clean pending retry, not a
-                                // half-applied one. Retain the pending owner instead of looping on the refused
+                                // half-applied one. Retain the pending marker instead of looping on the refused
                                 // acquire forever. The finally unlocks. setInvalidState also
                                 // bumped the in-memory start timestamp before the fence refused; restore it
                                 // so the catalogue does not report this valid view as "refreshing" forever

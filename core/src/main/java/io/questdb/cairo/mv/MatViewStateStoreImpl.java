@@ -465,6 +465,12 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         isPendingTaskReenqueueRequested.set(true);
     }
 
+    /**
+     * Test seam: runs once at the start of each {@code reenqueueFailedPendingTasks} scan, after the
+     * store-wide retry signal clears but before it iterates the per-view states. Tests use it to race a
+     * new retry request against an in-flight scan.
+     * Persistent: fires on every pass until reset.
+     */
     @TestOnly
     public void setOnPendingTaskReenqueueScanForTesting(Runnable onPendingTaskReenqueueScanForTesting) {
         this.onPendingTaskReenqueueScanForTesting = onPendingTaskReenqueueScanForTesting;
