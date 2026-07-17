@@ -828,7 +828,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // Plan 3b Task 1: self-describing partition-stride marker -- a GLOBAL property (not part of
         // either A/B section), so it is written at the same fixed offset on every commit regardless of
         // currentIsA, derived from this writer's own (already-correct, metadata-derived) stride.
-        txMemBase.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : 0);
+        txMemBase.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, partitionStrideMarker(longsPerAttachedPartition));
 
         Unsafe.storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);

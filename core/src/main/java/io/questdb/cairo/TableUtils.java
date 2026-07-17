@@ -852,6 +852,14 @@ public final class TableUtils {
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
+    // Derives the self-describing TX_BASE_OFFSET_PARTITION_STRIDE_32 marker value from a table's
+    // attached-partition record stride: LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE (8) for composite,
+    // 0 (byte-identical to the legacy zero padding) for plain. Single source of truth shared by
+    // TxReader#dumpTo and TxWriter#finishABHeader.
+    public static int partitionStrideMarker(int longsPerAttachedPartition) {
+        return longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : 0;
+    }
+
     public static LPSZ dFile(Path path, @NotNull CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {

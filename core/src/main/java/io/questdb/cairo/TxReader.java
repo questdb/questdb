@@ -148,7 +148,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
         // Plan 3b Task 1: self-describing partition-stride marker -- a GLOBAL property (not part of
         // either A/B section), so it is written at the same fixed offset regardless of isA/isB.
-        mem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : 0);
+        mem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, partitionStrideMarker(longsPerAttachedPartition));
 
         mem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
         mem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);

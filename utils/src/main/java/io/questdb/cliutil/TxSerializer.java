@@ -119,6 +119,12 @@ public class TxSerializer {
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
             rwTxMem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
+            // Plan 3b Task 1: self-describing partition-stride marker -- a GLOBAL property (not part of
+            // either A/B section). This CLI tool's TxFileStruct.AttachedPartition has no cellKey field and
+            // the partition write loop below is hardcoded to LONGS_PER_TX_ATTACHED_PARTITION (4 longs per
+            // partition), so it can only ever emit plain/stride-4 data. Write the explicit marker (0) so
+            // that is truthful and self-describing rather than relying on the memset zero-fill above.
+            rwTxMem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, 0);
 
             rwTxMem.putLong(baseOffset + TX_OFFSET_TXN_64, tx.TX_OFFSET_TXN);
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
