@@ -452,7 +452,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return computeNativeFrame(lo, hi);
     }
 
-    static long calculatePageFrameRowLimit(
+    public static long calculatePageFrameRowLimit(
             long partitionLo,
             long partitionHi,
             long pageFrameMinRows,

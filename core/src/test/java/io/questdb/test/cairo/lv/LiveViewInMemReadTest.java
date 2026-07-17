@@ -34,6 +34,7 @@ import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -410,6 +411,58 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                         "a read after the injected failures must still route",
                         cursor instanceof LiveViewPageFrameCursor
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameFilteredReadServesLeadAcrossSplitSlotFrames() throws Exception {
+        // The arm below, once the page-frame row bounds are narrower than the slot - which
+        // is what a wide IN MEMORY window makes the DEFAULT bounds do. The slot then tiles
+        // into several frames, each one past the first rebased onto its own rows, and the
+        // parallel filter has to see every slot row exactly once across them.
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+            sqlExecutionContext.changePageFrameSizes(2, 2);
+            try {
+                // The seam skips every disk frame here (leadStart == the disk scan's size),
+                // so the whole 5-row slot is served from RAM; calculatePageFrameRowLimit
+                // then rounds its 1-row trailing frame away, making the split [0, 3) +
+                // [3, 5) whatever the shared worker count is. Assert it: the filters below
+                // pass unchanged over an un-split slot, so without this the arm silently
+                // stops testing anything the moment the split stops happening.
+                try (
+                        RecordCursorFactory factory = select("SELECT * FROM lv");
+                        PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+                ) {
+                    Assert.assertTrue(cursor instanceof LiveViewPageFrameCursor);
+                    LongList ranges = new LongList();
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        ranges.add(frame.getPartitionLo());
+                        ranges.add(frame.getPartitionHi());
+                    }
+                    Assert.assertEquals("slot frame ranges", "[0,3,3,5]", ranges.toString());
+                }
+
+                // rn=2 sits in the first slot frame and rn=5 in the second, so a filter
+                // matching both proves a worker read past the one frame the whole-slot case
+                // handed it. rn=5 exists only in the tier.
+                assertLvQuery("SELECT * FROM lv WHERE g = 'bb'",
+                        "ts\tg\trn\n" +
+                                "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
+                                "2026-05-12T00:00:05.000000Z\tbb\t5\n");
+
+                // 'cc' is lead-only AND in the second slot frame: the overlay is bound per
+                // cursor, not per frame, so it must resolve from any frame the cursor emits.
+                // A miss here reads as an empty result rather than a wrong one.
+                assertLvQuery("SELECT * FROM lv WHERE g = 'cc'",
+                        "ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n");
+
+                assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
+                        "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE rn > 1");
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }

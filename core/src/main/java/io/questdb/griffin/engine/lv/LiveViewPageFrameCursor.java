@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.lv;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
@@ -39,6 +41,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.IntList;
@@ -49,8 +52,8 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Exposes a live view's two tiers as one page-frame stream: the LV table's own
- * disk frames cut at the seam, then a single synthetic frame over the pinned
- * in-memory slot. It is the page-frame twin of {@link LiveViewRecordCursor}'s
+ * disk frames cut at the seam, then synthetic frames over the pinned in-memory
+ * slot. It is the page-frame twin of {@link LiveViewRecordCursor}'s
  * seam split, and serves exactly the same rows in the same order - so a read
  * routed through here sees the un-flushed lead without giving up the engine's
  * frame machinery (the parallel filter, the JIT filter, LIMIT pushdown), which
@@ -126,13 +129,17 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // Set by toPartition(), cleared by toTop(): the walk is scoped to one disk partition,
     // so next() hands straight to the base and the tier stays out of it. See toPartition().
     private boolean isPartitionScoped;
-    private boolean isSlotEmitted;
     private LiveViewInMemoryBuffer slot;
     private int slotIdx;
     // The pinned slot's row count, snapshotted in of(). The slot is frozen for the
     // cursor's life, but snapshotting keeps the frame's row range and size() consistent
     // with the diskRoutedRows the same call computed.
     private long slotRowCount;
+    // Rows per synthetic slot frame, sized in of() by the same helper the native cursor
+    // sizes a partition's frames with. Always >= 1.
+    private long slotRowLimit;
+    // Slot rows covered by the frames returned so far.
+    private long slotRowsEmitted;
     private LiveViewInMemoryTier tier;
 
     public LiveViewPageFrameCursor() {
@@ -158,9 +165,9 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             isDiskExhausted = true;
             diskRowsEmitted = diskRoutedRows;
         }
-        if (!isSlotEmitted) {
-            isSlotEmitted = true;
-            counter.add(slotRowCount);
+        if (slotRowsEmitted < slotRowCount) {
+            counter.add(slotRowCount - slotRowsEmitted);
+            slotRowsEmitted = slotRowCount;
         }
     }
 
@@ -185,9 +192,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     @Override
     public long getRemainingRowsInInterval() {
         if (isDiskExhausted) {
-            // The slot frame is a partition of one frame, so once it is the only thing
-            // left there is nothing "remaining in the interval" behind it. calculateSize
-            // counts it instead.
+            // Nothing is left behind the slot for this to report: the un-emitted slot rows
+            // are what calculateSize counts, and the two must not both count them. The
+            // contract only binds their SUM - PageFrameRecordCursorImpl.calculateSize adds
+            // this and then calls calculateSize - so leaving the whole slot to the latter
+            // keeps the two halves disjoint whether the slot is one frame or many.
             return 0;
         }
         // The base counts every row left in its current partition; this cursor only
@@ -264,11 +273,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             }
             isDiskExhausted = true;
         }
-        if (!isSlotEmitted) {
-            isSlotEmitted = true;
-            if (slotRowCount > 0) {
-                return slotFrame;
-            }
+        if (slotRowsEmitted < slotRowCount) {
+            final long lo = slotRowsEmitted;
+            final long hi = Math.min(slotRowCount, lo + slotRowLimit);
+            slotRowsEmitted = hi;
+            return slotFrame.of(lo, hi);
         }
         return null;
     }
@@ -287,14 +296,17 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
      * any of them through here would over-return the slot's rows against a disk scan
      * they do not line up with.
      *
-     * @param base        the LV table's own frame cursor; owned from here on
-     * @param tier        the pinned tier; its pin is released by {@link #close()}
-     * @param slotIdx     the pinned slot's index, as {@link LiveViewInMemoryTier#acquireRead()} returned it
-     * @param slot        the pinned slot, i.e. {@code tier.getSlot(slotIdx)}
-     * @param symbolCache the tier's eager-interning symbol cache, for lead-only SYMBOL ids
-     * @param tierColumns output column -> tier column; copied
+     * @param executionContext the read's context; sizes the slot's frames through the row
+     *                         bounds {@code changePageFrameSizes} may have narrowed
+     * @param base             the LV table's own frame cursor; owned from here on
+     * @param tier             the pinned tier; its pin is released by {@link #close()}
+     * @param slotIdx          the pinned slot's index, as {@link LiveViewInMemoryTier#acquireRead()} returned it
+     * @param slot             the pinned slot, i.e. {@code tier.getSlot(slotIdx)}
+     * @param symbolCache      the tier's eager-interning symbol cache, for lead-only SYMBOL ids
+     * @param tierColumns      output column -> tier column; copied
      */
     public LiveViewPageFrameCursor of(
+            SqlExecutionContext executionContext,
             TablePageFrameCursor base,
             LiveViewInMemoryTier tier,
             int slotIdx,
@@ -311,6 +323,19 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         this.tierColumns.clear();
         this.tierColumns.addAll(tierColumns);
         this.slotRowCount = slot.rowCount();
+        // The slot is this scan's last partition, so it splits into frames the same way a
+        // disk partition of the same row count does - same helper, same bounds, same
+        // trailing-frame rounding. Sharing it is not just tidiness: those bounds carry the
+        // engine's hard cap on a frame's row count (Map.BATCH_ROW_INDEX_MASK + 1, the width
+        // of the frame-relative row index a batched GROUP BY packs into its entries), which
+        // a slot published as one frame would breach for a wide enough IN MEMORY window.
+        this.slotRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                0,
+                slotRowCount,
+                executionContext.getPageFrameMinRows(),
+                executionContext.getPageFrameMaxRows(),
+                executionContext.getSharedQueryWorkerCount()
+        );
         final long diskSize = base.size();
         // The fence admits only a plain entity scan, whose size is always known. A -1
         // would make the seam cut below meaningless (the disk band's row count IS the
@@ -397,7 +422,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         isDiskExhausted = false;
         isPartitionScoped = false;
         diskRowsEmitted = 0;
-        isSlotEmitted = false;
+        slotRowsEmitted = 0;
     }
 
     private void releaseSlot() {
@@ -550,45 +575,60 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     }
 
     /**
-     * The single synthetic frame over the pinned slot - the whole slot, overlap band and
-     * un-flushed lead together, since the seam cut above already stopped disk where this
-     * frame starts.
+     * A synthetic frame over rows {@code [lo, hi)} of the pinned slot. The slot's rows -
+     * overlap band and un-flushed lead together, since the seam cut above already stopped
+     * disk where {@code lo == 0} starts - are tiled by {@code slotRowLimit}-row frames, so
+     * a parallel filter's workers share the tier the way they share a disk partition.
      * <p>
      * It publishes the slot's own column regions as the frame's page addresses. The
      * buffer's layout is the native one a frame already wants: {@code dataMem} carries
-     * the payload at {@code row << shift} for a fixed-width or SYMBOL column and the
+     * the payload at {@code row * stride} for a fixed-width or SYMBOL column and the
      * appended bytes for a var-size one, and {@code auxMem} carries the driver's own
      * per-row offset/header vector (the 0 sentinel for a fixed-width column, which is
      * exactly what {@code PageFrameAddressCache} stores for a column with no aux page).
      * So the addresses pass straight through with no copy and no repacking.
      * <p>
-     * One frame for the whole slot, rather than several bounded by
-     * {@code changePageFrameSizes}: the slot is the scan's last frame and holds only the
-     * recent tail the {@code IN MEMORY} window retains, so a parallel filter's work
-     * distribution is dominated by the disk frames ahead of it. The cost is real though -
-     * a wide {@code IN MEMORY} window makes that trailing frame large, and one worker
-     * carries it while the others idle. Splitting the slot into several frames is the
-     * follow-up; it needs per-sub-frame rebasing (a sub-frame's aux base is
-     * {@code auxAddress(col) + driver.getAuxVectorOffset(lo)}, and its extent must be
-     * relative to that base), which the single whole-slot frame avoids entirely because
-     * its {@code lo} is 0.
+     * <b>What {@code lo > 0} rebases, and what it must not.</b> A frame consumer indexes a
+     * column by the frame-RELATIVE row, so a fixed-width column's page starts at this
+     * frame's first row and a var-size column's aux vector likewise starts at its first
+     * entry. Its data page does NOT move: an aux entry carries the payload's offset from
+     * the data vector's BASE, not from the frame, so a rebased data address would resolve
+     * every value {@code lo} rows too far in. The data page's SIZE stays absolute for the
+     * same reason - it bounds an offset measured from that base, so it is where this
+     * frame's LAST row's payload ends rather than how many bytes the frame's own rows
+     * occupy. This is exactly what a native frame publishes (see
+     * {@code FwdTableReaderPageFrameCursor.computeNativeFrame}), and it is the asymmetry
+     * that makes the whole-slot case ({@code lo == 0}) look like it needs no arithmetic.
      * <p>
-     * A STRING / BINARY column's aux extent is one entry wider than the {@code rows * 8}
-     * a native frame publishes - the buffer carries the layout's trailing terminator,
-     * which an mmap'd column file keeps out of the frame's extent. Publishing it as-is
-     * only loosens the bounds guard by that entry; see
-     * {@link LiveViewInMemoryBuffer#auxSize}.
+     * The aux extents are the driver's own, not {@link LiveViewInMemoryBuffer#auxSize} -
+     * which reports the whole slot, and for STRING / BINARY reports the layout's trailing
+     * terminator too. Deriving both bounds from {@code getAuxVectorOffset} keeps the extent
+     * relative to the rebased base, and lands on the {@code rows * 8} a native frame
+     * publishes rather than one entry past it.
      */
     private class SlotPageFrame implements PageFrame {
+        private long hi;
+        private long lo;
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
-            return slot.auxAddress(tierColumns.getQuick(columnIndex));
+            final int tierColumn = tierColumns.getQuick(columnIndex);
+            final int columnType = slot.columnType(tierColumn);
+            if (!ColumnType.isVarSize(columnType)) {
+                // No aux vector at all; 0 is the sentinel a frame publishes for one.
+                return 0;
+            }
+            return slot.auxAddress(tierColumn) + ColumnType.getDriver(columnType).getAuxVectorOffset(lo);
         }
 
         @Override
         public long getAuxPageSize(int columnIndex) {
-            return slot.auxSize(tierColumns.getQuick(columnIndex));
+            final int columnType = slot.columnType(tierColumns.getQuick(columnIndex));
+            if (!ColumnType.isVarSize(columnType)) {
+                return 0;
+            }
+            final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+            return driver.getAuxVectorOffset(hi) - driver.getAuxVectorOffset(lo);
         }
 
         @Override
@@ -608,12 +648,24 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public long getPageAddress(int columnIndex) {
-            return slot.dataAddress(tierColumns.getQuick(columnIndex));
+            final int tierColumn = tierColumns.getQuick(columnIndex);
+            final int columnType = slot.columnType(tierColumn);
+            final long dataAddress = slot.dataAddress(tierColumn);
+            // A var-size column's data page stays on row 0; see the class doc.
+            return ColumnType.isVarSize(columnType) ? dataAddress : dataAddress + lo * ColumnType.sizeOf(columnType);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
-            return slot.dataSize(tierColumns.getQuick(columnIndex));
+            final int tierColumn = tierColumns.getQuick(columnIndex);
+            final int columnType = slot.columnType(tierColumn);
+            if (!ColumnType.isVarSize(columnType)) {
+                return (hi - lo) * ColumnType.sizeOf(columnType);
+            }
+            // Absolute, to match the un-rebased data address above: where this frame's last
+            // row's payload ends. hi > lo >= 0 holds for every frame next() builds, so the
+            // driver never reads a negative row.
+            return ColumnType.getDriver(columnType).getDataVectorSizeAt(slot.auxAddress(tierColumn), hi - 1);
         }
 
         @Override
@@ -633,7 +685,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public long getPartitionHi() {
-            return slotRowCount;
+            return hi;
         }
 
         @Override
@@ -643,7 +695,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public long getPartitionLo() {
-            return 0;
+            return lo;
+        }
+
+        PageFrame of(long lo, long hi) {
+            this.lo = lo;
+            this.hi = hi;
+            return this;
         }
     }
 }

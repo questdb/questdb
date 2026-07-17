@@ -70,7 +70,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * other. {@link #supportsPageFrameCursor} follows the base, so a filtered live-view
  * read runs the parallel filter, the JIT filter and LIMIT pushdown the way a plain
  * table read does - and {@link #getPageFrameCursor} still routes, handing back a
- * {@link LiveViewPageFrameCursor} whose synthetic frame over the pinned slot the
+ * {@link LiveViewPageFrameCursor} whose synthetic frames over the pinned slot the
  * filter runs over exactly as it runs over a native partition. Routing evaluates the
  * same fence on both paths (see {@link LiveViewRouting}); a read that fails it gets
  * the base's frames unchanged.
@@ -215,6 +215,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * publishToInMemoryTier and emergency-flushes the lead every cycle.
      */
     private PageFrameCursor bindFrameCursor(
+            SqlExecutionContext executionContext,
             PageFrameCursor diskCursor,
             LiveViewInstance instance,
             boolean isLastAttempt
@@ -263,7 +264,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
                     cursor = new LiveViewPageFrameCursor();
                     // of() adopts diskCursor and the pin before anything that can throw, so
                     // from here close() is what releases them - hence the catch's fork.
-                    cursor.of(tableDiskCursor, tier, pin, slot, symbolCache, tierColumns);
+                    cursor.of(executionContext, tableDiskCursor, tier, pin, slot, symbolCache, tierColumns);
                     return cursor;
                 }
             }
@@ -312,7 +313,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     /**
      * The page-frame twin of {@link #getCursor}: the base scan's frames cut at the seam,
-     * followed by a synthetic frame over the pinned in-mem slot, so a frame consumer sees
+     * followed by synthetic frames over the pinned in-mem slot, so a frame consumer sees
      * the un-flushed lead too. Falls back to the base scan's frames unchanged whenever
      * routing cannot engage - the shape rules it out, the tier is absent or empty, or the
      * seqTxn fence misses - which serves the applied prefix, correct and at worst one flush
@@ -356,7 +357,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
                 // opposite - see below.
                 return null;
             }
-            final PageFrameCursor cursor = bindFrameCursor(diskCursor, instance, attempt >= MAX_STALE_DISK_RETRIES);
+            final PageFrameCursor cursor = bindFrameCursor(executionContext, diskCursor, instance, attempt >= MAX_STALE_DISK_RETRIES);
             if (cursor != null) {
                 return cursor;
             }

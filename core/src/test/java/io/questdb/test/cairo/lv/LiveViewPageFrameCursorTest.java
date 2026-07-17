@@ -59,6 +59,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -100,6 +101,41 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     private static final int TIER_COLUMN_COUNT = 4;
 
     @Test
+    public void testCalculateSizeCountsTheSlotRowsNoFrameHasCovered() throws Exception {
+        // A slot that spans several frames can be left half-served, which a single
+        // whole-slot frame made unreachable. A boolean "the slot went out" flag answers
+        // that state wrongly whichever way it leans - the whole slot for one already
+        // half-served, or nothing for one with rows still to come - so count the rows no
+        // frame has covered instead.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 4)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                fillSlot(tier, slotIdx, disk, 12, 12);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertEquals(16, cursor.size());
+                    Assert.assertEquals(16, calculateSize(cursor));
+
+                    // The disk frame, then the slot's leading 4-row frame: 8 slot rows left.
+                    cursor.toTop();
+                    Assert.assertNotNull(cursor.next());
+                    Assert.assertNotNull(cursor.next());
+                    Assert.assertEquals(8, calculateSize(cursor));
+                    // A second call must not re-count what the first consumed.
+                    Assert.assertEquals(0, calculateSize(cursor));
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testCloseReleasesTheTierPin() throws Exception {
         // The cursor carries the pin for its whole life because its frames publish the
         // slot's native addresses directly. Close must hand the slot back, or the refresh
@@ -116,7 +152,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 // Closed twice on the happy path - once here, once by the block. The second
                 // must be a no-op; a releaseRead without a matching pin corrupts the count.
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
 
                     Assert.assertNull("a reader pins the slot, so the writer must trail", tier.tryAcquireWrite(slotIdx));
                     cursor.close();
@@ -145,7 +181,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
 
                 final TestDiskPageFrameCursor base = diskCursor(disk, identityTierColumns(), 8, 12);
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(base, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, base, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final LongList served = drainTimestamps(cursor, metadataOf(identityTierColumns()));
                     assertTimestamps(served, 1, 14);
                     Assert.assertEquals("the frame above the seam must never be pulled", 1, base.nextCalls);
@@ -172,7 +208,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 8, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
 
                     cursor.toPartition(0);
                     // Every disk row, and not one lead row: 12, not 14. The routed walk
@@ -206,7 +242,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, tierColumns, 4, 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), tierColumns);
+                    cursor.of(sqlExecutionContext, diskCursor(disk, tierColumns, 4, 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), tierColumns);
                     // The slot holds disk rows [4, 8) as overlap plus 2 lead rows, so the
                     // disk band is 8 - 4 = 4 rows and the whole 6-row slot follows: ts 1..10.
                     final LongList served = new LongList();
@@ -244,7 +280,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 3, 3);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 3, 6, 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 3, 6, 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     Assert.assertEquals(11, cursor.size());
                     assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 11);
                 }
@@ -268,7 +304,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     // disk.size() + leadRowCount = 12 + 2. The overlap is already counted in
                     // disk.size(); only the un-flushed lead sits on top.
                     Assert.assertEquals(14, cursor.size());
@@ -293,7 +329,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     Assert.assertEquals(14, cursor.size());
                     Assert.assertEquals(14, calculateSize(cursor));
 
@@ -337,7 +373,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 5, 5);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final LongList timestamps = new LongList();
                     final ObjList<String> strings = new ObjList<>();
                     final ObjList<String> symbols = new ObjList<>();
@@ -362,6 +398,136 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSlotFrameExtentsRebaseOntoTheFramesOwnRows() throws Exception {
+        // Where the rebasing lives, and half of it cannot fail loudly. A consumer reads a
+        // column's extent only as a bounds guard, so an extent left describing the WHOLE
+        // slot is too LOOSE rather than wrong and every value still decodes - the drain
+        // arms pass either way. Assert the addresses and extents directly, against the
+        // same arithmetic FwdTableReaderPageFrameCursor.computeNativeFrame publishes.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 4)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                fillSlot(tier, slotIdx, disk, 12, 12);
+                final LiveViewInMemoryBuffer slot = tier.getSlot(slotIdx);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, slot, tier.getSymbolCache(), identityTierColumns());
+                    // The disk frame, then the slot's [0, 4). The [4, 8) frame below is the
+                    // first whose lo is not 0 - the one a whole-slot frame never had.
+                    Assert.assertNotNull(cursor.next());
+                    Assert.assertNotNull(cursor.next());
+                    final PageFrame frame = cursor.next();
+                    Assert.assertNotNull(frame);
+                    Assert.assertEquals(4, frame.getPartitionLo());
+                    Assert.assertEquals(8, frame.getPartitionHi());
+
+                    // A fixed-width column's page starts at this frame's first row and
+                    // covers only its rows. SYMBOL's 4-byte stride is not the timestamp's
+                    // 8, so a stride hard-coded to either lands off the rows for the other.
+                    Assert.assertEquals(slot.dataAddress(COL_TS) + 4 * 8L, frame.getPageAddress(COL_TS));
+                    Assert.assertEquals(4 * 8L, frame.getPageSize(COL_TS));
+                    Assert.assertEquals(slot.dataAddress(COL_G) + 4 * 4L, frame.getPageAddress(COL_G));
+                    Assert.assertEquals(4 * 4L, frame.getPageSize(COL_G));
+                    // ...and it has no aux vector at all.
+                    Assert.assertEquals(0, frame.getAuxPageAddress(COL_TS));
+                    Assert.assertEquals(0, frame.getAuxPageSize(COL_TS));
+
+                    // A var-size column's aux vector rebases onto this frame's first entry,
+                    // and its extent is relative to that base - not the slot's own auxSize,
+                    // which counts from entry 0 and carries the trailing terminator on top.
+                    final ColumnTypeDriver driver = ColumnType.getDriver(ColumnType.STRING);
+                    Assert.assertEquals(slot.auxAddress(COL_S) + driver.getAuxVectorOffset(4), frame.getAuxPageAddress(COL_S));
+                    Assert.assertEquals(driver.getAuxVectorOffset(8) - driver.getAuxVectorOffset(4), frame.getAuxPageSize(COL_S));
+                    Assert.assertTrue(
+                            "a rebased frame must not publish the whole slot's aux extent",
+                            frame.getAuxPageSize(COL_S) < slot.auxSize(COL_S)
+                    );
+                    // Its data page does NOT rebase: an aux entry carries the payload's
+                    // offset from the vector's BASE, so the address stays row 0's and the
+                    // extent stays absolute - where this frame's LAST row's payload ends,
+                    // rather than how many bytes its own rows occupy.
+                    Assert.assertEquals(slot.dataAddress(COL_S), frame.getPageAddress(COL_S));
+                    Assert.assertEquals(driver.getDataVectorSizeAt(slot.auxAddress(COL_S), 7), frame.getPageSize(COL_S));
+                    Assert.assertTrue(
+                            "a frame that is not the slot's last must stop at its own last row",
+                            frame.getPageSize(COL_S) < slot.dataSize(COL_S)
+                    );
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testSlotSplitsIntoFramesBoundedByThePageFrameRowLimit() throws Exception {
+        // One frame for the whole slot leaves a wide IN MEMORY window's tail to a single
+        // filter worker while the rest idle, and past Map.BATCH_ROW_INDEX_MASK rows it
+        // silently truncates the frame-relative row index a batched GROUP BY packs into
+        // its entries. The slot tiles into limit-sized frames instead, the way the disk
+        // partitions ahead of it already do.
+        // min == max pins the limit whatever the shared worker count is:
+        // calculatePageFrameRowLimit clamps its per-worker share into that band, and 12
+        // rows divide by 4 with no trailing-frame rounding.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 4)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // No overlap: all 12 slot rows are lead, so the drain reads the 4 disk rows
+                // and then the whole slot - ts 1..16, across one disk frame and 3 slot ones.
+                fillSlot(tier, slotIdx, disk, 12, 12);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    final LongList frameRanges = new LongList();
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        if (frame.getPartitionIndex() == Rows.MAX_SAFE_PARTITION_INDEX) {
+                            frameRanges.add(frame.getPartitionLo());
+                            frameRanges.add(frame.getPartitionHi());
+                        }
+                    }
+                    // Contiguous, limit-sized, and covering the slot exactly once.
+                    Assert.assertEquals(
+                            "slot frame ranges",
+                            "[0,4,4,8,8,12]",
+                            frameRanges.toString()
+                    );
+
+                    // ...and every row still decodes, which is what the rebasing buys. A
+                    // frame's aux vector that did not rebase resolves its first row's string
+                    // against the slot's first row instead.
+                    cursor.toTop();
+                    final LongList timestamps = new LongList();
+                    final ObjList<String> strings = new ObjList<>();
+                    final ObjList<String> symbols = new ObjList<>();
+                    drain(cursor, metadataOf(identityTierColumns()), (record) -> {
+                        timestamps.add(record.getTimestamp(COL_TS));
+                        strings.add(Chars.toString(record.getStrA(COL_S)));
+                        symbols.add(Chars.toString(record.getSymA(COL_G)));
+                    });
+                    assertTimestamps(timestamps, 1, 16);
+                    for (int i = 0; i < 16; i++) {
+                        Assert.assertEquals("row " + i, stringValue(i), strings.getQuick(i));
+                        // The 4 disk rows carry the committed symbol; every slot row here is
+                        // lead, so it carries the value only the overlay can resolve.
+                        Assert.assertEquals("row " + i, i < 4 ? COMMITTED_SYMBOL : LEAD_SYMBOL, symbols.getQuick(i));
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testToTopReplaysTheSameFrameStream() throws Exception {
         // The slot stays pinned and frozen for the cursor's life, so a replay must serve
         // exactly the same rows - the seam does not move under it.
@@ -374,7 +540,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final RecordMetadata metadata = metadataOf(identityTierColumns());
                     final LongList first = drainTimestamps(cursor, metadata);
                     cursor.toTop();

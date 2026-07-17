@@ -78,17 +78,20 @@ import io.questdb.std.str.Utf8SplitString;
  * <p>
  * {@link #dataAddress}, {@link #dataSize}, {@link #auxAddress} and {@link #auxSize}
  * expose each column's region as a raw (address, used-byte-extent) pair - the shape a
- * {@code PageFrame} column address wants, and what a frame over a pinned slot would
- * publish.
+ * {@code PageFrame} column address wants. All four describe the WHOLE slot, which is
+ * what makes them the base a frame builds on rather than what a frame publishes: a
+ * frame covering a row range derives its own addresses and extents against that range
+ * (see {@code LiveViewPageFrameCursor}), and the two coincide only for a frame that
+ * starts at row 0 and runs to {@code rowCount}.
  * <p>
  * Every column's aux vector is byte-for-byte the layout its {@code ColumnTypeDriver}
  * writes on disk, so any column here is driver-readable: VARCHAR and ARRAY get that for
  * free by appending through {@link VarcharTypeDriver} / {@link ArrayTypeDriver}, and
  * STRING / BINARY match the drivers' N+1 model - a leading 0 followed by one 8-byte END
  * offset per row, so {@code aux[row]} is the row's start and {@code aux[rowCount]} bounds
- * the last row's payload. The one place the two models still differ is the published
+ * the last row's payload. The one place the two models still differ is the reported
  * extent, and only for STRING / BINARY: {@link #auxSize} reports the N+1 vector where a
- * native frame publishes {@code N * 8}. That gap is inert - see {@link #auxSize}.
+ * native frame publishes {@code N * 8}. See {@link #auxSize}.
  * <p>
  * The slot's {@code rowCount} and {@code seamTs} bookkeeping is owned by the
  * caller: {@link #setRowCount(long)} bumps the row counter once all column
@@ -346,15 +349,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * this bound.
      * <p>
      * VARCHAR and ARRAY report {@code rowCount * 16}, exactly the extent a page frame over
-     * these rows publishes. STRING / BINARY report {@code (rowCount + 1) * 8} - the native
-     * N+1 vector, one entry MORE than the {@code rowCount * 8} a native frame publishes for
-     * the same rows, because this buffer carries the trailing terminator an mmap'd column
-     * file keeps out of the frame's extent. A frame may publish this value as-is: the aux
-     * extent is consumed purely as a bounds guard (every STRING / BINARY read in
-     * {@code PageFrameMemoryRecord} is {@code if (auxPageLim < auxOffset + 8) throw}),
-     * nothing derives a row count from it, and the frame's own row range caps {@code
-     * rowIndex} at {@code rowCount - 1} regardless - so the extra entry only loosens the
-     * guard by one entry.
+     * every one of these rows publishes. STRING / BINARY report {@code (rowCount + 1) * 8} -
+     * the native N+1 vector, one entry MORE than the {@code rowCount * 8} a native frame
+     * publishes for the same rows, because this buffer carries the trailing terminator an
+     * mmap'd column file keeps out of the frame's extent. So this is the vector's used
+     * extent, not a frame extent, and a frame over a row range must derive its own from the
+     * driver's {@code getAuxVectorOffset} - which is relative to the base it rebases onto,
+     * as this is not.
      * <p>
      * A STRING / BINARY column therefore reports 8, not 0, when the slot holds no rows: the
      * leading terminator entry is written at construction and re-written by {@link #reset()}.
