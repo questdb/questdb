@@ -62,23 +62,52 @@ import org.jetbrains.annotations.TestOnly;
  * visible to the refresh worker's slow-path {@code tryAcquireWrite} ensures
  * the writer trails rather than progressing past a slow reader.
  * <p>
- * Seam routing: when the consistency fence holds ({@link #routingEligible}),
- * the cursor serves disk rows with {@code ts < seamTs}, stops the disk scan at
- * the first row with {@code ts >= seamTs} (skipping the hot tail partition(s) of
- * the LV table), then serves the entire pinned in-mem slot, which holds every
- * output row with {@code ts >= seamTs}. The slot's lower band is the overlap -
- * rows already on disk, served from RAM in place of the hot tail - and any rows
- * above the applied point are the un-flushed lead, which disk does not have yet,
- * so the slot can lead disk. Disk is strictly below the seam and the slot is at
- * or above it (ties at {@code seamTs} included), so the seam boundary has neither
- * a duplicate nor a gap. The fence ({@code slot.lvSeqTxn == diskReader.seqTxn})
- * makes the overlap safe: equal seqTxns mean the slot's overlap and the disk
- * snapshot reflect the identical LV-table version, so that band agrees row-for-row
- * even across an O3 rewrite. The seam split also assumes the disk scan is
- * ascending, so a backward / index scan (e.g. {@code ORDER BY ts DESC} pushed
- * into the base) routes disk-only. When the fence does not hold (tier absent /
- * empty, a timestamp-pruned projection, a disk cursor that is not a plain table
- * scan, a non-ascending scan, or a seqTxn mismatch) the cursor falls back to disk-only,
+ * A slot's rows split at {@code leadStart = rowCount - leadRowCount}: rows
+ * {@code [0, leadStart)} are the <b>overlap</b> (already on disk, held in RAM so a read
+ * can skip the LV table's hot tail partition(s)), and rows
+ * {@code [leadStart, rowCount)} are the <b>lead</b> (not yet on disk, and the only copy
+ * that exists). The overlap is a performance asset; the lead is a freshness asset. The
+ * cursor has a routing mode per way of combining them - see the {@code ROUTING_*}
+ * constants - and picks the richest one the read's shape allows:
+ * <ul>
+ *   <li><b>Seam split</b> ({@link #ROUTING_SEAM}), the preferred mode: serve disk rows
+ *   with {@code ts < seamTs}, stop the disk scan at the first row with
+ *   {@code ts >= seamTs} (skipping the hot tail partition(s)), then serve the entire
+ *   slot, which holds every output row at or above {@code seamTs}. Disk is strictly
+ *   below the seam and the slot at or above it (ties at {@code seamTs} included), so the
+ *   boundary has neither a duplicate nor a gap. This is the only mode that cashes in the
+ *   overlap, and the only one that needs a projected designated timestamp to cut on and
+ *   an ascending disk scan.</li>
+ *   <li><b>Lead-only</b> ({@link #ROUTING_LEAD_ONLY_FWD} / {@link #ROUTING_LEAD_ONLY_DESC}):
+ *   serve the disk scan in FULL, plus the lead band alone. Disk holds every applied row
+ *   and the lead holds exactly what disk lacks, so their union still covers every row
+ *   exactly once - with no seam, no timestamp compare, and hence no ordering requirement
+ *   on the disk scan. It gives up the hot-tail skip, which is the right trade for the
+ *   shapes the seam cannot serve at all: a timestamp-pruned projection
+ *   ({@code SELECT max(rn) FROM lv}) and a backward scan
+ *   ({@code SELECT * FROM lv ORDER BY ts DESC}). Descending serves the reversed lead
+ *   first, then disk, since the lead sits at or above the on-disk maximum.</li>
+ *   <li><b>Disk-only</b> ({@link #ROUTING_DISK_ONLY}): the fallback.</li>
+ * </ul>
+ * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) is what makes any of this safe:
+ * equal seqTxns mean the slot and the disk snapshot reflect the identical LV-table
+ * version, so the overlap band agrees with disk row-for-row even across an O3 rewrite,
+ * and the lead is exactly the set of rows disk does not have. Both facts are needed -
+ * the seam leans on the first, lead-only on the second. If disk had advanced past the
+ * slot, rows the slot still calls lead would already be on disk and lead-only would
+ * double-count them.
+ * <p>
+ * The lead/disk bound is NON-strict: {@code min(lead ts) >= max(disk ts)}, with ties both
+ * reachable and load-bearing (an additive commit whose minimum ts equals the frontier is
+ * not diverted to O3, so it appends into the lead at exactly the on-disk maximum). No
+ * mode may assert a strict {@code >} on that boundary or split the two bands on a
+ * timestamp compare. Lead-only is immune by construction - it splits by ROW INDEX, so a
+ * lead row sharing a timestamp with a disk row is still a distinct row - and the seam
+ * handles the tie through its {@code leadStart == 0} branch.
+ * <p>
+ * When the fence does not hold (tier absent / empty, a projection that does not resolve
+ * against the tier's columns, a disk cursor that is not a plain unfiltered table scan, or
+ * a seqTxn mismatch) the cursor falls back to disk-only,
  * which serves the applied prefix - always correct, at worst one flush cycle
  * behind the lead. O3 replay rewrites the disk tier and atomically rebuilds the
  * in-mem tier from the rewritten LV table (see
@@ -93,11 +122,8 @@ import org.jetbrains.annotations.TestOnly;
  * columns projects a subset of what the slot already holds. The cursor resolves
  * each projected column to its tier column through the disk scan's
  * {@link ColumnMapping} (see {@link #isTierAddressableProjection}), so such reads
- * route too. A read that prunes the designated timestamp - e.g.
- * {@code SELECT max(rn)}, which leaves {@code timestampColumnIndex < 0} - still
- * serves from disk alone, because the seam split has no timestamp to cut on; that
- * is correct because disk holds every applied row (the read simply does not see
- * the lead). SYMBOL output columns route through the tier too: the refresh worker
+ * route too - including one that prunes the designated timestamp, which routes
+ * lead-only. SYMBOL output columns route through the tier too: the refresh worker
  * eager-interns the un-flushed lead's symbols into the LV table's id space (see
  * {@link io.questdb.cairo.lv.LiveViewSymbolCache}), and the cursor answers
  * {@link #getSymbolTable} / {@link #newSymbolTable} through a
@@ -125,7 +151,7 @@ import org.jetbrains.annotations.TestOnly;
  * therefore joined against NULL (or, if an earlier master row had a match, against
  * that stale row). Frame encoding keeps every in-mem rowId positive, so no sentinel
  * aliases one; it also puts them above every disk rowId, which is the order the
- * seam split serves them in.
+ * seam split and lead-only forward serve them in.
  * <p>
  * Single-shot lifecycle: the factory allocates a fresh instance per
  * {@link LiveViewRecordCursorFactory#getCursor(io.questdb.griffin.SqlExecutionContext)}.
@@ -133,6 +159,19 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class LiveViewRecordCursor implements RecordCursor {
 
+    // The read serves disk alone; the slot is never touched.
+    public static final int ROUTING_DISK_ONLY = 0;
+    // Lead-only, disk scan descending: the lead reversed (rowCount-1 down to leadStart),
+    // then the whole disk scan. The lead sits at or above the on-disk maximum, so serving
+    // it first keeps the output non-increasing across the band boundary.
+    public static final int ROUTING_LEAD_ONLY_DESC = 1;
+    // Lead-only, disk scan ascending: the whole disk scan, then the lead
+    // ([leadStart, rowCount)). Disk holds every applied row and the lead holds exactly
+    // what disk lacks, so the union covers every row once - no seam, no timestamp.
+    public static final int ROUTING_LEAD_ONLY_FWD = 2;
+    // The seam split: disk rows below seamTs, then the whole slot (overlap + lead). Serves
+    // the slot's overlap band from RAM in place of the LV table's hot tail partition(s).
+    public static final int ROUTING_SEAM = 3;
     // Frame index the in-mem rows' synthesized rowIds carry. A rowId on the page-frame
     // path is Rows.toRowID(frameIndex, rowIndex), and the disk cursor under this one is
     // a page-frame scan, so an in-mem row is addressable by taking a frame index of its
@@ -185,11 +224,16 @@ public class LiveViewRecordCursor implements RecordCursor {
     // Drives size() (disk.size() + lead) and the leadRowsServed counter.
     private long leadStart;
     private LiveViewInMemoryBuffer pinnedSlot;
-    // True when the fence holds (pinned slot and disk reader share an LV-table
-    // seqTxn) and every projected column resolves to a tier column. Seam routing in
-    // hasNext() serves the slot for ts >= seamTs only when this is true.
-    private boolean routingEligible;
+    // How this read serves the slot: one of the ROUTING_* modes. Anything but
+    // ROUTING_DISK_ONLY requires the fence to hold (pinned slot and disk reader share an
+    // LV-table seqTxn) and every projected column to resolve to a tier column; no serving
+    // path reads the slot while it is ROUTING_DISK_ONLY. Picked once in of().
+    private int routingMode;
     private int slotIdx;
+    // The pinned slot's row count, snapshotted in of() alongside leadStart. The slot is
+    // frozen for the cursor's life, but snapshotting keeps hasNext()'s band bounds, size()
+    // and skipRows() consistent with the leadStart the same call computed.
+    private long slotRowCount;
     private LiveViewInMemoryTier tier;
     private int timestampColumnIndex;
 
@@ -234,59 +278,82 @@ public class LiveViewRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         hasStartedIteration = true;
-        if (routingEligible) {
-            // Seam routing: serve disk rows strictly below the slot's seam
-            // timestamp, then serve the entire pinned slot. The slot holds every
-            // output row with ts >= seamTs: the overlap band [seamTs, applied]
-            // agrees with disk row-for-row (the seqTxn fence guarantees it) and is
-            // served from RAM instead of the hot tail partition(s); any rows above
-            // the applied point are the un-flushed lead, served only from RAM since
-            // disk does not have them yet. Disk is strictly < seamTs and the slot
-            // is >= seamTs (ties at seamTs included), so the seam boundary has
-            // neither a duplicate nor a gap.
-            if (!diskExhausted) {
-                if (diskCursor.hasNext()) {
-                    long ts = diskCursor.getRecord().getTimestamp(timestampColumnIndex);
-                    // leadStart == 0: the slot carries NO overlap (every row is un-flushed lead), so
-                    // disk holds none of them and there is nothing to cut against - disk must serve
-                    // every row it has. Cutting at seamTs (then the lead's own minimum) would drop a
-                    // disk row at exactly that ts, served by neither tier. Reachable: an additive
-                    // commit whose min ts equals the frontier is not diverted to O3 (strict
-                    // below-frontier compare), and a post-restart slot is pure lead. size() and
-                    // skipRows() already use diskRouted = diskSize - leadStart, i.e. the whole disk
-                    // when leadStart == 0; this restores hasNext() to that same contract.
-                    if (leadStart == 0 || ts < pinnedSlot.seamTs()) {
+        switch (routingMode) {
+            case ROUTING_SEAM:
+                // Serve disk rows strictly below the slot's seam timestamp, then serve the
+                // entire pinned slot. The slot holds every output row with ts >= seamTs: the
+                // overlap band [seamTs, applied] agrees with disk row-for-row (the seqTxn
+                // fence guarantees it) and is served from RAM instead of the hot tail
+                // partition(s); any rows above the applied point are the un-flushed lead,
+                // served only from RAM since disk does not have them yet. Disk is strictly <
+                // seamTs and the slot is >= seamTs (ties at seamTs included), so the seam
+                // boundary has neither a duplicate nor a gap.
+                if (!diskExhausted) {
+                    if (diskCursor.hasNext()) {
+                        long ts = diskCursor.getRecord().getTimestamp(timestampColumnIndex);
+                        // leadStart == 0: the slot carries NO overlap (every row is un-flushed lead), so
+                        // disk holds none of them and there is nothing to cut against - disk must serve
+                        // every row it has. Cutting at seamTs (then the lead's own minimum) would drop a
+                        // disk row at exactly that ts, served by neither tier. Reachable: an additive
+                        // commit whose min ts equals the frontier is not diverted to O3 (strict
+                        // below-frontier compare), and a post-restart slot is pure lead. size() and
+                        // skipRows() already use diskRouted = diskSize - leadStart, i.e. the whole disk
+                        // when leadStart == 0; this restores hasNext() to that same contract.
+                        if (leadStart == 0 || ts < pinnedSlot.seamTs()) {
+                            recordA.toDiskMode();
+                            return true;
+                        }
+                        // Reached the seam: this row and everything after it lives in
+                        // the slot. Stop scanning disk - the perf win.
+                        diskExhausted = true;
+                    } else {
+                        diskExhausted = true;
+                    }
+                }
+                return nextSlotRowForward();
+            case ROUTING_LEAD_ONLY_FWD:
+                // Disk in full, then the lead. Disk holds every applied row and the lead is
+                // exactly what disk lacks, so the union covers every row once. There is no
+                // seam and no timestamp compare, which is why a timestamp-pruned projection
+                // routes here.
+                if (!diskExhausted) {
+                    if (diskCursor.hasNext()) {
                         recordA.toDiskMode();
                         return true;
                     }
-                    // Reached the seam: this row and everything after it lives in
-                    // the slot. Stop scanning disk - the perf win.
-                    diskExhausted = true;
-                } else {
                     diskExhausted = true;
                 }
-            }
-            if (inMemRow + 1 < pinnedSlot.rowCount()) {
-                inMemRow++;
-                inMemRowsServed++;
-                if (inMemRow >= leadStart) {
-                    // A lead row: in the slot but not yet on the LV's on-disk tier.
+                return nextSlotRowForward();
+            case ROUTING_LEAD_ONLY_DESC:
+                // The mirror image: the lead reversed, then disk descending. The lead sits at
+                // or above the on-disk maximum, so both bands stay non-increasing across the
+                // boundary. The bound is non-strict - an additive commit whose minimum ts
+                // EQUALS the frontier appends into the lead at exactly the on-disk max - but
+                // the split is by row index, not by timestamp, so a lead row sharing a ts with
+                // a disk row is still a distinct row and neither tier drops it.
+                if (inMemRow - 1 >= leadStart) {
+                    inMemRow--;
+                    inMemRowsServed++;
                     leadRowsServed++;
+                    recordA.toInMemMode(inMemRow);
+                    return true;
                 }
-                recordA.toInMemMode(inMemRow);
-                return true;
-            }
-            return false;
+                if (diskCursor.hasNext()) {
+                    recordA.toDiskMode();
+                    return true;
+                }
+                return false;
+            default:
+                // Disk-only: the fence did not engage (tier absent/empty, a projection that
+                // does not resolve against the tier, a non-table or row-filtered disk cursor,
+                // or a seqTxn mismatch). Disk holds every applied row, so this serves the
+                // applied prefix - always correct, at worst one flush cycle behind the lead.
+                if (diskCursor.hasNext()) {
+                    recordA.toDiskMode();
+                    return true;
+                }
+                return false;
         }
-        // Disk-only: the fence did not engage (tier absent/empty, pruned
-        // projection, non-table disk cursor, or a seqTxn mismatch). Disk holds
-        // every applied row, so this serves the applied prefix - always correct,
-        // at worst one flush cycle behind the in-mem lead.
-        if (diskCursor.hasNext()) {
-            recordA.toDiskMode();
-            return true;
-        }
-        return false;
     }
 
     @TestOnly
@@ -301,7 +368,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @TestOnly
     public boolean isRoutingEligible() {
-        return routingEligible;
+        return routingMode != ROUTING_DISK_ONLY;
+    }
+
+    @TestOnly
+    public int routingMode() {
+        return routingMode;
     }
 
     /**
@@ -339,9 +411,10 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.diskExhausted = false;
         this.hasStartedIteration = false;
         this.inMemRow = -1;
+        this.slotRowCount = 0;
         this.pinnedSlot = null;
         this.inMemEligible = false;
-        this.routingEligible = false;
+        this.routingMode = ROUTING_DISK_ONLY;
         this.tierColumns.clear();
         // Prior-use overlays are stamped with the previous slot; free them. The
         // shared ones go with the symbolTableSource rebind at the end of of().
@@ -363,58 +436,65 @@ public class LiveViewRecordCursor implements RecordCursor {
                     LiveViewRecordCursorFactory.runSlotPinnedHook();
                     this.pinnedSlot = candidate.getSlot(pin);
                     symbolCache = candidate.getSymbolCache();
-                    this.inMemEligible = isTierAddressableProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex, tierColumns);
+                    this.inMemEligible = isTierAddressableProjection(diskCursor, baseMetadata, pinnedSlot, tierColumns);
+                    // The mode this read WOULD take if the fence held, from the query shape
+                    // alone. ROUTING_DISK_ONLY here means no shape can ever serve the slot.
+                    final int candidateMode = inMemEligible
+                            ? selectRoutingMode(diskCursor, timestampColumnIndex, diskScanAscending)
+                            : ROUTING_DISK_ONLY;
                     // LONG_NULL means the disk cursor exposes no LV-table seqTxn to fence
-                    // against at all: it is not a plain forward table scan (an index scan,
+                    // against at all: it is not a plain unfiltered table scan (an index scan,
                     // an interval-filtered or pushdown-filtered page-frame cursor, a
                     // non-table cursor). Distinct from a seqTxn that simply disagrees with
                     // the slot's - see the release decision below.
-                    final long diskSeqTxn = inMemEligible && diskScanAscending
+                    final long diskSeqTxn = candidateMode != ROUTING_DISK_ONLY
                             ? diskReaderSeqTxn(diskCursor)
                             : Numbers.LONG_NULL;
-                    if (!inMemEligible || !diskScanAscending || diskSeqTxn == Numbers.LONG_NULL) {
-                        // Statically disk-only: the projection drops the timestamp or
-                        // does not resolve against the tier's columns, or the disk
-                        // cursor is non-table (inMemEligible false), the scan is not
-                        // ascending (the seam split assumes ascending ts), or the
-                        // cursor carries no seqTxn to fence against (diskSeqTxn
-                        // LONG_NULL - e.g. SELECT * FROM lv WHERE ts >= '...', whose
-                        // interval filter the optimiser pushes into the page-frame scan).
-                        // The fence can never engage for this cursor regardless of the
-                        // slot's version, and no serving path (hasNext / size /
-                        // skipRows / getSymbolTable / newSymbolTable / recordAt) reads
-                        // the slot while routingEligible is false. Release the tier
+                    if (candidateMode == ROUTING_DISK_ONLY || diskSeqTxn == Numbers.LONG_NULL) {
+                        // Statically disk-only: the projection does not resolve against the
+                        // tier's columns or the disk cursor is non-table (inMemEligible
+                        // false), the disk cursor's two direction signals disagree (see
+                        // selectRoutingMode), or the cursor carries no seqTxn to fence
+                        // against (diskSeqTxn LONG_NULL - e.g. SELECT * FROM lv WHERE ts >=
+                        // '...', whose interval filter the optimiser pushes into the
+                        // page-frame scan). The fence can never engage for this cursor
+                        // regardless of the slot's version, and no serving path (hasNext /
+                        // size / skipRows / getSymbolTable / newSymbolTable / recordAt) reads
+                        // the slot while the mode is ROUTING_DISK_ONLY. Release the tier
                         // slot now instead of holding the global pin lease + per-slot
                         // rc for the whole cursor lifetime: sustained concurrent
                         // disk-only reads straddling a tier swap would otherwise pin
                         // BOTH slots, so publishToInMemoryTier fails and the refresh
                         // worker emergency-flushes the lead every cycle.
                         //
-                        // A version-fence miss (schema + direction OK and the disk cursor
-                        // DOES report a seqTxn, but the slot is newer than that snapshot)
-                        // is deliberately NOT released here: getCursor's
-                        // isSlotNewerThanDisk() staleness retry needs the slot pinned to
-                        // detect it and re-open against a fresh snapshot, so that path
-                        // keeps the pin (routingEligible stays false and it serves
-                        // disk-only for this attempt). A LONG_NULL disk seqTxn cannot
-                        // reach that retry - isSlotNewerThanDisk() reads it too - so
-                        // holding the pin there would buy nothing.
+                        // A version-fence miss (shape OK and the disk cursor DOES report a
+                        // seqTxn, but the slot is newer than that snapshot) is deliberately
+                        // NOT released here: getCursor's isSlotNewerThanDisk() staleness
+                        // retry needs the slot pinned to detect it and re-open against a
+                        // fresh snapshot, so that path keeps the pin (the mode stays
+                        // ROUTING_DISK_ONLY and it serves disk-only for this attempt). A
+                        // LONG_NULL disk seqTxn cannot reach that retry -
+                        // isSlotNewerThanDisk() reads it too - so holding the pin there
+                        // would buy nothing.
                         releaseSlot();
                         this.pinnedSlot = null;
                         symbolCache = null;
                     } else {
-                        // schema + direction are fine; serve the slot only when it and
-                        // the disk reader share an LV-table seqTxn (same version => rows
-                        // agree) and the slot actually holds rows. Mismatch / unstamped
-                        // => disk-only, but the slot stays pinned for the staleness
-                        // retry noted above.
-                        this.routingEligible = LiveViewRouting.isFenced(pinnedSlot, diskSeqTxn);
-                        // Snapshot the overlap/lead boundary. Rows [0, leadStart) are
-                        // the overlap (also on disk, served via the seam split); rows
-                        // [leadStart, rowCount) are the un-flushed lead, served only
-                        // from RAM. The slot is frozen for the cursor's lifetime, so
-                        // this snapshot stays valid.
-                        this.leadStart = pinnedSlot.rowCount() - pinnedSlot.leadRowCount();
+                        // The shape is fine; serve the slot only when it and the disk reader
+                        // share an LV-table seqTxn (same version => rows agree) and the slot
+                        // actually holds rows. Mismatch / unstamped => disk-only, but the
+                        // slot stays pinned for the staleness retry noted above.
+                        if (LiveViewRouting.isFenced(pinnedSlot, diskSeqTxn)) {
+                            this.routingMode = candidateMode;
+                        }
+                        // Snapshot the slot's extent and its overlap/lead boundary. Rows
+                        // [0, leadStart) are the overlap (also on disk, served via the seam
+                        // split); rows [leadStart, rowCount) are the un-flushed lead, the
+                        // only band a lead-only mode serves. The slot is frozen for the
+                        // cursor's lifetime, so these snapshots stay valid.
+                        this.slotRowCount = pinnedSlot.rowCount();
+                        this.leadStart = slotRowCount - pinnedSlot.leadRowCount();
+                        resetSlotWalk();
                     }
                 }
             }
@@ -425,7 +505,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         // statically-disk-only branch above already released. A version-fence miss
         // keeps the slot pinned for getCursor's staleness retry but does not route
         // either, so it binds pass-through too.
-        symbolTableSource.of(diskCursor, routingEligible ? symbolCache : null, pinnedSlot, tierColumns);
+        symbolTableSource.of(diskCursor, isRoutingEligible() ? symbolCache : null, pinnedSlot, tierColumns);
         recordA.bindDisk(diskCursor.getRecord(), this, pinnedSlot, tierColumns);
         recordB.bindDisk(diskCursor.getRecordB(), this, pinnedSlot, tierColumns);
     }
@@ -454,25 +534,26 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        if (routingEligible) {
-            // The cursor serves disk rows below the seam plus every row in the
-            // pinned slot. The slot's overlap (rows [0, leadStart)) is also on
-            // disk, so it is already counted in disk.size(); only the un-flushed
-            // lead (rows [leadStart, rowCount)) sits on top. Hence
-            // size() = disk.size() + (rowCount - leadStart) = disk.size() +
-            // leadRowCount. When the slot holds no lead this collapses to
-            // disk.size(). Returning -1 (unknown) would defeat LIMIT pushdown.
+        if (isRoutingEligible()) {
+            // disk.size() + leadRowCount, and the SAME sum for every routing mode - which
+            // is why this needs no mode switch. The seam serves (diskSize - leadStart) disk
+            // rows plus the whole slot; a lead-only mode serves every disk row plus the
+            // lead alone. Both come to diskSize + (rowCount - leadStart): the slot's
+            // overlap (rows [0, leadStart)) is on disk either way, so it is already counted
+            // in disk.size(), and only the un-flushed lead sits on top. When the slot holds
+            // no lead this collapses to disk.size(). Returning -1 (unknown) would defeat
+            // LIMIT pushdown.
             final long diskSize = diskCursor.size();
             if (diskSize < 0) {
                 // Never negative for the plain entity scan the fence admits, but
-                // propagate "unknown" rather than fold -1 into the seam sum
-                // (skipRows guards the same way).
+                // propagate "unknown" rather than fold -1 into the sum (skipRows
+                // guards the same way).
                 return -1;
             }
             // leadStart <= rowCount under a passing fence; assert to fail safe.
-            assert leadStart <= pinnedSlot.rowCount()
-                    : "leadStart " + leadStart + " exceeds slot rowCount " + pinnedSlot.rowCount();
-            return diskSize + (pinnedSlot.rowCount() - leadStart);
+            assert leadStart <= slotRowCount
+                    : "leadStart " + leadStart + " exceeds slot rowCount " + slotRowCount;
+            return diskSize + (slotRowCount - leadStart);
         }
         // Disk-only: the fence did not engage, so the read serves the applied
         // prefix straight from disk.
@@ -481,7 +562,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
-        if (!routingEligible) {
+        if (!isRoutingEligible()) {
             // Disk-only: the read is a pure pass-through of the disk cursor, so
             // its own (frame-level) skip applies directly and tracks its own
             // position. This is what a plain table scan already gets, restoring
@@ -493,74 +574,116 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (toSkip <= 0) {
             return;
         }
-        // Seam routing serves [disk rows with ts < seamTs] then the whole pinned
-        // slot [0, rowCount). The frame-level split below assumes a fresh cursor
-        // (disk at its top, nothing served yet); the LIMIT rewrite always skips
-        // right after toTop(), so that holds. A mid-iteration call (disk already
-        // advanced) falls back to the safe row-by-row default, as does a disk
-        // cursor that cannot report its size (never a plain page-frame scan while
-        // routing, but guard rather than compute a bogus split).
+        // Each mode serves two bands back to back, and the splits below assume a fresh
+        // cursor (disk at its top, nothing served yet); the LIMIT rewrite always skips
+        // right after toTop(), so that holds. A mid-iteration call (disk already advanced)
+        // falls back to the safe row-by-row default, as does a disk cursor that cannot
+        // report its size (never a plain page-frame scan while routing, but guard rather
+        // than compute a bogus split).
         final long diskSize = diskCursor.size();
         if (hasStartedIteration || diskSize < 0) {
             RecordCursor.super.skipRows(rowCount, maxRowsAfterSkip);
             return;
         }
-        // Disk rows before the seam number diskSize - leadStart: the overlap band
-        // [0, leadStart) sits at ts >= seamTs and is served from the slot, not
-        // disk. This is the same identity size() relies on (size == diskSize +
-        // leadRowCount), so the split stays consistent with LIMIT bound math.
-        // The overlap band is a subset of the disk prefix; assert to fail safe.
-        assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
-        final long diskRoutedCount = diskSize - leadStart;
-        if (toSkip < diskRoutedCount) {
-            // Landing inside the disk region: hand the skip to the disk cursor's
-            // frame skip. maxRowsAfterSkip (the consumer's post-skip bound) also
-            // covers the single seam-probe read hasNext() makes at the boundary
-            // (disk reads after the skip never exceed the consumer's bound), so
-            // the disk decode window is never clamped short.
-            diskCursor.skipRows(rowCount, maxRowsAfterSkip);
-            return;
+        final long leadRows = slotRowCount - leadStart;
+        switch (routingMode) {
+            case ROUTING_SEAM: {
+                // Disk rows before the seam number diskSize - leadStart: the overlap band
+                // [0, leadStart) sits at ts >= seamTs and is served from the slot, not
+                // disk. This is the same identity size() relies on (size == diskSize +
+                // leadRowCount), so the split stays consistent with LIMIT bound math.
+                // The overlap band is a subset of the disk prefix; assert to fail safe.
+                assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
+                final long diskRoutedCount = diskSize - leadStart;
+                if (toSkip < diskRoutedCount) {
+                    // Landing inside the disk region: hand the skip to the disk cursor's
+                    // frame skip. maxRowsAfterSkip (the consumer's post-skip bound) also
+                    // covers the single seam-probe read hasNext() makes at the boundary
+                    // (disk reads after the skip never exceed the consumer's bound), so
+                    // the disk decode window is never clamped short.
+                    diskCursor.skipRows(rowCount, maxRowsAfterSkip);
+                    return;
+                }
+                // The skip spans the entire disk region and lands in the slot. Never walk
+                // disk row-by-row: mark it exhausted (hasNext() short-circuits the disk
+                // side) and position within the slot directly.
+                diskExhausted = true;
+                rowCount.dec(diskRoutedCount);
+                final long slotSkip = Math.min(rowCount.get(), slotRowCount);
+                // hasNext() pre-increments inMemRow, so land one row before the first row
+                // to serve. slotSkip == slotRowCount leaves the slot exhausted (empty tail).
+                inMemRow = slotSkip - 1;
+                rowCount.dec(slotSkip);
+                return;
+            }
+            case ROUTING_LEAD_ONLY_FWD: {
+                // The whole disk scan, then the lead - so the disk band is diskSize, not
+                // the seam's diskSize - leadStart.
+                if (toSkip < diskSize) {
+                    diskCursor.skipRows(rowCount, maxRowsAfterSkip);
+                    return;
+                }
+                diskExhausted = true;
+                rowCount.dec(diskSize);
+                final long leadSkip = Math.min(rowCount.get(), leadRows);
+                // hasNext() pre-increments, so land one row before the first lead row to
+                // serve; the band starts at leadStart rather than 0.
+                inMemRow = leadStart + leadSkip - 1;
+                rowCount.dec(leadSkip);
+                return;
+            }
+            case ROUTING_LEAD_ONLY_DESC: {
+                // The lead reversed FIRST, then disk - so the skip walks the bands in the
+                // opposite order to the two modes above.
+                if (toSkip < leadRows) {
+                    // hasNext() pre-decrements, so land one row above the first lead row to
+                    // serve, counting down from the slot's top.
+                    inMemRow = slotRowCount - toSkip;
+                    rowCount.dec(toSkip);
+                    return;
+                }
+                // The skip spans the whole lead: park the walk at the band's floor, which
+                // hasNext() reads as exhausted, and hand the remainder to the disk cursor's
+                // frame skip.
+                inMemRow = leadStart;
+                rowCount.dec(leadRows);
+                if (rowCount.get() > 0) {
+                    diskCursor.skipRows(rowCount, maxRowsAfterSkip);
+                }
+            }
         }
-        // The skip spans the entire disk region and lands in the slot. Never walk
-        // disk row-by-row: mark it exhausted (hasNext() short-circuits the disk
-        // side) and position within the slot directly.
-        diskExhausted = true;
-        rowCount.dec(diskRoutedCount);
-        final long slotSkip = Math.min(rowCount.get(), pinnedSlot.rowCount());
-        // hasNext() pre-increments inMemRow, so land one row before the first row
-        // to serve. slotSkip == rowCount() leaves the slot exhausted (empty tail).
-        inMemRow = slotSkip - 1;
-        rowCount.dec(slotSkip);
     }
 
     @Override
     public void toTop() {
         // Restart both sides; the next hasNext() re-finds the seam by re-scanning
-        // disk from the top. routingEligible is unchanged - the slot stays pinned
+        // disk from the top. The routing mode is unchanged - the slot stays pinned
         // at the same seqTxn for the cursor's lifetime.
         if (diskCursor != null) {
             diskCursor.toTop();
         }
         diskExhausted = false;
         hasStartedIteration = false;
-        inMemRow = -1;
+        resetSlotWalk();
         recordA.toDiskMode();
     }
 
     // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
-    // not a plain FULL table-reader scan we can fence cheaply. Seam routing
-    // assumes the disk side yields every LV-table row below the seam in ascending
-    // ts order, so any scan shape that under-returns or reorders rows must
-    // disengage the fence (fail safe to disk-only). The record path adds two
-    // checks LiveViewRouting.diskReaderSeqTxn cannot make from a frame cursor
-    // alone: a non-entity row cursor (an indexed or row-filtered scan, should a
-    // future change push either into the LV base) under-returns rows the frames
-    // still carry, and a backward row cursor breaks the ascending assumption. A
-    // non-page-frame plan (LATEST BY, complex factory) returns LONG_NULL too.
+    // not a plain FULL table-reader scan we can fence cheaply. Every routing mode
+    // assumes the disk side yields the LV-table rows it is cut against in full, so
+    // any scan shape that under-returns rows must disengage the fence (fail safe
+    // to disk-only). The record path adds one check LiveViewRouting.diskReaderSeqTxn
+    // cannot make from a frame cursor alone: a non-entity row cursor (an indexed or
+    // row-filtered scan, should a future change push either into the LV base)
+    // under-returns rows the frames still carry, so the slot's bands would no longer
+    // line up with what disk serves. A non-page-frame plan (LATEST BY, complex
+    // factory) returns LONG_NULL too.
+    //
+    // Scan DIRECTION is deliberately not checked here - it selects the mode rather
+    // than disqualifying the read; see selectRoutingMode.
     private static long diskReaderSeqTxn(RecordCursor diskCursor) {
         if (diskCursor instanceof PageFrameRecordCursorImpl pfrc
-                && pfrc.getRowCursorFactory().isEntity()
-                && pfrc.getRowCursorFactory().isForwardScan()) {
+                && pfrc.getRowCursorFactory().isEntity()) {
             return LiveViewRouting.diskReaderSeqTxn(pfrc.getPageFrameCursor());
         }
         return Numbers.LONG_NULL;
@@ -576,14 +699,16 @@ public class LiveViewRecordCursor implements RecordCursor {
      * ({@code SELECT ts, x FROM lv}) and reordered ones ({@code SELECT x, ts FROM
      * lv}) therefore route through the tier and see the un-flushed lead.
      * <p>
-     * Two shapes stay disk-only. A projection that prunes the designated timestamp
-     * leaves {@code timestampColumnIndex < 0}, and the seam split has no timestamp
-     * to cut the disk scan on - {@code SELECT max(rn) FROM lv} is the common case.
      * A read whose base is not a plain page-frame scan (an aliasing or expression
      * projection the optimiser fronts with a {@code SelectedRecord} /
-     * {@code VirtualRecord}) exposes no column mapping to resolve against. Both
-     * serve from disk alone, which is correct because disk holds every applied row -
-     * they simply do not see the lead, trailing it by at most one flush cycle.
+     * {@code VirtualRecord}) exposes no column mapping to resolve against, and serves
+     * from disk alone. That is correct because disk holds every applied row - such a
+     * read simply does not see the lead, trailing it by at most one flush cycle.
+     * <p>
+     * Pruning the designated timestamp is NOT a disqualifier. Only the seam split needs
+     * a timestamp to cut the disk scan on; a timestamp-pruned read
+     * ({@code SELECT max(rn) FROM lv}) still resolves every column it does project, so
+     * it routes lead-only instead. See {@link #selectRoutingMode}.
      * <p>
      * SYMBOL columns are routable: the tier stores LV-table-consistent symbol ids
      * (eager-interned by the refresh worker, see
@@ -597,10 +722,9 @@ public class LiveViewRecordCursor implements RecordCursor {
             RecordCursor diskCursor,
             RecordMetadata baseMetadata,
             LiveViewInMemoryBuffer buffer,
-            int timestampColumnIndex,
             IntList tierColumnsOut
     ) {
-        if (timestampColumnIndex < 0 || buffer == null) {
+        if (buffer == null) {
             return false;
         }
         // A cursor that is not a page-frame scan (an aliasing or expression projection the
@@ -612,6 +736,73 @@ public class LiveViewRecordCursor implements RecordCursor {
         return LiveViewRouting.buildTierColumnMapping(pfrc.getPageFrameCursor(), baseMetadata, buffer, tierColumnsOut);
     }
 
+    /**
+     * Picks the routing mode the read's SHAPE allows, before the runtime seqTxn fence gets
+     * a say. Returns {@link #ROUTING_DISK_ONLY} when no mode can serve the slot.
+     * <p>
+     * The seam split is the preferred mode - it also skips the LV table's hot tail
+     * partition(s) - but it needs an ascending disk scan and a projected designated
+     * timestamp to cut on. Lead-only needs neither: it serves the disk scan in full and
+     * adds the lead band, so the union covers every row once whichever direction the scan
+     * runs and with no timestamp compare anywhere. A read that cannot seam therefore falls
+     * back to lead-only rather than to disk-only, giving up only the hot-tail skip.
+     * <p>
+     * Direction is read from TWO signals that must agree, and the disagreement case is the
+     * reason this is not a one-liner. {@code diskScanAscending} comes from the base
+     * factory's {@code getScanDirection()}, which deliberately reports FORWARD for a
+     * single-row factory even when the scan underneath it runs backward; the row cursor
+     * factory's {@code isForwardScan()} reports the direction the rows actually arrive in.
+     * Neither can be trusted alone once they part company, because they feed different
+     * consumers: believing {@code getScanDirection()} would cut an ascending seam over a
+     * descending scan, while believing {@code isForwardScan()} would serve rows descending
+     * out of a factory whose own {@code getScanDirection()} (this wrapper delegates it)
+     * tells the optimizer they arrive ascending. Only disk-only is right for both, so that
+     * is what a disagreement gets.
+     * <p>
+     * No SQL reaches that branch today, and the proof is worth recording because it rests
+     * on a check in another method entirely. The two signals can only diverge for a
+     * single-row factory, which the code generator builds solely with a
+     * {@code LatestByValue*IndexedRowCursorFactory}; every such factory reports
+     * {@code isEntity() == false}, so {@link #diskReaderSeqTxn} already answers
+     * {@code LONG_NULL} and the read is disk-only before it gets here. That makes this a
+     * fail-safe rather than a live branch - but the thing keeping the lie away is
+     * {@code isEntity()}, which exists to reject scans that UNDER-RETURN rows and says
+     * nothing about direction. It would stop guarding this the moment an entity single-row
+     * shape appeared.
+     */
+    private static int selectRoutingMode(RecordCursor diskCursor, int timestampColumnIndex, boolean diskScanAscending) {
+        // A non-page-frame disk cursor exposes no row cursor factory to cross-check, but it
+        // also carries no seqTxn (diskReaderSeqTxn returns LONG_NULL for it), so the read
+        // is disk-only regardless of what this returns.
+        final boolean rowScanForward = diskCursor instanceof PageFrameRecordCursorImpl pfrc
+                && pfrc.getRowCursorFactory().isForwardScan();
+        if (diskScanAscending && rowScanForward) {
+            return timestampColumnIndex >= 0 ? ROUTING_SEAM : ROUTING_LEAD_ONLY_FWD;
+        }
+        if (!diskScanAscending && !rowScanForward) {
+            return ROUTING_LEAD_ONLY_DESC;
+        }
+        return ROUTING_DISK_ONLY;
+    }
+
+    // Serves the next slot row walking UP: [0, slotRowCount) under the seam (the seam cut
+    // already stopped disk where the slot's overlap begins), [leadStart, slotRowCount)
+    // under lead-only forward, which is what resetSlotWalk's starting sentinel selects.
+    // The lead counter keys off leadStart either way, so one walk covers both modes.
+    private boolean nextSlotRowForward() {
+        if (inMemRow + 1 < slotRowCount) {
+            inMemRow++;
+            inMemRowsServed++;
+            if (inMemRow >= leadStart) {
+                // A lead row: in the slot but not yet on the LV's on-disk tier.
+                leadRowsServed++;
+            }
+            recordA.toInMemMode(inMemRow);
+            return true;
+        }
+        return false;
+    }
+
     private void releaseSlot() {
         if (tier != null && slotIdx >= 0) {
             // Safe even after the LV's DROP marked the tier closed: the deferred-
@@ -621,6 +812,18 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
         tier = null;
         slotIdx = -1;
+    }
+
+    // Parks the slot walk one row outside the band the mode serves, in the direction it
+    // serves it: hasNext() pre-increments (or pre-decrements) before reading. The seam
+    // walks the whole slot up from 0, lead-only forward walks up from leadStart, and
+    // lead-only descending walks DOWN from the slot's top to leadStart.
+    private void resetSlotWalk() {
+        inMemRow = switch (routingMode) {
+            case ROUTING_LEAD_ONLY_FWD -> leadStart - 1;
+            case ROUTING_LEAD_ONLY_DESC -> slotRowCount;
+            default -> -1;
+        };
     }
 
     /**

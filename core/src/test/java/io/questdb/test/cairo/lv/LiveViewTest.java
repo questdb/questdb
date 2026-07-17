@@ -1254,11 +1254,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: lv_fixed\n");
             // A timestamp-pruned projection cannot seam (the base scan drops the
-            // designated timestamp, leaving timestampColumnIndex < 0), so
-            // inMemory is false even on the fixed-width view.
+            // designated timestamp, leaving timestampColumnIndex < 0), but it routes
+            // lead-only, which needs no timestamp to cut on - so inMemory is true here too.
             assertQuery("SELECT price, rn FROM lv_fixed").noLeakCheck().assertsPlan("LiveView\n" +
                     "  view: lv_fixed\n" +
-                    "  inMemory: false\n" +
+                    "  inMemory: true\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: lv_fixed\n");
@@ -1279,11 +1279,13 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
-            // A backward scan cannot seam (lead routing assumes ascending disk
-            // rows), so inMemory is false regardless of schema.
+            // A backward scan cannot seam - that split assumes ascending disk rows - but it
+            // still routes lead-only (disk in full, plus the reversed lead), so inMemory
+            // stays true. The elided sort is what this test is about and is independent of
+            // routing: it turns on getScanDirection() alone.
             assertQuery("SELECT * FROM lv ORDER BY ts DESC").noLeakCheck().assertsPlan("LiveView\n" +
                     "  view: lv\n" +
-                    "  inMemory: false\n" +
+                    "  inMemory: true\n" +
                     "    PageFrame\n" +
                     "        Row backward scan\n" +
                     "        Frame backward scan on: lv\n");
@@ -1304,10 +1306,13 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
-            // ORDER BY ts DESC is pushed into the base as a backward scan, which lead
-            // routing can never serve (the seam split assumes ascending disk rows), so
-            // this read is statically disk-only: the frames come from the base scan
-            // unchanged.
+            // ORDER BY ts DESC is pushed into the base as a backward scan. The frame path
+            // serves that disk-only - its seam cut takes the disk band by row count, which
+            // a descending frame stream would cut at the wrong end - so this read gets the
+            // base scan's frames unchanged. inMemory still reports true: the attribute is
+            // the read SHAPE's capability, and the same query without the filter takes the
+            // record path and does route (lead-only). This is the widest gap between
+            // "routable" and "routed" the flag carries.
             assertQuery("SELECT * FROM lv WHERE sym = 'EURUSD' ORDER BY ts DESC LIMIT 10")
                     .noLeakCheck()
                     .assertsPlanContaining(
@@ -1316,14 +1321,15 @@ public class LiveViewTest extends AbstractLiveViewTest {
                             "limit: 10",
                             "filter: sym='EURUSD'",
                             "LiveView",
-                            "inMemory: false",
+                            "inMemory: true",
                             "Row backward scan"
                     );
-            // A timestamp-pruned projection is statically disk-only too, so an
-            // aggregate over the view reaches the parallel filter as well.
+            // A timestamp-pruned aggregate reaches the parallel filter as well, and this
+            // one DOES route: the frame path's cut is by row count, so it never needed the
+            // designated timestamp the projection drops.
             assertQuery("SELECT count() FROM lv WHERE sym = 'EURUSD'")
                     .noLeakCheck()
-                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: false");
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true");
             // A forward, full-schema read routes through the tier AND reaches the
             // parallel filter, which runs over the tier's own frame. This arm asserted
             // notContaining("Async") while the two were exclusive: page frames came from

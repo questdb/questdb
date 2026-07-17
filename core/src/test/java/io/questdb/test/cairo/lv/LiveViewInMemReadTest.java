@@ -124,24 +124,28 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFenceNotEligibleForTimestampPrunedProjection() throws Exception {
+    public void testTimestampPrunedProjectionRoutesLeadOnly() throws Exception {
         assertMemoryLeak(() -> {
             createIngestRefresh();
-            // Pruning the designated timestamp leaves the seam split nothing to cut
-            // the disk scan on (timestampColumnIndex < 0) -> disk-only. Pruning any
-            // OTHER column is fine: the cursor resolves each projected column to its
-            // tier column through the scan's mapping.
+            // Pruning the designated timestamp leaves the seam split nothing to cut the
+            // disk scan on (timestampColumnIndex < 0), so the read falls back to lead-only
+            // rather than to disk-only: that mode serves the disk scan in full plus the
+            // lead band, which needs no timestamp anywhere. Pruning any OTHER column keeps
+            // the seam - the cursor resolves each projected column to its tier column
+            // through the scan's mapping.
             try (
                     RecordCursorFactory factory = select("SELECT rn FROM lv");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("timestamp-pruned projection must not be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("timestamp-pruned projection must route lead-only",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, cursor.routingMode());
             }
             try (
                     RecordCursorFactory factory = select("SELECT ts, rn FROM lv");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertTrue("timestamp-bearing pruned projection must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("timestamp-bearing pruned projection must keep the seam",
+                        LiveViewRecordCursor.ROUTING_SEAM, cursor.routingMode());
             }
         });
     }
@@ -170,14 +174,18 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testDiskOnlyReadReleasesTierPin() throws Exception {
-        // M3: a statically disk-only read - a timestamp-pruned projection, a
-        // non-table cursor, or a non-ascending scan - can never engage the fence,
-        // so LiveViewRecordCursor.of() releases the tier slot pin immediately
-        // rather than holding it for the cursor's whole lifetime. Sustained
-        // concurrent disk-only reads straddling a tier swap would otherwise pin
-        // BOTH slots, so the refresh worker's publishToInMemoryTier fails and it
-        // emergency-flushes the lead every cycle. A routing read still pins its slot.
+    public void testTierPinTracksRoutingNotSeamEligibility() throws Exception {
+        // Who holds the slot pin follows one rule: a read that can never engage the fence
+        // releases it in LiveViewRecordCursor.of() rather than holding it for the cursor's
+        // whole lifetime, and every read that CAN route holds it until close. Sustained
+        // concurrent unpinned-worthy reads straddling a tier swap would otherwise pin BOTH
+        // slots, so the refresh worker's publishToInMemoryTier fails and it
+        // emergency-flushes the lead every cycle.
+        //
+        // Lead-only widened which reads fall on the holding side, and that is the cost side
+        // of the mode: a timestamp-pruned projection and a backward scan both used to be
+        // statically disk-only and release the pin at open. They now route, so they hold
+        // it - more shapes see the lead, and more shapes contend for the two slots.
         assertMemoryLeak(() -> {
             createIngestRefresh();
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -187,33 +195,51 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
             Assert.assertFalse("no reader open -> slot unpinned", isPublishedSlotReaderPinned(tier));
 
-            // Control: a routing read holds the pin for its lifetime, released on close.
+            // A seam read holds the pin for its lifetime, released on close.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertTrue("aligned identity read must route", cursor.isRoutingEligible());
+                Assert.assertEquals("aligned identity read must seam",
+                        LiveViewRecordCursor.ROUTING_SEAM, cursor.routingMode());
                 Assert.assertTrue("a routing read must hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
             Assert.assertFalse("closing the routing read releases the pin", isPublishedSlotReaderPinned(tier));
 
-            // A timestamp-pruned projection is disk-only and must not hold the pin
-            // while open.
+            // A timestamp-pruned projection routes lead-only, so it holds the pin too.
             try (
                     RecordCursorFactory factory = select("SELECT rn FROM lv");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("timestamp-pruned projection must be disk-only", cursor.isRoutingEligible());
-                Assert.assertFalse("a disk-only pruned read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+                Assert.assertEquals("timestamp-pruned projection must route lead-only",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, cursor.routingMode());
+                Assert.assertTrue("a lead-only pruned read must hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
+            Assert.assertFalse("closing the pruned read releases the pin", isPublishedSlotReaderPinned(tier));
 
-            // A backward scan is disk-only and must not hold the pin either.
+            // So does a backward scan.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv ORDER BY ts DESC");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("backward scan must be disk-only", cursor.isRoutingEligible());
-                Assert.assertFalse("a disk-only backward scan must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+                Assert.assertEquals("backward scan must route lead-only descending",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, cursor.routingMode());
+                Assert.assertTrue("a lead-only backward read must hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+            Assert.assertFalse("closing the backward read releases the pin", isPublishedSlotReaderPinned(tier));
+
+            // The release side survives lead-only: an interval-filtered scan exposes no
+            // LV-table seqTxn to fence against, so no mode can serve it and of() hands the
+            // slot straight back. testIntervalFilteredReadReleasesTierPin covers this shape
+            // in its own right; it is repeated here as the control that keeps the two sides
+            // of the rule in one place.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2020-01-01'");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertEquals("an interval-filtered scan must be disk-only",
+                        LiveViewRecordCursor.ROUTING_DISK_ONLY, cursor.routingMode());
+                Assert.assertFalse("a disk-only read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
         });
     }
@@ -952,36 +978,256 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testModeBDisabledForBackwardScan() throws Exception {
+    public void testBackwardScanRoutesLeadOnlyNotSeam() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
-            // ORDER BY ts DESC pushes a backward scan into the base. Mode B's
-            // seam split assumes ascending ts, so the cursor must route disk-only
-            // here (otherwise it would drop the disk rows below the seam).
+            // ORDER BY ts DESC pushes a backward scan into the base. The seam split assumes
+            // ascending ts, so taking it here would drop the disk rows below the seam - the
+            // cursor must fall back to lead-only descending instead, which serves the
+            // reversed lead and then the whole disk scan and so needs no ordering
+            // assumption of its own.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv ORDER BY ts DESC");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("backward scan must not be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("backward scan must route lead-only descending",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, cursor.routingMode());
             }
         });
     }
 
     @Test
-    public void testModeBDisabledForBackwardScanServesEveryDiskRowViaPageFrames() throws Exception {
+    public void testBackwardScanServesLeadFromRam() throws Exception {
+        // SELECT * FROM lv ORDER BY ts DESC was permanently blind to the un-flushed lead:
+        // the seam split assumes an ascending disk scan, and a backward scan therefore
+        // fenced the read disk-only for good. Lead-only needs no ordering assumption - it
+        // serves the reversed lead and then the whole disk scan - so the read now leads
+        // disk while still coming back in descending order.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk: ts 01/1, 02/2, 03/3; un-flushed lead: ts 04/4, 05/5
+
+            InnerRead desc = readInner("SELECT * FROM lv ORDER BY ts DESC");
+            Assert.assertEquals("backward scan must route lead-only descending",
+                    LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
+            // Lead-only serves the lead band ALONE - the overlap stays on disk, which is
+            // the hot-tail skip this mode gives up. Both counters therefore agree, unlike
+            // under the seam where inMemRowsServed also counts the overlap.
+            Assert.assertEquals("only the lead band comes from RAM", 2, desc.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, desc.leadRowsServed);
+            // The rows themselves, in full: the lead's 5 and 4 lead the disk scan's 3-2-1,
+            // and nothing is duplicated across the boundary.
+            Assert.assertEquals("ts\tx\trn\n" +
+                    "2026-05-12T00:00:05.000000Z\t5\t5\n" +
+                    "2026-05-12T00:00:04.000000Z\t4\t4\n" +
+                    "2026-05-12T00:00:03.000000Z\t3\t3\n" +
+                    "2026-05-12T00:00:02.000000Z\t2\t2\n" +
+                    "2026-05-12T00:00:01.000000Z\t1\t1\n", desc.output);
+            // The oracle projects the pass-through columns only. rn cannot appear in a
+            // recompute that sorts differently: the optimiser pushes the ORDER BY under the
+            // window, so row_number() OVER () numbers the DESCENDING rows and hands back
+            // 1..5 top-down - a different view from the one the refresh worker materialised
+            // in arrival order. The full-row assertion above is what pins rn here.
+            assertLvMatchesOracle("SELECT ts, x FROM lv ORDER BY ts DESC",
+                    "SELECT ts, x FROM base ORDER BY ts DESC");
+        });
+    }
+
+    @Test
+    public void testTimestampPrunedProjectionServesLeadFromRam() throws Exception {
+        // The mirror shape: a projection that prunes the designated timestamp leaves the
+        // seam nothing to cut on, and was disk-only for good. Lead-only never reads a
+        // timestamp, so it routes.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+
+            InnerRead pruned = readInner("SELECT rn FROM lv");
+            Assert.assertEquals("timestamp-pruned projection must route lead-only",
+                    LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, pruned.routingMode);
+            Assert.assertEquals("only the lead band comes from RAM", 2, pruned.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, pruned.leadRowsServed);
+            // Disk in full FIRST, then the lead appended - the opposite band order to the
+            // descending arm above.
+            Assert.assertEquals("rn\n1\n2\n3\n4\n5\n", pruned.output);
+            assertLvMatchesOracle("SELECT rn FROM lv",
+                    "SELECT rn FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+        });
+    }
+
+    @Test
+    public void testTimestampPrunedAggregateSeesLeadThroughPageFrames() throws Exception {
+        // SELECT max(rn) FROM lv never reaches LiveViewRecordCursor at all: the aggregate
+        // plans as an Async Group By, which takes the page-frame path. So the record
+        // cursor's lead-only mode cannot fix this shape - what does is that the frame
+        // path's seam cut is taken by ROW COUNT (base.size() - leadStart) and never reads
+        // a timestamp, so pruning the designated timestamp was never a reason to fence it
+        // disk-only. It returned max=3 (the applied prefix) while the lead held 4 and 5.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+
+            assertLvMatchesOracle("SELECT max(rn) FROM lv",
+                    "SELECT max(rn) FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+            assertLvMatchesOracle("SELECT sum(x) FROM lv",
+                    "SELECT sum(x) FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+            assertLvMatchesOracle("SELECT count() FROM lv",
+                    "SELECT count() FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+            // Pin the values outright: an oracle that silently went disk-only on BOTH sides
+            // would still match. The lead's rows are 4 and 5, so every one of these differs
+            // from its applied-prefix answer (3, 6 and 3).
+            StringSink sink = new StringSink();
+            printSql("SELECT max(rn), sum(x), count() FROM lv", sink);
+            Assert.assertEquals("max\tsum\tcount\n5\t15\t5\n", sink.toString());
+        });
+    }
+
+    @Test
+    public void testEvictedOverlapPlusLeadFixtureGeometry() throws Exception {
+        // Pins the fixture the band-arithmetic arms rest on. Its whole value is that
+        // leadStart, disk size and slot rowCount are three DIFFERENT numbers; if a refresh
+        // or eviction change collapsed any two, those arms would keep passing while the
+        // modes they distinguish became indistinguishable. Fail here instead.
+        assertMemoryLeak(() -> {
+            buildEvictedOverlapPlusLead();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            Assert.assertEquals("slot holds 2 overlap + 2 lead rows", 4, slot.rowCount());
+            Assert.assertEquals("2 of the slot's rows are the un-flushed lead", 2, slot.leadRowCount());
+            final long leadStart = slot.rowCount() - slot.leadRowCount();
+            Assert.assertEquals("the overlap band is 2 rows", 2, leadStart);
+
+            try (TableReader reader = getReader("lv")) {
+                Assert.assertEquals("disk holds the 5 applied rows", 5, reader.size());
+                Assert.assertTrue("the overlap must be a PROPER suffix of disk, else the seam's "
+                        + "disk band and lead-only's collapse into each other", leadStart < reader.size());
+            }
+            // The read itself: 5 applied rows plus the 2-row lead, each row once.
+            assertLvQuery("SELECT x FROM lv", "x\n1\n2\n3\n4\n5\n6\n7\n");
+        });
+    }
+
+    @Test
+    public void testLeadOnlySkipRowsLandsInEveryBand() throws Exception {
+        // skipRows() splits the skip across the two bands a mode serves, and lead-only
+        // reverses the split the seam uses: the seam's disk band is diskSize - leadStart
+        // (its overlap is served from the slot), while lead-only forward serves the WHOLE
+        // disk scan first and lead-only DESCENDING serves the lead FIRST and disk after.
+        // Three different band orders, so an offset must be checked against each - a skip
+        // that used the seam's arithmetic here would land on the wrong row rather than
+        // fail loudly.
+        //
+        // size() needs no such split and is asserted through these too: it is
+        // diskSize + leadRowCount for every mode (the seam serves diskSize - leadStart disk
+        // rows plus the whole slot; lead-only serves every disk row plus the lead), and the
+        // LIMIT rewrite turns a negative limit into an offset off that value.
+        assertMemoryLeak(() -> {
+            // disk: x = 1..5; slot: x = 4, 5 (overlap) then 6, 7 (lead). leadStart = 2,
+            // diskSize = 5, slot rowCount = 4 - three distinct numbers, so each mode's
+            // band boundary falls in a different place and a skip that used another mode's
+            // arithmetic lands on the wrong row.
+            buildEvictedOverlapPlusLead();
+
+            // Lead-only forward (timestamp pruned): the whole disk scan, then the lead.
+            // Offsets landing inside the disk band, exactly on the band boundary (5), inside
+            // the lead, and past the end.
+            assertLvQuery("SELECT rn FROM lv", "rn\n1\n2\n3\n4\n5\n6\n7\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT 2,4", "rn\n3\n4\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT 4,6", "rn\n5\n6\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT 5,7", "rn\n6\n7\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT 6,7", "rn\n7\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT 7,9", "rn\n");
+            // A negative limit is an offset from the END, so it reads size() first - the
+            // one place the mode-independent diskSize + leadRowCount sum has to be right.
+            assertLvQuery("SELECT rn FROM lv LIMIT -2", "rn\n6\n7\n");
+            assertLvQuery("SELECT rn FROM lv LIMIT -9", "rn\n1\n2\n3\n4\n5\n6\n7\n");
+
+            // Lead-only descending walks the same two bands in the OPPOSITE order, so an
+            // offset of 2 lands on the first disk row rather than inside the lead.
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC", "x\n7\n6\n5\n4\n3\n2\n1\n");
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 2", "x\n7\n6\n");
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 1,3", "x\n6\n5\n");
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 2,5", "x\n5\n4\n3\n");
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT 7,9", "x\n");
+            assertLvQuery("SELECT x FROM lv ORDER BY ts DESC LIMIT -2", "x\n2\n1\n");
+
+            // The seam's own split still holds, as the control: it cuts disk at
+            // diskSize - leadStart = 3 and serves the whole slot after it, so the same
+            // offsets reach the same rows through entirely different arithmetic.
+            Assert.assertEquals("a timestamp-bearing forward read must still seam",
+                    LiveViewRecordCursor.ROUTING_SEAM, readInner("SELECT ts, x FROM lv").routingMode);
+            assertLvQuery("SELECT x FROM lv LIMIT 2,4", "x\n3\n4\n");
+            assertLvQuery("SELECT x FROM lv LIMIT 4,6", "x\n5\n6\n");
+            assertLvQuery("SELECT x FROM lv LIMIT -2", "x\n6\n7\n");
+
+            // The rows above cannot pin WHICH band the skip landed in: the fence makes the
+            // slot's overlap hold the same values as disk, so a skip that walks into the
+            // overlap instead of stopping at the lead prints identical output. Drive the
+            // cursor's own skipRows and assert the tier counters, which do separate them.
+            //
+            // Lead-only forward serves 5 disk rows then 2 lead rows, so a skip of 4 must
+            // leave one DISK row (x=5) plus the lead - one row from disk, two from RAM. A
+            // skip using the seam's disk band (diskSize - leadStart = 3) would exhaust disk
+            // and serve slot rows 1..3 instead: the same x values 5, 6, 7, but 3 rows from
+            // RAM rather than 2.
+            InnerRead fwd = readInnerAfterSkip("SELECT rn FROM lv", 4);
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, fwd.routingMode);
+            Assert.assertEquals("rn\n5\n6\n7\n", fwd.output);
+            Assert.assertEquals("the skip must stop inside the DISK band, so only the "
+                    + "2 lead rows come from RAM", 2, fwd.inMemRowsServed);
+
+            // A skip that spans the whole disk band lands inside the lead itself.
+            InnerRead intoLead = readInnerAfterSkip("SELECT rn FROM lv", 6);
+            Assert.assertEquals("rn\n7\n", intoLead.output);
+            Assert.assertEquals("one lead row left", 1, intoLead.inMemRowsServed);
+
+            // Lead-only descending: the lead comes FIRST, so a skip of 1 leaves one lead
+            // row (x=6) and then all 5 disk rows. The LV factory under the ORDER BY still
+            // projects ts - the sort needs it - so the inner read carries both columns
+            // where the query-level arms above see the outer projection's x alone.
+            InnerRead desc = readInnerAfterSkip("SELECT x FROM lv ORDER BY ts DESC", 1);
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
+            Assert.assertEquals("x\tts\n" +
+                    "6\t2023-11-14T22:13:25.000003Z\n" +
+                    "5\t2023-11-14T22:13:25.000002Z\n" +
+                    "4\t2023-11-14T22:13:25.000001Z\n" +
+                    "3\t2023-11-14T22:13:20.000003Z\n" +
+                    "2\t2023-11-14T22:13:20.000002Z\n" +
+                    "1\t2023-11-14T22:13:20.000001Z\n", desc.output);
+            Assert.assertEquals("one lead row left before disk takes over", 1, desc.inMemRowsServed);
+
+            // A skip past the whole lead hands the remainder to the disk cursor.
+            InnerRead descIntoDisk = readInnerAfterSkip("SELECT x FROM lv ORDER BY ts DESC", 3);
+            Assert.assertEquals("x\tts\n" +
+                    "4\t2023-11-14T22:13:25.000001Z\n" +
+                    "3\t2023-11-14T22:13:20.000003Z\n" +
+                    "2\t2023-11-14T22:13:20.000002Z\n" +
+                    "1\t2023-11-14T22:13:20.000001Z\n", descIntoDisk.output);
+            Assert.assertEquals("the lead is fully skipped, so nothing comes from RAM",
+                    0, descIntoDisk.inMemRowsServed);
+        });
+    }
+
+    @Test
+    public void testBackwardFilteredReadServesEveryDiskRowViaPageFrames() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
-            // A backward scan routes disk-only, and there LiveViewRecordCursor is a
-            // pure pass-through of the base cursor - so the factory hands the read
-            // to the base's page frames instead, which is what lets the parallel /
-            // JIT filter and LIMIT pushdown engage. The fixture is the interesting
-            // case for that bypass: the pinned slot holds only the 2 most recent
-            // rows while disk holds all 5, so a page-frame read that mistakenly
-            // served the slot, or stopped at the seam, would drop the 3 rows below
-            // it. Every applied row must come back.
+            // A backward FRAME read is disk-only - the frame path's seam cut takes the disk
+            // band by row count, which a descending frame stream would cut at the wrong end,
+            // and lead-only over frames would need a narrowed slot frame the cursor does not
+            // build. So the factory hands the read to the base's page frames unchanged,
+            // which is also what lets the parallel / JIT filter and LIMIT pushdown engage.
+            // The fixture is the interesting case for that bypass: the pinned slot holds
+            // only the 2 most recent rows while disk holds all 5, so a page-frame read that
+            // mistakenly served the slot, or stopped at the seam, would drop the 3 rows
+            // below it. Every applied row must come back.
+            //
+            // inMemory reports true here while the read is disk-only: the attribute tracks
+            // the read SHAPE, and the same query WITHOUT the filter takes the record path
+            // and routes lead-only descending. That gap is the flag's known limit.
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
                     .noLeakCheck()
-                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: false", "Row backward scan");
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true", "Row backward scan");
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
                     .timestampDesc("ts")
                     .returns("ts\tx\n" +
@@ -1167,13 +1413,17 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv LIMIT 3");
             assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv LIMIT -2");
             assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv WHERE x > 2");
-            // ORDER BY ts DESC is the non-routing control: a backward scan is
-            // deliberately fenced disk-only (testModeBDisabledForBackwardScan), so
-            // both sides read disk here. It still must match, but the tier serves
-            // nothing - assert that so this line is not mistaken for Mode B coverage.
+            // ORDER BY ts DESC routes lead-only rather than seam-split, so it is NOT Mode B
+            // coverage - assert that rather than let the line read as if it were. This
+            // fixture flushed both cycles, so the slot is pure overlap with an EMPTY lead:
+            // lead-only has nothing to add and must serve exactly the disk scan. That makes
+            // it the sharpest arm for the mode's boundary condition - a lead-only walk that
+            // mis-starts its band (at 0 rather than leadStart) would re-serve the slot's 2
+            // overlap rows on top of disk's 5 and this would fail with duplicates.
             InnerRead desc = readInner("SELECT * FROM lv ORDER BY ts DESC");
-            Assert.assertFalse("backward scan must fence disk-only", desc.routingEligible);
-            Assert.assertEquals("backward scan must not serve the tier", 0, desc.inMemRowsServed);
+            Assert.assertEquals("backward scan must route lead-only descending",
+                    LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
+            Assert.assertEquals("an empty lead band must serve no tier rows", 0, desc.inMemRowsServed);
             assertModeBMatchesDiskOnly("SELECT * FROM lv ORDER BY ts DESC");
         });
     }
@@ -3796,6 +4046,50 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         }
     }
 
+    // The only fixture where all three of leadStart, diskSize and slot rowCount differ, so
+    // it is the one that can tell the routing modes' band arithmetic apart. The IN MEMORY
+    // window evicts the first cycle (as createSeamSplitLv's does) AND a final refresh lands
+    // inside FLUSH EVERY, so the slot ends up a PROPER suffix of disk plus a lead:
+    //
+    //   disk    : 5 applied rows, x = 1..5
+    //   slot    : 4 rows - x = 4, 5 (the overlap, also on disk) then x = 6, 7 (the lead)
+    //   leadStart = 2, slot rowCount = 4, disk size = 5, total = 7 rows
+    //
+    // buildFlushedPlusLead cannot substitute: its 30m window keeps everything resident, so
+    // the slot holds every row and leadStart == diskSize. The seam's disk band
+    // (diskSize - leadStart) is then 0 while lead-only's is the whole disk, and the two
+    // degenerate into each other - a lead-only skip using the seam's arithmetic still lands
+    // on the right row there, and the arm passes while testing nothing.
+    private void buildEvictedOverlapPlusLead() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
+                "SELECT ts, x, row_number() OVER () AS rn FROM base");
+        final long dataStart = 1_700_000_000_000_000L;
+        final long cycle2Start = dataStart + 5_000_000L; // 5s on, so the first cycle falls out of the 1s window
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "(" + (dataStart + 1) + ", 1), (" + (dataStart + 2) + ", 2), (" + (dataStart + 3) + ", 3)");
+            drainWalQueue();
+            setCurrentMicros(250_000L); // > FLUSH EVERY 100ms: flushes x = 1..3
+            drainJob(job);
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "(" + (cycle2Start + 1) + ", 4), (" + (cycle2Start + 2) + ", 5)");
+            drainWalQueue();
+            setCurrentMicros(500_000L); // 250ms on: flushes x = 4, 5 and evicts x = 1..3 from the slot
+            drainJob(job);
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "(" + (cycle2Start + 3) + ", 6), (" + (cycle2Start + 4) + ", 7)");
+            drainWalQueue();
+            setCurrentMicros(550_000L); // only 50ms on, inside FLUSH EVERY: x = 6, 7 stay the un-flushed lead
+            drainJob(job);
+        }
+        drainWalQueue();
+    }
+
     private void buildFlushedPlusLead() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
@@ -3868,6 +4162,16 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             drainWalQueue();
             drainJob(job); // clock still 0: refresh the lead (cc new, bb committed), no flush
         }
+    }
+
+    // Asserts a QUERY-LEVEL LV read - the LIMIT / filter wrappers above the LV factory
+    // included, unlike readInner, which drains the LV cursor directly and so never sees
+    // them (a LIMIT asserted through readInner silently tests nothing). printSql, not
+    // assertQuery, for the same reason as assertLvMatchesOracle below.
+    private static void assertLvQuery(String sql, String expected) throws SqlException {
+        StringSink sink = new StringSink();
+        printSql(sql, sink);
+        Assert.assertEquals("LV read mismatch for: " + sql, expected, sink.toString());
     }
 
     // Asserts the LV read (tier on) is byte-identical to an oracle SQL - a
@@ -4221,7 +4525,42 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvf.getCursor(sqlExecutionContext)) {
                 StringSink out = new StringSink();
                 println(lvf.getMetadata(), cursor, out);
-                return new InnerRead(out.toString(), cursor.inMemRowsServed(), cursor.leadRowsServed(), cursor.isRoutingEligible());
+                return new InnerRead(
+                        out.toString(),
+                        cursor.inMemRowsServed(),
+                        cursor.leadRowsServed(),
+                        cursor.isRoutingEligible(),
+                        cursor.routingMode()
+                );
+            }
+        }
+    }
+
+    // Drives the LV cursor's OWN skipRows() - the frame-level band split the LIMIT rewrite
+    // reaches - then drains what is left, reporting the rows alongside the routing
+    // counters. Two things make this necessary rather than a LIMIT query:
+    //  - readInner cannot apply a LIMIT at all (the wrapper sits above the LV factory it
+    //    unwraps to), and
+    //  - a LIMIT query cannot tell WHICH tier served a row. The seqTxn fence guarantees the
+    //    slot's overlap band holds the same values as disk, so a skip that lands in the
+    //    wrong band still prints the right rows. Only inMemRowsServed separates them.
+    private static InnerRead readInnerAfterSkip(String sql, long skip) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            LiveViewRecordCursorFactory lvf = unwrapLvFactory(factory);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvf.getCursor(sqlExecutionContext)) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.add(skip);
+                cursor.skipRows(counter, Long.MAX_VALUE);
+                Assert.assertEquals("skipRows must consume the whole skip for: " + sql, 0, counter.get());
+                StringSink out = new StringSink();
+                println(lvf.getMetadata(), cursor, out);
+                return new InnerRead(
+                        out.toString(),
+                        cursor.inMemRowsServed(),
+                        cursor.leadRowsServed(),
+                        cursor.isRoutingEligible(),
+                        cursor.routingMode()
+                );
             }
         }
     }
@@ -4243,18 +4582,23 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         Closeable open() throws SqlException;
     }
 
-    // Captured output and seam-routing observability counters from one inner-cursor read.
+    // Captured output and routing observability counters from one inner-cursor read.
     private static final class InnerRead {
         final long inMemRowsServed;
         final long leadRowsServed;
         final String output;
         final boolean routingEligible;
+        // Which LiveViewRecordCursor.ROUTING_* mode the read took. routingEligible alone
+        // cannot tell the seam split from a lead-only fallback, and the two serve the
+        // slot's bands differently, so a test that cares which one engaged must say so.
+        final int routingMode;
 
-        InnerRead(String output, long inMemRowsServed, long leadRowsServed, boolean routingEligible) {
+        InnerRead(String output, long inMemRowsServed, long leadRowsServed, boolean routingEligible, int routingMode) {
             this.output = output;
             this.inMemRowsServed = inMemRowsServed;
             this.leadRowsServed = leadRowsServed;
             this.routingEligible = routingEligible;
+            this.routingMode = routingMode;
         }
     }
 }

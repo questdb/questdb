@@ -46,8 +46,8 @@ import io.questdb.std.QuietCloseable;
  * <p>
  * The source owns no tier state of its own: it holds the pin's slot and cache by
  * reference and stays valid exactly as long as its binder keeps the slot pinned.
- * Whoever the engine hands a read to - {@link LiveViewRecordCursor} today, the
- * page-frame cursor phase 3 builds next - binds one of these and answers
+ * Whoever the engine hands a read to - {@link LiveViewRecordCursor} or
+ * {@link LiveViewPageFrameCursor} - binds one of these and answers
  * {@link SymbolTableSource} through it. Keeping the overlay here rather than inline
  * in the record cursor is what lets a frame consumer (a parallel filter worker
  * resolving symbols through the frame cursor rather than through a record) see the

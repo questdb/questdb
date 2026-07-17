@@ -3198,6 +3198,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // run produced.
                 assertModeBEngaged();
                 assertModeBMatchesDiskOnly("SELECT * FROM lv");
+                // The same differential over the shapes that route LEAD-ONLY rather than
+                // seam-split. The view is quiesced, so the lead is flushed and the slot is
+                // pure overlap - which is what makes routed and disk-only comparable, and
+                // what makes these bite: lead-only must then add NOTHING to the disk scan,
+                // so a walk that starts its band at 0 rather than leadStart re-serves the
+                // whole overlap on top of disk and diverges here as duplicates, under every
+                // O3 / restart / seed pattern the run produced.
+                //
+                // Each arm reaches a different mechanism, which is why one will not do:
+                // the projection prunes ts and ITERATES, so it walks the forward lead-only
+                // band (count() below cannot - it is answered from size() without ever
+                // calling hasNext); the backward scan walks the descending band, which
+                // serves its rows in the opposite order; count() covers size()'s
+                // mode-independent diskSize + leadRowCount sum; and sum(i) leaves the
+                // record cursor entirely for the page-frame path.
+                assertModeBMatchesDiskOnly("SELECT i, rn FROM lv");
+                assertModeBMatchesDiskOnly("SELECT * FROM lv ORDER BY ts DESC");
+                assertModeBMatchesDiskOnly("SELECT count() FROM lv");
+                assertModeBMatchesDiskOnly("SELECT sum(i) FROM lv");
             }
         }
 

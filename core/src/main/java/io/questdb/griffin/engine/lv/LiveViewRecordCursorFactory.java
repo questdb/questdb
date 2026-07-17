@@ -107,14 +107,14 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private static volatile Runnable onSlotPinnedHook;
     private final RecordCursorFactory base;
     private final CairoEngine engine;
-    // Static, query-shape eligibility for lead routing, surfaced as the
-    // EXPLAIN "inMemory" attribute. True when the read's shape permits the
-    // in-mem tier to lead disk - serving the recent overlap band plus the
-    // un-flushed lead (rows not yet on the LV's on-disk tier) from RAM (see
-    // isInMemRoutable). The runtime seqTxn fence, the tier's population state,
-    // and a timestamp-interval filter (not visible to a static plan) still make
-    // the final per-cursor call, so this is a capability indicator, not a
-    // guarantee. See LiveViewRecordCursor.
+    // Static, query-shape eligibility for lead routing, surfaced as the EXPLAIN
+    // "inMemory" attribute. True when the read's shape leaves the in-mem tier some way to
+    // lead disk - serving the un-flushed lead (rows not yet on the LV's on-disk tier), and
+    // under the seam split the recent overlap band too, from RAM (see isInMemRoutable).
+    // The runtime seqTxn fence, the tier's population state, a timestamp-interval filter
+    // (none of them visible to a static plan) and the read path taken still make the final
+    // per-cursor call, so this is a capability indicator, not a guarantee. See
+    // LiveViewRecordCursor.
     private final boolean inMemRoutable;
     private final TableToken liveViewToken;
     private final int timestampColumnIndex;
@@ -125,7 +125,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         this.liveViewToken = liveViewToken;
         this.base = base;
         this.timestampColumnIndex = base.getMetadata().getTimestampIndex();
-        this.inMemRoutable = isInMemRoutable(base, timestampColumnIndex);
+        this.inMemRoutable = isInMemRoutable(base);
     }
 
     @Override
@@ -318,10 +318,24 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * seqTxn fence misses - which serves the applied prefix, correct and at worst one flush
      * cycle stale. See {@link LiveViewPageFrameCursor}.
      * <p>
-     * A backward frame order routes disk-only: the seam cut serves the disk band and then
-     * the slot, which is ascending by construction. {@link #isInMemRoutable} already rules
-     * out a base whose natural scan is backward, but the {@code order} argument is the
-     * consumer's, not the base's, so it is checked in its own right.
+     * Routing needs an ascending frame stream: the seam cut takes the disk band by ROW
+     * COUNT ({@code base.size() - leadStart}) and then serves the slot, which is ascending
+     * by construction. Over a descending stream that cut would take the newest rows instead
+     * of the oldest and serve the slot on top of them, duplicating some rows and dropping
+     * others.
+     * <p>
+     * The {@code order} ARGUMENT decides that, and it is the only thing that does - which
+     * is worth stating because the base factory's own {@code getScanDirection()} looks like
+     * it should have a say and does not. The base builds a forward page-frame cursor for
+     * {@code ORDER_ASC} / {@code ORDER_ANY} and a backward one otherwise, whatever its
+     * natural scan direction, so this consumer's request fully determines which way the
+     * frames arrive. Checking the base's direction on top would only refuse reads whose
+     * frames ascend anyway.
+     * <p>
+     * Unlike the record path, a backward read gets no lead-only fallback here; it serves
+     * the applied prefix. Lead-only over frames means narrowing the slot frame to
+     * {@code [leadStart, rowCount)}, which needs the per-sub-frame aux rebasing the single
+     * whole-slot frame avoids by starting at 0 (see {@link LiveViewPageFrameCursor}).
      */
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
@@ -456,37 +470,34 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Static, refresh-timing-independent eligibility for lead routing - the
-     * read-shape preconditions {@link LiveViewRecordCursor} checks before the
-     * runtime seqTxn fence lets the in-mem tier lead disk (serve the un-flushed
-     * lead, plus the overlap, from RAM). True only when:
-     * <ul>
-     *   <li>the base scan is forward (ascending timestamp) - the seam split
-     *   assumes ascending disk rows, so a backward / index scan routes
-     *   disk-only;</li>
-     *   <li>the projection keeps the designated timestamp
-     *   ({@code timestampColumnIndex >= 0}) - a timestamp-pruned read (e.g. an
-     *   aggregate over the LV) has nothing to seam the disk scan on. Pruning or
-     *   reordering the OTHER columns is fine: the cursor resolves each projected
-     *   column to its tier column through the scan's column mapping;</li>
-     *   <li>every projected column is a type the tier can store (fixed-width,
-     *   SYMBOL, STRING, BINARY, VARCHAR, ARRAY) - an unsupported type (a non-persisted
-     *   type such as INTERVAL) means no tier, so it routes disk-only. SYMBOL columns are fine: the
-     *   refresh worker stores LV-table-space ids the disk reader resolves on
-     *   read.</li>
-     * </ul>
-     * A {@code true} result is a capability flag, not a guarantee: a static plan
-     * cannot see the runtime seqTxn fence, the tier's population state, or a
-     * timestamp-interval filter pushed into the scan, any of which can still route
-     * an individual cursor disk-only.
-     * A {@code false} result, by contrast, is reliable: the read is always
-     * disk-only, since these preconditions are hard disqualifiers the cursor
-     * enforces too.
+     * Static, refresh-timing-independent eligibility for lead routing: whether the read's
+     * shape leaves the in-mem tier ANY way to lead disk (serve the un-flushed lead, and
+     * possibly the overlap, from RAM). True when every projected column is a type the tier
+     * can store (fixed-width, SYMBOL, STRING, BINARY, VARCHAR, ARRAY). An unsupported type
+     * - a non-persisted one such as INTERVAL - means the LV has no tier at all, so the read
+     * can only ever come from disk. SYMBOL columns are fine: the refresh worker stores
+     * LV-table-space ids the disk reader resolves on read.
+     * <p>
+     * That is the whole of it, and the two preconditions that USED to be here are worth
+     * naming because their absence is the point. Neither a backward scan nor a
+     * timestamp-pruned projection disqualifies a read any more: both are seam-split
+     * requirements, and a read that cannot seam now falls back to lead-only rather than to
+     * disk-only (see {@link LiveViewRecordCursor}). Keeping them here would have made a
+     * {@code false} result unreliable, which is the one property this flag has.
+     * <p>
+     * A {@code true} result is a capability flag, not a guarantee, and the gap is wider
+     * than a static plan can show. It cannot see the runtime seqTxn fence, the tier's
+     * population state, or a timestamp-interval filter pushed into the scan, any of which
+     * still route an individual cursor disk-only. Nor does it distinguish the two read
+     * paths: {@link #getPageFrameCursor} routes only an ascending scan, so a backward
+     * FRAME read (e.g. a filtered {@code ORDER BY ts DESC}, which the parallel filter
+     * takes) reports {@code true} and still serves disk alone, while the same read without
+     * the filter takes the record path and routes lead-only.
+     * <p>
+     * A {@code false} result, by contrast, stays reliable: the read is always disk-only,
+     * since an unsupported column type is a hard disqualifier on both paths.
      */
-    private static boolean isInMemRoutable(RecordCursorFactory base, int timestampColumnIndex) {
-        if (base.getScanDirection() != SCAN_DIRECTION_FORWARD || timestampColumnIndex < 0) {
-            return false;
-        }
+    private static boolean isInMemRoutable(RecordCursorFactory base) {
         final RecordMetadata metadata = base.getMetadata();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (!LiveViewInMemoryBuffer.isColumnTypeSupported(metadata.getColumnType(i))) {
