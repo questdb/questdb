@@ -6491,9 +6491,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     /**
      * The live view's durable {@code _checkpoints/_ring}, addressed by name so a
      * test can remove it between restarts. That is how a restart reaches the
-     * highest-{@code .cp}-only fallback now that publication is unconditional:
-     * an absent manifest is the upgrade case, and the shape a corrupt one
-     * collapses to.
+     * highest-{@code .cp}-only fallback now that publication is unconditional,
+     * and it is the shape every route to that fallback collapses to: a corrupt
+     * or torn manifest, a run whose publications all failed, a restored
+     * enterprise backup (which excludes {@code _checkpoints/} by design), and a
+     * declined trust verdict, which removes {@code _ring} itself and so leaves
+     * the next restart with none.
      */
     private java.nio.file.Path liveViewRingManifestPath() {
         return java.nio.file.Paths.get(
@@ -19512,10 +19515,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         //
         // Removing _ring is what makes this the twin rather than a duplicate of
         // the trusted-manifest case: publication is unconditional now, so a
-        // manifest is always there to be trusted unless it is absent (a view
-        // upgraded from a build that never wrote one) or unreadable, which is the
-        // same fallback. The sibling test keeps its manifest and pays no scan at
-        // all.
+        // manifest is always there to be trusted unless it is gone or unreadable
+        // - a corrupt _ring, a run whose publications all failed, a restored
+        // backup, or a previous restart that declined to trust one and removed it.
+        // All of them land on this same fallback. The sibling test keeps its
+        // manifest and pays no scan at all.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
@@ -21967,9 +21971,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testO3RestartReDensifiesRingThenResumesFromAnchor() throws Exception {
-        // The fallback restart, with no manifest to rehydrate from - a view
-        // upgraded from a build that never wrote one, or one whose _ring went
-        // missing. The retained-checkpoint ring is NOT rebuilt from the surviving
+        // The fallback restart, with no manifest to rehydrate from - a corrupt
+        // _ring, a run whose publications all failed, a restored backup, or a
+        // previous restart that declined to trust one and removed it.
+        // The retained-checkpoint ring is NOT rebuilt from the surviving
         // on-disk .cp files: only the highest survivor is trusted as a resume
         // anchor. The ring restarts holding that head alone (the section 3.1
         // promotion, which is what keeps this path better than nothing) and
