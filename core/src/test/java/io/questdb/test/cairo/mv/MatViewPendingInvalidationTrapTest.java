@@ -2405,6 +2405,47 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResumeWalSwallowsRedeliveryFailureAndRecoversViaRetryFlags() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            // Suspend, then let an apply-time INVALIDATE park its marker (same choreography as
+            // testResumeWalRedeliversSuspendedInvalidation).
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            execute("UPDATE base_price SET price = 42");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(state.isPendingInvalidation());
+            Assert.assertFalse(state.isInvalid());
+
+            // Arm the one-shot redelivery failure: the store records the facet retry flags and
+            // throws, exactly what the impl-level enqueue catch does on queue-growth failure.
+            isResumeRedeliveryFailureArmed.set(true);
+
+            // Half 1 of the documented contract: the statement must succeed even though the
+            // redelivery enqueue threw after the resume durably committed.
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+
+            Assert.assertFalse("the armed failure must have fired", isResumeRedeliveryFailureArmed.get());
+            Assert.assertTrue("the marker must survive the failed redelivery", state.isPendingInvalidation());
+            Assert.assertFalse(state.isInvalid());
+
+            // Half 2: the next refresh-job tick claims the retry flags and redelivers.
+            drainWalAndMatViewQueues();
+
+            Assert.assertFalse(state.isPendingInvalidation());
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tupdate operation
+                            """);
+        });
+    }
+
+    @Test
     public void testSingleViewIncrementalRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
