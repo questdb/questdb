@@ -87,7 +87,9 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
-    // Counts every FULL enqueue that reaches the engine-installed store, across all callers.
+    // Counts 2-arg enqueueFullRefresh(TableToken, Object) calls that reach the engine-installed
+    // store wrapper. The 1-arg overload forwards straight to the delegate, and impl-internal
+    // redeliveries bypass the wrapper entirely, so neither is counted here.
     // Reset to 0 before every test.
     private static final AtomicInteger engineFullRefreshEnqueues = new AtomicInteger();
     // While set, the next reenqueueRefreshTask on the engine store models the impl-level
