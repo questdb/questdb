@@ -314,7 +314,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int liveViewCheckpointRetentionCount;
     private final long liveViewCheckpointRetentionMaxBytes;
     private final long liveViewCheckpointRetentionMicros;
-    private final boolean liveViewCheckpointRingDurableEnabled;
     private final long liveViewCheckpointRows;
     private final boolean liveViewEnabled;
     private final int liveViewFlushRetryMax;
@@ -1530,7 +1529,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewCheckpointRetentionCount = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 8);
             this.liveViewCheckpointRetentionMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
             this.liveViewCheckpointRetentionMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 0L);
-            this.liveViewCheckpointRingDurableEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, false);
             this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
             this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
             this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
@@ -5356,11 +5354,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
-        }
-
-        @Override
-        public boolean isLiveViewCheckpointRingDurableEnabled() {
-            return liveViewCheckpointRingDurableEnabled;
         }
 
         @Override

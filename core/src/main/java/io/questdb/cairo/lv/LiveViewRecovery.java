@@ -111,9 +111,8 @@ public final class LiveViewRecovery {
         candidateOut.clear();
         LiveViewCheckpointRingManifest.ringManifestPath(ringPath, liveViewDir);
         if (!ff.exists(ringPath.$())) {
-            // Legacy, never published, or published under a flag that is now
-            // off. Not a fault: highest-.cp-only recovery is the fallback the
-            // whole design keeps permanently.
+            // Legacy or never published. Not a fault: highest-.cp-only recovery
+            // is the fallback the whole design keeps permanently.
             return;
         }
         try {
@@ -224,7 +223,7 @@ public final class LiveViewRecovery {
      *                         on entry
      * @param ringCandidate    the {@code _ring} manifest {@link #readRingCandidate}
      *                         produced, or null to sweep without an allow-list
-     *                         (no manifest, or the durable ring is disabled) -
+     *                         (no manifest, or one that did not validate) -
      *                         which is exactly the legacy behaviour
      * @return the highest surviving {@code <lvSeqTxn>.cp}'s {@code lvSeqTxn},
      * or {@link Numbers#LONG_NULL} when no head survives

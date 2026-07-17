@@ -601,16 +601,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             //
             //  - the newest entry the durable _checkpoints/_ring lists, which a
             //    restart TRUSTING the manifest (covered == reconciled applied
-            //    floor) restores from. LONG_NULL while the durable ring is
-            //    disabled, or when the last publication listed nothing.
+            //    floor) restores from. LONG_NULL until the view's first
+            //    publication, or when the last one listed nothing.
             //  - the newest entry the in-memory ring holds, which a restart
             //    FALLING BACK restores from, the startup sweep keeping the
             //    highest surviving .cp as the head.
             //
-            // Neither substitutes for the other: the manifest is absent entirely
-            // while the durable ring is disabled, and a failed publication leaves
-            // the in-memory ring holding an entry the manifest does not list,
-            // whose base seqTxn is above the one a trusting restart needs. Purge
+            // Neither substitutes for the other, and a failed publication is what
+            // prises them apart in both directions: it can leave the in-memory
+            // ring holding an entry the manifest does not list, whose base seqTxn
+            // is above the one a trusting restart needs, or leave the manifest
+            // listing a survivor the in-memory ring has since retired past. Purge
             // cannot tell which restart is coming, so it holds both.
             //
             // Always the NEWEST entry, never the oldest: the ring spans the whole

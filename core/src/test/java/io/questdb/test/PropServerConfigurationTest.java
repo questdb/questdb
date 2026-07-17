@@ -925,7 +925,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64L * 1024 * 1024, cairo.getLiveViewCheckpointRetentionMaxBytes());
         Assert.assertEquals(0L, cairo.getLiveViewCheckpointRetentionMicros());
         Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
-        Assert.assertFalse(cairo.isLiveViewCheckpointRingDurableEnabled());
         Assert.assertTrue(cairo.isLiveViewEnabled());
         Assert.assertEquals(5, cairo.getLiveViewFlushRetryMax());
         Assert.assertEquals(60 * Micros.SECOND_MICROS, cairo.getLiveViewFlushRetryMaxDurationMicros());
@@ -991,7 +990,6 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.live.view.checkpoint.retention.count", "12");
         properties.setProperty("cairo.live.view.checkpoint.retention.max.bytes", "96M");
         properties.setProperty("cairo.live.view.checkpoint.retention.micros", "500ms");
-        properties.setProperty("cairo.live.view.checkpoint.ring.durable.enabled", "true");
         properties.setProperty("cairo.live.view.checkpoint.rows", "640000");
         properties.setProperty("cairo.live.view.enabled", "false");
         properties.setProperty("cairo.live.view.flush.retry.max", "9");
@@ -1010,7 +1008,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(96L * 1024 * 1024, cairo.getLiveViewCheckpointRetentionMaxBytes());
         Assert.assertEquals(500 * Micros.MILLI_MICROS, cairo.getLiveViewCheckpointRetentionMicros());
         Assert.assertEquals(640_000L, cairo.getLiveViewCheckpointRows());
-        Assert.assertTrue(cairo.isLiveViewCheckpointRingDurableEnabled());
         Assert.assertFalse(cairo.isLiveViewEnabled());
         Assert.assertEquals(9, cairo.getLiveViewFlushRetryMax());
         Assert.assertEquals(2 * Micros.MINUTE_MICROS, cairo.getLiveViewFlushRetryMaxDurationMicros());

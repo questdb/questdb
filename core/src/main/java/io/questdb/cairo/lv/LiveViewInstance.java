@@ -204,8 +204,8 @@ public class LiveViewInstance implements QuietCloseable {
     // under the refresh latch; volatile for the catalogue thread.
     private volatile boolean checkpointRestoreSucceeded;
     // The _checkpoints/_ring manifest the startup sweep read and structurally
-    // validated, awaiting the trust decision; null when there is no manifest, it
-    // did not validate, or the durable ring is disabled. Not a ring: trust
+    // validated, awaiting the trust decision; null when there is no manifest or
+    // it did not validate. Not a ring: trust
     // compares its coveredBaseSeqTxn against the reconciled applied floor, which
     // exists only on the refresh worker, so the sweep stashes the claim here and
     // decides nothing. Written once during catalogue load and read (then cleared)
@@ -222,9 +222,8 @@ public class LiveViewInstance implements QuietCloseable {
     // (membership, covered) pair that was valid when written, and restart either
     // finds covered equal to the reconciled applied floor and trusts it, or does
     // not and falls back). It exists so later code does not mistake the
-    // in-memory ring for a durable one, and to surface in live_views(). Stays
-    // false when the durable ring is disabled - there is no manifest to diverge
-    // from then. Mutated only on the refresh worker under the refresh latch;
+    // in-memory ring for a durable one, and to surface in live_views(). Mutated
+    // only on the refresh worker under the refresh latch;
     // volatile for the catalogue thread. See lastPublishedRingGeneration.
     private volatile boolean checkpointRingDirty;
     // Number of entries restart rehydrated into the retained-checkpoint ring from
@@ -245,10 +244,9 @@ public class LiveViewInstance implements QuietCloseable {
     // the reconciled applied floor, or an entry this code could not have written.
     // Each one costs the first in-retention O3 after the restart a boundary
     // rebuild, so this is the deployment-wide signal for how often the feature is
-    // not paying out - sum() it across live_views(). Counts only what happens with
-    // the durable ring enabled: with the flag off there is no manifest to decline,
-    // and counting the whole fleet's legacy restarts as fallbacks would drown the
-    // shape worth alerting on. A trusted-but-empty manifest is not a fallback
+    // not paying out - sum() it across live_views(). A view restarting before it
+    // ever published counts one, which is honest: it recovers no ring and pays
+    // the same scan. A trusted-but-empty manifest is not a fallback
     // either - it was trusted. Recovery is single-shot per LV lifetime (see
     // checkpointRestoreAttempted), so this reads 0 or 1 for as long as the process
     // lives; it is a counter so that a later path recovering more than once stays
@@ -466,10 +464,12 @@ public class LiveViewInstance implements QuietCloseable {
     // FALLING BACK resumes from, the startup sweep keeping the highest surviving
     // .cp as the head and the ring governing which .cp files survive. WalPurgeJob
     // cannot tell which restart it is holding base WAL for, so it pins both and
-    // takes the lower. Load-bearing even with the durable ring disabled, where
-    // nothing publishes and this is the only arm covering the survivors an O3
-    // retire leaves on disk after clearing the head. Mutated only on the refresh
-    // worker under the refresh latch; volatile for WalPurgeJob's thread.
+    // takes the lower. Load-bearing whenever a publication fails: the manifest
+    // then still lists a membership an O3 retire has since narrowed, so its arm
+    // sits above the survivors this one covers - the .cp files retention keeps on
+    // disk and the sweep restores from once the retire clears the head. Mutated
+    // only on the refresh worker under the refresh latch; volatile for
+    // WalPurgeJob's thread.
     private volatile long ringNewestBaseSeqTxn = Numbers.LONG_NULL;
     // Live-view-row count applied since the most recent head-checkpoint commit.
     // The refresh worker compares this against cairo.live.view.checkpoint.rows
@@ -1499,9 +1499,7 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Records a restart whose ring recovery took the highest-{@code .cp}-only
-     * fallback instead of trusting a manifest, leaving the ring empty. Call only
-     * when the durable ring is enabled - see
-     * {@link #checkpointRingRecoveryFallbackCount}.
+     * fallback instead of trusting a manifest, leaving the ring empty.
      */
     public void recordCheckpointRingRecoveryFallback() {
         checkpointRingRecoveredEntries = 0;

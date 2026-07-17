@@ -6488,6 +6488,22 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 "(x + " + offset + ")::double FROM long_sequence(" + CHECKPOINT_SPACING_ROWS + ")");
     }
 
+    /**
+     * The live view's durable {@code _checkpoints/_ring}, addressed by name so a
+     * test can remove it between restarts. That is how a restart reaches the
+     * highest-{@code .cp}-only fallback now that publication is unconditional:
+     * an absent manifest is the upgrade case, and the shape a corrupt one
+     * collapses to.
+     */
+    private java.nio.file.Path liveViewRingManifestPath() {
+        return java.nio.file.Paths.get(
+                engine.getConfiguration().getDbRoot(),
+                engine.verifyTableName("lv").getDirName(),
+                LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME,
+                LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME
+        );
+    }
+
     private java.nio.file.Path liveViewStatePath() {
         return java.nio.file.Paths.get(
                 engine.getConfiguration().getDbRoot(),
@@ -18018,45 +18034,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    @Test
-    public void testCheckpointRingCandidateNotStashedWhenDurableRingDisabled() throws Exception {
-        // With the durable ring off the sweep must behave exactly as it did
-        // before recovery learned to read _ring: no candidate, and the older
-        // .cp files retire down to the head. A stale manifest from an earlier
-        // run with the flag on must not resurrect the allow-list either, which
-        // is what makes the flag a real kill switch rather than a write toggle.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-                Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getRetainedCheckpointCount());
-            }
-
-            // Restart with the ring disabled, leaving the valid _ring on disk.
-            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "false");
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-
-            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(lv);
-            Assert.assertNull("no candidate when the durable ring is disabled", lv.getCheckpointRingCandidate());
-            // Legacy sweep: everything below the head retires.
-            final long head = lv.getHeadCheckpointLvSeqTxn();
-            Assert.assertTrue(head != Numbers.LONG_NULL);
-            Assert.assertEquals(1, countCheckpointFiles(lv));
-            execute("DROP LIVE VIEW lv");
-        });
-    }
 
     @Test
     public void testCheckpointRingCandidateStashedOnRestart() throws Exception {
@@ -18066,7 +18043,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // pass retires all but the head, which is every entry the ring exists to
         // offer as a resume anchor.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -18118,41 +18094,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    @Test
-    public void testCheckpointRingManifestNotWrittenWhenDurableRingDisabled() throws Exception {
-        // The durable ring is off by default, so publication must stay inert:
-        // no _ring on disk, and the head advances exactly as it did before the
-        // publish call joined the add path.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
-                 Path path = new Path();
-                 Path liveViewDir = new Path()) {
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-                Assert.assertEquals(lv.getRetainedCheckpointLvSeqTxn(0), lv.getHeadCheckpointLvSeqTxn());
-                Assert.assertFalse(lv.isCheckpointRingDirty());
-                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
-
-                liveViewDir.of(engine.getConfiguration().getDbRoot()).concat(lv.getLiveViewToken());
-                Assert.assertFalse("_ring must not exist while the durable ring is disabled",
-                        engine.getConfiguration().getFilesFacade()
-                                .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$()));
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
 
     @Test
     public void testCheckpointRingManifestPublishedOnAddPath() throws Exception {
@@ -18161,7 +18102,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // its covered seqTxn equals the applied watermark a restart reconciles
         // against - the trust rule's equality.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -18222,7 +18162,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // serving off the in-memory ring, which runs ahead of the manifest and
         // says so through checkpointRingDirty.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final AtomicBoolean failRingPublish = new AtomicBoolean(true);
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -18313,7 +18252,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the REPLACE_RANGE commit with the survivors, once after it with the
         // fresh head - and the poisoned entries are gone from _ring either way.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -18386,7 +18324,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // and its watermark still advances - the manifest is derived state, so
         // it can trail without gating the cycle that produces it.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
@@ -18450,7 +18387,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // availability, and never correctness.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 3);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
@@ -18590,24 +18526,36 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCheckpointRingClearedHeadHoldsWalPurgeFloorWithDurableRingOff() throws Exception {
-        // The same cleared-head divergence, with the durable ring DISABLED - so
-        // it costs a permanently INVALID view rather than a full scan, and it
-        // does not need the manifest to exist at all. Retention keeps the
-        // survivors' .cp files on disk whatever the flag says, and the startup
-        // sweep restores from the highest of them, replaying raw base WAL from
-        // its base seqTxn. Nothing publishes here, so the durable-manifest arm of
-        // the floor is absent and the in-memory ring arm is the only thing
-        // holding that WAL back.
+    public void testCheckpointRingRetirePublishFailureHoldsWalPurgeFloorOnInMemoryArmAlone() throws Exception {
+        // The floor's in-memory arm, isolated - the counterpart to
+        // testCheckpointRingAddPublishFailureAfterRetireHoldsWalPurgeFloorOnDurableArmAlone,
+        // and the only shape in which this arm is the sole thing holding the
+        // floor.
+        //
+        // Its two companions shadow it everywhere else, so prising them off
+        // takes an O3 retire whose publish AND whose post-replay .cp write both
+        // fail. The retire clears the head and the failed publish keeps it
+        // cleared (head arm out). The failed .cp write suppresses the fresh
+        // entry, so the in-memory ring is left holding the survivor alone. And
+        // the failed publish leaves the manifest still listing the pre-O3
+        // membership, whose newest entry sits at base seqTxn 3 - ABOVE the
+        // survivor at 1 - so the durable arm floors nothing that matters. Only
+        // the in-memory arm names the entry the restart actually resumes from.
+        //
+        // It costs a permanently INVALID view rather than the trusted variant's
+        // full scan: retention keeps the survivor's .cp on disk whatever the
+        // manifest says, the sweep restores from it, and its raw base WAL is
+        // gone. Nothing about that needs a trusted manifest - which is why this
+        // arm has to hold even when the manifest is stale.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        // CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED deliberately left off.
         final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
                 if (failCheckpointWrite.get()
-                        && Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                        && (Utf8s.endsWithAscii(name, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)
+                        || Utf8s.endsWithAscii(name, LiveViewCheckpointRingManifest.RING_MANIFEST_FILE_NAME))) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -18632,8 +18580,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
                 Assert.assertEquals(3, lv.getRetainedCheckpointCount());
-                // No manifest: the durable arm of the floor contributes nothing.
-                Assert.assertEquals(Numbers.LONG_NULL, lv.getLastPublishedRingNewestBaseSeqTxn());
+                Assert.assertEquals(3L, lv.getLastPublishedRingNewestBaseSeqTxn());
 
                 failCheckpointWrite.set(true);
                 setCurrentMicros(t0 + 4_000_000L);
@@ -18650,6 +18597,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         1L, lv.getRetainedCheckpointBaseSeqTxn(0));
                 Assert.assertEquals("the in-memory arm carries the floor alone here",
                         1L, lv.getRingNewestBaseSeqTxn());
+                // The durable arm is stuck on the membership the retire's failed
+                // publish never narrowed, so it floors nothing below lvConsumed
+                // that the survivor needs.
+                Assert.assertTrue(lv.isCheckpointRingDirty());
+                Assert.assertEquals(3L, lv.getLastPublishedRingNewestBaseSeqTxn());
             }
 
             setCurrentMicros(t0 + 5_000_000L);
@@ -18662,7 +18614,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertSegmentExistence(true, "base", 1, 1);
             assertSegmentExistence(true, "base", 1, 2);
 
-            // Restart. The sweep restores the survivor as the head and replays
+            // Restart. The stale manifest names two .cp files the retire
+            // unlinked, so it fails the referenced-file check and recovery falls
+            // back: the sweep restores the survivor as the head and replays
             // (1, 4] raw base WAL. Pre-fix that WAL is gone and the view
             // invalidates permanently - strictly worse than the full scan the
             // trusted-manifest variant of this bug costs.
@@ -18706,7 +18660,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // own segment: WalPurgeJob purges at segment granularity.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -18822,7 +18775,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // own segment: WalPurgeJob purges at segment granularity.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         // Counts _ring writes down to the fault. MAX_VALUE never fires; 1 lets
         // the cycle's in-order publish through and fails the add publish behind
         // it - the two are indistinguishable by path or by covered, so only
@@ -18974,7 +18926,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // survivor - which is why it cannot isolate this one.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         // An O3 cycle publishes exactly twice: the retire ahead of the commit,
         // then the add beside the post-replay .cp. Let the first through, fail
         // the second.
@@ -19106,7 +19057,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // being dragged DOWN, which is the only failure the item names.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
             setCurrentMicros(t0);
@@ -19178,7 +19128,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // rebuilds for want of an alternative rather than by choice, which is
         // why the recovered-entries assertion below comes before the counters.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19299,7 +19248,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // write-ahead publish wrote - the survivors, at the replay's commit
         // point, with the unsealed entries already gone.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final AtomicBoolean failCheckpointWrite = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -19375,7 +19323,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // cycle just as the lead path's does.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
@@ -19431,7 +19378,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // its ring exactly as an unpublished in-order cycle does.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19486,7 +19432,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // floor would reject the ring on every steadily-ingesting view.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19551,56 +19496,28 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    @Test
-    public void testCheckpointRingCoveredNotAdvancedWhenDurableRingDisabled() throws Exception {
-        // The in-order publication is behind the same flag as the rest, so with
-        // it off no _ring appears on a no-checkpoint cycle either.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
-                 Path path = new Path();
-                 Path liveViewDir = new Path()) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                Assert.assertEquals(0, lv.getLastPublishedRingGeneration());
-                Assert.assertFalse(lv.isCheckpointRingDirty());
-
-                liveViewDir.of(engine.getConfiguration().getDbRoot()).concat(lv.getLiveViewToken());
-                Assert.assertFalse("_ring must not exist while the durable ring is disabled",
-                        engine.getConfiguration().getFilesFacade()
-                                .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$()));
-            }
-            execute("DROP LIVE VIEW lv");
-        });
-    }
 
     @Test
-    public void testCheckpointRingLostStatePersistRebuildsWithDurableRingOff() throws Exception {
-        // The flag-off twin, and the reason this is a live defect rather than a
-        // Phase 3 one: the retention ring unlinks superseded .cp files whatever
-        // the flag says, so a lost persist strands the sweep with nothing at or
-        // below the raw watermark here too - only without a manifest to exempt
-        // the survivors, so the orphan gate deletes them outright. No head is
-        // stamped, tryRestoreFromHead never runs, and the refresh body drains the
-        // post-watermark commits from COLD accumulators: row_number() restarts at
-        // 1 and the wrong value is durably flushed. Silent - no crash, no
-        // invalidation. The worker must rebuild from the applied base instead.
+    public void testCheckpointRingLostStatePersistRebuildsWithoutManifest() throws Exception {
+        // The no-manifest twin, and the reason this is a live defect rather than
+        // a recovery-only one: the retention ring unlinks superseded .cp files
+        // whether or not a manifest survives, so a lost persist strands the sweep
+        // with nothing at or below the raw watermark here too - only without a
+        // manifest to exempt the survivors, so the orphan gate deletes them
+        // outright. No head is stamped, tryRestoreFromHead never runs, and the
+        // refresh body drains the post-watermark commits from COLD accumulators:
+        // row_number() restarts at 1 and the wrong value is durably flushed.
+        // Silent - no crash, no invalidation. The worker must rebuild from the
+        // applied base instead.
+        //
+        // Removing _ring is what makes this the twin rather than a duplicate of
+        // the trusted-manifest case: publication is unconditional now, so a
+        // manifest is always there to be trusted unless it is absent (a view
+        // upgraded from a build that never wrote one) or unreadable, which is the
+        // same fallback. The sibling test keeps its manifest and pays no scan at
+        // all.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19610,6 +19527,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             engine.getLiveViewRegistry().clear();
             java.nio.file.Files.write(liveViewStatePath(), lostState);
+            java.nio.file.Files.delete(liveViewRingManifestPath());
             engine.buildViewGraphs();
 
             final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -19663,7 +19581,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // was always designed to do - and the whole ring comes back.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19727,7 +19644,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // reconciled floor here (a clean shutdown), so the trust rule fires and
         // every listed entry becomes a resume anchor again.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19792,7 +19708,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // no entry sits below the trigger, and the whole view recomputes -
         // o3_boundary_replay_rows moves instead of o3_resume_replay_rows.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19871,7 +19786,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Pin the duration cadence out of reach so the rows cadence is the only
         // trigger: spacing has to be exact for the bound to mean anything.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -19957,7 +19871,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testCheckpointRingRestartIgnoresUnlistedPoisonedCheckpoint() throws Exception {
         // The allow-list rule, end to end, and the counterpart of
         // testO3RestartDoesNotResurrectStaleCheckpointAsAnchor (which pins the
-        // same safety with the flag off, at the cost of a boundary rebuild).
+        // same safety on the fallback path, at the cost of a boundary rebuild).
         //
         // An O3 retirement unlinks the .cp files it unseals with best-effort
         // removeQuiet. When that unlink fails, a poisoned .cp - window state
@@ -19979,7 +19893,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20086,7 +19999,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // so the restore replays them up to latestSeenTs=50 over a head still at
         // maxTs=30, and a trigger at ts=35 is both above the head and an O3.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20191,7 +20103,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // returns -1 for a ceiling of 25, and the whole view rebuilds from its lower
         // bound - boundary rows move and resume rows stay 0.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20298,7 +20209,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Asserting the full three-entry ring first is what makes the rebuild mean
         // what the section says it means.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20379,7 +20289,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // still holding all three recovered entries is proof no rebuild ran. The
         // unchanged .cp count says the restore sealed nothing either.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20488,7 +20397,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20588,7 +20496,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20674,7 +20581,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20791,7 +20697,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20888,7 +20793,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // a full scan to enforce a bound the prune satisfies for free. The prune
         // republishes before unlinking, so the manifest never names a missing .cp.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -20968,7 +20872,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // testCheckpointRingCoveredAdvancesOnDedupBase covers the dedup PUBLISH;
         // this is the dedup RESTART, which is the half section 11.7 asks for.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
@@ -21068,7 +20971,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Both arms are asserted, because only the pair is the argument: the
         // membership IS stale, and the covered is what makes it harmless.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -21184,7 +21086,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // and TRUNCATE are not three tests, they are three ways to reach the
         // same walked-past commit.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -21269,14 +21170,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // pre-commit publication is a header-only manifest.
         //
         // testO3ApplyAheadTruncateFallsBackToBoundary already pins the in-memory
-        // drop with the flag off. This is the durable half: nothing anywhere
+        // drop. This is the durable half: nothing anywhere
         // asserted that an empty manifest is written rather than skipped, and a
         // "don't bother publishing an empty ring" shortcut would leave the prior
         // manifest on disk listing anchors this cycle just unlinked - trusted at
         // the next restart, because the commit lands and carries the floor up to
         // the covered the STALE manifest still claims.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -21361,7 +21261,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // right, the verdict is right, and the reason was wrong: the rmdir that
         // was supposed to make this free never runs here.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -21426,7 +21325,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // restarted at 1, and a covered that still equals the applied floor - the
         // comparison the NEXT restart's trust rule makes.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -21497,7 +21395,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -21558,52 +21455,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         });
     }
 
-    @Test
-    public void testLiveViewsCatalogueCheckpointRingColumnsInertWhenDurableRingDisabled() throws Exception {
-        // The flag is a kill switch and the catalogue must not imply otherwise.
-        // The restore genuinely runs here and genuinely recovers the head alone,
-        // so every column below is inert by rule rather than because nothing
-        // happened. The fallback count especially: with no manifest to decline,
-        // counting one per restart would bury the shape worth alerting on under
-        // the whole fleet's legacy restarts.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                for (int seconds = 10; seconds <= 30; seconds += 10) {
-                    setCurrentMicros(seconds * 20_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
-                    drainWalQueue();
-                    drainJob(job);
-                    drainWalQueue();
-                }
-                Assert.assertEquals(3, engine.getLiveViewRegistry().getViewInstance("lv").getRetainedCheckpointCount());
-            }
-
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(1_000_000L);
-                drainJob(job);
-            }
-
-            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
-            Assert.assertEquals(1, lv.getRetainedCheckpointCount());
-            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_manifest_generation, " +
-                    "checkpoint_ring_manifest_covered_seqtxn, checkpoint_ring_manifest_dirty, " +
-                    "checkpoint_ring_recovery_fallback_count FROM live_views()")
-                    .noLeakCheck().noRandomAccess()
-                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t" +
-                            "checkpoint_ring_manifest_covered_seqtxn\tcheckpoint_ring_manifest_dirty\t" +
-                            "checkpoint_ring_recovery_fallback_count\n" +
-                            "null\t0\tnull\tfalse\t0\n");
-            execute("DROP LIVE VIEW lv");
-        });
-    }
 
     @Test
     public void testO3CorruptNonHeadAnchorIsEvictedAndNotRetried() throws Exception {
@@ -21943,17 +21794,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testO3RestartDoesNotResurrectStaleCheckpointAsAnchor() throws Exception {
-        // Poisoned-anchor recovery safety (section 6.3). A selective O3
-        // invalidation drops the unsealed retained checkpoints with best-effort
-        // removeQuiet; when that unlink fails, a stale (poisoned) .cp whose window
-        // state predates the late row lingers on disk below the highest survivor,
-        // with an lvSeqTxn <= appliedWatermark (so the orphan check cannot catch
-        // it). On restart the retained-checkpoint ring must NOT be rebuilt from
-        // those on-disk files - only the highest survivor is a trusted anchor, and
-        // the ring is seeded with that head alone (section 3.1) - so a later O3
-        // whose trigger sits above the stale entry's maxTs cannot resume from it
-        // and mis-sequence the view; finding no eligible anchor it rebuilds from
-        // the boundary and stays correct.
+        // Poisoned-anchor recovery safety on the FALLBACK path, with no manifest
+        // to rehydrate from. A selective O3 invalidation drops the unsealed
+        // retained checkpoints with best-effort removeQuiet; when that unlink
+        // fails, a stale (poisoned) .cp whose window state predates the late row
+        // lingers on disk below the highest survivor, with an lvSeqTxn <=
+        // appliedWatermark (so the orphan check cannot catch it). On restart the
+        // retained-checkpoint ring must NOT be rebuilt from those on-disk files -
+        // only the highest survivor is a trusted anchor, and the ring is seeded
+        // with that head alone (section 3.1) - so a later O3 whose trigger sits
+        // above the stale entry's maxTs cannot resume from it and mis-sequence the
+        // view; finding no eligible anchor it rebuilds from the boundary and stays
+        // correct.
         //
         // Without the "trust only highest" rule the ring would re-adopt the poisoned
         // maxTs=20 checkpoint (whose row_number() counter predates the ts=15 late
@@ -22029,10 +21881,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainWalQueue();
             }
 
-            // Restart: rebuild the registry from disk. The startup sweep stamps the
-            // highest survivor (the fresh post-O3 maxTs=30 head); the pure-restore
-            // tick rehydrates window state from it.
+            // Restart with no manifest, which is what makes this the fallback
+            // twin of testCheckpointRingRestartIgnoresUnlistedPoisonedCheckpoint:
+            // there the allow-list is what refuses the poisoned .cp, here there is
+            // no allow-list to consult and the sweep's highest-only rule has to
+            // hold the same line on its own. That path is permanent - it is the
+            // upgrade and corruption story - so the property has to be pinned on
+            // both.
+            //
+            // The startup sweep stamps the highest survivor (the fresh post-O3
+            // maxTs=30 head); the pure-restore tick rehydrates window state from
+            // it.
             engine.getLiveViewRegistry().clear();
+            java.nio.file.Files.delete(liveViewRingManifestPath());
             engine.buildViewGraphs();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(1_000_000L);
@@ -22106,12 +21967,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testO3RestartReDensifiesRingThenResumesFromAnchor() throws Exception {
-        // Restart recovery (section 6.3). The retained-checkpoint ring is NOT
-        // rebuilt from the surviving on-disk .cp files - only the highest survivor
-        // is trusted as a resume anchor. The ring restarts holding that head alone
-        // (section 3.1) and re-densifies from checkpoints written post-restart, so
-        // a later cross-commit O3 resumes from a fresh near-head anchor and still
-        // matches a from-scratch recompute over the base.
+        // The fallback restart, with no manifest to rehydrate from - a view
+        // upgraded from a build that never wrote one, or one whose _ring went
+        // missing. The retained-checkpoint ring is NOT rebuilt from the surviving
+        // on-disk .cp files: only the highest survivor is trusted as a resume
+        // anchor. The ring restarts holding that head alone (the section 3.1
+        // promotion, which is what keeps this path better than nothing) and
+        // re-densifies from checkpoints written post-restart, so a later
+        // cross-commit O3 resumes from a fresh near-head anchor and still matches
+        // a from-scratch recompute over the base.
+        //
+        // testCheckpointRingRehydratedOnRestart is the counterpart that keeps its
+        // manifest and gets the whole ring back instead.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush -> dense ring
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -22146,8 +22013,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
             }
 
-            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            // Simulate restart: drop the in-memory registry, remove the manifest so
+            // recovery takes the fallback, and rebuild from disk.
             engine.getLiveViewRegistry().clear();
+            java.nio.file.Files.delete(liveViewRingManifestPath());
             engine.buildViewGraphs();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(800_000L);

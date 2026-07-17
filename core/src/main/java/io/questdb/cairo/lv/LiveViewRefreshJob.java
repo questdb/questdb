@@ -205,8 +205,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Publishes _checkpoints/_ring. Lazily allocated on this worker's first
     // publication and held for the worker's life, so a per-cycle publication
     // costs the manifest rewrite plus one mmap/munmap and nothing else. Null
-    // when cairo.live.view.checkpoint.ring.durable.enabled is off, or before the
-    // first view on this worker publishes.
+    // until the first view on this worker publishes.
     private LiveViewCheckpointRingManifestWriter ringManifestWriter;
     // Ring membership snapshot handed to a _checkpoints/_ring publication, packed
     // as LiveViewCheckpointRingManifest entry records. Worker-owned; cleared
@@ -3966,21 +3965,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code _ring} is unwritable.
      *
      * @return {@code true} when the manifest is durable at
-     * {@code coveredBaseSeqTxn}. {@code false} covers both a failed publication
-     * and a disabled durable ring, so it means "not published", not "error" -
-     * the log line and {@code checkpointRingDirty} distinguish the two.
+     * {@code coveredBaseSeqTxn}, {@code false} when the publication failed.
      */
     private boolean publishCheckpointRing(LiveViewInstance instance, long coveredBaseSeqTxn) {
         // Read-only replicas must not publish, for the reason maybeWriteHeadCheckpoint
         // spells out at its own copy of this assert: _ring is an allow-list over local
         // .cp files a replica never writes, so a replica reaching a publication means a
-        // primary-only path lost its gate. Ahead of the flag check on purpose - the
-        // invariant is about the caller, not about whether this build persists the
-        // ring, and Phase 4 removes the flag.
+        // primary-only path lost its gate.
         assert !isLeadReconstruction() : "read-only replica must not publish the live view checkpoint ring";
-        if (!engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
-            return false;
-        }
         // The generation a successful publication will stamp. A failed one
         // leaves it unclaimed for the next attempt: nothing selects on
         // generation, so gaps would be harmless, but a monotone counter with no
@@ -4253,19 +4245,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // open exactly that gap, so the head waits on a successful
             // publication - the ordering covers the crash, the gate the failure.
             //
-            // The gate reads the flag rather than the return value because the
-            // helper returns false for a disabled ring too: with no manifest to
-            // fall behind, nothing constrains the head and it advances as it did
-            // before this step.
-            //
             // A failed publish therefore leaves the fresh .cp an orphan with the
             // head, the floor and the cadence counters all parked on the previous
             // entry, so the next cycle writes another .cp and re-lists the ring
             // from memory. The view keeps serving throughout: the in-memory ring
             // already holds the fresh entry, so resume anchors stay available even
             // while the manifest trails.
-            final boolean ringPublished = publishCheckpointRing(instance, lvSeqTxn);
-            if (ringPublished || !engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
+            if (publishCheckpointRing(instance, lvSeqTxn)) {
                 instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
             }
             // Unlink unconditionally, even when the publish failed and the stale
@@ -4919,18 +4905,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // lifetime, so nothing downstream may read startup state as live.
         instance.setCheckpointRingCandidate(null);
         if (candidate == null || !candidate.isStructurallyValid()) {
-            // No manifest on disk, unreadable, or the durable ring is disabled -
-            // the sweep's read is gated on the flag, so a null candidate is the
-            // kill switch too, and this method is inert without it. Which is also
-            // why the fallback only counts under the flag: with the ring disabled
-            // there was no manifest to decline, so every legacy restart would
-            // count one and bury the shape worth alerting on. The absent and
-            // corrupt manifests are indistinguishable here - the sweep nulls the
+            // No manifest on disk, or one the sweep could not read. The absent
+            // and corrupt cases are indistinguishable here - the sweep nulls the
             // candidate for both - and both count, being equally a fallback the
             // first post-restart O3 pays for. The read logs which at its own site.
-            if (engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
-                instance.recordCheckpointRingRecoveryFallback();
-            }
+            // A view whose first ever restart predates its first publication
+            // counts one too, and that is the honest reading: it recovers no ring
+            // and pays the same scan as a view whose manifest went missing.
+            instance.recordCheckpointRingRecoveryFallback();
             return fallbackHeadLvSeqTxn;
         }
         final long covered = candidate.getCoveredBaseSeqTxn();

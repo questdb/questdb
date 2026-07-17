@@ -1014,26 +1014,23 @@ public class CairoEngine implements Closeable, WriterSource {
                             // window state; an unlisted .cp is garbage by
                             // construction.
                             liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
-                            LiveViewCheckpointRingCandidate ringCandidate = null;
-                            if (configuration.isLiveViewCheckpointRingDurableEnabled()) {
-                                ringCandidate = new LiveViewCheckpointRingCandidate();
-                                LiveViewRecovery.readRingCandidate(
-                                        configuration.getFilesFacade(),
-                                        sweepPath,
-                                        liveViewDirPath,
-                                        tableToken,
-                                        reader,
-                                        ringManifestReader,
-                                        ringCandidate
-                                );
-                                if (ringCandidate.isStructurallyValid()) {
-                                    instance.setCheckpointRingCandidate(ringCandidate);
-                                } else {
-                                    // Absent, corrupt, version-skewed, or naming a
-                                    // .cp that is gone. Sweep without an allow-list,
-                                    // which is the legacy behaviour exactly.
-                                    ringCandidate = null;
-                                }
+                            LiveViewCheckpointRingCandidate ringCandidate = new LiveViewCheckpointRingCandidate();
+                            LiveViewRecovery.readRingCandidate(
+                                    configuration.getFilesFacade(),
+                                    sweepPath,
+                                    liveViewDirPath,
+                                    tableToken,
+                                    reader,
+                                    ringManifestReader,
+                                    ringCandidate
+                            );
+                            if (ringCandidate.isStructurallyValid()) {
+                                instance.setCheckpointRingCandidate(ringCandidate);
+                            } else {
+                                // Absent, corrupt, version-skewed, or naming a
+                                // .cp that is gone. Sweep without an allow-list,
+                                // which is the legacy behaviour exactly.
+                                ringCandidate = null;
                             }
                             // Startup sweep: clean .cp.tmp orphans
                             // and any .cp whose lvSeqTxn outran the applied

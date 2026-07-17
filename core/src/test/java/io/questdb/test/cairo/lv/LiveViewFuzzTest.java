@@ -741,8 +741,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     @Test
     public void testFuzzRestartWithDurableRing() throws Exception {
-        // Restarts with the durable checkpoint ring enabled, so each one
-        // rehydrates the retained ring from the _ring manifest and resumes off an
+        // Randomized restarts against the durable checkpoint ring: each one must
+        // rehydrate the retained ring from the _ring manifest and resume off an
         // anchor the manifest names instead of falling back to the highest .cp.
         // Three ingestion shapes run, because none of them reaches what the
         // others do. A full shuffle spreads every commit over the whole range, so
@@ -756,7 +756,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // frontier, so the ring keeps its older entries and a late row resumes
         // from the nearest one below it.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             for (int v = 0; v < variantCount(); v++) {
@@ -1704,7 +1703,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * later commit to refresh - contributes to no counter at all.
      */
     private void harvestCheckpointRingVerdict(LiveViewInstance instance) {
-        if (instance == null || !engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
+        if (instance == null) {
             return;
         }
         ringRecoveryFallbacks += (int) instance.getCheckpointRingRecoveryFallbackCount();

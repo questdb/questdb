@@ -85,9 +85,7 @@ import io.questdb.std.ObjList;
  * {@code checkpoint_ring_manifest_covered_seqtxn} track {@code applied_watermark}
  * and know the next restart will trust the ring rather than wait for it to not.
  * {@code checkpoint_ring_manifest_dirty} flags an in-memory ring that has run
- * ahead of the manifest on disk. All five are inert - NULL, zero, false - while
- * {@code cairo.live.view.checkpoint.ring.durable.enabled} is off, which publishes
- * and recovers nothing.
+ * ahead of the manifest on disk.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -379,8 +377,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // ring from a trusted _checkpoints/_ring manifest, after
                         // pruning to the running retention budget - the anchors this
                         // process came back with. NULL when no recovery decision was
-                        // made: the view never restored (no head checkpoint), or the
-                        // durable ring is disabled and no manifest was ever read.
+                        // made, i.e. the view never restored (no head checkpoint).
                         // Zero splits two ways, and checkpoint_ring_recovery_fallback_count
                         // is what tells them apart: a fallback recovered nothing,
                         // while a trusted manifest that listed nothing withheld
@@ -402,11 +399,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 instance.getLastPublishedRingCoveredBaseSeqTxn();
                         // Restarts whose ring recovery declined to trust a manifest and
                         // fell back to the highest checkpoint alone, each costing the
-                        // first in-retention O3 after it a boundary rebuild. Counts
-                        // only with the durable ring enabled - with the flag off there
-                        // is no manifest to decline. Recovery is single-shot per view
-                        // per process, so this reads 0 or 1; sum() it across the
-                        // catalogue for a deployment-wide tally.
+                        // first in-retention O3 after it a boundary rebuild. Recovery
+                        // is single-shot per view per process, so this reads 0 or 1;
+                        // sum() it across the catalogue for a deployment-wide tally.
                         case COLUMN_CHECKPOINT_RING_RECOVERY_FALLBACK_COUNT ->
                                 instance.getCheckpointRingRecoveryFallbackCount();
                         default -> 0;

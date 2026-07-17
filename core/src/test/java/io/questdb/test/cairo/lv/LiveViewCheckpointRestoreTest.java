@@ -222,7 +222,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // manifest beside its own .cp files is what keeps the allow-list and the
         // disk agreeing.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
         final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                 "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
         assertMemoryLeak(() -> {

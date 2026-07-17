@@ -1684,11 +1684,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isLiveViewCheckpointRingDurableEnabled() {
-        return getDelegate().isLiveViewCheckpointRingDurableEnabled();
-    }
-
-    @Override
     public boolean isLiveViewEnabled() {
         return getDelegate().isLiveViewEnabled();
     }
