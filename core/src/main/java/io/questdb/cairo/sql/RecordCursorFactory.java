@@ -288,27 +288,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if this factory can materialize a different result across two cursor opens
-     * because it evaluates a non-deterministic function (for example {@code rnd_*} or
-     * {@code systimestamp()}). Wrapping factories propagate the property from their retained
-     * filter and base factory; a factory that evaluates projected functions overrides this to OR
-     * in those functions' non-determinism.
+     * Returns true unless this factory can PROVE its result is stable across two cursor opens.
+     * The contract is fail-safe: the default is {@code true} ("assume unstable") and a factory
+     * asserts determinism by overriding this to return {@code false} only when every value source
+     * it evaluates (projected/aggregate functions, retained filter, interval model, row cursor,
+     * child factories) is itself deterministic. A factory that does not override merely loses
+     * determinism-dependent optimizations; it can never cause wrong results.
      * <p>
-     * Compile-time consumers (for example scalar-subquery timestamp bounds) use this to avoid
-     * pruning optimizations that would re-open the cursor and observe a different value. The
-     * property is conservative in one direction only: it must never return {@code false} for a
-     * value that is genuinely unstable across opens, but it may miss non-determinism buried in a
-     * factory that neither is a projection nor exposes its filter/base.
+     * Compile-time consumers (for example scalar-subquery timestamp bounds in
+     * {@code WhereClauseParser}) use this to avoid pruning optimizations that would re-open the
+     * cursor and observe a different value (for example {@code rnd_*} or {@code systimestamp()}).
+     * Returning {@code false} for a factory whose value is genuinely unstable across opens leads
+     * to silently dropped rows, which is why unknown shapes must report {@code true}.
      *
-     * @return true if two cursor opens can yield different values
+     * @return true if two cursor opens can yield different values or stability cannot be proven
      */
     default boolean isNonDeterministic() {
-        final Function filter = getFilter();
-        if (filter != null && filter.isNonDeterministic()) {
-            return true;
-        }
-        final RecordCursorFactory base = getBaseFactory();
-        return base != null && base.isNonDeterministic();
+        return true;
     }
 
     /**

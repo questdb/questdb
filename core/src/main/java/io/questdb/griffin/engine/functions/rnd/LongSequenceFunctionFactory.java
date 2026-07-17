@@ -105,6 +105,12 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
         }
 
+        // The produced relation is always 1..N; deterministic by construction.
+        @Override
+        public boolean isNonDeterministic() {
+            return false;
+        }
+
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
@@ -217,6 +223,13 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             super(metadata);
             this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
             this.rnd = new Rnd(this.seedLo = seedLo, this.seedHi = seedHi);
+        }
+
+        // The produced relation is always 1..N and the rnd seeds are fixed constructor arguments
+        // reset on every open, so even downstream seeded rnd_* draws are reproducible.
+        @Override
+        public boolean isNonDeterministic() {
+            return false;
         }
 
         @Override

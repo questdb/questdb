@@ -100,6 +100,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return base;
     }
 
+    // Pure column re-mapping: stability is exactly the base's.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
     // to be used in combination with compiled filter
     @Nullable
     public ObjList<Function> getBindVarFunctions() {

@@ -39,5 +39,14 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
 
     TimestampDriver getTimestampDriver();
 
+    /**
+     * Fail-safe determinism contract mirroring {@code RecordCursorFactory#isNonDeterministic()}:
+     * returns {@code true} unless the model can prove its intervals are stable across two
+     * evaluations (static intervals, or dynamic bounds that are all deterministic).
+     */
+    default boolean isNonDeterministic() {
+        return true;
+    }
+
     boolean isStatic();
 }

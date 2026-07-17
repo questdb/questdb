@@ -71,6 +71,12 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
         return filter;
     }
 
+    // Stable iff the retained filter and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        return filter.isNonDeterministic() || base.isNonDeterministic();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);

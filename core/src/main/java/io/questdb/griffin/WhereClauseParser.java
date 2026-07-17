@@ -1471,15 +1471,17 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
 
-            // A non-deterministic scalar SUBQUERY bound (e.g. >= (SELECT rnd_timestamp())) is
-            // compiled twice: once for this pruning inverter and once for the retained residual
-            // filter. Its two cursor opens can yield different values and drop rows, so skip pruning
-            // and let the residual filter be the single source of truth. This targets ONLY a
-            // non-deterministic ScalarSubQueryTimestampFunction: runtime-CONSTANT bounds (bind
-            // variables, now()) are stable within a query and are not ScalarSubQueryTimestampFunction,
-            // so they still prune; deterministic subquery bounds report isNonDeterministic()==false
-            // and still prune. The finally below frees loBound/hiBound/head (ownership has not yet
-            // transferred to the inverter).
+            // A scalar SUBQUERY bound (e.g. >= (SELECT ...)) is compiled twice: once for this
+            // pruning inverter and once for the retained residual filter. If the sub-query is not
+            // PROVABLY deterministic, its two cursor opens can yield different values and drop rows,
+            // so skip pruning and let the residual filter be the single source of truth.
+            // RecordCursorFactory.isNonDeterministic() is fail-safe: a factory reports false only
+            // when it can prove stability across opens (see its javadoc), so unknown sub-query
+            // shapes never prune. Runtime-CONSTANT bounds (bind variables, now()) are stable within
+            // a query and are not ScalarSubQueryTimestampFunction, so they still prune; provably
+            // deterministic sub-query bounds (e.g. max(ts) over a plain scan) report
+            // isNonDeterministic()==false and still prune. The finally below frees loBound/hiBound/
+            // head (ownership has not yet transferred to the inverter).
             if ((loBound instanceof ScalarSubQueryTimestampFunction && loBound.isNonDeterministic())
                     || (hiBound instanceof ScalarSubQueryTimestampFunction && hiBound.isNonDeterministic())) {
                 return false;

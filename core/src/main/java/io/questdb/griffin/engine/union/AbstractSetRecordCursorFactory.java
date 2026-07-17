@@ -57,6 +57,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         this.castFunctionsA = castFunctionsA;
     }
 
+    // A set operation is stable iff both inputs are; cast functions are type adapters over
+    // child columns and introduce no value sources of their own.
+    @Override
+    public boolean isNonDeterministic() {
+        return factoryA.isNonDeterministic() || factoryB.isNonDeterministic();
+    }
+
     @Override
     public String getBaseColumnName(int idx) {
         if (idx < factoryA.getMetadata().getColumnCount()) {

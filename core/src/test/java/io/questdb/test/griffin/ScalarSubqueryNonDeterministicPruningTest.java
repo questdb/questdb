@@ -84,6 +84,47 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
         });
     }
 
+    // A NON-deterministic AGGREGATE sub-query bound (rnd_* inside max()) MUST NOT prune: the
+    // non-determinism lives in the aggregate function held by the group-by factory, not in a
+    // projection, filter or base factory. Two independent opens draw different bounds, so pruning
+    // with one draw while filtering with another silently drops rows.
+    @Test
+    public void testNonDeterministicAggregateSubqueryBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM long_sequence(5))")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
+    // Same shape over a table base (group-by factory over a page-frame scan) MUST NOT prune.
+    @Test
+    public void testNonDeterministicAggregateOverTableSubqueryBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM b)")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
+    // A set-operation sub-query bound holding a non-deterministic aggregate MUST NOT prune.
+    // AbstractSetRecordCursorFactory exposes neither a filter nor a base factory, so only a
+    // fail-safe (prove-determinism) contract keeps this shape out of the pruning path.
+    @Test
+    public void testNonDeterministicUnionSubqueryBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM long_sequence(5) " +
+                    "UNION ALL " +
+                    "SELECT max(rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) FROM long_sequence(5) " +
+                    "LIMIT 1)")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
     // A non-deterministic systimestamp() sub-query bound MUST NOT prune.
     @Test
     public void testSystimestampSubqueryBoundNotPruned() throws Exception {

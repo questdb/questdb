@@ -88,6 +88,12 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         return baseOrder;
     }
 
+    // A full scan of the table snapshot has no value sources of its own.
+    @Override
+    public boolean isNonDeterministic() {
+        return false;
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();

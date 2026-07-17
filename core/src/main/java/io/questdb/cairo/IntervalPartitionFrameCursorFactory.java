@@ -93,6 +93,13 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         return baseOrder;
     }
 
+    // Stable iff the interval model is: a runtime model re-evaluates its bound functions on
+    // every open, so an unstable bound yields different frames across opens.
+    @Override
+    public boolean isNonDeterministic() {
+        return intervalModel.isNonDeterministic();
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();

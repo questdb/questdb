@@ -223,6 +223,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return filter;
     }
 
+    // Stable iff the retained filter and the base are stable.
+    @Override
+    public boolean isNonDeterministic() {
+        return filter.isNonDeterministic() || base.isNonDeterministic();
+    }
+
     @Override
     public int getScanDirection() {
         return base.getScanDirection();

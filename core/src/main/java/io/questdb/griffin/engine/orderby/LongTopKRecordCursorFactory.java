@@ -66,6 +66,12 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Top-K selection re-orders/trims the base rows without introducing value sources.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);

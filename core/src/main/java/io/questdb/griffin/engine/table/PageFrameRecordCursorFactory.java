@@ -95,6 +95,21 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return followsOrderByAdvice;
     }
 
+    // Provably stable only for a plain (entity, non-indexed) scan of a stable frame set with a
+    // stable (or absent) filter. Index-driven row cursors may embed value functions (for example
+    // a deferred symbol lookup) that this factory cannot inspect, so they stay fail-safe.
+    @Override
+    public boolean isNonDeterministic() {
+        if (!rowCursorFactory.isEntity() || rowCursorFactory.isUsingIndex()) {
+            return true;
+        }
+        final Function filter = this.filter;
+        if (filter != null && filter.isNonDeterministic()) {
+            return true;
+        }
+        return partitionFrameCursorFactory.isNonDeterministic();
+    }
+
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
