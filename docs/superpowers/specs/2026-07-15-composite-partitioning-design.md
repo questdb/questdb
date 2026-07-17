@@ -298,3 +298,18 @@ unchanged.
 | Parquet symbol row-group pruning (exists) | `core/rust/qdbr/src/parquet_read/row_groups.rs:2478, 3017` |
 | Parquet ts-fast-path to guard for clustering | `core/rust/qdbr/src/parquet_read/row_groups.rs:3500-3560, 3623` |
 | Mat-view refresh time-interval only | `cairo/mv/WalTxnRangeLoader.java:163-172` |
+
+---
+
+## Addendum (2026-07-17): Self-describing `_txn` partition stride
+
+**Supersedes** the earlier "stride derived per-table from `metadata.getPartitionSpec()`, no `_txn` header field" decision for the READER side, per an empirical finding during Plan 3 Task 10.
+
+**Finding.** A dormant composite table writes a stride-8 `_txn` as soon as it has partitions. Six engine-wide sites open `_txn` without threading `setComposite` and misread the stride-8 region: `O3PartitionPurgeJob` (can misclassify a live partition as detached → **deletes its directory → data loss**), `TableStorageRecordCursorFactory` (`table_storage()` → doubled `partition_count`), `MetadataCache.hydrateTableStartup`, `ColumnPurgeOperator` (BAU/startup), `RebuildColumnBase`/`IndexBuilder` (ALTER ADD INDEX / UPDATE / ATTACH), and `TableSnapshotRestore` (checkpoint restore). Several are in packages that cannot reach the package-private `setComposite`.
+
+**Decision (user-approved).** Make `_txn` self-describing for stride: a marker in reserved base-header space (`TX_BASE_HEADER`, ≤ 64 bytes) encodes the partition stride. Every `TxReader` reads it in `unsafeLoadBaseOffset` (before the partition region is divided) and self-derives `longsPerAttachedPartition` — so all six sites plus `TableWriter` auto-detect with zero per-site threading.
+
+- **Marker semantics:** `0 = plain (stride 4)`, `8 = composite (stride 8)`. Plain writes `0`, identical to today's zero padding ⇒ plain `_txn` stays **byte-identical**.
+- **Writer** still derives its create-time stride from `metadata.getPartitionSpec()` (it must, to write stride-8 records) and writes the marker from that. **Reader** treats the marker as the single source of truth (the metadata-threaded reader-side `setComposite` from Plan 3 Task 1 becomes redundant and is removed).
+- **Exception:** the static `TxReader.findPartitionRawIndex` (used by `PartitionOverwriteControl`, gated off by default) has no reader instance; it reads the marker from mapped base memory or takes an explicit stride.
+- Plan 3 Tasks 1–9 remain valid (the stride-8 on-disk layout is unchanged); this refinement is additive.
