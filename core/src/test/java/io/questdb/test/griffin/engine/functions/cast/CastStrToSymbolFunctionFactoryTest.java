@@ -37,6 +37,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.lang.management.ManagementFactory;
@@ -193,8 +194,10 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testUnusedDictionaryDoesNotAllocateAcrossCursorLifecycles() throws Exception {
-        final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
-        Assert.assertTrue(threadMXBean.isThreadAllocatedMemorySupported());
+        final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
+        final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
+        Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
         if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
             threadMXBean.setThreadAllocatedMemoryEnabled(true);
         }
