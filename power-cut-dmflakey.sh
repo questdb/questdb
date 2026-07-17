@@ -53,7 +53,18 @@
 #     → up_interval=0s, down_interval=180s, 1 feature: drop_writes → always in down phase,
 #       all writes silently discarded (reads return stale data)
 #
+# COMMIT MODES (parameterized — COMMIT_MODE ∈ {adaptive, SYNC, NOSYNC}, plus W for adaptive):
+#   adaptive: the WAL path (CommitMode.ADAPTIVE). CrashVerifier runs the production recovery triple
+#             (RecoveryCoordinator.recover → notifyWalTxnRepublisher → drainWalQueue) on reopen and
+#             asserts the SP-D4 oracle against (C=committed seqTxn, Wm=localDurableSeqTxn):
+#               W=0   → expect DURABLE (F >= C — zero loss, adaptive == SYNC)
+#               W=50ms→ expect RPO_OK  (F >= Wm — every ACKED txn survives; unflushed loss bounded to
+#                                       (Wm,C], RPO <= W). A missing ACKED txn (F < Wm) = DURABILITY_FAILURE.
+#   SYNC / NOSYNC: the NON-WAL (bypass wal) path (the original harness / regression guard).
+#
 # INTERPRETATION:
+#   adaptive + verifier prints DURABLE (W=0) or RPO_OK (W>0) → PASS (durable-ack contract upheld)
+#   adaptive + DURABILITY_FAILURE / SILENT_CORRUPTION        → serious (acked txn lost / corruption)
 #   SYNC + count >= COMMITTED  → DURABLE: fsync'd data survived the power cut (expected)
 #   SYNC + count <  COMMITTED  → DURABILITY_FAILURE: SYNC-committed rows were LOST (serious!)
 #   NOSYNC + any result        → informational; loss or corruption is expected and normal
@@ -64,7 +75,7 @@ set -euo pipefail
 # CONFIGURATION — adjust paths for your environment
 # ============================================================
 # Under `sudo`, $HOME is /root — derive the invoking user's home from SUDO_USER instead.
-WT="${WT:-/home/${SUDO_USER:-$(id -un)}/claude/wt/oss/sync-batch}"
+WT="${WT:-/home/${SUDO_USER:-$(id -un)}/claude/wt/oss/adaptive-commit}"
 JAR="${JAR:-$WT/benchmarks/target/benchmarks.jar}"
 # QuestDB needs these JVM flags on JDK 21+ (same set as core/pom.xml argLine).
 # WITHOUT --add-exports ...jdk.internal.vm=ALL-UNNAMED the worker continuation class
@@ -163,7 +174,9 @@ wait_progress() {
     while true; do
         if [ -f "$pfile" ]; then
             local val
-            val=$(cat "$pfile" 2>/dev/null || echo 0)
+            # First line of _progress is the bare committed row count in ALL modes (adaptive appends
+            # C=/Wm= lines below it), so head -1 works for both formats.
+            val=$(head -1 "$pfile" 2>/dev/null || echo 0)
             if [ "${val:-0}" -ge "$threshold" ] 2>/dev/null; then
                 echo "$val"
                 return 0
@@ -185,10 +198,11 @@ WRITER_PID=""
 
 run_one() {
     local MODE="$1"
-    local BATCHED="${2:-true}"
+    local W="${2:-0}"          # cairo.adaptive.commit.group.window.us (only meaningful for adaptive; 0 for SYNC/NOSYNC)
+    local BATCHED="${3:-true}"
     echo ""
     echo "======================================================"
-    echo "  POWER-CUT CYCLE: commitMode=$MODE  batchedColumnSync=$BATCHED"
+    echo "  POWER-CUT CYCLE: commitMode=$MODE  W(group.window.us)=$W  batchedColumnSync=$BATCHED"
     echo "======================================================"
 
     # ---- 1. Create 4 GB sparse image on a real disk ----
@@ -225,6 +239,7 @@ run_one() {
     echo "  [5] starting CrashIngestWriter (commitMode=$MODE) → $DBDIR"
     java $QDB_JVM -cp "$JAR" \
         -DcommitMode="$MODE" \
+        -Dgroup.window.us="$W" \
         -Dbatched="$BATCHED" \
         org.questdb.CrashIngestWriter "$DBDIR" \
         > "$DBDIR/../_writer.log" 2>&1 &
@@ -252,7 +267,8 @@ run_one() {
     # After the power-cut, the file may or may not be on disk depending on commit mode.
     # We store COMMITTED in a shell variable so it survives regardless.
     local COMMITTED
-    COMMITTED=$(cat "$PROGRESS_FILE" 2>/dev/null || echo 0)
+    # First line = committed row count in all modes (adaptive appends C=/Wm= below); head -1 handles both.
+    COMMITTED=$(head -1 "$PROGRESS_FILE" 2>/dev/null || echo 0)
     echo "  [7] COMMITTED=$COMMITTED (captured before power cut)"
 
     # ---- 8. Kill the writer (page cache still intact) ----
@@ -292,10 +308,13 @@ run_one() {
 
     # ---- 11. Verify ----
     echo ""
-    echo "=== MODE=$MODE batched=$BATCHED committed_before_cut=$COMMITTED ==="
+    echo "=== MODE=$MODE W=$W batched=$BATCHED committed_before_cut=$COMMITTED ==="
     local VERIFY_OUT VERIFY_EXIT
     VERIFY_EXIT=0
-    VERIFY_OUT=$(java $QDB_JVM -cp "$JAR" org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
+    # The verifier must be told the mode + W (mode is not stored on disk): adaptive runs the recovery
+    # triple and the (C,Wm) oracle; SYNC/NOSYNC take the original bit-check path.
+    VERIFY_OUT=$(java $QDB_JVM -cp "$JAR" -DcommitMode="$MODE" -Dgroup.window.us="$W" \
+        org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
     echo "$VERIFY_OUT"
 
     # Extract count from verifier output
@@ -303,8 +322,27 @@ run_one() {
     COUNT=$(echo "$VERIFY_OUT" | grep -oP '(?<=count=)\d+' | tail -1 || echo "unknown")
 
     echo ""
-    echo "--- INTERPRETATION (MODE=$MODE) ---"
-    if [ "$MODE" = "SYNC" ]; then
+    echo "--- INTERPRETATION (MODE=$MODE W=$W) ---"
+    if [ "$MODE" = "adaptive" ]; then
+        # Expected verdict per the SP-D4 oracle: W=0 ⇒ DURABLE (zero loss), W>0 ⇒ RPO_OK (acked survives).
+        local EXPECT
+        if [ "$W" -eq 0 ] 2>/dev/null; then EXPECT="DURABLE"; else EXPECT="RPO_OK"; fi
+        echo "  (adaptive W=$W → expected verdict: $EXPECT)"
+        if echo "$VERIFY_OUT" | grep -q '^SILENT_CORRUPTION'; then
+            echo "GA_BLOCKER: SILENT_CORRUPTION after power cut (adaptive W=$W) — the no-corruption HARD bar failed"
+            echo "*** every recovered row must bit-match its formula; this blocks GA ***"
+        elif echo "$VERIFY_OUT" | grep -q '^DURABILITY_FAILURE'; then
+            echo "DURABILITY_FAILURE: an ACKED txn was lost, or the table stayed suspended (adaptive W=$W)"
+            echo "*** SERIOUS: the durable-ack contract (acked ⇒ survives) was broken ***"
+        elif echo "$VERIFY_OUT" | grep -q "^$EXPECT"; then
+            echo "PASS: adaptive W=$W met its bar ($EXPECT) — every acked txn survived the power cut"
+        elif echo "$VERIFY_OUT" | grep -q '^LOUD_FAILURE'; then
+            echo "LOUD_FAILURE: engine detected a torn state (adaptive W=$W); acceptable only if a clean"
+            echo "    committed prefix reads back — inspect the verifier output above."
+        else
+            echo "UNKNOWN_RESULT: could not parse verifier verdict (exit=$VERIFY_EXIT)"
+        fi
+    elif [ "$MODE" = "SYNC" ]; then
         if echo "$VERIFY_OUT" | grep -q '^CONSISTENT'; then
             if [ "$COUNT" != "unknown" ] && [ "$COUNT" -ge "$COMMITTED" ] 2>/dev/null; then
                 echo "DURABLE: SYNC committed data survived power cut (count=$COUNT >= committed=$COMMITTED)"
@@ -425,8 +463,10 @@ echo "  FSTYPE:        $FSTYPE   <-- filesystem actually under test"
 echo ""
 echo "  Technique: dm-flakey drop_writes → umount writeback DROPPED"
 echo "             = un-fsync'd page-cache data LOST (power cut model)"
+echo "  adaptive W=0:    WAL fdatasync before commit returns → DURABLE (zero loss)"
+echo "  adaptive W=50ms: batched WAL fdatasync → RPO_OK (every ACKED txn survives, RPO <= W)"
 echo "  SYNC:  fsync before commit → data survives → DURABLE"
-echo "  NOSYNC: no fsync → data lost → expected (shows why SYNC matters)"
+echo "  NOSYNC: no fsync → data lost → expected (shows why the durable modes matter)"
 echo ""
 
 # Check JAR (do NOT build under root — maven would use /root/.m2 and re-download everything).
@@ -443,20 +483,26 @@ ensure_dmflakey
 # PREFLIGHT: prove the cut drops un-fsync'd data before trusting any durability result.
 prove_cut_drops_unsynced
 
-# Attribution run:
-#   1) SYNC + batched flush optimization (the path that showed SILENT_CORRUPTION)
-#   2) SYNC + batched OFF = per-file msync(MS_SYNC) baseline (does the proven path survive?)
-#   3) NOSYNC for reference (total loss expected)
-run_one SYNC  true
-run_one SYNC  false
-run_one NOSYNC true
+# Default run-set (run_one MODE W BATCHED):
+#   1) adaptive W=0      — the zero-loss SUBJECT (adaptive == SYNC); expect DURABLE
+#   2) adaptive W=50000  — the RPO SUBJECT (batched WAL fdatasync, 50ms); expect RPO_OK (acked survives)
+#   3) SYNC batched on   — CONTROL / regression guard on the existing non-WAL path; expect DURABLE
+#   4) SYNC batched off  — per-file msync(MS_SYNC) baseline
+#   5) NOSYNC            — CONTROL; total loss expected (shows why the durable modes matter)
+run_one adaptive 0     true
+run_one adaptive 50000 true
+run_one SYNC     0     true
+run_one SYNC     0     false
+run_one NOSYNC   0     true
 
 echo ""
 echo "======================================================"
 echo "  POWER-CUT HARNESS COMPLETE"
 echo "======================================================"
-echo "  SYNC:   expected DURABLE (count >= committed)"
-echo "  NOSYNC: expected data loss (count < committed, or corruption)"
+echo "  adaptive W=0:     expected DURABLE (F >= C — zero loss, adaptive == SYNC)"
+echo "  adaptive W=50ms:  expected RPO_OK  (F >= Wm — every acked txn survives, RPO <= W)"
+echo "  SYNC:             expected DURABLE (count >= committed) — regression guard on the existing path"
+echo "  NOSYNC:           expected data loss (count < committed, or corruption)"
 echo "  See output above for per-mode INTERPRETATION lines."
 echo ""
 echo "  If SYNC shows DURABILITY_FAILURE, check:"
