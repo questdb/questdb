@@ -602,7 +602,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         while (true) {
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(

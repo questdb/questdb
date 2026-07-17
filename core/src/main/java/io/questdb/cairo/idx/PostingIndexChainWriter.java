@@ -442,6 +442,62 @@ public final class PostingIndexChainWriter {
     }
 
     /**
+     * Read only the chain header and return its {@code regionLimit} -- the
+     * live-region high-water offset. Lets a caller size the {@code keyMem}
+     * mapping from the header (which is self-consistent with the head entry
+     * it references) instead of from {@code ff.length()}, which can lag the
+     * writer that extended the .pk during parallel apply and leave the head
+     * entry outside a short mapping. Needs only the header pages mapped.
+     * <p>
+     * Validates the header the same way {@link #openExisting} does (seqlock read
+     * plus format version) and additionally range-checks the region descriptors
+     * before the value is trusted to size a mapping: it rejects an inconsistent
+     * region (a {@code regionBase} below the reserved window, or a
+     * {@code regionLimit} that precedes {@code regionBase}) and an out-of-region
+     * {@code headEntryOffset}. The head-pointer check is the important one for
+     * the reopen path: the caller feeds the result to
+     * {@code keyMem.jumpTo(regionLimit)} and then {@code openExisting} reads the
+     * head entry at {@code headEntryOffset}, so a corrupt-but-version-consistent
+     * header whose head points outside {@code [regionBase, regionLimit)} would be
+     * read past the mapping (SIGSEGV in a {@code -da} build). These are the same
+     * checks the positional-pread reader
+     * {@code PostingIndexUtils#readSealTxnFromKeyFdTriState} enforces;
+     * {@code regionLimit == regionBase} is the legitimate empty-region shape and
+     * stays valid. This does not upper-bound {@code regionLimit} (neither does the
+     * pread reader): a consistent-but-oversized value is caught downstream by the
+     * allocation failing in {@code jumpTo}, whose error path releases the mapping
+     * without truncating the .pk.
+     */
+    public long peekRegionLimit(MemoryR keyMem) {
+        if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
+            throw CairoException.critical(0).put("posting index header unreadable");
+        }
+        if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            throw CairoException.critical(0)
+                    .put("Unsupported Posting index version [expected=")
+                    .put(PostingIndexUtils.V2_FORMAT_VERSION)
+                    .put(", actual=").put(headerScratch.formatVersion).put(']');
+        }
+        if (headerScratch.regionBase < PostingIndexUtils.KEY_FILE_RESERVED
+                || headerScratch.regionLimit < headerScratch.regionBase) {
+            throw CairoException.critical(0)
+                    .put("posting index header has invalid region [regionBase=")
+                    .put(headerScratch.regionBase)
+                    .put(", regionLimit=").put(headerScratch.regionLimit).put(']');
+        }
+        if (headerScratch.headEntryOffset != PostingIndexUtils.V2_NO_HEAD
+                && (headerScratch.headEntryOffset < headerScratch.regionBase
+                || headerScratch.headEntryOffset >= headerScratch.regionLimit)) {
+            throw CairoException.critical(0)
+                    .put("posting index header has out-of-region head [headEntryOffset=")
+                    .put(headerScratch.headEntryOffset)
+                    .put(", regionBase=").put(headerScratch.regionBase)
+                    .put(", regionLimit=").put(headerScratch.regionLimit).put(']');
+        }
+        return headerScratch.regionLimit;
+    }
+
+    /**
      * Read the current head entry's cover end-offset footer into {@code out}
      * (cleared first). Lets a caller preserve the footer across a republish it
      * cannot recompute -- e.g. a same-sealTxn gen flush whose writer-side
