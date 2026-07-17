@@ -105,6 +105,53 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNativeKeyCacheTranslatesEachSourceKeyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
+            // A static source dictionary hands the same native key back on repeated rows: alpha
+            // (source key 100) appears three times, beta (200) once. The projection caches the
+            // source-key -> result-key translation per source, so it must intern each distinct
+            // source value exactly once and serve the rest from the cache.
+            final TrackingCursorFactory base = new TrackingCursorFactory(new String[][]{
+                    {"alpha"},
+                    {"alpha"},
+                    {"beta"},
+                    {"alpha"}
+            });
+            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try (UnionSymbolCastRecordCursorFactory factory = newFactory(base, functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+
+                    Assert.assertTrue(cursor.hasNext());
+                    final int alphaKey = record.getInt(0);
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals("a repeated source key must resolve to the cached result key", alphaKey, record.getInt(0));
+                    Assert.assertTrue(cursor.hasNext());
+                    final int betaKey = record.getInt(0);
+                    Assert.assertNotEquals(alphaKey, betaKey);
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(alphaKey, record.getInt(0));
+                    Assert.assertFalse(cursor.hasNext());
+
+                    TestUtils.assertEquals("alpha", symbolTable.valueOf(alphaKey));
+                    TestUtils.assertEquals("beta", symbolTable.valueOf(betaKey));
+                    // The cache interns each distinct source value once; without it every row would
+                    // re-intern, so this count is what pins the cache write.
+                    Assert.assertEquals(2, function.internCount);
+                    // The source dictionary resolved each distinct native key once, not once per row.
+                    Assert.assertEquals(1, base.cursor.symbolTableLookupCount);
+                }
+                assertCursorClosed(base, tracker, function);
+            } finally {
+                releaseTracker(tracker);
+            }
+        });
+    }
+
+    @Test
     public void testPartialSourceStateFailureClosesCursorAndFunctions() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
@@ -486,6 +533,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
 
     private static class TrackingSymbolFunction extends CastStrToSymbolFunctionFactory.Func {
         private int cursorClosedCount;
+        private int internCount;
         private int symbolCallCount;
 
         private TrackingSymbolFunction(Function arg) {
@@ -511,6 +559,12 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
         public CharSequence getSymbolB(Record rec) {
             symbolCallCount++;
             return super.getSymbolB(rec);
+        }
+
+        @Override
+        public int intern(CharSequence value) {
+            internCount++;
+            return super.intern(value);
         }
     }
 }
