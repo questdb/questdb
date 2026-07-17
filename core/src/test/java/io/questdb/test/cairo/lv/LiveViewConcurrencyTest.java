@@ -622,6 +622,21 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         row.append();
     }
 
+    // Appends one row to the var-size base table (ts, vs STRING, vv VARCHAR), deriving
+    // both var-length values from the row's (unique) timestamp - vs is the decimal ts,
+    // vv is 'v' + the decimal ts - so a reader can decode them back and detect a torn
+    // var-length read. The caller owns the two sinks so a tight writer loop reuses them.
+    private static void appendVarSizeRow(WalWriter walWriter, long ts, StringSink strSink, Utf8StringSink vcSink) {
+        final TableWriter.Row row = walWriter.newRow(ts);
+        strSink.clear();
+        strSink.put(ts);
+        row.putStr(1, strSink); // vs STRING = decimal ts
+        vcSink.clear();
+        vcSink.put('v').put(ts);
+        row.putVarchar(2, vcSink); // vv VARCHAR = 'v' + decimal ts
+        row.append();
+    }
+
     // Generates the logical dataset: strictly-unique, strictly-increasing timestamps
     // (so OVER (ORDER BY ts) and the natural ts scan order used by OVER () are total
     // orders both the incremental and the batch path agree on), random symbols and
@@ -661,20 +676,24 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // clock each pass so deferred flushes land, and applying the LV's own WAL after
     // each burst. Mirrors the fuzz harness.
 
-    // Like newWriterThread, but for the var-size base table (ts, vs STRING,
-    // vv VARCHAR): writer w ingests the round-robin slice w, w+numWriters, ... Each
-    // row's var-length values are derived from its (unique) timestamp - vs is the
-    // decimal ts, vv is 'v' + the decimal ts - so a reader can decode them back and
-    // detect a torn var-length read. The cross-writer commit interleaving is what
-    // produces O3, which drives the in-mem tier rebuild against the live readers.
-    private Thread newVarSizeWriterThread(
+    // Like newPacedWriterThread, but for the var-size base table (ts, vs STRING,
+    // vv VARCHAR): writer w ingests the round-robin slice fromIndex+w, fromIndex+w+numWriters,
+    // ... one batch per refresh tick. Each row's var-length values are derived from its
+    // (unique) timestamp - vs is the decimal ts, vv is 'v' + the decimal ts - so a reader
+    // can decode them back and detect a torn var-length read. The cross-writer commit
+    // interleaving is what produces O3, which drives the in-mem tier rebuild against the
+    // live readers; the pacing is what keeps the writers from finishing inside the driver's
+    // first tick and leaving the readers nothing to race.
+    private Thread newPacedVarSizeWriterThread(
             int writerId,
             int numWriters,
+            int fromIndex,
             int rowCount,
             int batch,
             long[] tsv,
             TableToken baseToken,
             CyclicBarrier barrier,
+            AtomicLong refreshTicks,
             ConcurrentLinkedQueue<Throwable> errors
     ) {
         return new Thread(() -> {
@@ -683,19 +702,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
                 barrier.await();
                 int sinceCommit = 0;
-                for (int k = writerId; k < rowCount; k += numWriters) {
-                    final long ts = tsv[k];
-                    final TableWriter.Row row = walWriter.newRow(ts);
-                    strSink.clear();
-                    strSink.put(ts);
-                    row.putStr(1, strSink); // vs STRING = decimal ts
-                    vcSink.clear();
-                    vcSink.put('v').put(ts);
-                    row.putVarchar(2, vcSink); // vv VARCHAR = 'v' + decimal ts
-                    row.append();
+                for (int k = fromIndex + writerId; k < rowCount; k += numWriters) {
+                    appendVarSizeRow(walWriter, tsv[k], strSink, vcSink);
                     if (++sinceCommit >= batch) {
                         walWriter.commit();
                         sinceCommit = 0;
+                        awaitRefreshTick(refreshTicks);
                     }
                 }
                 walWriter.commit();
@@ -704,7 +716,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } finally {
                 Path.clearThreadLocals();
             }
-        }, "lv-varsize-writer-" + writerId);
+        }, "lv-paced-varsize-writer-" + writerId);
     }
 
     // Like newWriterThread, but the writer waits for the refresh driver to complete a tick
@@ -825,14 +837,22 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // drains it, asserting the per-snapshot invariant (see
     // assertRowNumberSnapshotInvariant). Unfiltered, so it reads through the record-cursor
     // path's seam routing (Mode B).
-    private void readRowNumberViewOnce() throws Exception {
+    // <p>
+    // Returns whether this read routed through the in-mem tier rather than falling back to
+    // disk-only, which the soak counts as its evidence that the readers actually reached the
+    // tier while it ran, not just once after quiescence. Reads the LV factory's own cursor
+    // (unwrapping any QueryProgress wrapper) so isRoutingEligible answers for the read the
+    // soak just drained.
+    private boolean readRowNumberViewOnce() throws Exception {
         try (
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                 SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(ctx)
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory()
         ) {
-            assertRowNumberSnapshotInvariant(cursor);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)) {
+                assertRowNumberSnapshotInvariant(cursor);
+                return cursor.isRoutingEligible();
+            }
         }
     }
 
@@ -910,42 +930,49 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // realloc, a seam dup/gap, a use-after-free - surfaces as a value mismatch or a
     // crash. The view is mid-flight, so the row count itself is not asserted here;
     // the final single-threaded oracle validates the full contents after quiescence.
-    private void readVarSizeViewOnce() throws Exception {
+    // <p>
+    // Returns whether this read routed through the in-mem tier, which the soak counts as
+    // its evidence that the var-length reads actually dereferenced the tier's (data, aux)
+    // regions while it ran. Reads the LV factory's own cursor (unwrapping any QueryProgress
+    // wrapper) so isRoutingEligible answers for the read the soak just drained.
+    private boolean readVarSizeViewOnce() throws Exception {
         try (
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                 SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(ctx)
+                RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory()
         ) {
-            final Record record = cursor.getRecord();
-            long prevTs = Long.MIN_VALUE;
-            long expectedRn = 1;
-            while (cursor.hasNext()) {
-                final long ts = record.getLong(0);
-                final CharSequence vs = record.getStrA(1);
-                final Utf8Sequence vv = record.getVarcharA(2);
-                final long rn = record.getLong(3);
-                if (ts <= prevTs) {
-                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)) {
+                final Record record = cursor.getRecord();
+                long prevTs = Long.MIN_VALUE;
+                long expectedRn = 1;
+                while (cursor.hasNext()) {
+                    final long ts = record.getLong(0);
+                    final CharSequence vs = record.getStrA(1);
+                    final Utf8Sequence vv = record.getVarcharA(2);
+                    final long rn = record.getLong(3);
+                    if (ts <= prevTs) {
+                        throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+                    }
+                    if (rn != expectedRn) {
+                        throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
+                                + ", actual=" + rn + ", ts=" + ts);
+                    }
+                    long decoded;
+                    try {
+                        decoded = vs == null ? Long.MIN_VALUE : Numbers.parseLong(vs);
+                    } catch (NumericException e) {
+                        throw new AssertionError("vs STRING passthrough not numeric: ts=" + ts + ", vs=" + vs);
+                    }
+                    if (decoded != ts) {
+                        throw new AssertionError("vs STRING passthrough mismatch: ts=" + ts + ", vs=" + vs);
+                    }
+                    if (vv == null || vv.size() == 0 || vv.byteAt(0) != 'v') {
+                        throw new AssertionError("vv VARCHAR passthrough mismatch: ts=" + ts + ", vv=" + vv);
+                    }
+                    prevTs = ts;
+                    expectedRn++;
                 }
-                if (rn != expectedRn) {
-                    throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
-                            + ", actual=" + rn + ", ts=" + ts);
-                }
-                long decoded;
-                try {
-                    decoded = vs == null ? Long.MIN_VALUE : Numbers.parseLong(vs);
-                } catch (NumericException e) {
-                    throw new AssertionError("vs STRING passthrough not numeric: ts=" + ts + ", vs=" + vs);
-                }
-                if (decoded != ts) {
-                    throw new AssertionError("vs STRING passthrough mismatch: ts=" + ts + ", vs=" + vs);
-                }
-                if (vv == null || vv.size() == 0 || vv.byteAt(0) != 'v') {
-                    throw new AssertionError("vv VARCHAR passthrough mismatch: ts=" + ts + ", vv=" + vv);
-                }
-                prevTs = ts;
-                expectedRn++;
+                return cursor.isRoutingEligible();
             }
         }
     }
@@ -2236,15 +2263,29 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
+    // Reader threads churn cursors over an IN MEMORY view while the refresh driver publishes
+    // tier slots and paced writers ingest - the read/publish hand-off. Hardened the same way
+    // runParallelFilterTierSwapSoak was, and for the same reason: left unpaced the writers
+    // finish inside the driver's first tick at any row count, the driver publishes nothing
+    // while the readers are alive, and the run races nothing while passing. So the writers
+    // pace to the driver (one batch per tick), the tier is pre-warmed before any reader opens,
+    // and the run asserts its own counters - swaps the driver caught under the readers, and
+    // (for a tier-routing shape) reads that actually reached the tier mid-soak.
     private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB, boolean leadMode) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        // Growth budget 0 makes isCompactionWorthwhile true on every publish, so the refresh
+        // worker always takes the slow path (fill the other slot, then publishSwap) and the
+        // driver's getPublishedIdx() sampling below counts a swap per publish deterministically
+        // rather than only the ones a reader's pin happened to collide with. A determinism knob,
+        // not an enabler: under this churn a reader pin defeats the fast-path CAS anyway.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
         final int n = 1 + rnd.nextInt(8);
         // modeB: a SYMBOL-free row_number() view, so the read path routes through
         // the in-mem tier (Mode B seam routing) and the readers can assert the
         // gapless-rn invariant per snapshot. Otherwise: a sum() view with a SYMBOL
-        // passthrough, which routes disk-only (the tier holds segment-local symbol
-        // ids the reader cannot resolve) but still exercises the publish hand-off.
+        // passthrough, which routes disk-only but still exercises the publish hand-off
+        // (the readers open cursors over the view while the driver swaps under them).
         final String viewSql = modeB
                 ? "SELECT ts, i, row_number() OVER () AS rn FROM base"
                 : "SELECT " + projection(0, n) + " FROM base";
@@ -2270,30 +2311,77 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean running = new AtomicBoolean(true);
+        // Refresh ticks completed by the driver; the writers pace off it. And the run's own
+        // evidence: reads that found the tier at the instant they looked, and swaps the driver
+        // caught between two of its own passes.
+        final AtomicLong refreshTicks = new AtomicLong();
+        final AtomicLong routedReads = new AtomicLong();
+        final AtomicLong swapsObserved = new AtomicLong();
+        // In lead mode advance the clock by a fraction of FLUSH EVERY per tick so a flush comes
+        // due only every few ticks; the refreshes in between publish the un-flushed lead (Mode
+        // A). Otherwise advance past FLUSH EVERY every tick so every refresh also flushes and
+        // the tier stays a disk subset the read seams over (Mode B).
+        final long clockStepMicros = leadMode ? CLOCK_ADVANCE_MICROS / 6 : CLOCK_ADVANCE_MICROS;
         try {
-            // numWriters writers + the refresh driver, released together. Readers spin
+            // Pre-warm, single-threaded: commit the leading slice and refresh it, so the tier is
+            // live and stamped before any reader opens. It only comes into being on the first
+            // publish, which is a tick the readers would otherwise spend reading a view with no
+            // tier to route to.
+            final int preCount = Math.max(1, rowCount / 4);
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                for (int k = 0; k < preCount; k++) {
+                    appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                }
+                walWriter.commit();
+            }
+            drainWalQueue();
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainJob(job);
+            drainWalQueue();
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("the pre-warm refresh must publish a tier for the readers to route to", tier);
+            Assert.assertTrue("the pre-warmed tier must hold rows", tier.publishedRowCount() > 0);
+
+            // numWriters paced writers + the refresh driver, released together. Readers spin
             // independently (no synchronized start needed) until running clears.
             final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
-                final int batch = 5 + rnd.nextInt(20);
-                writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
+                // Small batches, and the pacing means the batch size IS how many publishes the
+                // run gets to race (one commit per tick); see runParallelFilterTierSwapSoak.
+                final int batch = 4 + rnd.nextInt(4);
+                writers[w] = newPacedWriterThread(
+                        w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, refreshTicks, errors
+                );
             }
-            // In lead mode advance the clock by a fraction of FLUSH EVERY per tick so
-            // a flush comes due only every few ticks; the refreshes in between
-            // publish the un-flushed lead. Otherwise advance past FLUSH EVERY every
-            // tick so every refresh also flushes (the tier stays a disk subset).
-            final long clockStepMicros = leadMode ? CLOCK_ADVANCE_MICROS / 6 : CLOCK_ADVANCE_MICROS;
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
+                    int lastPublishedIdx = tier.getPublishedIdx();
                     while (running.get()) {
                         setCurrentMicros(currentMicros + clockStepMicros);
                         drainWalQueue();
-                        drainJob(job);
+                        // drainJob's own loop, opened up so the published index can be sampled
+                        // between passes: a tick runs up to 64 passes and the index only
+                        // alternates between two slots, so a per-tick sample would report a run
+                        // of swaps' parity rather than its length.
+                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
+                            final int publishedIdx = tier.getPublishedIdx();
+                            if (publishedIdx != lastPublishedIdx) {
+                                swapsObserved.incrementAndGet();
+                                lastPublishedIdx = publishedIdx;
+                            }
+                        }
+                        refreshTicks.incrementAndGet();
                     }
                 } catch (Throwable th) {
                     errors.add(th);
+                    // The writers pace off this counter; keep it moving so a dead driver fails
+                    // the run through the errors queue rather than hanging it.
+                    refreshTicks.addAndGet(Long.MAX_VALUE / 2);
                 } finally {
                     Path.clearThreadLocals();
                 }
@@ -2305,7 +2393,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     try {
                         while (running.get()) {
                             if (modeB) {
-                                readRowNumberViewOnce();
+                                if (readRowNumberViewOnce()) {
+                                    routedReads.incrementAndGet();
+                                }
                             } else {
                                 readViewOnce();
                             }
@@ -2341,6 +2431,23 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // Quiesce single-threaded, then assert the differential oracle below.
             drainWalQueue();
             driveRefreshToQuiescence(job);
+
+            LOG.info().$("LV concurrency reader-churn soak done: modeB=").$(modeB).$(", leadMode=").$(leadMode)
+                    .$(", refreshTicks=").$(refreshTicks.get()).$(", routedReads=").$(routedReads.get())
+                    .$(", swapsObserved=").$(swapsObserved.get()).$();
+            // The soak's own evidence. A green run that raced nothing looks identical without
+            // these: a driver that never published under the readers, or reads that never
+            // reached the tier.
+            Assert.assertTrue(
+                    "the refresh worker must have swapped tier slots under the churning readers",
+                    swapsObserved.get() > 0
+            );
+            if (modeB) {
+                Assert.assertTrue(
+                        "the readers must have routed through the tier mid-soak, not just after it",
+                        routedReads.get() > 0
+                );
+            }
         } finally {
             Misc.free(job);
         }
@@ -2388,6 +2495,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // state still matches the recompute.
     private void runVarSizeReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        // See runReaderChurnSoak: forces every publish onto the slow path so the swap sampling
+        // is deterministic. It also makes every publish realloc-and-move the (data, aux) regions
+        // the var-length reads dereference, which is the base-pointer move this soak is about.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
         final String viewSql = "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
@@ -2413,25 +2524,65 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean running = new AtomicBoolean(true);
+        // The writers pace off refreshTicks; routedReads and swapsObserved are the run's own
+        // evidence that it raced the tier rather than spending itself against an empty one.
+        final AtomicLong refreshTicks = new AtomicLong();
+        final AtomicLong routedReads = new AtomicLong();
+        final AtomicLong swapsObserved = new AtomicLong();
         try {
-            // numWriters writers + the refresh driver, released together. Readers
+            // Pre-warm, single-threaded: commit the leading slice and refresh it, so the tier is
+            // live and stamped before any reader opens.
+            final int preCount = Math.max(1, rowCount / 4);
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                final StringSink strSink = new StringSink();
+                final Utf8StringSink vcSink = new Utf8StringSink();
+                for (int k = 0; k < preCount; k++) {
+                    appendVarSizeRow(walWriter, tsv[k], strSink, vcSink);
+                }
+                walWriter.commit();
+            }
+            drainWalQueue();
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainJob(job);
+            drainWalQueue();
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("the pre-warm refresh must publish a tier for the readers to route to", tier);
+            Assert.assertTrue("the pre-warmed tier must hold rows", tier.publishedRowCount() > 0);
+
+            // numWriters paced writers + the refresh driver, released together. Readers
             // spin independently (no synchronized start needed) until running clears.
             final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
-                final int batch = 5 + rnd.nextInt(20);
-                writers[w] = newVarSizeWriterThread(w, numWriters, rowCount, batch, tsv, baseToken, barrier, errors);
+                final int batch = 4 + rnd.nextInt(4);
+                writers[w] = newPacedVarSizeWriterThread(
+                        w, numWriters, preCount, rowCount, batch, tsv, baseToken, barrier, refreshTicks, errors
+                );
             }
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
+                    int lastPublishedIdx = tier.getPublishedIdx();
                     while (running.get()) {
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
-                        drainJob(job);
+                        // drainJob's own loop, opened up so a swap is sampled between passes
+                        // rather than once per tick; see runReaderChurnSoak.
+                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
+                            final int publishedIdx = tier.getPublishedIdx();
+                            if (publishedIdx != lastPublishedIdx) {
+                                swapsObserved.incrementAndGet();
+                                lastPublishedIdx = publishedIdx;
+                            }
+                        }
+                        refreshTicks.incrementAndGet();
                     }
                 } catch (Throwable th) {
                     errors.add(th);
+                    refreshTicks.addAndGet(Long.MAX_VALUE / 2);
                 } finally {
                     Path.clearThreadLocals();
                 }
@@ -2442,7 +2593,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 readers[r] = new Thread(() -> {
                     try {
                         while (running.get()) {
-                            readVarSizeViewOnce();
+                            if (readVarSizeViewOnce()) {
+                                routedReads.incrementAndGet();
+                            }
                         }
                     } catch (Throwable th) {
                         errors.add(th);
@@ -2475,6 +2628,17 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // Quiesce single-threaded, then assert the differential oracle below.
             drainWalQueue();
             driveRefreshToQuiescence(job);
+
+            LOG.info().$("LV concurrency var-size reader-churn soak done: refreshTicks=").$(refreshTicks.get())
+                    .$(", routedReads=").$(routedReads.get()).$(", swapsObserved=").$(swapsObserved.get()).$();
+            Assert.assertTrue(
+                    "the refresh worker must have swapped tier slots under the churning readers",
+                    swapsObserved.get() > 0
+            );
+            Assert.assertTrue(
+                    "the readers must have routed through the tier's var-length regions mid-soak, not just after it",
+                    routedReads.get() > 0
+            );
         } finally {
             Misc.free(job);
         }
