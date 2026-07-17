@@ -594,8 +594,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * {@code false} result unreliable, which is the one property this flag has.
      * <p>
      * A {@code true} result is a capability flag, not a guarantee. It cannot see the
-     * runtime seqTxn fence, the tier's population state, or a timestamp-interval filter
-     * pushed into the scan, any of which still route an individual cursor disk-only.
+     * runtime seqTxn fence, the tier's population state, a parquet pushdown filter, or an
+     * interval filter the scan will not describe back, any of which still route an
+     * individual cursor disk-only. A describable timestamp-interval filter is NOT among
+     * them: it routes lead-only, with the slot's band cut by the same intervals.
      * <p>
      * A {@code false} result, by contrast, stays reliable: the read is always disk-only,
      * since an unsupported column type is a hard disqualifier on both paths.

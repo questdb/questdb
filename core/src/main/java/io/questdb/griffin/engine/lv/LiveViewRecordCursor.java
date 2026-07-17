@@ -456,11 +456,14 @@ public class LiveViewRecordCursor implements RecordCursor {
                     final int candidateMode = inMemEligible
                             ? selectRoutingMode(diskCursor, timestampColumnIndex, diskScanAscending, intervals != null)
                             : ROUTING_DISK_ONLY;
-                    // LONG_NULL means the disk cursor exposes no LV-table seqTxn to fence
-                    // against at all: it is not a plain unfiltered table scan (an index scan,
-                    // an interval-filtered or pushdown-filtered page-frame cursor, a
-                    // non-table cursor). Distinct from a seqTxn that simply disagrees with
-                    // the slot's - see the release decision below.
+                    // LONG_NULL means the disk cursor exposes no LV-table seqTxn we can fence
+                    // and reproduce over the slot: an index scan, a parquet-pushdown-filtered
+                    // page-frame cursor, an interval filter the cursor will not describe back
+                    // (getIntervals() null), or a non-table cursor. A DESCRIBABLE interval
+                    // filter is NOT in this set - it reports a real seqTxn and routes
+                    // lead-only, with the slot's band cut by the same intervals (see
+                    // selectRoutingMode and buildSlotBands). Distinct from a seqTxn that
+                    // simply disagrees with the slot's - see the release decision below.
                     final long diskSeqTxn = candidateMode != ROUTING_DISK_ONLY
                             ? diskReaderSeqTxn(diskCursor)
                             : Numbers.LONG_NULL;
@@ -469,10 +472,13 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // tier's columns or the disk cursor is non-table (inMemEligible
                         // false), the disk cursor's two direction signals disagree (see
                         // selectRoutingMode), or the cursor carries no seqTxn to fence
-                        // against (diskSeqTxn LONG_NULL - e.g. SELECT * FROM lv WHERE ts >=
-                        // '...', whose interval filter the optimiser pushes into the
-                        // page-frame scan). The fence can never engage for this cursor
-                        // regardless of the slot's version, and no serving path (hasNext /
+                        // against (diskSeqTxn LONG_NULL - a parquet pushdown filter that
+                        // prunes row groups the frames still count, or an interval filter the
+                        // cursor will not describe back, neither of which the slot's band can
+                        // be cut to match; a describable interval like SELECT * FROM lv WHERE
+                        // ts >= '...' routes lead-only instead). The fence can never engage
+                        // for this cursor regardless of the slot's version, and no serving
+                        // path (hasNext /
                         // size / skipRows / getSymbolTable / newSymbolTable / recordAt) reads
                         // the slot while the mode is ROUTING_DISK_ONLY. Release the tier
                         // slot now instead of holding the global pin lease + per-slot

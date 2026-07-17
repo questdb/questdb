@@ -730,6 +730,93 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testHorizonJoinSlaveOverAnIntervalFilteredLiveViewSeesTheUnflushedLead() throws Exception {
+        // The interval-filtered twin of testHorizonJoinSlaveSeesTheUnflushedLead, and the
+        // horizon analogue of testWindowJoinSlaveOverAnIntervalFilteredLiveViewSeesTheUnflushedLead.
+        // An interval filter on the slave selects ConcurrentTimeFrameState's eager walk
+        // (buildFrameCacheEagerly enumerates every frame), a different route to the lead than
+        // the lazy per-partition walk the plain arm takes - and the walk where routing an
+        // interval-filtered read once crashed a join on an out-of-bounds partition index. This
+        // arm proves the horizon consumer survives it, keeps the interval, and still sees the
+        // lead.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk x = 1,2,3 (ts 01,02,03); un-flushed lead x = 4,5 (ts 04,05)
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            // Offsets -2..2 land the ASOF match at ts 01,02,03,04,05. The interval keeps ts
+            // >= 02, so offset -2 (ts 01) finds nothing and reports null; the rest name both
+            // what the interval admitted and which tier answered: offsets 1 and 2 are the
+            // lead's x = 4, 5, which arrive here only through the eager walk's lead frames.
+            assertQuery("SELECT h.offset / 1_000_000 AS sec_offs, sum(l.x) AS agg " +
+                    "FROM probe t " +
+                    "HORIZON JOIN (SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:02.000000Z') l " +
+                    "RANGE FROM -2s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Horizon Join", "LiveView");
+
+            StringSink sink = new StringSink();
+            printSql("SELECT h.offset / 1_000_000 AS sec_offs, sum(l.x) AS agg " +
+                    "FROM probe t " +
+                    "HORIZON JOIN (SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:02.000000Z') l " +
+                    "RANGE FROM -2s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs", sink);
+            Assert.assertEquals(
+                    "sec_offs\tagg\n" +
+                            "-2\tnull\n" +
+                            "-1\t2\n" +
+                            "0\t3\n" +
+                            "1\t4\n" +
+                            "2\t5\n",
+                    sink.toString());
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSlaveSeesTheUnflushedLead() throws Exception {
+        // The HORIZON JOIN analogue of testWindowJoinSlaveSeesTheUnflushedLead. A not-keyed
+        // HORIZON JOIN slave takes the parallel path
+        // (AsyncHorizonJoinNotKeyedRecordCursor), which asks the LV factory for page
+        // frames, casts the result to TablePageFrameCursor, and drives it through
+        // ConcurrentTimeFrameState - the same bridge the window join uses, but with the
+        // horizon atom's own construct/seek/close of that state. The state used to build its
+        // whole frame model from the LV table's per-partition row counts, missing the in-mem
+        // slot; it now takes the lead from the cursor's lead-scoped walk under a
+        // pseudo-partition of its own.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk x = 1,2,3 (ts 01,02,03); un-flushed lead x = 4,5 (ts 04,05)
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            final String horizonSql = "SELECT h.offset / 1_000_000 AS sec_offs, sum(lv.x) AS agg " +
+                    "FROM probe t " +
+                    "HORIZON JOIN lv " +
+                    "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                    "ORDER BY sec_offs";
+
+            // Pin the parallel horizon path over the LV, so this exercises the frame bridge
+            // and ConcurrentTimeFrameState rather than the single-threaded time-frame path the
+            // ASOF / LT arms cover.
+            assertQuery(horizonSql).noLeakCheck().assertsPlanContaining("Async Horizon Join", "LiveView");
+
+            // Offset 0 -> ASOF ts 03 -> disk x = 3. Offset 1 -> ASOF ts 04 -> lead x = 4.
+            // Offset 2 -> ASOF ts 05 -> lead x = 5. So the per-offset sum names which tier
+            // answered: 3,4,5 is every match once. 3,3,3 would mean the lead never arrived.
+            StringSink sink = new StringSink();
+            printSql(horizonSql, sink);
+            Assert.assertEquals(
+                    "sec_offs\tagg\n" +
+                            "0\t3\n" +
+                            "1\t4\n" +
+                            "2\t5\n",
+                    sink.toString());
+        });
+    }
+
+    @Test
     public void testWindowJoinSlaveOverAnEvictedOverlapSeesEveryRowOnce() throws Exception {
         // The arm above proves the lead arrives; this one proves the OVERLAP does not arrive
         // twice, which the other fixture cannot ask. buildEvictedOverlapPlusLead is the only
@@ -3588,6 +3675,68 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             StringSink flushed = new StringSink();
             printSql(asofSql, flushed);
+            Assert.assertEquals("the flush must not move the match", sink.toString(), flushed.toString());
+        });
+    }
+
+    @Test
+    public void testLtJoinRhsSeesTheUnflushedLead() throws Exception {
+        // The LT-JOIN twin of testAsOfJoinRhsSeesTheUnflushedLead. LT JOIN with the LV on the
+        // RHS and no ON key takes the same time-frame fast path
+        // (LtJoinNoKeyFastRecordCursorFactory -> getTimeFrameCursor), which now routes the
+        // un-flushed lead. LT differs from ASOF only at the boundary: it matches the last RHS
+        // row STRICTLY BELOW the probe ts and rejects an equal one. The equal-ts probe below
+        // pins that difference on a lead row - it must fall back to the previous lead row, not
+        // take the equal-ts lead row an ASOF would - so the arm covers both the routed lead
+        // and LT's strict boundary in one pass.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk (applied): ts 01..03 x=1..3; lead (RAM): ts 04,05 x=4,5
+
+            // The lead is live in the tier: a record-cursor read serves it from RAM.
+            InnerRead direct = readInner("SELECT * FROM lv");
+            Assert.assertEquals("two un-flushed lead rows live in the tier", 2, direct.leadRowsServed);
+
+            // Probe rows: one strictly inside the lead, one exactly on a lead ts (the LT
+            // boundary), and one past the lead. Every LT match lands on a lead row.
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id) VALUES " +
+                    "('2026-05-12T00:00:04.500000Z', 1), " +
+                    "('2026-05-12T00:00:05.000000Z', 2), " +
+                    "('2026-05-12T00:00:06.000000Z', 3)");
+            drainWalQueue();
+
+            final String ltSql = "SELECT p.ts, p.id, lv.x FROM probe p LT JOIN lv";
+
+            // Pin the fast (time-frame) LT path over the LV, so this exercises the bridged
+            // time frames and not the record-cursor light path, which sees the lead by an
+            // entirely different mechanism.
+            assertQuery(ltSql).noLeakCheck().assertsPlanContaining("Lt Join Fast", "LiveView");
+
+            // ts 04.5 -> last lv ts < 04.5 = lead ts 04 (x=4). ts 05.0 -> LT REJECTS the equal
+            // lead ts 05 and takes lead ts 04 (x=4); an ASOF here would take x=5. ts 06.0 ->
+            // last lv ts < 06 = lead ts 05 (x=5). Disk's last row is ts 03 / x=3, the answer a
+            // disk-only cursor gave for all three. printSql keeps the tier alive, so this
+            // reads the live lead rather than a flushed copy of it.
+            StringSink sink = new StringSink();
+            printSql(ltSql, sink);
+            Assert.assertEquals(
+                    "ts\tid\tx\n" +
+                            "2026-05-12T00:00:04.500000Z\t1\t4\n" +
+                            "2026-05-12T00:00:05.000000Z\t2\t4\n" +
+                            "2026-05-12T00:00:06.000000Z\t3\t5\n",
+                    sink.toString());
+
+            // The flush moves those same rows from the lead band to disk. The answer must not
+            // budge: it is the same row either way, and a model taking the whole slot band
+            // rather than the lead would start double-counting the overlap here.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            StringSink flushed = new StringSink();
+            printSql(ltSql, flushed);
             Assert.assertEquals("the flush must not move the match", sink.toString(), flushed.toString());
         });
     }
