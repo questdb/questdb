@@ -20818,6 +20818,378 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingDedupRestartRebuildsDespiteTrustedRing() throws Exception {
+        // Section 2.2's accepted full-scan path, pinned: a dedup base with a
+        // checkpoint-to-applied gap rebuilds at restart "regardless of the ring".
+        // The ordering is what makes this worth a test - tryRestoreFromHead
+        // rehydrates and restores FIRST (:4620, :4662) and only then finds the
+        // dedup gap and throws the lot away (:4737). So the ring really is whole
+        // and trusted at the moment the rebuild is chosen; the rebuild is not a
+        // recovery failure and must not be "optimised" into a bounded resume by
+        // someone reading the trusted manifest as licence. The gap must be closed
+        // over the applied post-dedup base, and no anchor changes that.
+        //
+        // testCheckpointRingCoveredAdvancesOnDedupBase covers the dedup PUBLISH;
+        // this is the dedup RESTART, which is the half section 11.7 asks for.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', 'a', " + seconds + ".0)");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+
+                // Open the checkpoint-to-applied gap the dedup branch keys on:
+                // with the cadence out of reach this commit advances the applied
+                // watermark without sealing a .cp, so the newest listed entry's
+                // baseSeqTxn trails the floor at restart.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-01T00:00:40.000000Z', 'a', 40.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                readRingManifest(lv, manifest);
+                Assert.assertEquals(3, manifest.getEntryCount());
+                Assert.assertEquals("the manifest must be trustable at restart", lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
+                Assert.assertTrue(
+                        "the newest entry must trail the floor, or there is no gap to test",
+                        manifest.getEntryBaseSeqTxn(2) < manifest.getCoveredBaseSeqTxn()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+            // The manifest WAS trusted - this is not a fallback, and saying so is
+            // the point: the rebuild below is the dedup contract, not a recovery
+            // failure. Three entries came back before the gap was even looked at.
+            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_recovery_fallback_count\n3\t0\n");
+            // And it bought no bounded replay: the dedup branch rebuilt from the
+            // view's lower bound over the applied base, retiring the whole
+            // rehydrated ring and sealing one fresh head in its place.
+            Assert.assertTrue("the dedup restart must rebuild from the boundary", lv.getO3BoundaryReplayRows() > 0);
+            Assert.assertEquals("the dedup restart must not resume from an anchor", 0, lv.getO3ResumeReplayRows());
+            Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+            // Idempotent against the intact base: the rebuild reproduces exactly
+            // the post-dedup rows disk already held.
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tsym\ts\n" +
+                            "2026-11-01T00:00:10.000000Z\ta\t10.0\n" +
+                            "2026-11-01T00:00:20.000000Z\ta\t30.0\n" +
+                            "2026-11-01T00:00:30.000000Z\ta\t60.0\n" +
+                            "2026-11-01T00:00:40.000000Z\ta\t100.0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingCorruptMidRingAnchorLeavesStaleManifestUntrusted() throws Exception {
+        // Section 11.7's "corrupt older .cp with a valid head", and section 6.6's
+        // open checklist item settled with it - the checklist asks to confirm the
+        // publication is reachable before implementing it.
+        //
+        // The PATH is reachable, and the checklist's stated reason for doubting it
+        // is wrong: it argues "every caller of handleCorruptHeadCheckpoint falls
+        // through to a boundary rebuild, which publishes an empty manifest a moment
+        // later". replayFromAnchor's caller does not. It abandons the cycle with a
+        // bare return (:3034) so the trigger re-fires later, and nothing republishes
+        // in between. So the window 6.6 describes is real, and this test asserts it
+        // exists rather than pretending it does not: after the eviction the on-disk
+        // _ring still names a .cp that has just been unlinked.
+        //
+        // What makes the publication redundant anyway is the OTHER half of the
+        // retire that opened the window. It set covered = commitSeqTxn, and an
+        // abandoned cycle never commits, so the floor stays below it and the trust
+        // rule rejects the manifest whole before its exists() check is consulted.
+        // Both arms are asserted, because only the pair is the argument: the
+        // membership IS stale, and the covered is what makes it harmless.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            final long corruptLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1); Path cpPath = new Path()) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                // Index 1 (maxTs=20) - a mid-ring anchor, not the head, so
+                // handleCorruptHeadCheckpoint evicts it without clearing the head
+                // trio and the "valid head" half of the item holds.
+                corruptLvSeqTxn = lv.getRetainedCheckpointLvSeqTxn(1);
+                Assert.assertNotEquals(corruptLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
+
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(lv.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, corruptLvSeqTxn);
+                // Past the header, so the CRC breaks and the restore takes the
+                // structural-corruption branch (errno 0) rather than the version
+                // mismatch, which neither unlinks nor evicts.
+                overwriteByteInFile(engine.getConfiguration(), cpPath, LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8, (byte) 0xAB);
+
+                final long floorBeforeO3 = lv.getAppliedWatermark();
+                // A late row at 25 selects the corrupt anchor at 20. One run only:
+                // a second cycle re-fires the trigger and republishes, healing the
+                // window this test is here to observe.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                drainWalQueue();
+                Assert.assertTrue(job.run());
+
+                Assert.assertFalse("the corrupt anchor's .cp must be unlinked", engine.getConfiguration().getFilesFacade().exists(cpPath.$()));
+                Assert.assertEquals("the abandoned replay must not advance the floor", floorBeforeO3, lv.getAppliedWatermark());
+
+                readRingManifest(lv, manifest);
+                // Arm 1 - the window 6.6 names is real. The retire published the
+                // anchor as a survivor (anchorMaxTs < retireThreshold) and the
+                // restore then unlinked it, with no publication in between.
+                boolean namesUnlinked = false;
+                for (int i = 0; i < manifest.getEntryCount(); i++) {
+                    namesUnlinked |= manifest.getEntryLvSeqTxn(i) == corruptLvSeqTxn;
+                }
+                Assert.assertTrue("the stale manifest must still name the unlinked .cp - that is the 6.6 window", namesUnlinked);
+                // Arm 2 - and it cannot be trusted, whatever it names. The same
+                // retire set covered to the commit this cycle abandoned.
+                Assert.assertTrue(
+                        "the abandoned cycle must leave covered above the floor [covered=" + manifest.getCoveredBaseSeqTxn()
+                                + ", floor=" + lv.getAppliedWatermark() + ']',
+                        manifest.getCoveredBaseSeqTxn() > lv.getAppliedWatermark()
+                );
+            }
+
+            // So a restart in the window falls back - on the trust rule, and it
+            // would fall back on the exists() check too. 6.6's publication moves
+            // the manifest from one rejection to the other and buys no anchor:
+            // publishing at commitSeqTxn lands covered above the floor exactly as
+            // the retire already did.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            assertQuery("SELECT checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovery_fallback_count\n1\n");
+            // The accepted cost, stated: one rebuild, on a path that had a corrupt
+            // checkpoint anyway. The content is right either way - that is the part
+            // that must not regress.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                    "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                    "2026-11-01T00:00:25.000000Z\t25\t3\n" +
+                    "2026-11-01T00:00:30.000000Z\t30\t4\n");
+            // The corrupt anchor never comes back, by either route.
+            for (int i = 0, n = reloaded.getRetainedCheckpointCount(); i < n; i++) {
+                Assert.assertNotEquals(corruptLvSeqTxn, reloaded.getRetainedCheckpointLvSeqTxn(i));
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingCoveredAdvancesPastBaseDropPartition() throws Exception {
+        // Section 11.7 lists "DROP PARTITION / TTL / TRUNCATE / REPLACE_RANGE"
+        // as a lifecycle row, on the strength of section 6.5's claim that a
+        // non-DATA trigger drops the ring by construction. Base DDL alone does
+        // no such thing, because it is not a trigger at all: drainBaseWal walks
+        // straight past a non-DATA commit (:1682) without reaching any replay,
+        // so the ring's membership is untouched and only covered moves. That is
+        // the section 6.3 in-order rule reached through a commit that carries no
+        // rows - the one advancement shape Step 6's three cases do not build.
+        //
+        // The retire that empties the ring needs the non-DATA commit to ride the
+        // apply-ahead range of a REAL DATA O3 trigger, which is
+        // testO3ApplyAheadTruncatePublishesEmptyRingManifest below. These two
+        // are what section 11.7's item 2 collapses to; DROP PARTITION and TTL
+        // and TRUNCATE are not three tests, they are three ways to reach the
+        // same walked-past commit.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            final LongList ringBeforeDrop = new LongList();
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1), ('2026-04-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            setCurrentMicros(200_000L);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+            lv.copyRetainedCheckpointsTo(ringBeforeDrop);
+            readRingManifest(lv, manifest);
+            Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
+            final long coveredBeforeDrop = manifest.getCoveredBaseSeqTxn();
+            final long generationBeforeDrop = manifest.getGeneration();
+
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-04-01'");
+            drainWalQueue();
+            // FLUSH EVERY would otherwise rate-limit the back-to-back cycle and
+            // the walk-past would not run - see
+            // testDropPartitionOnBaseIsTransparentToLiveView.
+            lv.setLastFlushTimeUs(Numbers.LONG_NULL);
+            setCurrentMicros(400_000L);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(lv.isInvalid());
+            // The DROP PARTITION seqTxn is consumed, so covered must carry past
+            // it: a manifest still claiming the old floor would be untrustable at
+            // the next restart and cost a scan for a commit that changed nothing.
+            readRingManifest(lv, manifest);
+            Assert.assertTrue(
+                    "covered must advance past the walked-past DROP PARTITION seqTxn [before=" + coveredBeforeDrop
+                            + ", after=" + manifest.getCoveredBaseSeqTxn() + ']',
+                    manifest.getCoveredBaseSeqTxn() > coveredBeforeDrop
+            );
+            Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
+            Assert.assertTrue(manifest.getGeneration() > generationBeforeDrop);
+            // Membership is frozen: the walk-past unsealed nothing, and the
+            // dropped base partition does not retract the LV rows the entry
+            // covers. Dropping the entry here would cost the next O3 its anchor.
+            Assert.assertEquals(1, manifest.getEntryCount());
+            final LongList ringAfterDrop = new LongList();
+            lv.copyRetainedCheckpointsTo(ringAfterDrop);
+            TestUtils.assertEquals(ringBeforeDrop, ringAfterDrop);
+            Assert.assertFalse(lv.isCheckpointRingDirty());
+
+            // The surviving anchor is still a real one: restart trusts the
+            // manifest and comes back with it rather than falling back.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(1, reloaded.getRetainedCheckpointCount());
+            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_recovery_fallback_count FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_recovery_fallback_count\n1\t0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ApplyAheadTruncatePublishesEmptyRingManifest() throws Exception {
+        // Section 6.5's empty publication, and the ONLY route a base TRUNCATE /
+        // DROP PARTITION / TTL reaches it by: as a passenger in the apply-ahead
+        // range of a real DATA O3 trigger, where computeApplyAheadMinTs refuses
+        // the range (:2579-2582) and drives retireLowTs to LONG_NULL. That drops
+        // the whole ring - maxTs >= LONG_NULL is universally true - so the
+        // pre-commit publication is a header-only manifest.
+        //
+        // testO3ApplyAheadTruncateFallsBackToBoundary already pins the in-memory
+        // drop with the flag off. This is the durable half: nothing anywhere
+        // asserted that an empty manifest is written rather than skipped, and a
+        // "don't bother publishing an empty ring" shortcut would leave the prior
+        // manifest on disk listing anchors this cycle just unlinked - trusted at
+        // the next restart, because the commit lands and carries the floor up to
+        // the covered the STALE manifest still claims.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                readRingManifest(lv, manifest);
+                Assert.assertEquals(3, manifest.getEntryCount());
+                final long generationBeforeTruncate = manifest.getGeneration();
+
+                // The trigger at 25 qualifies for the anchor at 20, but the
+                // unexamined ahead range holds a TRUNCATE, so the resume is
+                // refused and the whole ring goes with it.
+                setCurrentMicros(800_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 25)");
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(0, lv.getRetainedCheckpointCount());
+                readRingManifest(lv, manifest);
+                Assert.assertTrue(manifest.getGeneration() > generationBeforeTruncate);
+                Assert.assertEquals("the retire must publish an EMPTY manifest, not skip the write", 0, manifest.getEntryCount());
+                Assert.assertEquals(lv.getAppliedWatermark(), manifest.getCoveredBaseSeqTxn());
+                // An empty manifest lists nothing to resume from, so it releases
+                // WalPurgeJob's durable floor arm rather than pinning base WAL at
+                // the newest entry it no longer has (:4022-4026).
+                Assert.assertEquals(Numbers.LONG_NULL, lv.getLastPublishedRingNewestBaseSeqTxn());
+                // Every .cp went with the ring, so the allow-list and the disk agree.
+                Assert.assertEquals(0, countCheckpointFiles(lv));
+                Assert.assertFalse(lv.isCheckpointRingDirty());
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueReportsCheckpointRingRecovery() throws Exception {
         // The catalogue half of the acceptance signal. A restart that trusted the
         // manifest must be legible without the logs: the entries the ring came
