@@ -105,6 +105,29 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionDelegatesRowIdToTheBaseRecord() throws Exception {
+        assertMemoryLeak(() -> {
+            final TrackingCursorFactory base = new TrackingCursorFactory(new String[][]{{"alpha"}, {"beta"}});
+            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try (UnionSymbolCastRecordCursorFactory factory = newFactory(base, functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    // The projection wraps a single cursor, so every getter it does not re-symbolise
+                    // must reach the base record. Rowids are unreachable through this factory today
+                    // (recordCursorSupportsRandomAccess() is false), so this pins the delegation
+                    // itself rather than any behaviour a query can observe.
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(0, record.getRowId());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, record.getRowId());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSourceStateRegistrationFailureIsCleanAndRetryable() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
@@ -137,6 +160,35 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
                 assertCursorClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
+            }
+        });
+    }
+
+    @Test
+    public void testTextReadsBypassTheSymbolFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            final TrackingCursorFactory base = new TrackingCursorFactory(new String[][]{{"alpha", "beta"}});
+            final TrackingSymbolFunction functionA = new TrackingSymbolFunction(new StrColumn(0));
+            final TrackingSymbolFunction functionB = new TrackingSymbolFunction(new StrColumn(1));
+            final ObjList<Function> functions = functions(functionA, functionB);
+            try (UnionSymbolCastRecordCursorFactory factory = newFactory(base, functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    TestUtils.assertEquals("alpha", record.getSymA(0));
+                    TestUtils.assertEquals("beta", record.getSymB(1));
+                    // getSymB must read the record's B slot, not its A slot, so that a caller can
+                    // hold both flyweights at once.
+                    Assert.assertNotSame(record.getSymA(1), record.getSymB(1));
+                    Assert.assertFalse(cursor.hasNext());
+                }
+                // Every re-symbolised column projects CastStrToSymbol(StrColumn(col)), so routing a
+                // text read through the function only lands back on the union record's own
+                // getStrA/getStrB for the same column. The projection must read the record directly.
+                Assert.assertEquals(0, functionA.symbolCallCount);
+                Assert.assertEquals(0, functionB.symbolCallCount);
+                // The source symbol tables answer keys, not text, so a text read must not reach them.
+                Assert.assertEquals(0, base.cursor.symbolTableLookupCount);
             }
         });
     }
@@ -322,13 +374,21 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
             }
 
             @Override
+            public long getRowId() {
+                return rowIndex;
+            }
+
+            @Override
             public CharSequence getStrA(int col) {
                 return values[rowIndex][col];
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return values[rowIndex][col];
+                // A distinct instance with equal content, so an assertion can tell the B slot
+                // apart from the A slot the way a real record's A/B flyweights do.
+                final String value = values[rowIndex][col];
+                return value != null ? new String(value) : null;
             }
 
             @Override
@@ -399,6 +459,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
 
     private static class TrackingSymbolFunction extends CastStrToSymbolFunctionFactory.Func {
         private int cursorClosedCount;
+        private int symbolCallCount;
 
         private TrackingSymbolFunction(Function arg) {
             super(arg);
@@ -411,6 +472,18 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
             } finally {
                 cursorClosedCount++;
             }
+        }
+
+        @Override
+        public CharSequence getSymbol(Record rec) {
+            symbolCallCount++;
+            return super.getSymbol(rec);
+        }
+
+        @Override
+        public CharSequence getSymbolB(Record rec) {
+            symbolCallCount++;
+            return super.getSymbolB(rec);
         }
     }
 }

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -41,6 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -64,6 +66,21 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     private final UnionSymbolCastRecordCursor cursor;
     private final ObjList<Function> functions;
 
+    /**
+     * @param metadata              result metadata, exposing the re-symbolised columns as SYMBOL
+     * @param base                  the union factory whose all-SYMBOL columns were downcast to STRING
+     * @param columnToFunctionIndex for each result column, the index into {@code functions} of the
+     *                              function that re-symbolises it, or -1 to pass the base column
+     *                              through untouched. Function indices must ascend with column
+     *                              index: the cursor's per-column source state and symbol tables are
+     *                              built by walking the columns in order, so it indexes both by
+     *                              function index and would otherwise pair a column with another
+     *                              column's dictionary.
+     * @param functions             one {@link CastStrToSymbolFunctionFactory.Func} per re-symbolised
+     *                              column, serving as that column's merged dictionary. The record
+     *                              reads text straight off the base record and uses the function
+     *                              only to mint and resolve integer keys.
+     */
     public UnionSymbolCastRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory base,
@@ -292,7 +309,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    private static class UnionSymbolCastRecord extends UnionRecord {
+    // The projection sits on a single union cursor, so it delegates to one base record. Extending
+    // UnionRecord instead would carry an A/B pair whose B side is permanently null and whose useA
+    // flag is permanently true, taxing every inherited getter with a branch that can never be taken.
+    private static class UnionSymbolCastRecord extends DelegatingRecord {
         private final IntList columnToFunctionIndex;
         private final UnionSymbolCastRecordCursor cursor;
         private final ObjList<Function> functions;
@@ -311,13 +331,13 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         public int getInt(int col) {
             final int functionIndex = columnToFunctionIndex.getQuick(col);
             if (functionIndex < 0) {
-                return super.getInt(col);
+                return base.getInt(col);
             }
             final CastStrToSymbolFunctionFactory.Func function = symbolFunction(functions.getQuick(functionIndex));
             final SourceState sourceState = cursor.getCurrentSourceState();
             final SourceColumn sourceColumn = sourceState.columns.getQuick(functionIndex);
             if (sourceColumn.symbolTable == null) {
-                return function.intern(function.getSymbol(recordA));
+                return function.intern(base.getStrA(col));
             }
 
             final int sourceKey = sourceState.record.getInt(col);
@@ -332,25 +352,19 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             return resultKey;
         }
 
+        // A re-symbolised column projects CastStrToSymbol(StrColumn(col)), and that function's
+        // getSymbol/getSymbolB are pass-throughs onto its argument. Routing a text read through it
+        // therefore only lands back on the base record's getStrA/getStrB for the same column, at the
+        // cost of a list lookup, a checkcast and two virtual calls on every row. Read the base
+        // directly; the function still mints and resolves integer keys in getInt/valueOf.
         @Override
         public CharSequence getSymA(int col) {
-            final int functionIndex = columnToFunctionIndex.getQuick(col);
-            return functionIndex < 0
-                    ? recordA.getSymA(col)
-                    : symbolFunction(functions.getQuick(functionIndex)).getSymbol(recordA);
+            return columnToFunctionIndex.getQuick(col) < 0 ? base.getSymA(col) : base.getStrA(col);
         }
 
         @Override
         public CharSequence getSymB(int col) {
-            final int functionIndex = columnToFunctionIndex.getQuick(col);
-            return functionIndex < 0
-                    ? recordA.getSymB(col)
-                    : symbolFunction(functions.getQuick(functionIndex)).getSymbolB(recordA);
-        }
-
-        private void of(Record baseRecord) {
-            super.of(baseRecord, null);
-            super.setAb(true);
+            return columnToFunctionIndex.getQuick(col) < 0 ? base.getSymB(col) : base.getStrB(col);
         }
     }
 
@@ -380,6 +394,14 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             for (int column = 0, n = columnToFunctionIndex.size(); column < n; column++) {
                 final int functionIndex = columnToFunctionIndex.getQuick(column);
                 if (functionIndex > -1) {
+                    // Both lookups this cursor makes by function index - the per-source state and the
+                    // symbol table below - are built by walking the columns in order, so a function
+                    // index that does not ascend with its column would pair a column with another
+                    // column's dictionary.
+                    assert functionIndex == symbolColumns.size();
+                    // The record serves a re-symbolised column's text straight off the base record,
+                    // so the function must stand for that very column rather than an expression over it.
+                    assert isProjectionOfColumn(functions.getQuick(functionIndex), column);
                     symbolColumns.add(column);
                     symbolTables.add(new KeyValueSymbolTable(symbolFunction(functions.getQuick(functionIndex))));
                 }
@@ -526,6 +548,11 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             currentSourceIndex = sourceIndex;
             return currentSourceState = sourceState;
         }
+    }
+
+    private static boolean isProjectionOfColumn(Function function, int column) {
+        return symbolFunction(function).getArg() instanceof StrColumn strColumn
+                && strColumn.getColumnIndex() == column;
     }
 
     private static CastStrToSymbolFunctionFactory.Func symbolFunction(Function function) {
