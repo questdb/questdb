@@ -96,6 +96,15 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     // single per-query read.
     @TestOnly
     private static volatile Runnable onDiskCursorOpenedHook;
+    // Test-only, single-shot hook run right after a read pins its tier slot and before
+    // anything adopts that pin - on either read path. Lets a test drive the error paths
+    // that have to hand the slot back by themselves: bindFrameCursor's catch on the frame
+    // path, and openBoundCursor's catch (an of() that throws with the slot already pinned)
+    // on the record path. A pin those miss is not a stale read but a slot the refresh
+    // worker can never reclaim again. Production never sets it; the null check is a single
+    // per-query read.
+    @TestOnly
+    private static volatile Runnable onSlotPinnedHook;
     private final RecordCursorFactory base;
     private final CairoEngine engine;
     // Static, query-shape eligibility for lead routing, surfaced as the
@@ -179,6 +188,17 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * Test-only: arms a single-shot hook that fires on whichever read path opens next, right
+     * after it pins the tier slot and before anything adopts that pin. A hook that throws
+     * reproduces a failure with the slot pinned, which is the only way to exercise the
+     * releases that guard it. Production never calls this.
+     */
+    @TestOnly
+    public static void setOnSlotPinnedHook(Runnable hook) {
+        onSlotPinnedHook = hook;
+    }
+
+    /**
      * One attempt at the frame path: pins a tier slot and evaluates the routing fence over
      * it and the (already opened) disk scan. Returns a {@link LiveViewPageFrameCursor} when
      * the read routes, {@code diskCursor} itself when it does not, or {@code null} to ask
@@ -223,6 +243,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             tier = candidate;
             slotIdx = pin;
+            runSlotPinnedHook();
             final LiveViewInMemoryBuffer slot = tier.getSlot(pin);
             final long diskSeqTxn = LiveViewRouting.diskReaderSeqTxn(tableDiskCursor);
             final IntList tierColumns = new IntList();
@@ -482,6 +503,18 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         final Runnable hook = onDiskCursorOpenedHook;
         if (hook != null) {
             onDiskCursorOpenedHook = null;
+            hook.run();
+        }
+    }
+
+    // Single-shot, for the same reason as runDiskCursorOpenedHook: the staleness retry
+    // pins a slot again on its second attempt and must not re-fire the hook. Package-private
+    // because the record path takes its pin inside LiveViewRecordCursor.of, so that is where
+    // it fires from.
+    static void runSlotPinnedHook() {
+        final Runnable hook = onSlotPinnedHook;
+        if (hook != null) {
+            onSlotPinnedHook = null;
             hook.run();
         }
     }

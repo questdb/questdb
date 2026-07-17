@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -58,6 +60,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.Closeable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -79,6 +83,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * rowId round-trip, and a toTop re-read.
  */
 public class LiveViewInMemReadTest extends AbstractLiveViewTest {
+
+    // Marks the failures the pin-lifetime error-path arms inject through the read
+    // path's test hooks, so an assertion cannot mistake an unrelated CairoException
+    // for the one it armed.
+    private static final String INJECTED_OPEN_FAILURE = "injected cursor open failure";
 
     // A non-SEED view drops rows below its CREATE wall-clock floor; pin the
     // clock below the (2026) test data so every row stays in-frame.
@@ -275,6 +284,106 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             ) {
                 Assert.assertFalse("seqTxn mismatch must not route", cursor.isRoutingEligible());
                 Assert.assertTrue("a version-fence miss must keep the slot pinned for the retry", isPublishedSlotReaderPinned(tier));
+            }
+        });
+    }
+
+    @Test
+    public void testRecordReadFailurePathsReleaseTierPin() throws Exception {
+        // The record path's error paths, per the repo's resource-cleanup convention. Both
+        // are real forks the code carries: a throw before of() runs (openBoundCursor owns
+        // the disk cursor and nothing else does), and a throw inside of() once it has
+        // pinned a slot (only Misc.free(cursor) -> close() -> releaseSlot gives that slot
+        // back). A missed pin is worse than a missed close: the refresh worker's
+        // tryAcquireWrite fails against it forever, so publishToInMemoryTier
+        // emergency-flushes the lead every cycle for the rest of the view's life, and the
+        // tier's native memory can never free (its close is deferred until the last pin
+        // drains). Nothing else fails visibly, which is why it needs its own arm.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
+
+            // Before the pin: the disk cursor is open and owned by nobody, so the catch
+            // must free it. assertMemoryLeak's busy-reader check is what proves it did.
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                assertOpenFailsBeforePin(() -> unwrapLvFactory(factory).getCursor(sqlExecutionContext));
+                Assert.assertFalse(
+                        "a failure before the pin must leave the slot unpinned",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            // With the pin held: of() adopted the disk cursor and the slot before this
+            // throws, so close() is the only thing that can release either.
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                assertOpenFailsWithPinHeld(() -> unwrapLvFactory(factory).getCursor(sqlExecutionContext));
+                Assert.assertFalse(
+                        "a failure while the slot is pinned must release the pin",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            // The injected failures are per-open, not sticky: the next read routes.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("a read after the injected failures must still route", cursor.isRoutingEligible());
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameReadFailurePathsReleaseTierPin() throws Exception {
+        // The frame path's twin of testRecordReadFailurePathsReleaseTierPin, and the pin
+        // matters more here: getPageFrameCursor takes it in its own right, so every throw
+        // between the acquireRead and the of() that adopts it has to hand the slot back by
+        // hand. See that test for what a leaked pin costs.
+        //
+        // The catch's other fork - cursor != null, i.e. of() threw after adopting - is
+        // deliberately not driven here: of() takes ownership in its first statements and
+        // only its own asserts can throw past them, so there is nothing to inject that
+        // does not amount to asserting an assert.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
+
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                assertOpenFailsBeforePin(
+                        () -> unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+                );
+                Assert.assertFalse(
+                        "a failure before the pin must leave the slot unpinned",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                assertOpenFailsWithPinHeld(
+                        () -> unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+                );
+                Assert.assertFalse(
+                        "a failure while the slot is pinned must release the pin",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+            ) {
+                Assert.assertTrue(
+                        "a read after the injected failures must still route",
+                        cursor instanceof LiveViewPageFrameCursor
+                );
             }
         });
     }
@@ -3773,6 +3882,55 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 oracle.toString(), lv.toString());
     }
 
+    // Fails `open` at the point the disk cursor is open but the tier slot is not yet
+    // pinned, and asserts the failure propagates instead of handing back a cursor. The
+    // hook is single-shot but disarmed anyway: an open that throws before it fires would
+    // otherwise leave it armed for the next read.
+    private static void assertOpenFailsBeforePin(LvCursorOpen open) {
+        LiveViewRecordCursorFactory.setOnDiskCursorOpenedHook(LiveViewInMemReadTest::throwInjectedOpenFailure);
+        try {
+            assertInjectedOpenFailure(open);
+        } finally {
+            LiveViewRecordCursorFactory.setOnDiskCursorOpenedHook(null);
+        }
+    }
+
+    // Fails `open` with the tier slot pinned - the window where only the read's own
+    // release can give the slot back.
+    private static void assertOpenFailsWithPinHeld(LvCursorOpen open) {
+        LiveViewRecordCursorFactory.setOnSlotPinnedHook(LiveViewInMemReadTest::throwInjectedOpenFailure);
+        try {
+            assertInjectedOpenFailure(open);
+        } finally {
+            LiveViewRecordCursorFactory.setOnSlotPinnedHook(null);
+        }
+    }
+
+    // Asserts the armed injection reaches the caller and that the failed open took the
+    // disk cursor down with it. The Misc.free is unreachable while the injection fires -
+    // it exists so that a fire point the open never reaches fails as a missing exception
+    // rather than as a leaked cursor on top of it.
+    // <p>
+    // The busy-reader count is the assertion that carries the disk cursor here, not
+    // assertMemoryLeak: the base factory OWNS the cursor instance it hands out and frees
+    // it on its own close(), so a strand shows up only while the factory is still open -
+    // which is exactly the window a cached factory leaves a live server in.
+    private static void assertInjectedOpenFailure(LvCursorOpen open) {
+        try {
+            Misc.free(open.open());
+            Assert.fail("the injected failure must propagate out of the cursor open");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), INJECTED_OPEN_FAILURE);
+        } catch (SqlException e) {
+            throw new AssertionError("unexpected compile-time failure", e);
+        }
+        Assert.assertEquals("a failed open must not strand the disk reader", 0, engine.getBusyReaderCount());
+    }
+
+    private static void throwInjectedOpenFailure() {
+        throw CairoException.critical(0).put(INJECTED_OPEN_FAILURE);
+    }
+
     // Runs the LV SELECT with the fence forced off (disk-only, by mismatching both
     // slots' stamps) and asserts the output equals an oracle SQL - the applied
     // prefix. Restores the stamps afterwards.
@@ -4075,6 +4233,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         }
         Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
         return (LiveViewRecordCursorFactory) f;
+    }
+
+    // One inner-cursor open, over either read path: getCursor or getPageFrameCursor. Both
+    // hand back a Closeable and both can throw SqlException, so the error-path arms can
+    // drive either through the same helper.
+    @FunctionalInterface
+    private interface LvCursorOpen {
+        Closeable open() throws SqlException;
     }
 
     // Captured output and seam-routing observability counters from one inner-cursor read.

@@ -360,6 +360,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     // per-slot rc and must not touch the tier again.
                     this.tier = candidate;
                     this.slotIdx = pin;
+                    LiveViewRecordCursorFactory.runSlotPinnedHook();
                     this.pinnedSlot = candidate.getSlot(pin);
                     symbolCache = candidate.getSymbolCache();
                     this.inMemEligible = isTierAddressableProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex, tierColumns);

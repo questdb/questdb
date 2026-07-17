@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -37,17 +38,22 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -68,6 +74,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 /**
  * Concurrency tests for live views, covering the ingestion and lifecycle shapes the
@@ -111,6 +120,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   values decoding back to their ts-derived form. No ARM-specific canary is needed
  *   for it because, unlike the cross-slot symbol cache, var-length values live in
  *   the per-slot buffers and are frozen while a reader pins the slot.</li>
+ *   <li><b>Parallel filter racing a tier swap.</b> Every soak above reads through the
+ *   record-cursor path, whose slot reads all happen on the reading thread. A FILTERED
+ *   read instead routes through {@code LiveViewPageFrameCursor}, which publishes the
+ *   pinned slot's raw native addresses as a page frame and hands that frame to filter
+ *   workers on other threads - so the slot gets read by threads that never pinned it.
+ *   This variant runs real filter workers (a query {@code WorkerPool}) over the frame
+ *   while the refresh worker swaps tier slots on EVERY publish (a growth budget of 0
+ *   forces the slow path) and writers ingest. The safety argument is that a frame
+ *   consumer cannot outlive the cursor that holds the pin, so the writer can only ever
+ *   reclaim the slot the readers are not on; a break is a use-after-free, surfacing as
+ *   a torn value against the same per-snapshot invariant, or as a crash.</li>
  * </ul>
  * <p>
  * <b>Why the oracle stays deterministic despite the concurrency.</b> The premise of
@@ -139,6 +159,19 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // floor above a data row, even if it spins many times during ingestion.
     private static final String CLOCK_START = "2026-01-01T00:00:00.000000Z";
     private static final String DATA_START = "2027-01-01T00:00:00.000000Z";
+    // Filter workers for the parallel-filter tier-swap soak: the pool's size and, because
+    // the two must agree for the reduce work to land on those threads, the shared-worker
+    // count each reader's execution context declares.
+    private static final int FILTER_WORKER_COUNT = 4;
+    // The filtered read the parallel-filter soak routes through the tier's page frame. The
+    // predicate keeps every row of the (ts, i, rn) view - see readFilteredRowNumberViewOnce.
+    private static final String FILTERED_VIEW_SQL = "SELECT * FROM lv WHERE rn > 0";
+    // How long a paced writer waits for the refresh driver's next tick before giving up on
+    // it. Generous: it bounds a stalled driver, it does not pace anything itself.
+    private static final long REFRESH_TICK_WAIT_NANOS = 30_000_000_000L;
+    // Refresh passes the parallel-filter soak's driver runs per tick, matching drainJob's
+    // own bound - the driver inlines that loop to sample the tier between passes.
+    private static final int REFRESH_PASSES_PER_TICK = 64;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
     // Fault injection for testCreateRollbackDefersFreeWhileRefreshLatchHeld, armed for the duration of
     // that one test. Null (the default) makes the state-store wrapper below a pure pass-through, so
@@ -493,6 +526,22 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testParallelFilterRacesTierSwap() throws Exception {
+        // The page-frame read path under its own risk: a filtered read routes through the
+        // tier's synthetic frame, which publishes the pinned slot's raw native addresses,
+        // and the parallel filter hands that frame to workers on OTHER threads. The
+        // argument that this is safe is that the frame cursor holds the pin for its whole
+        // life and no worker outlives the cursor that produced it - so a swap can only
+        // ever take the slot the readers are NOT on. This drives it: real filter workers
+        // read tier frames while the refresh worker swaps slots on every publish and
+        // writers ingest cross-writer O3. A worker reading a slot the writer reclaimed is
+        // a use-after-free, so it surfaces as a torn value or a crash rather than a
+        // wrong-but-plausible answer.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runParallelFilterTierSwapSoak(rnd, 4, 4, 2000));
+    }
+
+    @Test
     public void testReaderChurnSoak() throws Exception {
         // Reader threads churn cursors over an IN MEMORY view while a refresh driver
         // appends via the fast-path CAS and writers ingest - the read/publish risk.
@@ -658,6 +707,59 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-varsize-writer-" + writerId);
     }
 
+    // Like newWriterThread, but the writer waits for the refresh driver to complete a tick
+    // after each commit, so its slice trickles in one batch per refresh cycle instead of
+    // all inside the driver's first one. That is what gives the readers many publishes to
+    // race rather than one; see runParallelFilterTierSwapSoak. The wait is bounded so a
+    // driver that dies (or never starts) fails the run through the errors queue rather
+    // than hanging it.
+    private Thread newPacedWriterThread(
+            int writerId,
+            int numWriters,
+            int fromIndex,
+            int rowCount,
+            int batch,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicLong refreshTicks,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                int sinceCommit = 0;
+                for (int k = fromIndex + writerId; k < rowCount; k += numWriters) {
+                    appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                    if (++sinceCommit >= batch) {
+                        walWriter.commit();
+                        sinceCommit = 0;
+                        awaitRefreshTick(refreshTicks);
+                    }
+                }
+                walWriter.commit();
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-paced-writer-" + writerId);
+    }
+
+    // Waits for the refresh driver to complete one more tick than it had when called.
+    // Bounded: on a driver that has stopped ticking this returns and lets the writer run
+    // on, so the run fails on its own assertions rather than in a hang.
+    private static void awaitRefreshTick(AtomicLong refreshTicks) {
+        final long seen = refreshTicks.get();
+        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
+        while (refreshTicks.get() == seen && System.nanoTime() < deadlineNanos) {
+            Os.pause();
+        }
+    }
+
     // Builds a writer thread that owns its own WalWriter and ingests a round-robin
     // slice of [fromIndex, rowCount): writer w gets fromIndex+w, fromIndex+w+numWriters,
     // ... The slices are disjoint and globally ts-ordered, so timestamps stay unique;
@@ -719,16 +821,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }
     }
 
-    // Opens a fresh cursor over the SYMBOL-free row_number() view (columns
-    // ts, i, rn) and drains it, asserting the per-snapshot invariant that holds
-    // for every consistent LV-table version: rows come back ts-ascending (the
-    // designated-timestamp total order) and rn is a gapless 1..N sequence in that
-    // order. row_number() OVER () numbers rows in ts-ascending scan order and the
-    // O3 replay re-sequences the whole table, so any committed snapshot - whether
-    // served disk-only or through Mode B - must satisfy it. A torn read, a seam
-    // duplicate/gap, or a stale pre-O3 row re-stamped into the slot breaks it.
-    // The view is mid-flight, so the row count itself is not asserted here; the
-    // final single-threaded oracle validates the full contents after quiescence.
+    // Opens a fresh cursor over the SYMBOL-free row_number() view (columns ts, i, rn) and
+    // drains it, asserting the per-snapshot invariant (see
+    // assertRowNumberSnapshotInvariant). Unfiltered, so it reads through the record-cursor
+    // path's seam routing (Mode B).
     private void readRowNumberViewOnce() throws Exception {
         try (
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
@@ -736,22 +832,71 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(ctx)
         ) {
-            final Record record = cursor.getRecord();
-            long prevTs = Long.MIN_VALUE;
-            long expectedRn = 1;
-            while (cursor.hasNext()) {
-                long ts = record.getLong(0);
-                long rn = record.getLong(2);
-                if (ts <= prevTs) {
-                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
-                }
-                if (rn != expectedRn) {
-                    throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
-                            + ", actual=" + rn + ", ts=" + ts);
-                }
-                prevTs = ts;
-                expectedRn++;
+            assertRowNumberSnapshotInvariant(cursor);
+        }
+    }
+
+    // The same snapshot read as readRowNumberViewOnce, but FILTERED, so it routes through
+    // the page-frame path: the parallel filter runs over the tier's synthetic frame the
+    // way it runs over a native partition. The context declares the filter pool's worker
+    // count, which is what enables the parallel filter at all (see
+    // SqlExecutionContextImpl's parallelFilterEnabled) and puts the reduce work on those
+    // threads rather than on this one.
+    // <p>
+    // The predicate keeps every row, deliberately: it makes the read take the frame path
+    // without weakening the invariant to a subset the assertion could not check. What a
+    // filter DISCARDS over a tier frame is pinned deterministically elsewhere
+    // (LiveViewInMemReadTest#testPageFrameFilteredReadServesLeadFromRam); what this needs
+    // is for every slot row to reach a worker.
+    // <p>
+    // Returns whether this read's shape found the tier's frame rather than the base scan's,
+    // which the soak counts. The probe is a second cursor over the same factory rather than
+    // the filter's own - that one is private to the async factory - so it answers for the
+    // instant just before the read, over the identical predicate. That is enough for what
+    // the count is for: proving the soak was routing at all while it ran, rather than
+    // spending itself against a tier the fence had shut it out of.
+    private boolean readFilteredRowNumberViewOnce() throws Exception {
+        try (
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, FILTER_WORKER_COUNT);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(FILTERED_VIEW_SQL, ctx).getRecordCursorFactory()
+        ) {
+            final boolean routed;
+            try (PageFrameCursor probe = unwrapLvFactory(factory).getPageFrameCursor(ctx, ORDER_ASC)) {
+                routed = probe instanceof LiveViewPageFrameCursor;
             }
+            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                assertRowNumberSnapshotInvariant(cursor);
+            }
+            return routed;
+        }
+    }
+
+    // The per-snapshot invariant of the SYMBOL-free row_number() view (columns ts, i, rn):
+    // rows come back ts-ascending (the designated-timestamp total order) and rn is a
+    // gapless 1..N sequence in that order. row_number() OVER () numbers rows in
+    // ts-ascending scan order and the O3 replay re-sequences the whole table, so any
+    // committed snapshot - served disk-only, through Mode B, or through the tier's page
+    // frame - must satisfy it. A torn read, a seam duplicate/gap, or a stale pre-O3 row
+    // re-stamped into the slot breaks it. The view is mid-flight, so the row count itself
+    // is not asserted; the final single-threaded oracle validates the full contents after
+    // quiescence.
+    private static void assertRowNumberSnapshotInvariant(RecordCursor cursor) {
+        final Record record = cursor.getRecord();
+        long prevTs = Long.MIN_VALUE;
+        long expectedRn = 1;
+        while (cursor.hasNext()) {
+            long ts = record.getLong(0);
+            long rn = record.getLong(2);
+            if (ts <= prevTs) {
+                throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+            }
+            if (rn != expectedRn) {
+                throw new AssertionError("rn not a gapless 1..N sequence: expected=" + expectedRn
+                        + ", actual=" + rn + ", ts=" + ts);
+            }
+            prevTs = ts;
+            expectedRn++;
         }
     }
 
@@ -1866,6 +2011,231 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         execute("DROP TABLE base");
     }
 
+    // Reader threads run a FILTERED read over an IN MEMORY view - the shape that routes
+    // through LiveViewPageFrameCursor and hands the pinned slot's frame to the parallel
+    // filter - while the refresh driver swaps tier slots and writers ingest.
+    // <p>
+    // Three things have to be arranged or the race does not happen at all, and none of them
+    // announces itself: with any one missing the run still passes, having tested nothing.
+    // <ul>
+    //   <li><b>The writers pace themselves to the refresh driver</b>, one batch per tick.
+    //   Left to run flat out they finish INSIDE the driver's first tick - at any row count,
+    //   since the tick drains what they wrote - so the driver ticks exactly once, publishes
+    //   nothing while the readers are alive, and the tier is still null when they all
+    //   stop.</li>
+    //   <li><b>The tier is pre-warmed</b>, so it is allocated, populated and stamped before
+    //   the first reader opens. It only comes into being on the first publish, which is a
+    //   tick the readers would otherwise spend reading a view that has no tier to route
+    //   to.</li>
+    //   <li><b>The growth budget is 0</b>, which makes isCompactionWorthwhile true on every
+    //   publish, so the refresh worker always takes the SLOW path (fill the other slot,
+    //   then publishSwap) rather than appending in place. It is a determinism knob rather
+    //   than an enabler: swaps happen under this soak's churn either way, because a
+    //   reader's pin defeats the fast-path CAS on the published slot and drops the writer
+    //   onto the slow path regardless. The budget makes every publish a swap instead of
+    //   only the ones a reader happened to collide with.</li>
+    // </ul>
+    // The readers assert the same per-snapshot invariant the other row_number() soaks do -
+    // ts ascending, rn a gapless 1..N - which holds for the filtered output too because the
+    // predicate keeps every row; what this adds is that the rows come back through filter
+    // workers reading the slot's frame. The counters the run asserts on at the end are not
+    // decoration: without them a soak that has quietly stopped routing, stopped swapping,
+    // or stopped racing still passes, which is exactly the state the first draft was in.
+    private void runParallelFilterTierSwapSoak(Rnd rnd, int numWriters, int numReaders, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+
+        final String viewSql = "SELECT ts, i, row_number() OVER () AS rn FROM base";
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+
+        execute(createSql);
+
+        LOG.info().$("LV concurrency parallel-filter tier-swap soak: writers=").$(numWriters)
+                .$(", readers=").$(numReaders).$(", filterWorkers=").$(FILTER_WORKER_COUNT)
+                .$(", rows=").$(rowCount).$(", sql=").$(viewSql).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean running = new AtomicBoolean(true);
+        // Refresh ticks completed by the driver. The writers pace off it, so it doubles as
+        // the clock the whole soak runs on.
+        final AtomicLong refreshTicks = new AtomicLong();
+        // Reads that found the tier's frame at the instant they looked, and swaps the
+        // driver caught between two of its own ticks. Both are the run's own evidence that
+        // it raced what it says it raced.
+        final AtomicLong routedReads = new AtomicLong();
+        final AtomicLong swapsObserved = new AtomicLong();
+        // Query jobs only: the writer jobs would put a second ApplyWal2TableJob against the
+        // refresh driver's own drainWalQueue, and the filter's reduce queue is all this needs.
+        final WorkerPool filterPool = new WorkerPool(() -> FILTER_WORKER_COUNT);
+        WorkerPoolUtils.setupQueryJobs(filterPool, engine);
+        filterPool.start(LOG);
+        try {
+            // Pre-warm, single-threaded: commit the leading slice and refresh it, so the
+            // tier is live and stamped before any reader opens.
+            final int preCount = Math.max(1, rowCount / 4);
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                for (int k = 0; k < preCount; k++) {
+                    appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                }
+                walWriter.commit();
+            }
+            drainWalQueue();
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainJob(job);
+            drainWalQueue();
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("the pre-warm refresh must publish a tier for the readers to route to", tier);
+            Assert.assertTrue("the pre-warmed tier must hold rows", tier.publishedRowCount() > 0);
+
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1);
+            final Thread[] writers = new Thread[numWriters];
+            for (int w = 0; w < numWriters; w++) {
+                // Small batches on purpose, and the one knob here that is not shared with
+                // the other soaks: a paced writer commits once per batch and then waits out
+                // a refresh tick, so the batch size IS how many publishes the run gets to
+                // race. The other soaks' 5..24 leaves a handful.
+                final int batch = 4 + rnd.nextInt(4);
+                writers[w] = newPacedWriterThread(
+                        w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, refreshTicks, errors
+                );
+            }
+            // The clock step is a fraction of FLUSH EVERY, so a flush comes due only every
+            // few ticks and the refreshes in between leave an un-flushed lead resident -
+            // which is what makes the frames the filter workers read carry slot rows disk
+            // does not have.
+            final Thread driver = new Thread(() -> {
+                try {
+                    barrier.await();
+                    int lastPublishedIdx = tier.getPublishedIdx();
+                    while (running.get()) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS / 6);
+                        drainWalQueue();
+                        // drainJob's own loop, opened up so the published index can be
+                        // sampled between passes rather than once per tick. A tick runs up
+                        // to 64 passes and the index only ever alternates between two
+                        // slots, so a per-tick sample reports the parity a run of swaps
+                        // happened to land on rather than its length - it read single
+                        // digits against passes that had swapped an order of magnitude
+                        // more. Per pass it is still a lower bound (a pass can publish and
+                        // the sample can miss a pair), which is all the assertion needs.
+                        for (int i = 0; i < REFRESH_PASSES_PER_TICK && job.run(); i++) {
+                            final int publishedIdx = tier.getPublishedIdx();
+                            if (publishedIdx != lastPublishedIdx) {
+                                swapsObserved.incrementAndGet();
+                                lastPublishedIdx = publishedIdx;
+                            }
+                        }
+                        refreshTicks.incrementAndGet();
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                    // The writers pace off this counter; keep it moving or they wait out
+                    // their deadline one batch at a time and the failure takes minutes to
+                    // surface.
+                    refreshTicks.addAndGet(Long.MAX_VALUE / 2);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-driver");
+
+            final Thread[] readers = new Thread[numReaders];
+            for (int r = 0; r < numReaders; r++) {
+                readers[r] = new Thread(() -> {
+                    try {
+                        while (running.get()) {
+                            if (readFilteredRowNumberViewOnce()) {
+                                routedReads.incrementAndGet();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-filter-reader-" + r);
+            }
+
+            for (Thread t : writers) {
+                t.start();
+            }
+            driver.start();
+            for (Thread t : readers) {
+                t.start();
+            }
+            for (Thread t : writers) {
+                t.join();
+            }
+            running.set(false);
+            driver.join();
+            for (Thread t : readers) {
+                t.join();
+            }
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+
+            LOG.info().$("LV concurrency parallel-filter tier-swap soak done: refreshTicks=").$(refreshTicks.get())
+                    .$(", routedReads=").$(routedReads.get()).$(", swapsObserved=").$(swapsObserved.get()).$();
+            // The soak's own evidence. A green run that raced nothing looks identical
+            // without these: reads that never routed read disk frames, and a tier that
+            // never swapped hands the workers a slot the writer was never trying to
+            // reclaim.
+            Assert.assertTrue(
+                    "the readers must have routed through the tier's page frame mid-soak, not just after it",
+                    routedReads.get() > 0
+            );
+            Assert.assertTrue(
+                    "the refresh worker must have swapped tier slots under the readers",
+                    swapsObserved.get() > 0
+            );
+        } finally {
+            // Before the leak check, and before the assertions below reach for the tier: a
+            // live filter worker still holds frames over it.
+            filterPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            Misc.free(job);
+        }
+
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1",
+                "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+
+        // The plan is the other half of the guard: routedReads above proves the reads
+        // reached the tier's frame, this proves the filter over it ran in PARALLEL. Neither
+        // implies the other - a fork back to the interpreted cursor would still route, and
+        // leave no worker to race.
+        assertQuery(FILTERED_VIEW_SQL)
+                .noLeakCheck()
+                .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true");
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
     private void runReaderChurnSoak(Rnd rnd, int numWriters, int numReaders, int rowCount, boolean modeB, boolean leadMode) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
@@ -2151,11 +2521,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", sqlExecutionContext).getRecordCursorFactory()
         ) {
-            RecordCursorFactory f = factory;
-            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
-                f = f.getBaseFactory();
-            }
-            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+            final LiveViewRecordCursorFactory f = unwrapLvFactory(factory);
             try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(sqlExecutionContext)) {
                 StringSink sink = new StringSink();
                 println(f.getMetadata(), cursor, sink);
@@ -2174,6 +2540,18 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         Assert.assertEquals("Mode A lead read must equal the recompute", recompute.toString(), lvOut.toString());
     }
 
+    // Unwraps any wrapper factory (QueryProgress, the async filter) down to the live
+    // view's own, so a test can ask it for a page frame cursor directly and see which
+    // tier it routed to.
+    private static LiveViewRecordCursorFactory unwrapLvFactory(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+            f = f.getBaseFactory();
+        }
+        Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+        return (LiveViewRecordCursorFactory) f;
+    }
+
     // Confirms the SYMBOL-free row_number() view engages Mode B on the production
     // read path. Run single-threaded after quiescence, so the published slot is
     // stable and stamped with the latest applied seqTxn the fresh reader reports -
@@ -2186,12 +2564,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory()
         ) {
-            RecordCursorFactory f = factory;
-            while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
-                f = f.getBaseFactory();
-            }
-            Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
-            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) f.getCursor(ctx)) {
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)) {
                 Assert.assertTrue("quiesced row_number() read must route through Mode B", cursor.isRoutingEligible());
             }
         }
