@@ -410,6 +410,34 @@ public class TableSequencerAPI implements QuietCloseable {
         seqTxnTrackers.remove(dirName);
     }
 
+    /**
+     * TEST-ONLY reboot model for crash-consistency sweeps: force-close the table's cached sequencer AND drop
+     * its in-memory {@link SeqTxnTracker}, so the next access reloads BOTH from the durable txnlog on disk,
+     * exactly as a freshly booted engine does.
+     * <p>
+     * Needed because a sequenced-but-non-durable txn (adaptive group commit {@code W > 0}: the transaction
+     * was assigned a seqTxn in memory, but its txnlog record's device flush was DEFERRED to the WAL writer's
+     * close and a swept crash rolled it back) otherwise wedges recovery. The still-open sequencer keeps the
+     * stale in-memory {@code lastTxn}; {@link #forAllWalTables} reads it (the slow path) instead of the
+     * durable txnlog high-water and re-seeds the tracker's {@code seqTxn} above the durable {@code writerTxn},
+     * so the apply job spins forever (updateWriterTxns keeps returning {@code writerTxn < seqTxn} for a txn
+     * the rolled-back WAL no longer has). Closing the sequencer discards that stale high-water and forces
+     * {@code forAllWalTables} onto the fast path (reads the durable txnlog), so the fresh tracker re-inits to
+     * the rolled-back frontier and the apply converges.
+     * <p>
+     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock);
+     * the crash-sweep driver has already released readers/writers/WAL writers, so it is unreferenced.
+     */
+    @TestOnly
+    public void resetForReboot(TableToken tableToken) {
+        final String dirName = tableToken.getDirName();
+        final TableSequencerImpl sequencer = seqRegistry.get(dirName);
+        if (sequencer != null && sequencer.checkClose()) {
+            seqRegistry.remove(dirName, sequencer);
+        }
+        purgeTxnTracker(dirName);
+    }
+
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
         try (
                 TableSequencerImpl tableSequencer = getTableSequencerEntry(

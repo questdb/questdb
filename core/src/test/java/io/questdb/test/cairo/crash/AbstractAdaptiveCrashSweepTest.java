@@ -244,6 +244,15 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         // (setAppendPosition truncating committed rows) that recovery must roll forward. A freshly booted
         // engine's WAL-writer pool is empty; this models that so recovery and the workload's follow-up
         // write both open fresh, correctly-mapped writers.
+        //
+        // Force-reclaim any WAL writer the swept crash left checked out FIRST: under adaptive group commit
+        // (W>0) the crash can fire on the deferred close-time fdatasync inside WalWriter.cleanupBeforeClose
+        // (flushPendingDurable), which distresses the writer and RETHROWS, so WalWriterTenant.close() unwinds
+        // with the pool slot still OWNED. releaseAllWalWriters() below cannot reclaim an owned slot (its CAS
+        // from UNALLOCATED fails -> "table is left behind on pool shutdown"); this reclaims it first, the WAL
+        // analogue of releaseEngineHandles()'s releaseCrashOrphanedWriters for table writers. Run BEFORE
+        // crash() for the same intact-file reason as the pool release below. A no-op under W=0.
+        engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
@@ -272,6 +281,23 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             engine.getTxnScoreboardPool().remove(tt);
         }
 
+        // Model a fresh-process restart, part 3: force-close the cached table sequencer AND drop its
+        // SeqTxnTracker (resetForReboot), so both reload from the durable txnlog on disk — exactly as a
+        // booted engine does. Under group commit (W>0) a crash on the DEFERRED close-time fdatasync
+        // (flushPendingDurable inside WalWriter.cleanupBeforeClose) distresses the WAL WRITER but NOT the
+        // sequencer (unlike W=0, whose inline sequencer sync distresses+closes the sequencer), so a
+        // convert/alter that was assigned a seqTxn in memory (lastTxn=N) but whose txnlog record rolled back
+        // (durable high-water N-1) leaves the STILL-OPEN sequencer advertising the stale N. forAllWalTables
+        // then reads that in-memory N (its open-sequencer slow path) instead of the durable txnlog, re-seeds
+        // the tracker's seqTxn to N, and recovery's apply spins forever: updateWriterTxns keeps returning
+        // `writerTxn(N-1) < seqTxn(N)` == true, re-notifying ApplyWal2TableJob for a txn the rolled-back WAL
+        // no longer has. Closing the sequencer discards that stale high-water and forces forAllWalTables onto
+        // its durable-txnlog fast path, so the fresh tracker re-inits to N-1 and the apply converges. (A
+        // monotonic tracker purge alone is insufficient: the open sequencer would just re-seed N.)
+        for (TableToken tt : tokens) {
+            engine.getTableSequencerAPI().resetForReboot(tt);
+        }
+
         new RecoveryCoordinator(engine).recover();
         for (TableToken tt : tokens) {
             engine.notifyWalTxnRepublisher(tt);
@@ -290,6 +316,10 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         // death reclaims them; this models that on the live JVM, the writer-pool analogue of the non-cache fd
         // reclaim in reclaimLingeringNonCacheFds. A no-op on a healthy engine (production never leaks a writer).
         engine.releaseCrashOrphanedWriters();
+        // WAL-writer analogue of the line above: a swept crash on the deferred close-time fdatasync under
+        // group commit (W>0) leaves a distressed WalWriter owned in the pool (see recoverAfterCrash); reclaim
+        // it before releaseAllWalWriters() so the full release does not trip "left behind on pool shutdown".
+        engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
         engine.releaseInactiveTableSequencers();
     }

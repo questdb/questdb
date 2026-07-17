@@ -42,7 +42,6 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -337,22 +336,36 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // pre-convert rows) or AFTER (convert applied), recovery must land on the SAME logical rows with no
     // corruption/suspend. Exercises the crash sweep + oracle through the DEFERRED group-commit flush path.
     //
-    // @Ignore: the W>0 DURABILITY oracle passes, but forEachAdaptiveCrashPoint's teardown is not yet W>0-clean —
-    // a crash mid-group-commit leaves the WAL writer crash-orphaned (owned/distressed) in the pool, so it is
-    // "left behind on pool shutdown" (same class as the rebase table-writer orphan; neither the WalPurgeJob
-    // runSerially flush nor an owned-tenant reclaim clears it). Making the SWEEP harness reclaim W>0 group-commit
-    // orphans is the SP-D sub-task that unblocks these. The W>0 durable-ack crash GUARANTEE itself is already
-    // covered by AdaptiveGroupCommitCrashTest (acked survives; un-flushed lost-but-clean).
-    @Ignore("harness: forEachAdaptiveCrashPoint teardown leaves W>0 group-commit WAL writers behind; SP-D sub-task")
+    // Under W>0 a swept crash can fire on the deferred close-time fdatasync (flushPendingDurable inside
+    // WalWriter.cleanupBeforeClose), which distresses the WAL WRITER but not the sequencer — so the sweep's
+    // recoverAfterCrash reclaims the resulting owned/distressed pool orphan (releaseCrashOrphanedWalWriters,
+    // else "left behind on pool shutdown") AND reboots the table sequencer (resetForReboot, else the
+    // still-open sequencer's stale in-memory lastTxn wedges recovery's apply in an infinite re-notify loop).
+    // The W>0 durable-ack crash GUARANTEE itself is separately covered by AdaptiveGroupCommitCrashTest.
     @Test
     public void testConvertPartitionCrashSafeWN() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, GROUP_WINDOW_WN_US);
-        runWithCrashFacade(() -> {
-            SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
-            Assert.assertFalse("convert-partition WN sweep truncated (N > cap) — raise the cap", r.truncated);
-        });
+        // Pin the microsecond clock. Under W>0 BOTH the group-commit deferral trigger
+        // (WalWriter.recordPendingDurable) and the WAL-apply time quota (ApplyWal2TableJob's per-batch
+        // timeLimit) read the engine's microsecond clock, so with the REAL clock a heavy-load run's wall-clock
+        // jitter makes the deferred-flush crash point and recovery's apply batching non-deterministic —
+        // intermittently wedging recovery's drainWalQueue. A fixed clock keeps every commit inside the window
+        // (deterministic deferral, still exercising the close-time flush crash path) and the apply quota
+        // effectively unbounded (single-pass apply), independent of load. This mirrors how the sibling W>0
+        // oracle AdaptiveGroupCommitCrashTest drives its window off a controlled clock. Restore the real clock
+        // in the finally so a fixed clock never leaks into a later test (currentMicros is a static not reset
+        // by the harness between tests).
+        setCurrentMicros(1_000_000L);
+        try {
+            runWithCrashFacade(() -> {
+                SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
+                Assert.assertFalse("convert-partition WN sweep truncated (N > cap) — raise the cap", r.truncated);
+            });
+        } finally {
+            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
+        }
     }
 
     // NIGHTLY-only: group-commit (W=50ms) counterpart of testFullLibraryW0 — the randomized full-op-library
@@ -360,16 +373,22 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // W=0 staircase/full-at-N bars are intentionally NOT applied. runSeedSweep asserts the per-crash-point
     // oracle at EVERY point: recovery lands on a CONSISTENT committed prefix (membership) with no
     // corruption/suspend — the broad "clean rollback under group commit" guarantee across the whole op library.
-    // @Ignore: blocked on the same W>0 sweep-teardown reclaim as testConvertPartitionCrashSafeWN (SP-D sub-task).
-    @Ignore("harness: forEachAdaptiveCrashPoint teardown leaves W>0 group-commit WAL writers behind; SP-D sub-task")
     @Test
     public void testFullLibraryWN() throws Exception {
         Assume.assumeTrue("full-library WN crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        runWithCrashFacade(() -> {
-            SweepResult r = runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], GROUP_WINDOW_WN_US, 700);
-            Assert.assertTrue("sweep must exercise >= 1 crash point under W>0", r.sweptPoints >= 1);
-        });
+        // Pin the microsecond clock for load-independent W>0 determinism (see testConvertPartitionCrashSafeWN):
+        // the group-commit deferral trigger and the WAL-apply time quota both read the engine clock, so the
+        // real clock makes this nightly-scale sweep intermittently wedge under load. Restore in the finally.
+        setCurrentMicros(1_000_000L);
+        try {
+            runWithCrashFacade(() -> {
+                SweepResult r = runSeedSweep(FIXED_SEEDS0[0], FIXED_SEEDS1[0], GROUP_WINDOW_WN_US, 700);
+                Assert.assertTrue("sweep must exercise >= 1 crash point under W>0", r.sweptPoints >= 1);
+            });
+        } finally {
+            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
+        }
     }
 
     private static final String CVT_TABLE = "cf_cvt";

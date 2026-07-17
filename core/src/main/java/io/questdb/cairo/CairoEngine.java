@@ -1922,6 +1922,20 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.releaseCrashOrphanedWriters();
     }
 
+    /**
+     * Force-reclaim WAL writers the calling thread left checked out — a fault-injection crash-test artifact.
+     * Under adaptive group commit ({@code W > 0}) a swept power loss can fire on the deferred close-time
+     * fdatasync ({@code WalWriter.cleanupBeforeClose} -> {@code flushPendingDurable}); the writer distresses
+     * and rethrows, so its {@code WalWriterTenant.close()} unwinds with the pool slot still owned, which
+     * {@link #releaseAllWalWriters()} cannot reclaim (it would throw "left behind on pool shutdown"). The
+     * WAL-writer analogue of {@link #releaseCrashOrphanedWriters()}; covers the view WAL pool too. No-op on a
+     * healthy engine.
+     */
+    @TestOnly
+    public int releaseCrashOrphanedWalWriters() {
+        return walWriterPool.releaseCrashOrphanedTenants() + viewWalWriterPool.releaseCrashOrphanedTenants();
+    }
+
     public boolean releaseInactive() {
         boolean useful = writerPool.releaseInactive();
         useful |= readerPool.releaseInactive();
