@@ -1,0 +1,33 @@
+# Composite Partitioning — Plan 4: Write Routing (Design)
+
+**Status:** design, pending user review. Builds on Plans 1–3b (all merge-ready on `feat/composite-partitioning` @ `82afa15cd8`). Grounded in `.superpowers/sdd/plan4-research.md` (the integration-surface map — all anchors verified against the live worktree).
+
+## Goal
+Make the write path compute each row's `cellKey` from its dimension values and ROUTE rows to per-cell partitions on disk — turning the dormant `(ts, cellKey)` machinery (Plans 1–3b) live. After Plan 4, an `INSERT` into a composite table physically separates rows by cell; before it, every row lands in the single dormant cellKey-0 cell.
+
+## What already exists (do not rebuild)
+- `_txn` stride-8 `(ts, cellKey)` records + `findAttachedPartitionRawIndexBy(ts, cellKey)` (Plan 3 Task 3, currently called only with cellKey 0); `_cv` 2-D key; the reader's 2-D merge; the self-describing stride marker.
+- `CellRegistry.internCell(int[] tuple, int arity)` → dense cellKey (Plan 2); per-dim ordinal resolver `TableWriter.internDimensionValue(dimIndex, CharSequence)` for IDENTITY/HASH/TRUNCATE (Plan 2 Task 7); interner crash-safety rides the normal `_txn` symbol-count commit.
+- `PartitionSpec.namingMode` (HIVE `ts=…/exch=BTC/` vs PLAIN `…/BTC/`) — parsed, persisted in `_meta`, SHOW-CREATE round-tripped (Plan 1); **zero consumers yet**.
+- Single partition-path choke point `TableUtils.setPathForNativePartition(path, tsType, partitionBy, timestamp, nameTxn)` (~60 call sites).
+
+## Decomposition (5 sub-plans; land in order)
+- **4a — Routing core (biggest/riskiest, lands first).** Per-row dimension→ordinal→cellKey resolution wired into the WAL-apply/O3 pipeline; restructure `processO3Block`'s loop (`TableWriter.java:9573`) to iterate `(partitionTimestamp, cellKey)` cells instead of bare `partitionTimestamp`; call the existing `findAttachedPartitionRawIndexBy(ts, cellKey)` with a real cellKey; generalize `TxWriter.switchPartitions` / `getNextExistingPartitionTimestamp` to the `(ts, cellKey)` walk. Scope: **IDENTITY + HASH + TRUNCATE** dimensions.
+- **4b — Per-cell on-disk layout.** Extend `setPathForNativePartition` (+ Parquet siblings) with a cellKey/dim-value parameter; implement HIVE/PLAIN cell-dir insertion + per-cell nameTxn; thread the resolved cellKey through the ~60 call sites and `openPartition`/`O3PartitionJob`/`O3OpenColumnJob`.
+- **4c — Per-cell frontiers.** Generalize the writer's single-active-tail state so cells within one day partition can each be an append/merge target.
+- **4d — Crash-safety follow-through.** Fix `TableSnapshotRestore.rebuildSymbolFilesForColumns` to also rebuild the dedicated-dict + `_cell`-registry files (ticket T-I3) — must land before any user could snapshot a table with non-empty interners.
+- **4e — Expression dimensions.** `KIND_EXPRESSION` eval (deferred — see the scope decision below).
+
+4b and 4c interleave with 4a's later tasks (a routed cell is meaningless without a path and frontier). 4d before merge.
+
+## Resolved engineering forks (my calls — internal, not on-disk/user-facing)
+- **(a) O3 sort → partition-then-subsort (Option 1), correctness-first.** Keep the battle-tested single-key timestamp radix sort untouched. Within each `[srcOooLo, srcOooHi]` time-partition range `processO3Block` already finds by binary search, compute cellKey per row and run a stable in-partition grouping pass to produce contiguous per-cell sub-ranges. The combined-radix-key approach (Option 2 — elegant, reuses the single sort, makes the partition advance a natural per-cell walk) is a **future performance optimization**, not the first cut; it requires lossless key packing across irregular partition units (WEEK/MONTH/YEAR) and careful remap-vs-sort-vs-cellKey ordering.
+- **(HASH/TRUNCATE reverse-lookup gap, surfaced by research)** — resolve each dimension's string **once per unique local WAL-segment symbol value**, via the segment's own local symbol map, *before* global remapping — then compute the dim ordinal and memoize per (dimIndex, localSymbolKey). Avoids a per-row reverse lookup and avoids exposing `SymbolMapWriter` internals through the `MapWriter` accessor. IDENTITY needs no lookup (the resolved global symbol key already IS the ordinal — read it straight from the symbol column buffer).
+- **(b) On-disk layout → per-cell nameTxn, cell segment between date and version.** Path = `<date>/<cell>` where `<cell>` is `exch=BTC` (HIVE) or `BTC` (PLAIN) per the persisted `namingMode`, and the `.nameTxn` version suffix attaches to the **cell's own** directory (`2026-07-15/exch=BTC.3`), not the shared day dir — real evidence: `_txn` already models nameTxn per `(ts, cellKey)`, so one cell's independent O3-rewrite/attach/detach must not version-bump its siblings. The day directory becomes a bare unversioned grouping dir.
+- **(c) Per-cell frontiers → reuse the single-active-slot machinery per cell, sequentially.** `processO3Block` already opens/appends/seals one partition range at a time and advances; generalize that same one-slot machinery to process each `(ts, cellKey)` range in turn (open the cell's dir, append/merge, seal, next), with `switchPartitions` generalized to `(ts, cellKey)` and per-cell `transientRowCount` living in the `_txn` per-cell record (already there). Table-wide `maxTimestamp`/`minTimestamp`/`fixedRowCount` stay scalar/aggregate. A per-cellKey open-handle cache (avoiding re-open when writes bounce between sibling cells) is a **later optimization**, not the first cut.
+
+## The one open scope decision (for the user)
+**Expression dimensions** (`PARTITION BY day, (upper(region)) AS r`): the `(expr) AS name` grammar exists and is persisted, but expression evaluation at write time has **zero** supporting infrastructure (no `Function`/`VirtualRecord` in `TableWriter`, no generated-column precedent anywhere). IDENTITY (`exch`), HASH (`hash(exch, 16)`), and TRUNCATE (`truncate(sku, 4)`) cover the common partitioning use cases and are the natural first live release. Building expression eval means either a new `Function`-eval bridge inside the cairo write path (reverses today's griffin→cairo dependency) or client-side pre-evaluation carried in the WAL segment schema — both nontrivial. Recommendation: **defer expression dims to sub-plan 4e** (keep the current "throws" behavior with a clear "not yet supported" message), ship IDENTITY/HASH/TRUNCATE live routing first.
+
+## Non-goals (this phase)
+Cross-cell k-way timestamp merge at read time (Phase-1 sub-plan 6), read pruning / index-skip (sub-plan 5), cardinality guard (sub-plan 7), non-symbol dimensions, ORDER-BY clustering realization. Plan 4 is physical routing + on-disk cells + per-cell frontiers only.
