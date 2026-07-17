@@ -146,6 +146,9 @@ public class TxReader implements Closeable, Mutable {
         mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
         mem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
         mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
+        // Plan 3b Task 1: self-describing partition-stride marker -- a GLOBAL property (not part of
+        // either A/B section), so it is written at the same fixed offset regardless of isA/isB.
+        mem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : 0);
 
         mem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
         mem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
@@ -745,6 +748,35 @@ public class TxReader implements Closeable, Mutable {
         baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
         symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
         partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+
+        // Plan 3b Task 1: self-describing partition-stride marker, read BEFORE this method returns so
+        // unsafeLoadPartitions() (called right after, by the unsafeLoadAll()/unsafeLoadRowCount()
+        // callers) folds the raw attached-partitions region at the RIGHT stride. This makes a TxReader
+        // self-detect composite-ness purely from the file, with no setComposite() call required.
+        // <p>
+        // UPGRADE-ONLY: marker == 8 always forces composite. marker == 0 deliberately does NOT force a
+        // reset back to plain -- it leaves longsPerAttachedPartition/attachedPartitionsShl exactly as
+        // they already are. This matters for a genuinely-fresh COMPOSITE table that has not yet
+        // completed its first base-header write: TableUtils#createTxn (physical file creation, before
+        // any TxWriter/metadata exists) always writes marker 0, so the on-disk marker only catches up to
+        // 8 once TxWriter#finishABHeader/TxReader#dumpTo first runs with the correct stride. Two already
+        // -shipped call patterns rely on an explicit setComposite(true) surviving a load that happens
+        // while the on-disk marker still reads 0 this way: (a) the standalone TxWriter/TxReader test
+        // idiom (setCompositeForTest(true) called BEFORE ofRW/ofRO, whose own unsafeLoadAll() would
+        // otherwise immediately stomp it back to plain on a brand-new table); and (b) TableWriter's
+        // constructor, which blind-loads via the 1-arg ofRW() before metadata/compositeness is known,
+        // calls setComposite(true) once metadata is available, then -- for an ALREADY-partitioned
+        // composite table -- reloadAttachedPartitionsAfterComposite() forces a SECOND unsafeLoadAll() to
+        // heal the first blind load's stride-4 mis-fold; that second load must not itself undo the
+        // setComposite(true) that just ran, for a fresh/still-uncommitted composite table. A table's
+        // compositeness never changes across its lifetime, so "upgrade-only" never masks a genuine
+        // plain-to-composite transition that doesn't exist; it only avoids treating "the marker hasn't
+        // been corrected on disk yet" as "this table is plain."
+        int partitionStrideMarker = roTxMemBase.getInt(TX_BASE_OFFSET_PARTITION_STRIDE_32);
+        if (partitionStrideMarker == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+            longsPerAttachedPartition = LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE;
+            attachedPartitionsShl = LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB;
+        }
 
         // Before extending file, check that values read are not dirty
         Unsafe.loadFence();

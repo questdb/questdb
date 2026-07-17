@@ -211,6 +211,16 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+    // Plan 3b Task 1: self-describing attached-partition record stride for this table, a GLOBAL
+    // (non-A/B, non-versioned) property written at the same fixed offset on every base-header write --
+    // it does not swap with the A/B parity because compositeness never changes across a table's
+    // lifetime. Lives in what was pure zero padding (part of the tail introduced by the Math.max(.., 64)
+    // above, not part of either per-section TX_BASE_HEADER_SECTION_PADDING block) so a plain table's
+    // on-disk bytes are unaffected: 0 (== today's zero padding) means plain/stride-4, 8 means
+    // COMPOSITE/stride-8 -- see LONGS_PER_TX_ATTACHED_PARTITION / LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE.
+    // Read by TxReader#unsafeLoadBaseOffset(); written by TxReader#dumpTo(), TableUtils#createTxn() and
+    // TxWriter#finishABHeader().
+    public static final long TX_BASE_OFFSET_PARTITION_STRIDE_32 = 56;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
@@ -821,6 +831,12 @@ public final class TableUtils {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
+        // Plan 3b Task 1: this is genuinely-fresh physical file creation, before any TxWriter/metadata
+        // object exists to say whether the table will be composite, so this always writes the plain
+        // default (0) -- byte-identical to the zero padding this offset held before this task. A real
+        // COMPOSITE table's writer corrects this the first time it writes the base header (TxWriter's
+        // own longsPerAttachedPartition, set from metadata, drives that write).
+        txMem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, 0);
         resetTxn(
                 txMem,
                 TX_BASE_HEADER_SIZE,
