@@ -62,10 +62,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
-    private final T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
     private final MillisecondClock clock;
-    private final PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
@@ -76,10 +74,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
+    private T atom;
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
     private int dispatchStartFrameIndex;
     private int frameCount;
+    private PageFrameAddressCache frameAddressCache;
     private PageFrameCursor frameCursor;
     private long id;
     private PageFrameMemoryRecord localRecord;
@@ -90,6 +90,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
+    private boolean isClosing;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
@@ -123,7 +124,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             this.taskType = taskType;
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -205,11 +206,26 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     @Override
     public void close() {
-        reset();
-        localRecord = Misc.free(localRecord);
-        workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
-        localTask = Misc.free(localTask);
-        Misc.free(atom);
+        Throwable cleanupFailure = null;
+        isClosing = true;
+        try {
+            reset();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        final PageFrameMemoryRecord localRecordToFree = localRecord;
+        localRecord = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, localRecordToFree);
+        final SqlExecutionCircuitBreakerWrapper circuitBreakerToFree = workStealCircuitBreaker;
+        workStealCircuitBreaker = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, circuitBreakerToFree);
+        final PageFrameReduceTask localTaskToFree = localTask;
+        localTask = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, localTaskToFree);
+        final T atomToFree = atom;
+        atom = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, atomToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public void collect(long cursor, boolean forceCollect) {
@@ -441,7 +457,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
-        atom.clear();
+
+        Throwable cleanupFailure = null;
+        try {
+            if (atom != null) {
+                atom.clear();
+            }
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
         // Unfreeze the covered posting readers frozen at dispatch BEFORE the
         // address cache (which holds them) and the frame cursor (which owns them)
         // are torn down. reset() runs after the sequence has been awaited (see the
@@ -449,20 +473,53 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // every worker cursor has finished and the unfreeze is race-free. A reader
         // left frozen would make its reloadConditionally() a permanent no-op and
         // break the next query against the same partition.
-        if (frameAddressCache != null) {
-            frameAddressCache.unfreezeCoveredReaders();
+        final PageFrameAddressCache frameAddressCacheToFree = frameAddressCache;
+        if (isClosing) {
+            frameAddressCache = null;
         }
-        Misc.free(frameAddressCache);
-        frameCursor = Misc.free(frameCursor);
+        if (frameAddressCacheToFree != null) {
+            try {
+                frameAddressCacheToFree.unfreezeCoveredReaders();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameAddressCacheToFree);
+        final PageFrameCursor frameCursorToFree = frameCursor;
+        frameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameCursorToFree);
         // collect sequence may not be set here when
         // factory is closed without using cursor
-        if (collectSubSeq != null) {
-            messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
-            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
+        final SCSequence collectSubSeqToRemove = collectSubSeq;
+        collectSubSeq = null;
+        if (collectSubSeqToRemove != null) {
+            try {
+                messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeqToRemove);
+                LOG.debug().$("removed [seq=").$(collectSubSeqToRemove).I$();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
         }
         if (localTask != null) {
-            localTask.clear();
+            try {
+                localTask.clear();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -88,18 +89,18 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INDEX_LOOKAHEAD = 2;
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
-    private final AbstractWindowJoinFastRecordCursor cursor;
     private final boolean includePrevailing;
-    private final Function joinFilter;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
     private final int masterSymbolIndex;
-    private final RecordCursorFactory slaveFactory;
     private final int slaveSymbolIndex;
-    private final SimpleMapValue value;
     private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
+    private AbstractWindowJoinFastRecordCursor cursor;
+    private Function joinFilter;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
+    private SimpleMapValue value;
 
     public WindowJoinFastRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -301,13 +302,32 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(joinFilter);
-        Misc.free(joinMetadata);
-        Misc.free(value);
+        final RecordMetadata metadata = detachMetadata();
+        final AbstractWindowJoinFastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function joinFilter = this.joinFilter;
+        this.joinFilter = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+        final SimpleMapValue value = this.value;
+        this.value = null;
+
+        Throwable failure = Misc.freeIfCloseableBestEffort(null, metadata);
+        failure = Misc.freeBestEffort(failure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinFilter);
+        if (joinMetadata != metadata) {
+            failure = Misc.freeBestEffort(failure, joinMetadata);
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static StaticSymbolTable asStaticSymbolTable(SymbolTable symbolTable) {

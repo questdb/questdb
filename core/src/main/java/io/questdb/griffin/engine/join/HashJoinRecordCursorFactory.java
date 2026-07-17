@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -50,10 +51,10 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.join.AbstractHashOuterJoinRecordCursor.populateRecordHashMap;
 
 public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final HashJoinRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final SymbolTranslatingRecord symbolTranslatingRecord;
+    private HashJoinRecordCursor cursor;
+    private SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -90,9 +91,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     : null;
             cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
         } catch (Throwable th) {
-            Misc.free(joinKeyMap);
-            Misc.free(slaveChain);
-            close();
+            Misc.free(joinKeyMap, th);
+            Misc.free(slaveChain, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -167,11 +168,14 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(symbolTranslatingRecord);
+        final HashJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable cleanupFailure = closeJoinOwnersBestEffort();
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private class HashJoinRecordCursor extends AbstractJoinCursor {
