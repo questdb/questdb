@@ -123,6 +123,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -2599,6 +2600,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
+    /**
+     * Reverse-looks-up dense symbol key {@code key} on column {@code colIndex}'s own symbol map back
+     * to its interned string -- the narrow accessor {@link #getSymbolMapWriter(int)} alone cannot
+     * provide ({@link MapWriter} declares no {@code valueOf}; see {@link MapWriter#valueOf(MapWriter, int)}).
+     * Used by {@link #renderCellSegment(CharSink, int)} to render an {@code IDENTITY} dimension's
+     * value at partition-path-construction time (composite-partitioning Plan 4a Task 3) -- not the
+     * O3 hot path, so a clean reverse lookup here is fine.
+     */
+    public CharSequence symbolValueOf(int colIndex, int key) {
+        return MapWriter.valueOf(getSymbolMapWriter(colIndex), key);
+    }
+
     @Override
     public @NotNull TableToken getTableToken() {
         return tableToken;
@@ -3489,6 +3502,98 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int ordinal = internDimensionValue(dimIndex, value);
         dimensionOrdinalMemo.put(memoKey, ordinal);
         return ordinal;
+    }
+
+    /**
+     * Renders this table's on-disk cell-directory segment for a resolved {@code cellKey}, per
+     * {@link PartitionSpec#getNamingMode()}: {@code MODE_HIVE} renders each dimension as
+     * {@code <sourceColumnName>=<value>} (e.g. {@code exch=BTC}); {@code MODE_PLAIN} renders the
+     * bare {@code <value>} (e.g. {@code BTC}). An arity-&gt;1 spec joins each dimension's segment
+     * with {@code '/'} -- nested directory levels, Hive-multi-column-partitioning-style (e.g.
+     * {@code exchange=NYSE/symbol=BTC}) -- rather than hardcoding a single dimension.
+     * <p>
+     * This is pure path-string rendering (composite-partitioning Plan 4a Task 3): it does not touch
+     * {@code processO3Block}/the write path (Task 4) and does not construct a full partition path
+     * itself -- a caller combines the rendered segment with
+     * {@link TableUtils#setSinkForNativePartition(CharSink, int, int, long, long, CharSequence)}.
+     * <p>
+     * Decodes {@code cellKey} back to its per-dimension ordinal tuple via
+     * {@link CellRegistry#getTupleFromWriter(int, int[])} (the write-side reverse lookup added
+     * alongside this method), then renders each ordinal per {@link PartitionDimension#getKind()}:
+     * {@code IDENTITY}'s ordinal is the source SYMBOL column's own resolved key, reverse-looked-up
+     * to its string via {@link #symbolValueOf(int, int)}; {@code HASH}'s ordinal already IS the
+     * bucket number in {@code [0, N)}, rendered as a plain integer (a bucket cannot be un-hashed
+     * back to a value, and doesn't need to be); {@code TRUNCATE}'s ordinal reverse-looks-up the
+     * interned prefix in its dedicated dictionary. {@code EXPRESSION} is not reachable here
+     * (deferred to Plan 4e).
+     * <p>
+     * Every reverse-looked-up value is written through {@link TableUtils#putPathSafe(CharSink, CharSequence)},
+     * which percent-escapes path-unsafe characters: unlike a table/column identifier, a SYMBOL value
+     * or TRUNCATE prefix is arbitrary user data with no existing restriction against containing
+     * {@code /}, {@code .}, or other characters that would otherwise corrupt the partition path
+     * structure. The HIVE-mode {@code <sourceColumnName>=} key prefix is not escaped: column names
+     * are already restricted to filesystem-safe characters at DDL time
+     * ({@link TableUtils#isValidColumnName}).
+     * <p>
+     * Not the O3 hot path (path construction happens once per partition-cell, not once per row), so
+     * this allocates a fresh per-call tuple array rather than reusing a scratch field, unlike
+     * {@link #resolveCellKey(int[])}'s caller-provided-scratch contract.
+     *
+     * @param sink    destination for the rendered segment (no leading/trailing separator; e.g.
+     *                writes exactly {@code "exch=BTC"}, not {@code "/exch=BTC"})
+     * @param cellKey the dense cellKey to render, as returned by {@link #resolveCellKey(int[])}
+     * @throws UnsupportedOperationException if called on a non-composite table, or if any dimension
+     *                                        is {@code KIND_EXPRESSION}
+     */
+    public void renderCellSegment(CharSink<?> sink, int cellKey) {
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        if (dimCount <= 0) {
+            throw new UnsupportedOperationException(
+                    "renderCellSegment() must not be called on a non-composite table [table=" + tableToken + ']'
+            );
+        }
+        int[] tuple = new int[dimCount];
+        getCompositeDictionaries().cellRegistry().getTupleFromWriter(cellKey, tuple);
+        byte namingMode = spec.getNamingMode();
+        for (int i = 0; i < dimCount; i++) {
+            if (i > 0) {
+                sink.put('/');
+            }
+            renderDimensionSegment(sink, spec, i, tuple[i], namingMode);
+        }
+    }
+
+    /**
+     * Renders one dimension's cell-directory segment -- one path component out of
+     * {@link #renderCellSegment(CharSink, int)}'s possibly-multi-segment output -- into {@code sink}.
+     */
+    private void renderDimensionSegment(CharSink<?> sink, PartitionSpec spec, int dimIndex, int ordinal, byte namingMode) {
+        PartitionDimension dim = spec.getDimension(dimIndex);
+        if (namingMode == PartitionSpec.MODE_HIVE) {
+            sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+        }
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                TableUtils.putPathSafe(sink, symbolValueOf(dim.getColumnIndex(), ordinal));
+                break;
+            case PartitionDimension.KIND_HASH:
+                sink.put(ordinal);
+                break;
+            case PartitionDimension.KIND_TRUNCATE:
+                MapWriter dedicatedDict = getCompositeDictionaries().dedicatedDictFor(dimIndex);
+                if (dedicatedDict == null) {
+                    // Should not happen for a real TRUNCATE dimension (a composite table always
+                    // provisions one), but guard explicitly rather than let a wrong-kind/stale
+                    // dimIndex surface as a bare NPE here -- mirrors internDimensionValue's guard.
+                    throw CairoException.nonCritical()
+                            .put("no dedicated dictionary for composite dimension [dimIndex=").put(dimIndex).put(']');
+                }
+                TableUtils.putPathSafe(sink, MapWriter.valueOf(dedicatedDict, ordinal));
+                break;
+            default:
+                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+        }
     }
 
     @Override

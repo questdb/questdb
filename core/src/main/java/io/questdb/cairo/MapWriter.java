@@ -71,6 +71,28 @@ public interface MapWriter extends SymbolCountProvider {
     }
 
     /**
+     * Reverse-looks-up dense key {@code key} on {@code writer}, returning its interned string value
+     * -- the write-side mirror of {@link io.questdb.cairo.sql.SymbolTable#valueOf(int)}, which only
+     * concrete reader types (e.g. {@code SymbolMapReaderImpl}) expose; {@code MapWriter} itself
+     * declares no {@code valueOf}. A {@link SymbolMapWriter} already holds the exact backing data a
+     * reverse lookup needs -- it appends new symbols to the very same offset/value memory
+     * {@link #getSymbolOffsetsMemory()}/{@link #getSymbolValuesMemory()} already expose -- so this
+     * reads it back directly instead of requiring a separate {@code SymbolMapReader} to be opened.
+     * Mirrors {@code SymbolMapReaderImpl.uncachedValue(int)}'s exact mechanics.
+     * <p>
+     * Only meaningful for a {@code key} previously returned by {@link #put(CharSequence)} (or an
+     * equivalent intern call) on this same {@code writer} -- e.g. composite-partitioning path
+     * construction (Plan 4a Task 3), which reverse-looks-up an IDENTITY dimension's source-column
+     * symbol key, a TRUNCATE dimension's dedicated-dictionary ordinal, or the {@code _cell}
+     * registry's own cellKey, all of which are plain {@code MapWriter}s. Not meant for an arbitrary
+     * out-of-range key or a {@code NullMapWriter} -- callers must already know {@code writer} is a
+     * real, populated symbol map.
+     */
+    static CharSequence valueOf(MapWriter writer, int key) {
+        return writer.getSymbolValuesMemory().getStrA(writer.getSymbolOffsetsMemory().getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    /**
      * Column index in table writer metadata. This value is a pass-thru from table writer, and
      * it used by table writer to look-back the column name when needed.
      *

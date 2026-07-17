@@ -79,6 +79,24 @@ public class CellRegistry implements QuietCloseable {
     }
 
     /**
+     * Reverse-looks-up dense cell ordinal {@code ordinal} back to its dimension-tuple on the WRITE
+     * side, decoding it into {@code tupleOut} -- the write-mode counterpart of {@link #getTuple(int, int[])}
+     * (which requires a reader). Composite-partitioning path construction (Plan 4a Task 3) runs on
+     * the write side, where a {@code CellRegistry} is opened over a writer only; {@link
+     * MapWriter#valueOf(MapWriter, int)} reads the just-interned hex-tuple string straight back off
+     * the writer's own memory, so no redundant {@link SymbolMapReader} needs to be opened just to
+     * decode a tuple this same writer already holds.
+     *
+     * @throws IllegalStateException if this registry was opened read-only
+     */
+    public void getTupleFromWriter(int ordinal, int[] tupleOut) {
+        if (writer == null) {
+            throw new IllegalStateException("CellRegistry opened read-only");
+        }
+        CompositeTupleCodec.decode(MapWriter.valueOf(writer, ordinal), tupleOut);
+    }
+
+    /**
      * Interns dimension-tuple {@code tuple[0, arity)} into a dense cell ordinal: repeated calls
      * with an equal tuple return the same ordinal (dedup), stable across the life of the
      * underlying symbol map. Write-side only.

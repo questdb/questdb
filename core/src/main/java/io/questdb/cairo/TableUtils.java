@@ -2506,6 +2506,30 @@ public final class TableUtils {
     }
 
     /**
+     * Sets the path to the directory of a native partition, additionally inserting a per-cell
+     * directory segment between the date component and the {@code .nameTxn} version suffix -- the
+     * composite-partitioning counterpart of {@link #setPathForNativePartition(Path, int, int, long, long)},
+     * which this delegates to unchanged (byte-identical: same date component, same {@code .nameTxn}
+     * placement right after it) whenever {@code cellSegment} is {@code null}.
+     * <p>
+     * {@code cellSegment} must already be fully rendered (e.g. by {@link TableWriter#renderCellSegment})
+     * -- this method is pure path plumbing with no notion of {@code PartitionSpec}, dimension kinds,
+     * or how to resolve a {@code cellKey}; it just places an opaque, already-path-safe component. The
+     * {@code .nameTxn} suffix attaches to the cell segment, not the shared day directory (composite
+     * on-disk versioning is per-cell -- see {@code TxReader.getPartitionNameTxn}).
+     *
+     * @param path          Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix, attached after the cell segment (or after the date, if {@code cellSegment} is null)
+     * @param cellSegment   Already-rendered cell directory segment (e.g. {@code "exch=BTC"} or {@code "BTC"}), or {@code null} for a plain (non-composite) partition
+     */
+    public static void setPathForNativePartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn, cellSegment);
+    }
+
+    /**
      * Sets the path to the file of a Parquet partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
@@ -2549,6 +2573,55 @@ public final class TableUtils {
         PartitionBy.setSinkForPartition(sink, timestampType, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
+        }
+    }
+
+    /**
+     * Sets the sink to the directory of a native partition, additionally inserting a per-cell
+     * directory segment between the date component and the {@code .nameTxn} version suffix. See
+     * {@link #setPathForNativePartition(Path, int, int, long, long, CharSequence)} for the full
+     * contract. The existing 5-arg {@link #setSinkForNativePartition(CharSink, int, int, long, long)}
+     * is untouched and remains byte-identical for a plain (non-composite) partition.
+     */
+    public static void setSinkForNativePartition(CharSink<?> sink, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        PartitionBy.setSinkForPartition(sink, timestampType, partitionBy, timestamp);
+        if (cellSegment != null) {
+            sink.put('/').put(cellSegment);
+        }
+        if (nameTxn > -1L) {
+            sink.put('.').put(nameTxn);
+        }
+    }
+
+    /**
+     * Writes {@code value} into {@code sink}, percent-escaping every character that would be unsafe
+     * as a single path/directory-name component: {@code /} and {@code \} (path separators on
+     * POSIX/Windows), {@code .} (ambiguous with the {@code .<nameTxn>} version-suffix separator and
+     * with the special {@code .}/{@code ..} directory names), {@code %} itself (keeps the escaping
+     * unambiguous/self-delimiting), and C0 control characters / DEL ({@code U+0000..U+001F, U+007F}).
+     * <p>
+     * Composite-partition cell-directory segments (Plan 4a Task 3) are rendered from arbitrary
+     * user-supplied data -- SYMBOL column values (IDENTITY) and TRUNCATE dedicated-dictionary
+     * prefixes -- which, unlike table/column identifiers ({@link #isValidTableName}/
+     * {@link #isValidColumnName}), carry no existing restriction against filesystem-unsafe
+     * characters: a symbol value of {@code "A/../B"} is perfectly legal SQL data. Escaping here is
+     * what stops such a value from silently producing a broken path, or one that escapes the
+     * partition directory entirely.
+     * <p>
+     * This is a narrow, forward (encode)-only escape: it does not defend against platform-reserved
+     * names (e.g. Windows {@code CON}/{@code PRN}) and provides no decode/reverse-parse path back to
+     * the original value -- reverse-parsing an on-disk cell directory name is not needed by this
+     * task and is left for whichever later task needs it, at the same validation bar the existing
+     * identifier validators above already accept.
+     */
+    public static void putPathSafe(CharSink<?> sink, CharSequence value) {
+        for (int i = 0, n = value.length(); i < n; i++) {
+            char c = value.charAt(i);
+            if (c == '/' || c == '\\' || c == '.' || c == '%' || c < 0x20 || c == 0x7f) {
+                sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
+            } else {
+                sink.put(c);
+            }
         }
     }
 
