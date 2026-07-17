@@ -478,6 +478,105 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDropKeepsViewRegistryVisibleUntilFenced() throws Exception {
+        // Regression for the DROP-vs-checkpoint freeze race. The checkpoint agent decides whether to
+        // freeze a live view with a live getViewInstance(name) lookup and only calls startCheckpoint()
+        // (which fences the refresh worker) when it finds one. dropLiveView used to remove the name
+        // mapping BEFORE marking the view dropped and fencing it, so in the window between the two a
+        // concurrent checkpoint could look the view up, get null, skip the freeze, and copy _lv.s +
+        // the table data while a refresh turn was still mutating them.
+        //
+        // The fix marks+fences BEFORE unregistering. This test pins that ordering deterministically:
+        // a worker holds the refresh latch (an in-flight refresh turn), so dropLiveView parks in
+        // fenceRefresh; while it is parked, the checkpoint's freeze-lookup must still return the
+        // instance (and see it already marked dropped). Pre-fix the lookup returned null here.
+        final CountDownLatch latchHeld = new CountDownLatch(1);
+        final CountDownLatch releaseLatch = new CountDownLatch(1);
+        final CountDownLatch dropStarted = new CountDownLatch(1);
+        final AtomicBoolean dropReturned = new AtomicBoolean(false);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            execute("DROP TABLE IF EXISTS base");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // Worker: holds the refresh latch across the whole drop attempt, standing in for an
+            // in-flight refresh turn that a checkpoint freeze would have to fence.
+            final Thread worker = new Thread(() -> {
+                try {
+                    Assert.assertTrue(instance.tryLockForRefresh());
+                    latchHeld.countDown();
+                    releaseLatch.await();
+                    instance.unlockAfterRefresh();
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-worker");
+
+            // Dropper: runs the real engine.dropLiveView, which must park in fenceRefresh until the
+            // worker releases the latch.
+            final Thread dropper = new Thread(() -> {
+                try {
+                    dropStarted.countDown();
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+                    dropReturned.set(true);
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-dropper");
+
+            worker.start();
+            latchHeld.await();
+            dropper.start();
+            dropStarted.await();
+            awaitThreadInMethod(dropper, "fenceRefresh", 60_000);
+
+            // The observation: while the drop is parked in the fence (refresh still in flight), what
+            // does the checkpoint agent's freeze-lookup see? Capture it all now, before releasing the
+            // latch, so the assertions below are made against the exact window.
+            final boolean isDropReturnedWhileFenced = dropReturned.get();
+            final LiveViewInstance checkpointView = engine.getLiveViewRegistry().getViewInstance("lv");
+            final boolean isDroppedDuringFence = checkpointView != null && checkpointView.isDropped();
+
+            // Release the latch FIRST (no assertion between the await and here), so the fence
+            // completes and both threads join cleanly regardless of what was observed. Only then
+            // assert - a red run reports the assertion instead of stranding the parked threads.
+            releaseLatch.countDown();
+            worker.join();
+            dropper.join(60_000);
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("thread failed", errors.peek());
+            }
+
+            Assert.assertFalse("dropLiveView must block in fenceRefresh while the refresh latch is held",
+                    isDropReturnedWhileFenced);
+            Assert.assertNotNull(
+                    "DROP must keep the view registry-visible until it is fenced, so a concurrent"
+                            + " checkpoint freeze-lookup cannot miss it while a refresh is in flight",
+                    checkpointView);
+            Assert.assertTrue("the view must already be marked dropped before the fence completes",
+                    isDroppedDuringFence);
+            Assert.assertTrue("dropLiveView must complete once the latch is released", dropReturned.get());
+
+            // Clean teardown: the view is gone from the registry, the base survived.
+            Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+            Assert.assertNull("LV name must no longer resolve after the drop", engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testMultiRefreshWorkerConvergence() throws Exception {
         // Production runs one LiveViewRefreshJob per refresh-pool worker (2-4 by
         // default, ServerMain.setupLiveViewJobs) with no per-view sharding: every

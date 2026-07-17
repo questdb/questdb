@@ -2471,6 +2471,104 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRederiveAfterWalLossDropsUnflushedLead() throws Exception {
+        // Regression for the applied-base re-derive: rederiveFromAppliedBaseAfterWalLoss recomputes
+        // the whole view and rewrites the on-disk tier (REPLACE_RANGE), but it used to leave the
+        // in-RAM lead bookkeeping (leadRowCount + the published slot) untouched. On a LIVE (never
+        // restarted) view that carries an un-flushed lead when a base WAL segment goes missing, that
+        // stale lead was re-appended by the next flush as on-disk duplicates. The sibling recovery
+        // rebuildActiveWindowStateFromAppliedBase already resets the lead and rebuilds the tier from
+        // the rewritten LV table; this path must do the same.
+        //
+        // Distinct from the two testRestoredViewRederives* tests above, which restart (clear the
+        // registry) before the re-derive, so their lead always starts at zero and never exercises
+        // this branch.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // FLUSH EVERY 1s with the clock held at 0: the first ACTIVE drain flushes (its
+            // lastFlushUs is unset), later drains publish the lead in RAM only. START FROM NOW over
+            // the (empty at CREATE) base seeds nothing, so every row below arrives on the ACTIVE
+            // path - the only path that carries a lead.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Rows 10,20,30 to disk: the first ACTIVE drain flushes (lastFlushUs unset).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-04-01T00:00:01.000000Z', 10), " +
+                        "('2026-04-01T00:00:02.000000Z', 20), " +
+                        "('2026-04-01T00:00:03.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Rows 40,50 refreshed but NOT flushed (clock still 0, inside FLUSH EVERY 1s): they
+                // become the un-flushed lead in RAM.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-04-01T00:00:04.000000Z', 40), " +
+                        "('2026-04-01T00:00:05.000000Z', 50)");
+                drainWalQueue();
+                drainJob(job);
+
+                LiveViewInstance live = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(live);
+                Assert.assertTrue(
+                        "the test must establish a non-empty un-flushed lead",
+                        live.getLeadRowCount() > 0
+                );
+
+                // A further base commit that the view still owes itself. Everything committed so far
+                // shares the base's first WAL, which the restore leaves behind.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:06.000000Z', 60)");
+                drainWalQueue();
+
+                // The restore gap: the applied base TABLE survives (rows 10..60 are durable in its
+                // partitions), its WAL segments do not. releaseInactive frees the pooled base WAL
+                // writer so the segment directory can be removed.
+                engine.releaseInactive();
+                final TableToken baseToken = engine.verifyTableName("base");
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(baseToken).concat(WalUtils.WAL_NAME_BASE + "1");
+                    Assert.assertTrue(
+                            "could not remove the base WAL",
+                            engine.getConfiguration().getFilesFacade().rmdir(p)
+                    );
+                }
+
+                // The drain cannot read the missing segment, spends the retry budget, and re-derives
+                // from the applied base (rows 10..60). The clock is still 0, so no cycle flushes.
+                for (int i = 0; i < 8; i++) {
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertFalse("the re-derive must not invalidate the view", live.isInvalid());
+
+                // A fresh base commit with an intact WAL, drained into the lead, then flushed. On the
+                // buggy path the stale pre-re-derive lead (rows 40,50) is re-appended here.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:07.000000Z', 70)");
+                drainWalQueue();
+                drainJob(job);
+                setCurrentMicros(2_000_000L); // past FLUSH EVERY 1s so the lead flushes
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Exact-once: every base row exactly once, gapless row_number().
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-04-01T00:00:01.000000Z\t10\t1\n" +
+                    "2026-04-01T00:00:02.000000Z\t20\t2\n" +
+                    "2026-04-01T00:00:03.000000Z\t30\t3\n" +
+                    "2026-04-01T00:00:04.000000Z\t40\t4\n" +
+                    "2026-04-01T00:00:05.000000Z\t50\t5\n" +
+                    "2026-04-01T00:00:06.000000Z\t60\t6\n" +
+                    "2026-04-01T00:00:07.000000Z\t70\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSeedFilteredViewResumesAcrossRestart() throws Exception {
         // A WHERE filter drops base rows, so the sweep's data-cursor offset
         // outruns the output-row count. The restart must resume at the correct
@@ -6955,6 +7053,78 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                                 "2026-04-01T00:00:00.000000Z\t1\t1\n" +
                                 "2026-04-01T00:00:01.000000Z\t2\t2\n");
             }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSeedResumeWaitsForPendingApplyBeforeReadingFloor() throws Exception {
+        // Regression for the seed-resume floor: the resume path calls the void applyWalDirect to
+        // fold a committed-but-unapplied seed block into the on-disk row count it derives the
+        // skip-write floor from, then immediately stamps the single-shot resume flag and reads that
+        // floor. applyWalDirect is non-throwing: when the LV TableWriter is busy it returns on
+        // EntryUnavailableException without applying (no suspension). The block then stays off disk,
+        // the floor under-counts it, and the resumed sweep re-emits the row - which duplicates once
+        // the block finally applies (the seed append carries no dedup to collapse it). The resume
+        // must verify the LV writer caught up to its committed seqTxn before trusting the floor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one admitted row per seed turn
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:01.000000Z', 1), " +
+                    "('2026-04-01T00:00:02.000000Z', 2), " +
+                    "('2026-04-01T00:00:03.000000Z', 3)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Turn 1: sweep row 1 and commit its LV block, but hold the LV TableWriter so the
+                // inline apply no-ops via EntryUnavailableException (a busy writer, as on a primary
+                // whose refresh worker owns it). The block is committed-but-unapplied and the view
+                // stays SEEDING - the exact crash-between-commit-and-apply state a restart inherits.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    job.run();
+                    drainWalQueue();
+                }
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("the view must still be SEEDING",
+                        LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+                Assert.assertTrue("the seed block must be committed but unapplied",
+                        tracker.getSeqTxn() > tracker.getWriterTxn());
+
+                // Restart: seedResumeAttempted resets, the SEEDING view reloads from disk, and its
+                // committed-but-unapplied block is still pending (the global apply path skips LV
+                // tokens, and the SEEDING branch of the restart reconcile does not touch it).
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                Assert.assertTrue("the block is still pending after the restart",
+                        tracker.getSeqTxn() > tracker.getWriterTxn());
+
+                // Drive the resume with the LV writer held again, so the resume applyWalDirect
+                // no-ops. The bug stamps the flag and re-sweeps off an under-read (0-row) floor; the
+                // fix leaves the view SEEDING with the flag unset and re-attempts next turn.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    for (int i = 0; i < 4; i++) {
+                        job.run();
+                        drainWalQueue();
+                    }
+                }
+
+                // Writer released: the deferred block applies and the seed finishes. Every base row
+                // must land exactly once.
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-04-01T00:00:01.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:02.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:03.000000Z\t3\t3\n");
 
             execute("DROP LIVE VIEW lv");
         });

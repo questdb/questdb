@@ -3571,6 +3571,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Runs before the resume-attempted flag is stamped so a failure here re-enters
             // this block on the next turn rather than resuming off an under-read floor.
             applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+            // applyWalDirect is void and non-throwing: it silently no-ops when the LV writer is busy
+            // (EntryUnavailableException) and suspends-then-swallows on an apply error, leaving the
+            // committed block unapplied. Reading the skip-write floor off lvReader.size() below would
+            // then under-count it, the resumed sweep would re-emit those rows, and they would
+            // duplicate when the block later applies (the seed append carries no dedup to collapse
+            // them). Only stamp the single-shot resume flag and derive the floor once the LV writer
+            // has actually caught up to its committed seqTxn; otherwise leave the view SEEDING with
+            // the flag unset so the fallback scan re-enqueues it and the next turn re-attempts the
+            // apply (a genuinely suspended LV table then blocks the seed until RESUME - correct, and
+            // strictly better than duplicating).
+            final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+            if (lvTracker.isInitialised() && lvTracker.getSeqTxn() > lvTracker.getWriterTxn()) {
+                return;
+            }
             instance.setSeedResumeAttempted();
             long onDiskLvRows = 0;
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
@@ -6582,7 +6596,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         try {
+            // Drop any un-flushed lead the failed cycles left published (a lead-eligible view
+            // between flushes carries a non-zero leadRowCount and a slot holding those rows). The
+            // replay recomputes the whole view and rewrites the on-disk tier via REPLACE_RANGE, so
+            // those RAM rows are about to become durable on disk; a surviving leadRowCount would
+            // make the next publishToInMemoryTier / flushLead re-append them as duplicates. Mirror
+            // rebuildActiveWindowStateFromAppliedBase, the sibling recovery: reset before the replay
+            // (defensive - o3HeadMissReplay does not read the lead) and rebuild the tier + resync the
+            // counter after it, so the published slot becomes a clean disk subset stamped at the new
+            // seqTxn with leadRowCount 0.
+            instance.setLeadRowCount(0);
             o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn, true);
+            // REPLACE_RANGE rewrote disk, so the published slot is stale; rebuild it from the
+            // rewritten LV table (read via the LV token - the missing base WAL is irrelevant here)
+            // or reads keep serving the pre-replay rows and the next flush re-appends the stale lead.
+            rebuildInMemoryTier(instance);
+            instance.setLeadRowCount(0);
             // The replay flushed the whole tier to disk and advanced lastProcessed / the applied
             // watermark, so no un-flushed lead remains. Keep refreshedUpTo == lastProcessed so a
             // later ALTER cannot see a phantom lead.

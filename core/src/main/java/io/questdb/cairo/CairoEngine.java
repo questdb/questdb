@@ -1844,7 +1844,15 @@ public class CairoEngine implements Closeable, WriterSource {
             securityContext.authorizeLiveViewDrop(token);
             writeLiveViewDropSentinel(token);
         }
-        LiveViewInstance instance = liveViewRegistry.removeView(name);
+        // Look the instance up WITHOUT unregistering it yet. Marking dropped and fencing the
+        // refresh worker must happen while the view is still registry-visible: a concurrent
+        // DatabaseCheckpointAgent freeze looks the instance up by name (getViewInstance) and only
+        // calls startCheckpoint() when it finds one. If removeView ran first, that lookup could
+        // return null in the window before the fence completes, so the agent would skip the freeze
+        // and copy _lv.s + the table data while an in-flight refresh turn is still mutating them.
+        // Fencing before unregistering guarantees that a checkpoint which no longer finds the view
+        // is looking at an already-quiesced refresh worker.
+        LiveViewInstance instance = liveViewRegistry.getViewInstance(name);
         if (instance != null) {
             // Mark dropped, then fence the refresh worker (spin-acquire+release the
             // latch) before the table teardown below, so no in-flight refresh turn
@@ -1852,6 +1860,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // orphans) and the worker's next isDropped() recheck sees the drop.
             instance.markAsDropped();
             instance.fenceRefresh();
+        }
+        // Now unregister: the instance is quiesced (or was never present), so a checkpoint that
+        // observes it gone races nothing.
+        liveViewRegistry.removeView(name);
+        if (instance != null) {
             // A definition-less load-failure stub was never added to the dependents
             // graph (its base table could not be resolved), so skip that cleanup for it.
             if (!instance.isStub()) {
