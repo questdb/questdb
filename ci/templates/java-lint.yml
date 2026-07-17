@@ -12,7 +12,7 @@ steps:
         # Pinned: an unpinned "latest" download reformats the whole repo whenever
         # JetBrains ships a formatter change (2026.2 changed nested-ternary
         # continuation indents and turned every lint run red). Bump this pin and
-        # reformat the repo in the same PR when moving to a newer IDEA.
+        # reformat the repo in the same PR when moving to a newer IDEA
         wget "https://download.jetbrains.com/idea/idea-2026.1.4.tar.gz" -O intellij.tar.gz
         tar xzf intellij.tar.gz -C "$IDEA_ROOT"
         rm intellij.tar.gz
