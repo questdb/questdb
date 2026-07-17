@@ -260,8 +260,11 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if (hiEpoch == Numbers.LONG_NULL) {
+                return false;
+            }
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL || hiEpoch == Numbers.LONG_NULL) {
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             final long loTs = driver.from(loFunc.getTimestamp(rec), loValueType);
@@ -354,8 +357,11 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if (loEpoch == Numbers.LONG_NULL) {
+                return false;
+            }
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL || loEpoch == Numbers.LONG_NULL) {
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
             final long hiTs = driver.from(hiFunc.getTimestamp(rec), hiValueType);
