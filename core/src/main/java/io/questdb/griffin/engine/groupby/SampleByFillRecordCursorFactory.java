@@ -763,7 +763,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // finding an absent one to fill. Poll the breaker on a
                     // 1024-iteration stride so cancellation does not stall.
                     if ((++skipCount & 0x3FF) == 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                     }
                     long lastKnownTs = keysMapRecord.getLong(LAST_KNOWN_TS_SLOT);
                     if (lastKnownTs != currentBucketTimestamp) {

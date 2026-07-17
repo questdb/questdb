@@ -42,7 +42,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 
 /**
  * End-to-end coverage of the per-query {@code QUERY_FLAG_RESET_DICT} flag over
@@ -92,7 +91,7 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
             try (final TestServerMain ignored = startFragmented()) {
                 try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
                     socket.setSoTimeout(60_000);
-                    performReadHandshake(socket);
+                    QwpWireTestFixtures.performReadHandshake(socket);
 
                     OutputStream out = socket.getOutputStream();
                     InputStream in = socket.getInputStream();
@@ -100,7 +99,7 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
                     // QUERY_REQUEST with a valid header but a lone continuation byte
                     // (0x80) where the optional query_flags varint should be -- the
                     // decoder runs off the frame end and throws QwpParseException.
-                    out.write(maskedBinaryFrame(buildMalformedQueryRequest(requestId)));
+                    out.write(QwpWireTestFixtures.maskedFrame(WebSocketOpcode.BINARY, buildMalformedQueryRequest(requestId)));
                     out.flush();
 
                     // SERVER_INFO is pushed first on connect; skip past it to the error.
@@ -521,120 +520,13 @@ public class QwpEgressQueryFlagsResetWireTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * Wraps {@code payload} in a masked client-to-server BINARY frame (FIN set).
-     * Client frames must be masked per RFC 6455.
-     */
-    private static byte[] maskedBinaryFrame(byte[] payload) {
-        byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
-        int payloadLen = payload.length;
-        int headerLen = (payloadLen <= 125) ? 6 : (payloadLen <= 65_535) ? 8 : 14;
-        byte[] frame = new byte[headerLen + payloadLen];
-        int offset = 0;
-        frame[offset++] = (byte) (0x80 | (WebSocketOpcode.BINARY & 0x0F));
-        if (payloadLen <= 125) {
-            frame[offset++] = (byte) (0x80 | payloadLen);
-        } else if (payloadLen <= 65_535) {
-            frame[offset++] = (byte) (0x80 | 126);
-            frame[offset++] = (byte) ((payloadLen >> 8) & 0xFF);
-            frame[offset++] = (byte) (payloadLen & 0xFF);
-        } else {
-            frame[offset++] = (byte) (0x80 | 127);
-            for (int b = 7; b >= 0; b--) {
-                frame[offset++] = (byte) (((long) payloadLen >> (b * 8)) & 0xFF);
-            }
-        }
-        System.arraycopy(maskKey, 0, frame, offset, 4);
-        offset += 4;
-        for (int b = 0; b < payloadLen; b++) {
-            frame[offset + b] = (byte) (payload[b] ^ maskKey[b % 4]);
-        }
-        return frame;
-    }
-
-    /**
-     * Performs the WebSocket upgrade against the egress read endpoint and reads
-     * exactly up to the {@code \r\n\r\n} header boundary, leaving any pushed QWP
-     * frames (SERVER_INFO first) unconsumed in the stream.
-     */
-    private static void performReadHandshake(Socket socket) throws Exception {
-        OutputStream out = socket.getOutputStream();
-        InputStream in = socket.getInputStream();
-
-        byte[] keyBytes = new byte[16];
-        for (int i = 0; i < 16; i++) {
-            keyBytes[i] = (byte) (i + 1);
-        }
-        String wsKey = Base64.getEncoder().encodeToString(keyBytes);
-
-        String request = "GET /read/v1 HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "Upgrade: websocket\r\n" +
-                "Connection: Upgrade\r\n" +
-                "Sec-WebSocket-Key: " + wsKey + "\r\n" +
-                "Sec-WebSocket-Version: 13\r\n" +
-                "\r\n";
-        out.write(request.getBytes(StandardCharsets.UTF_8));
-        out.flush();
-
-        StringBuilder response = new StringBuilder();
-        while (true) {
-            int b = in.read();
-            Assert.assertNotEquals("Unexpected end of stream during handshake", -1, b);
-            response.append((char) b);
-            int len = response.length();
-            if (len >= 4
-                    && response.charAt(len - 4) == '\r' && response.charAt(len - 3) == '\n'
-                    && response.charAt(len - 2) == '\r' && response.charAt(len - 1) == '\n') {
-                break;
-            }
-        }
-        Assert.assertTrue(
-                "Expected 101 Switching Protocols, got: " + response.toString().split("\r\n")[0],
-                response.toString().startsWith("HTTP/1.1 101")
-        );
-    }
-
-    private static byte[] readBinaryFrame(InputStream in) throws Exception {
-        int b0 = readByte(in);
-        int opcode = b0 & 0x0F;
-        Assert.assertEquals("server must reply with a BINARY frame, not opcode 0x" + Integer.toHexString(opcode),
-                WebSocketOpcode.BINARY, opcode);
-        int b1 = readByte(in);
-        Assert.assertEquals("server frames must not be masked", 0, b1 & 0x80);
-        int payloadLen = b1 & 0x7F;
-        if (payloadLen == 126) {
-            payloadLen = (readByte(in) << 8) | readByte(in);
-        } else if (payloadLen == 127) {
-            long extended = 0;
-            for (int i = 0; i < 8; i++) {
-                extended = (extended << 8) | readByte(in);
-            }
-            payloadLen = (int) extended;
-        }
-        byte[] payload = new byte[payloadLen];
-        int read = 0;
-        while (read < payloadLen) {
-            int n = in.read(payload, read, payloadLen - read);
-            Assert.assertNotEquals("Unexpected end of stream while reading frame payload", -1, n);
-            read += n;
-        }
-        return payload;
-    }
-
-    private static int readByte(InputStream in) throws Exception {
-        int b = in.read();
-        Assert.assertNotEquals("Unexpected end of stream", -1, b);
-        return b & 0xFF;
-    }
-
-    /**
      * Reads binary WebSocket frames until one whose QWP msg_kind (the byte at
      * {@link QwpConstants#HEADER_SIZE}) equals {@code kind}, skipping earlier
      * frames such as the unsolicited SERVER_INFO. Fails if not found promptly.
      */
     private static byte[] readFrameUntilKind(InputStream in, byte kind) throws Exception {
         for (int attempt = 0; attempt < 8; attempt++) {
-            byte[] payload = readBinaryFrame(in);
+            byte[] payload = QwpWireTestFixtures.readServerFrame(in);
             if (payload.length > QwpConstants.HEADER_SIZE && payload[QwpConstants.HEADER_SIZE] == kind) {
                 return payload;
             }
