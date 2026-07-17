@@ -130,6 +130,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public LongList getIntervals() {
+        return partitionFrameCursor != null ? partitionFrameCursor.getIntervals() : null;
+    }
+
+    @Override
     public long getRemainingRowsInInterval() {
         return remainingRowsInInterval;
     }

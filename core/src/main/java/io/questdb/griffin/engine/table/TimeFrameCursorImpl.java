@@ -515,6 +515,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameCursor.toTop();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            if (frame.getPartitionIndex() >= partitionCount) {
+                // Not a partition of this reader; see ConcurrentTimeFrameState's own eager
+                // walk for why such a frame has no place in a model indexed by them.
+                continue;
+            }
             frameAddressCache.add(frameCount, frame);
             framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());

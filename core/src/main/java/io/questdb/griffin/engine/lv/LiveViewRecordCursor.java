@@ -45,6 +45,7 @@ import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -54,6 +55,7 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -193,6 +195,12 @@ public class LiveViewRecordCursor implements RecordCursor {
     private static final int SLOT_FRAME_INDEX = Rows.MAX_SAFE_PARTITION_INDEX;
     private final MergedRecord recordA = new MergedRecord();
     private final MergedRecord recordB = new MergedRecord();
+    // The slot rows this read serves, as flat half-open (lo, hi) row pairs, ascending and
+    // disjoint: the mode's band ([0, rowCount) under the seam, [leadStart, rowCount) under
+    // lead-only) cut down by the disk scan's interval filter, if it carries one. Rebuilt in
+    // of() once the mode is known; empty unless the read routes. One band is the common
+    // case - an interval filter is the only thing that ever produces more, or fewer.
+    private final LongList slotBands = new LongList();
     // Resolves the read's SYMBOL columns: the disk cursor's tables overlaid with the
     // pinned tier's eager-interned lead symbols while routing, the disk cursor's
     // tables alone otherwise. Bound in of() once the routing decision is made.
@@ -229,6 +237,9 @@ public class LiveViewRecordCursor implements RecordCursor {
     // LV-table seqTxn) and every projected column to resolve to a tier column; no serving
     // path reads the slot while it is ROUTING_DISK_ONLY. Picked once in of().
     private int routingMode;
+    // Index of the band in slotBands the walk currently sits in. Moves up under a forward
+    // walk and down under a descending one; out of range means the slot side is exhausted.
+    private int slotBandIdx;
     private int slotIdx;
     // The pinned slot's row count, snapshotted in of() alongside leadStart. The slot is
     // frozen for the cursor's life, but snapshotting keeps hasNext()'s band bounds, size()
@@ -331,11 +342,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                 // EQUALS the frontier appends into the lead at exactly the on-disk max - but
                 // the split is by row index, not by timestamp, so a lead row sharing a ts with
                 // a disk row is still a distinct row and neither tier drops it.
-                if (inMemRow - 1 >= leadStart) {
-                    inMemRow--;
-                    inMemRowsServed++;
-                    leadRowsServed++;
-                    recordA.toInMemMode(inMemRow);
+                if (nextSlotRowBackward()) {
                     return true;
                 }
                 if (diskCursor.hasNext()) {
@@ -415,6 +422,8 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.pinnedSlot = null;
         this.inMemEligible = false;
         this.routingMode = ROUTING_DISK_ONLY;
+        this.slotBandIdx = 0;
+        this.slotBands.clear();
         this.tierColumns.clear();
         // Prior-use overlays are stamped with the previous slot; free them. The
         // shared ones go with the symbolTableSource rebind at the end of of().
@@ -437,10 +446,15 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.pinnedSlot = candidate.getSlot(pin);
                     symbolCache = candidate.getSymbolCache();
                     this.inMemEligible = isTierAddressableProjection(diskCursor, baseMetadata, pinnedSlot, tierColumns);
+                    // The intervals the disk scan applies beneath this wrapper, if any: the
+                    // slot's band is cut by the same filter so the two tiers serve the same
+                    // rows. Null when the scan applies none, which is the common case and
+                    // leaves the band whole.
+                    final LongList intervals = diskIntervals(diskCursor);
                     // The mode this read WOULD take if the fence held, from the query shape
                     // alone. ROUTING_DISK_ONLY here means no shape can ever serve the slot.
                     final int candidateMode = inMemEligible
-                            ? selectRoutingMode(diskCursor, timestampColumnIndex, diskScanAscending)
+                            ? selectRoutingMode(diskCursor, timestampColumnIndex, diskScanAscending, intervals != null)
                             : ROUTING_DISK_ONLY;
                     // LONG_NULL means the disk cursor exposes no LV-table seqTxn to fence
                     // against at all: it is not a plain unfiltered table scan (an index scan,
@@ -494,6 +508,12 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // cursor's lifetime, so these snapshots stay valid.
                         this.slotRowCount = pinnedSlot.rowCount();
                         this.leadStart = slotRowCount - pinnedSlot.leadRowCount();
+                        // Only a routing read walks the slot, and only it may read the
+                        // intervals: a fence miss keeps the slot pinned for getCursor's
+                        // retry but serves disk-only, so it needs no bands.
+                        if (isRoutingEligible()) {
+                            buildSlotBands(intervals);
+                        }
                         resetSlotWalk();
                     }
                 }
@@ -535,25 +555,30 @@ public class LiveViewRecordCursor implements RecordCursor {
     @Override
     public long size() {
         if (isRoutingEligible()) {
-            // disk.size() + leadRowCount, and the SAME sum for every routing mode - which
-            // is why this needs no mode switch. The seam serves (diskSize - leadStart) disk
-            // rows plus the whole slot; a lead-only mode serves every disk row plus the
-            // lead alone. Both come to diskSize + (rowCount - leadStart): the slot's
-            // overlap (rows [0, leadStart)) is on disk either way, so it is already counted
-            // in disk.size(), and only the un-flushed lead sits on top. When the slot holds
-            // no lead this collapses to disk.size(). Returning -1 (unknown) would defeat
-            // LIMIT pushdown.
             final long diskSize = diskCursor.size();
             if (diskSize < 0) {
-                // Never negative for the plain entity scan the fence admits, but
-                // propagate "unknown" rather than fold -1 into the sum (skipRows
-                // guards the same way).
+                // Unknown, and an INTERVAL-filtered scan always is - the native interval
+                // cursor cannot size itself without walking its partitions. Propagate
+                // "unknown" rather than fold -1 into the sum (skipRows guards the same way).
+                // The cost is LIMIT pushdown, which such a read gives up either way.
                 return -1;
             }
+            // The disk rows this mode serves, plus the slot rows it serves. The seam skips
+            // the scan's TRAILING leadStart rows - the slot's overlap band serves them from
+            // RAM instead - while a lead-only mode serves the scan whole; slotBands carries
+            // the slot side either way.
+            //
+            // With no interval the two modes agree on the total, which is the identity
+            // skipRows also uses: the seam's (diskSize - leadStart) + rowCount and
+            // lead-only's diskSize + (rowCount - leadStart) are the same number, because the
+            // overlap is on disk either way and only the un-flushed lead sits on top. That
+            // agreement is why this needed no mode switch before the slot's band could be
+            // CUT. It can now, so the sum is taken from the bands rather than assumed.
             // leadStart <= rowCount under a passing fence; assert to fail safe.
             assert leadStart <= slotRowCount
                     : "leadStart " + leadStart + " exceeds slot rowCount " + slotRowCount;
-            return diskSize + (slotRowCount - leadStart);
+            final long diskRouted = routingMode == ROUTING_SEAM ? diskSize - leadStart : diskSize;
+            return diskRouted + LiveViewIntervalBands.countRows(slotBands);
         }
         // Disk-only: the fence did not engage, so the read serves the applied
         // prefix straight from disk.
@@ -578,13 +603,22 @@ public class LiveViewRecordCursor implements RecordCursor {
         // cursor (disk at its top, nothing served yet); the LIMIT rewrite always skips
         // right after toTop(), so that holds. A mid-iteration call (disk already advanced)
         // falls back to the safe row-by-row default, as does a disk cursor that cannot
-        // report its size (never a plain page-frame scan while routing, but guard rather
-        // than compute a bogus split).
+        // report its size - an INTERVAL-filtered scan, which always reports -1, plus any
+        // future shape that cannot size itself.
         final long diskSize = diskCursor.size();
         if (hasStartedIteration || diskSize < 0) {
             RecordCursor.super.skipRows(rowCount, maxRowsAfterSkip);
             return;
         }
+        // The splits below read the slot side straight off leadStart / slotRowCount rather
+        // than from slotBands, so they assume the mode's band reaches this UNCUT. Only an
+        // interval filter cuts it, and such a scan cannot report a size, so the guard above
+        // already turned it away. Asserted on the row count rather than the band count: a
+        // slot with no lead leaves lead-only an EMPTY band and no entry at all, which is
+        // uncut too.
+        assert LiveViewIntervalBands.countRows(slotBands)
+                == slotRowCount - (routingMode == ROUTING_SEAM ? 0 : leadStart)
+                : "skipRows needs the mode's slot band uncut, got " + slotBands.size() / 2 + " band(s)";
         final long leadRows = slotRowCount - leadStart;
         switch (routingMode) {
             case ROUTING_SEAM: {
@@ -666,6 +700,16 @@ public class LiveViewRecordCursor implements RecordCursor {
         hasStartedIteration = false;
         resetSlotWalk();
         recordA.toDiskMode();
+    }
+
+    // The intervals the disk scan confines its rows to, or null when it applies no interval
+    // filter. Only meaningful once diskReaderSeqTxn has admitted the cursor - that is what
+    // establishes a reported interval filter also describes itself.
+    private static @Nullable LongList diskIntervals(RecordCursor diskCursor) {
+        if (diskCursor instanceof PageFrameRecordCursorImpl pfrc) {
+            return LiveViewRouting.diskIntervals(pfrc.getPageFrameCursor());
+        }
+        return null;
     }
 
     // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
@@ -770,14 +814,23 @@ public class LiveViewRecordCursor implements RecordCursor {
      * nothing about direction. It would stop guarding this the moment an entity single-row
      * shape appeared.
      */
-    private static int selectRoutingMode(RecordCursor diskCursor, int timestampColumnIndex, boolean diskScanAscending) {
+    private static int selectRoutingMode(
+            RecordCursor diskCursor,
+            int timestampColumnIndex,
+            boolean diskScanAscending,
+            boolean hasIntervals
+    ) {
         // A non-page-frame disk cursor exposes no row cursor factory to cross-check, but it
         // also carries no seqTxn (diskReaderSeqTxn returns LONG_NULL for it), so the read
         // is disk-only regardless of what this returns.
         final boolean rowScanForward = diskCursor instanceof PageFrameRecordCursorImpl pfrc
                 && pfrc.getRowCursorFactory().isForwardScan();
         if (diskScanAscending && rowScanForward) {
-            return timestampColumnIndex >= 0 ? ROUTING_SEAM : ROUTING_LEAD_ONLY_FWD;
+            // An interval narrows the disk scan BENEATH this wrapper, so the scan's trailing
+            // rows are no longer the slot's overlap band and the seam has nothing sound to
+            // cut against. Lead-only needs no such identity: it serves the disk scan whole,
+            // whatever that scan kept, and adds the lead band cut by the same intervals.
+            return timestampColumnIndex >= 0 && !hasIntervals ? ROUTING_SEAM : ROUTING_LEAD_ONLY_FWD;
         }
         if (!diskScanAscending && !rowScanForward) {
             return ROUTING_LEAD_ONLY_DESC;
@@ -785,45 +838,16 @@ public class LiveViewRecordCursor implements RecordCursor {
         return ROUTING_DISK_ONLY;
     }
 
-    // Serves the next slot row walking UP: [0, slotRowCount) under the seam (the seam cut
-    // already stopped disk where the slot's overlap begins), [leadStart, slotRowCount)
-    // under lead-only forward, which is what resetSlotWalk's starting sentinel selects.
-    // The lead counter keys off leadStart either way, so one walk covers both modes.
-    private boolean nextSlotRowForward() {
-        if (inMemRow + 1 < slotRowCount) {
-            inMemRow++;
-            inMemRowsServed++;
-            if (inMemRow >= leadStart) {
-                // A lead row: in the slot but not yet on the LV's on-disk tier.
-                leadRowsServed++;
-            }
-            recordA.toInMemMode(inMemRow);
-            return true;
-        }
-        return false;
-    }
-
-    private void releaseSlot() {
-        if (tier != null && slotIdx >= 0) {
-            // Safe even after the LV's DROP marked the tier closed: the deferred-
-            // close protocol on LiveViewInMemoryTier keeps native memory alive
-            // until the last pin drains (DROP LIVE VIEW "modulo cursor pins").
-            tier.releaseRead(slotIdx);
-        }
-        tier = null;
-        slotIdx = -1;
-    }
-
-    // Parks the slot walk one row outside the band the mode serves, in the direction it
-    // serves it: hasNext() pre-increments (or pre-decrements) before reading. The seam
-    // walks the whole slot up from 0, lead-only forward walks up from leadStart, and
-    // lead-only descending walks DOWN from the slot's top to leadStart.
-    private void resetSlotWalk() {
-        inMemRow = switch (routingMode) {
-            case ROUTING_LEAD_ONLY_FWD -> leadStart - 1;
-            case ROUTING_LEAD_ONLY_DESC -> slotRowCount;
-            default -> -1;
-        };
+    // The slot rows this read serves, as flat half-open (lo, hi) row pairs: the mode's own
+    // band cut down by the disk scan's intervals, if it carries any. Rebuilt in of() once
+    // the mode is known and walked by nextSlotRowForward / nextSlotRowBackward. Empty
+    // unless the read routes.
+    private void buildSlotBands(@Nullable LongList intervals) {
+        slotBands.clear();
+        // The seam serves the whole slot; a lead-only mode serves the lead band alone. An
+        // interval filter only ever reaches a lead-only mode - see selectRoutingMode.
+        final long bandLo = routingMode == ROUTING_SEAM ? 0 : leadStart;
+        LiveViewIntervalBands.cut(pinnedSlot, pinnedSlot.getTimestampColumnIndex(), bandLo, slotRowCount, intervals, slotBands);
     }
 
     /**
@@ -846,6 +870,83 @@ public class LiveViewRecordCursor implements RecordCursor {
      * through the routed cursor, so it reads from RAM too rather than delegating to
      * the disk record.
      */
+    // The mirror image, walking DOWN through slotBands: lead-only descending serves the
+    // slot's band(s) newest-first before handing over to the descending disk scan.
+    private boolean nextSlotRowBackward() {
+        long next = inMemRow - 1;
+        while (slotBandIdx >= 0 && next < slotBands.getQuick(2 * slotBandIdx)) {
+            slotBandIdx--;
+            if (slotBandIdx >= 0) {
+                next = slotBands.getQuick(2 * slotBandIdx + 1) - 1;
+            }
+        }
+        if (slotBandIdx < 0) {
+            return false;
+        }
+        inMemRow = next;
+        inMemRowsServed++;
+        if (inMemRow >= leadStart) {
+            leadRowsServed++;
+        }
+        recordA.toInMemMode(inMemRow);
+        return true;
+    }
+
+    // Serves the next slot row walking UP through slotBands: [0, slotRowCount) under the
+    // seam (the seam cut already stopped disk where the slot's overlap begins),
+    // [leadStart, slotRowCount) under lead-only forward, and one sub-band per interval when
+    // the disk scan carries an interval filter. resetSlotWalk's starting sentinel selects
+    // which. The lead counter keys off leadStart in every mode, so one walk covers them all.
+    private boolean nextSlotRowForward() {
+        long next = inMemRow + 1;
+        // Step over exhausted bands. Bands are ascending and disjoint, so the walk only ever
+        // moves up; a mode with no interval filter has exactly one band and never loops.
+        while (slotBandIdx < slotBands.size() / 2 && next >= slotBands.getQuick(2 * slotBandIdx + 1)) {
+            slotBandIdx++;
+            if (slotBandIdx < slotBands.size() / 2) {
+                next = slotBands.getQuick(2 * slotBandIdx);
+            }
+        }
+        if (slotBandIdx >= slotBands.size() / 2) {
+            return false;
+        }
+        inMemRow = next;
+        inMemRowsServed++;
+        if (inMemRow >= leadStart) {
+            // A lead row: in the slot but not yet on the LV's on-disk tier.
+            leadRowsServed++;
+        }
+        recordA.toInMemMode(inMemRow);
+        return true;
+    }
+
+    private void releaseSlot() {
+        if (tier != null && slotIdx >= 0) {
+            // Safe even after the LV's DROP marked the tier closed: the deferred-
+            // close protocol on LiveViewInMemoryTier keeps native memory alive
+            // until the last pin drains (DROP LIVE VIEW "modulo cursor pins").
+            tier.releaseRead(slotIdx);
+        }
+        tier = null;
+        slotIdx = -1;
+    }
+
+    // Parks the slot walk one row outside the first band the mode serves, in the direction
+    // it serves it: hasNext() pre-increments (or pre-decrements) before reading. Forward
+    // walks up from the first band's floor, descending DOWN from the last band's ceiling.
+    // An empty band list (an interval filter admitting none of the slot's rows) parks the
+    // walk where both directions read as exhausted straight away.
+    private void resetSlotWalk() {
+        final int bandCount = slotBands.size() / 2;
+        if (routingMode == ROUTING_LEAD_ONLY_DESC) {
+            slotBandIdx = bandCount - 1;
+            inMemRow = bandCount > 0 ? slotBands.getQuick(slotBands.size() - 1) : 0;
+        } else {
+            slotBandIdx = 0;
+            inMemRow = bandCount > 0 ? slotBands.getQuick(0) - 1 : -1;
+        }
+    }
+
     private static class MergedRecord extends DelegatingRecord {
         // Per-column, A/B var-size read flyweights OWNED by this record. The in-mem
         // tier buffer is shared across every reader cursor pinning a slot (and this

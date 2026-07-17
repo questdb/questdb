@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Defines a page frame cursor backed with an in-house database table.
@@ -52,6 +54,17 @@ public interface TablePageFrameCursor extends PageFrameCursor {
                             : readerMetadata.getWriterIndex(colIdx)
             );
         }
+    }
+
+    /**
+     * The designated-timestamp intervals this cursor's frames are confined to, or null when
+     * it applies no interval filter or cannot describe the one it applies. See
+     * {@link PartitionFrameCursor#getIntervals()} for the encoding and the contract; this
+     * is the same list, surfaced at the page-frame layer for consumers that never see the
+     * partition frame cursor underneath.
+     */
+    default @Nullable LongList getIntervals() {
+        return null;
     }
 
     default boolean hasIntervalFilter() {

@@ -359,6 +359,16 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         frameCursor.toTop();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            if (frame.getPartitionIndex() >= partitionCount) {
+                // Not a partition of this reader, so it has no place in a model indexed by
+                // them - ensurePartitionOpened() and the whole time-frame API address frames
+                // through partitionIndex. A frame source may sit over the table and add rows
+                // of its own (a live view's in-memory tier does exactly that, and reserves a
+                // partition index ABOVE the table's to say so); this walk models the table,
+                // so it takes the table's frames alone. The lazy branch above reaches the
+                // same place by walking one partition at a time.
+                continue;
+            }
             addressCache.add(frameCount, frame);
             framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());

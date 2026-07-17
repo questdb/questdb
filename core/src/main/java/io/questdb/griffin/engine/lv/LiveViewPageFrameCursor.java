@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
@@ -59,14 +60,14 @@ import org.jetbrains.annotations.Nullable;
  * filter, the JIT filter, LIMIT pushdown), which the record-cursor path cannot
  * offer.
  * <p>
- * <b>The two modes</b>, picked in {@link #of} from the direction the base's frames
- * arrive in, mirror the record path's own (see {@link LiveViewRecordCursor}'s
- * {@code ROUTING_*} constants). A slot's rows split at
+ * <b>The modes</b>, picked in {@link #of} from the direction the base's frames arrive in
+ * and whether it carries an interval filter, mirror the record path's own (see
+ * {@link LiveViewRecordCursor}'s {@code ROUTING_*} constants). A slot's rows split at
  * {@code leadStart = rowCount - leadRowCount}: rows {@code [0, leadStart)} are the
  * overlap (also on disk), rows {@code [leadStart, rowCount)} the un-flushed lead.
  * <ul>
- *   <li><b>Seam split</b>, for an ascending frame stream: the disk scan's leading
- *   {@code base.size() - leadStart} frames, then the whole slot. Under the seqTxn
+ *   <li><b>Seam split</b>, for an ascending unfiltered frame stream: the disk scan's
+ *   leading {@code base.size() - leadStart} frames, then the whole slot. Under the seqTxn
  *   fence the overlap band IS the disk scan's trailing {@code leadStart} rows - the
  *   ones at or above {@code seamTs} - so this covers every row exactly once, disk
  *   below the seam and slot at or above it, and serves the LV table's hot tail
@@ -78,17 +79,33 @@ import org.jetbrains.annotations.Nullable;
  *   seam cannot serve at all: the seam's cut takes the scan's LEADING rows, which over a
  *   descending stream are the newest rather than the oldest, so it would serve the slot
  *   on top of rows it already yielded.</li>
+ *   <li><b>Lead-only forward</b>, for an ascending stream carrying an INTERVAL filter: the
+ *   disk scan in full, then the lead band. The interval narrows the base scan BENEATH this
+ *   cursor, so the scan's trailing rows are no longer the slot's overlap and the seam's
+ *   row-count cut has nothing sound to cut against - it also leaves the scan unable to
+ *   size itself at all. Lead-only depends on neither.</li>
  * </ul>
- * Both cuts are taken by ROW COUNT rather than by comparing each row's timestamp
- * against {@code seamTs}. The two are the same boundary, but the row count is the
+ * <b>The interval filter cuts the slot too</b>, which is what makes such a read routable at
+ * all rather than merely orderable. The base applies it to its own frames; {@link #of}
+ * applies the same list to the slot's band through {@link LiveViewIntervalBands}, so the
+ * frames tile the surviving row sub-bands and the two tiers answer to one filter. Serving
+ * the band whole instead would emit lead rows the query excluded - wrong results, not stale
+ * ones. Every other mode's band is uncut, which is simply the one-band case of the same
+ * machinery.
+ * <p>
+ * <b>The overlap/lead split is taken by ROW COUNT</b> rather than by comparing each row's
+ * timestamp against {@code seamTs}. The two are the same boundary, but the row count is the
  * identity {@link LiveViewRecordCursor#size} and {@code skipRows} already use, so all
  * three agree by construction rather than by an invariant holding; it also needs no
  * timestamp read, which a parquet frame or a metadata-only skip frame cannot serve
  * anyway. It disposes of the lead/disk timestamp tie for free - the split is by row, so
- * a lead row sharing a timestamp with a disk row is still a distinct row, and neither
- * mode may assert a strict {@code >} on that boundary. {@code leadStart == 0} (a slot
- * that is pure lead) collapses the seam to "disk serves everything", matching
- * {@link LiveViewRecordCursor#hasNext}'s branch for it.
+ * a lead row sharing a timestamp with a disk row is still a distinct row, and no mode may
+ * assert a strict {@code >} on that boundary. {@code leadStart == 0} (a slot that is pure
+ * lead) collapses the seam to "disk serves everything", matching
+ * {@link LiveViewRecordCursor#hasNext}'s branch for it. The INTERVAL cut above is the one
+ * timestamp-driven boundary here, and it is a different question - which rows the query
+ * asked for, not which tier holds them - so it is taken against the slot's own ts ladder
+ * and never against disk.
  * <p>
  * <b>Why descending serves the lead FIRST.</b> The bound is
  * {@code min(lead ts) >= max(disk ts)}, so the reversed lead runs down to the on-disk
@@ -132,6 +149,12 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     private static final int SLOT_PARTITION_INDEX = Rows.MAX_SAFE_PARTITION_INDEX;
     private final SeamCutPageFrame seamCutFrame = new SeamCutPageFrame();
     private final SlotPageFrame slotFrame = new SlotPageFrame();
+    // The slot rows this cursor serves, as flat half-open (lo, hi) row pairs, ascending and
+    // disjoint: the mode's band ([0, rowCount) under the seam, [leadStart, rowCount) under
+    // lead-only) cut down by the base scan's interval filter, if it carries one. Built in
+    // of(); the frames tile these bands and nothing else. One band is the common case - an
+    // interval filter is the only thing that ever produces more, or fewer.
+    private final LongList slotBands = new LongList();
     // Resolves the read's SYMBOL columns: the base frame cursor's tables overlaid with
     // the pinned slot's eager-interned lead symbols. Bound once in of().
     private final LiveViewSymbolTableSource symbolTableSource = new LiveViewSymbolTableSource();
@@ -141,10 +164,14 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // snapshot the caller cannot mutate underneath it.
     private final IntList tierColumns = new IntList();
     private TablePageFrameCursor base;
-    // Disk rows this cursor serves: the scan's leading rows, strictly below the seam.
-    // base.size() - leadStart, snapshotted in of().
+    // Disk rows this cursor serves, snapshotted in of(): the scan's leading rows strictly
+    // below the seam (base.size() - leadStart) under the seam, the whole scan under
+    // lead-only. NEGATIVE when the base cannot size itself, which an interval-filtered scan
+    // never can - that is the signal the disk band is bounded by the base running out
+    // rather than by a row count, and every read of this field forks on it.
     private long diskRoutedRows;
-    // Disk rows covered by the frames returned so far.
+    // Disk rows covered by the frames returned so far. Meaningless while diskRoutedRows is
+    // negative: an unmeasured band has nothing to measure progress against.
     private long diskRowsEmitted;
     private boolean isDiskExhausted;
     // The routing mode, snapshotted in of() from the direction the base's frames arrive
@@ -155,11 +182,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // so next() hands straight to the base and the tier stays out of it. See toPartition().
     private boolean isPartitionScoped;
     private LiveViewInMemoryBuffer slot;
-    // The first slot row this cursor serves: 0 under the seam, which serves the whole
-    // slot, and leadStart under lead-only, which serves the lead band alone. Snapshotted
-    // in of() alongside diskRoutedRows - the two are the mode's band split, and size()
-    // holds whichever way they fall.
-    private long slotBandLo;
+    // Index of the band in slotBands the frames are currently tiling. Moves up under an
+    // ascending walk and down under a descending one; out of range means the slot side is
+    // exhausted.
+    private int slotBandIdx;
+    // Slot rows covered by the frames returned so far WITHIN the current band. Reset on
+    // every band change; slotRowsEmitted carries the total across bands.
+    private long slotBandRowsEmitted;
     private int slotIdx;
     // The pinned slot's row count, snapshotted in of(). The slot is frozen for the
     // cursor's life, but snapshotting keeps the frame's row range and size() consistent
@@ -189,17 +218,29 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         if (!isDiskExhausted) {
-            // Order matters: getRemainingRowsInInterval() reads the state this branch
-            // then advances.
-            final long remainingInInterval = getRemainingRowsInInterval();
-            counter.add(diskRoutedRows - diskRowsEmitted - remainingInInterval);
+            if (diskRoutedRows >= 0) {
+                // Order matters: getRemainingRowsInInterval() reads the state this branch
+                // then advances.
+                final long remainingInInterval = getRemainingRowsInInterval();
+                counter.add(diskRoutedRows - diskRowsEmitted - remainingInInterval);
+                diskRowsEmitted = diskRoutedRows;
+            } else {
+                // No row count to subtract from: hand the whole question to the base, which
+                // nets off its own getRemainingRowsInInterval() exactly as this does. This
+                // is the ONLY way to count an interval-filtered scan - no size() reports its
+                // rows - and equally it is the only case that may delegate, since a base
+                // that CAN size itself counts through size() and leaves calculateSize a
+                // no-op (AbstractFullPartitionFrameCursor never overrides it).
+                base.calculateSize(counter);
+            }
             isDiskExhausted = true;
-            diskRowsEmitted = diskRoutedRows;
         }
-        final long slotRoutedRows = slotRowCount - slotBandLo;
+        final long slotRoutedRows = LiveViewIntervalBands.countRows(slotBands);
         if (slotRowsEmitted < slotRoutedRows) {
             counter.add(slotRoutedRows - slotRowsEmitted);
             slotRowsEmitted = slotRoutedRows;
+            // The bands are counted whole now, so leave the walk with nothing to hand out.
+            slotBandIdx = isLeadOnlyDescending ? -1 : slotBands.size() / 2;
         }
     }
 
@@ -222,6 +263,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public LongList getIntervals() {
+        // See hasIntervalFilter(): the base's intervals describe both tiers' rows, because
+        // of() cut the slot's band by this very list.
+        return base.getIntervals();
+    }
+
+    @Override
     public long getRemainingRowsInInterval() {
         if (isDiskExhausted) {
             // Nothing is left behind the slot for this to report: the un-emitted slot rows
@@ -230,6 +278,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             // this and then calls calculateSize - so leaving the whole slot to the latter
             // keeps the two halves disjoint whether the slot is one frame or many.
             return 0;
+        }
+        if (diskRoutedRows < 0) {
+            // Nothing to clamp against: the base's frames are this cursor's disk band in
+            // full, so its answer is already this cursor's.
+            return base.getRemainingRowsInInterval();
         }
         // The base counts every row left in its CURRENT partition; this cursor may serve
         // fewer (the seam's band stops short of the scan's end), so clamp to what is left
@@ -261,9 +314,9 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public boolean hasIntervalFilter() {
-        // Always false while routing: the fence admits no interval-filtered scan, since a
-        // filtered disk band next to the unfiltered slot would over-return the excluded
-        // rows. Delegate anyway rather than hard-code the fence's conclusion here.
+        // The interval this reports is applied to BOTH tiers: the base applies it to its
+        // own frames, and of() cut the slot's band by the same list. So the answer is the
+        // base's, and it describes this whole cursor's stream.
         return base.hasIntervalFilter();
     }
 
@@ -303,12 +356,12 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
      * The caller must have pinned {@code slotIdx} through
      * {@link LiveViewInMemoryTier#acquireRead()} and must have established the routing
      * preconditions {@link LiveViewRouting} holds: a tier-addressable projection (which is
-     * what {@code tierColumns} records), an unfiltered base scan whose
-     * {@link PageFrameCursor#size()} is known, and the seqTxn fence (slot and disk reader
-     * on the same LV-table version). Routing a read that fails any of them through here
-     * would over-return the slot's rows against a disk scan they do not line up with.
-     * Scan direction is not among them - it picks the mode instead, through
-     * {@code isDescending}.
+     * what {@code tierColumns} records), a base scan that either applies no filter or
+     * applies an interval it can hand back, and the seqTxn fence (slot and disk reader on
+     * the same LV-table version). Routing a read that fails any of them through here would
+     * over-return the slot's rows against a disk scan they do not line up with. Neither the
+     * scan direction nor the interval is among them - they pick the MODE instead, through
+     * {@code isDescending} and {@link LiveViewRouting#diskIntervals} respectively.
      *
      * @param executionContext the read's context; sizes the slot's frames through the row
      *                         bounds {@code changePageFrameSizes} may have narrowed
@@ -342,30 +395,46 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         this.slot = slot;
         this.tierColumns.clear();
         this.tierColumns.addAll(tierColumns);
-        this.isLeadOnlyDescending = isDescending;
         this.slotRowCount = slot.rowCount();
         final long diskSize = base.size();
-        // The fence admits only a plain entity scan, whose size is always known. A -1
-        // would make the seam cut below meaningless (the disk band's row count IS the
-        // cut), so it is a precondition, not a case to degrade through.
-        assert diskSize >= 0 : "in-mem routing needs a sized disk scan, got " + diskSize;
         final long leadStart = slotRowCount - slot.leadRowCount();
-        // The overlap band is a suffix of the disk scan, so it cannot exceed it. Both
-        // hold under a passing fence; assert to fail safe rather than cut at a negative
-        // row count and serve disk rows twice.
+        // The overlap band is a suffix of the disk scan, so it cannot exceed it. Holds
+        // under a passing fence; assert to fail safe rather than cut at a negative row
+        // count and serve disk rows twice.
         assert leadStart >= 0 : "leadStart " + leadStart + " is negative";
-        assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
-        if (isDescending) {
-            // Lead-only: disk serves every applied row and the slot adds the lead band
-            // alone, so there is no cut to take and no overlap to skip.
-            this.slotBandLo = leadStart;
+        // The intervals the base scan confines its rows to, if any. They select the mode as
+        // much as the direction does: an interval narrows the base scan BENEATH this cursor,
+        // so the scan's trailing rows are no longer the slot's overlap band and the seam's
+        // row-count cut has nothing sound to cut against. Lead-only needs no such identity.
+        final LongList intervals = LiveViewRouting.diskIntervals(base);
+        this.isLeadOnlyDescending = isDescending;
+        final long slotBandLo;
+        // The seam needs a SIZED base - the disk band's row count IS its cut - and an
+        // unfiltered ascending one. An interval-filtered scan is neither: it cannot size
+        // itself, and it narrows the base out from under the cut. Lead-only needs neither,
+        // so every other shape falls back to it rather than to disk-only, which also makes
+        // an unsized base degrade instead of mis-cutting.
+        if (isDescending || intervals != null || diskSize < 0) {
+            // Lead-only: disk serves every row it kept and the slot adds the lead band
+            // alone, so there is no cut to take and no overlap to skip. diskRoutedRows
+            // carries the base's own -1 through when it cannot size itself.
+            slotBandLo = leadStart;
             this.diskRoutedRows = diskSize;
         } else {
             // The seam: the slot's overlap band stands in for the disk scan's trailing
-            // leadStart rows, so the disk band stops leadStart rows short of its end.
-            this.slotBandLo = 0;
+            // leadStart rows, so the disk band stops leadStart rows short of its end. The
+            // overlap band is a suffix of the disk scan, so it cannot exceed it; assert to
+            // fail safe rather than cut at a negative row count and serve disk rows twice.
+            assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
+            slotBandLo = 0;
             this.diskRoutedRows = diskSize - leadStart;
         }
+        // The slot rows this read serves: the mode's band, cut down by the base scan's own
+        // intervals so both tiers answer to the same filter. Without that cut a routed
+        // interval-filtered read would emit lead rows the query excluded - wrong results,
+        // not stale ones.
+        slotBands.clear();
+        LiveViewIntervalBands.cut(slot, slot.getTimestampColumnIndex(), slotBandLo, slotRowCount, intervals, slotBands);
         // The slot band is this scan's last partition, so it splits into frames the same
         // way a disk partition of the same row count does - same helper, same bounds, same
         // trailing-frame rounding. Sharing it is not just tidiness: those bounds carry the
@@ -373,8 +442,8 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         // of the frame-relative row index a batched GROUP BY packs into its entries), which
         // a slot published as one frame would breach for a wide enough IN MEMORY window.
         this.slotRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                slotBandLo,
-                slotRowCount,
+                0,
+                LiveViewIntervalBands.countRows(slotBands),
                 executionContext.getPageFrameMinRows(),
                 executionContext.getPageFrameMaxRows(),
                 executionContext.getSharedQueryWorkerCount()
@@ -410,13 +479,22 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public long size() {
-        // The mode's disk band plus its slot band, which comes to base.size() +
-        // leadRowCount whichever way the two fall: the seam serves (diskSize - leadStart)
-        // disk rows plus the whole slot, lead-only every disk row plus the lead alone. The
-        // slot's overlap is on disk either way, so base.size() already counts it and only
-        // the un-flushed lead sits on top. Same identity LiveViewRecordCursor.size()
-        // reports, so a routed read sizes the same through either path and either mode.
-        return diskRoutedRows + slotRowCount - slotBandLo;
+        if (diskRoutedRows < 0) {
+            // The base cannot size itself, and an INTERVAL-filtered scan never can - the
+            // native interval cursor would have to walk its partitions to know. Propagate
+            // "unknown" rather than fold -1 into the sum; calculateSize() still answers.
+            return -1;
+        }
+        // The mode's disk band plus its slot band. With no interval the two modes agree on
+        // the total - the seam serves (diskSize - leadStart) disk rows plus the whole slot,
+        // lead-only every disk row plus the lead alone, and both come to base.size() +
+        // leadRowCount, because the slot's overlap is on disk either way and only the
+        // un-flushed lead sits on top. That agreement is why this used to need no mode
+        // switch; it holds only while the slot's band is served WHOLE, so the slot side is
+        // taken from the bands now that an interval can cut it. Same quantity
+        // LiveViewRecordCursor.size() reports, so a routed read sizes the same through
+        // either path and either mode.
+        return diskRoutedRows + LiveViewIntervalBands.countRows(slotBands);
     }
 
     @Override
@@ -456,14 +534,30 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         isPartitionScoped = false;
         diskRowsEmitted = 0;
         slotRowsEmitted = 0;
+        slotBandRowsEmitted = 0;
+        // Park the band walk at the end the mode starts from. An empty band list (an
+        // interval filter admitting none of the slot's rows) leaves the index out of range
+        // either way, which reads as exhausted straight away.
+        slotBandIdx = isLeadOnlyDescending ? slotBands.size() / 2 - 1 : 0;
     }
 
-    // The disk band's next frame, or null once the band is spent. The band is the scan's
-    // LEADING diskRoutedRows rows either way: under the seam that stops at the cut,
-    // leaving the hot tail to the slot's frames, while under lead-only it is every row
-    // the base has.
+    // The disk band's next frame, or null once the band is spent. Under the seam the band
+    // is the scan's LEADING diskRoutedRows rows, stopping at the cut and leaving the hot
+    // tail to the slot's frames; under lead-only it is every frame the base hands out, and
+    // the base's own end is what ends it.
     private @Nullable PageFrame nextDiskFrame(long skipTarget) {
         if (isDiskExhausted) {
+            return null;
+        }
+        if (diskRoutedRows < 0) {
+            // The base cannot size itself, so there is no row count to measure against and
+            // nothing to cut: pass its frames straight through until it runs out. Only
+            // lead-only reaches here - of() routes an unsized base that way for this reason.
+            final PageFrame frame = base.next(skipTarget);
+            if (frame != null) {
+                return frame;
+            }
+            isDiskExhausted = true;
             return null;
         }
         final long remainingDiskRows = diskRoutedRows - diskRowsEmitted;
@@ -478,8 +572,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
                 // The frame straddles the seam: serve its prefix and stop the disk side -
                 // the rest of it is the slot's overlap, which the slot frame serves from
                 // RAM. This is the hot-tail skip the seam exists for, and it is why the
-                // band is a row count rather than the base's own end. Lead-only never
-                // reaches it: its band is every row the base has, so no frame can straddle.
+                // band is a row count rather than the base's own end.
                 isDiskExhausted = true;
                 diskRowsEmitted = diskRoutedRows;
                 return seamCutFrame.of(frame, remainingDiskRows);
@@ -493,29 +586,38 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         return null;
     }
 
-    // The next frame over the slot band this mode serves - the whole slot under the seam,
-    // the lead [leadStart, rowCount) under lead-only - or null once the band is spent. The
-    // band tiles into slotRowLimit-row frames, walking UP from slotBandLo under the seam
-    // and DOWN from the slot's top under lead-only, each in the order its mode serves them.
+    // The next frame over the slot rows this mode serves, or null once they are spent. Each
+    // band in slotBands tiles into slotRowLimit-row frames, walking UP through the bands
+    // under the seam and lead-only forward, and DOWN through them under lead-only
+    // descending - each in the order its mode serves them.
     private @Nullable PageFrame nextSlotFrame() {
-        final long slotRoutedRows = slotRowCount - slotBandLo;
-        if (slotRowsEmitted >= slotRoutedRows) {
-            return null;
+        final int bandCount = slotBands.size() / 2;
+        while (slotBandIdx >= 0 && slotBandIdx < bandCount) {
+            final long bandLo = slotBands.getQuick(2 * slotBandIdx);
+            final long bandHi = slotBands.getQuick(2 * slotBandIdx + 1);
+            if (slotBandRowsEmitted >= bandHi - bandLo) {
+                // Band spent; step to the next one in the direction this mode walks.
+                slotBandIdx += isLeadOnlyDescending ? -1 : 1;
+                slotBandRowsEmitted = 0;
+                continue;
+            }
+            final long lo;
+            final long hi;
+            if (isLeadOnlyDescending) {
+                // Rounding down from the band's top leaves its LOWEST frame the short one,
+                // which is the frame boundary BwdTableReaderPageFrameCursor gives a disk
+                // partition of the same row count.
+                hi = bandHi - slotBandRowsEmitted;
+                lo = Math.max(bandLo, hi - slotRowLimit);
+            } else {
+                lo = bandLo + slotBandRowsEmitted;
+                hi = Math.min(bandHi, lo + slotRowLimit);
+            }
+            slotBandRowsEmitted += hi - lo;
+            slotRowsEmitted += hi - lo;
+            return slotFrame.of(lo, hi);
         }
-        final long lo;
-        final long hi;
-        if (isLeadOnlyDescending) {
-            // Rounding down from the top leaves the band's LOWEST frame the short one,
-            // which is the frame boundary BwdTableReaderPageFrameCursor gives a disk
-            // partition of the same row count.
-            hi = slotRowCount - slotRowsEmitted;
-            lo = Math.max(slotBandLo, hi - slotRowLimit);
-        } else {
-            lo = slotBandLo + slotRowsEmitted;
-            hi = Math.min(slotRowCount, lo + slotRowLimit);
-        }
-        slotRowsEmitted += hi - lo;
-        return slotFrame.of(lo, hi);
+        return null;
     }
 
     private void releaseSlot() {

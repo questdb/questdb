@@ -229,16 +229,30 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             }
             Assert.assertFalse("closing the backward read releases the pin", isPublishedSlotReaderPinned(tier));
 
-            // The release side survives lead-only: an interval-filtered scan exposes no
-            // LV-table seqTxn to fence against, so no mode can serve it and of() hands the
-            // slot straight back. testIntervalFilteredReadReleasesTierPin covers this shape
-            // in its own right; it is repeated here as the control that keeps the two sides
-            // of the rule in one place.
+            // An interval-filtered scan routes lead-only too - the slot's band is cut by
+            // the same intervals - so it pins like any other routed read. It cannot seam:
+            // the interval narrows the disk scan beneath the wrapper, so the scan's
+            // trailing rows are no longer the slot's overlap band.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2020-01-01'");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertEquals("an interval-filtered scan must be disk-only",
+                Assert.assertEquals("an interval-filtered scan must route lead-only forward",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, cursor.routingMode());
+                Assert.assertTrue("a routed interval read must hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+            Assert.assertFalse("closing the interval read releases the pin", isPublishedSlotReaderPinned(tier));
+
+            // The release side needs a shape no mode can serve, and an interval is no longer
+            // one. LATEST BY still is: it plans as a LatestByAllFiltered rather than a
+            // page-frame scan, so there is no row cursor factory to cross-check and no
+            // LV-table seqTxn to fence against. It stays statically disk-only and hands the
+            // slot straight back - the control that keeps both sides of the rule here.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv LATEST ON ts PARTITION BY x");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertEquals("a non-page-frame scan must be disk-only",
                         LiveViewRecordCursor.ROUTING_DISK_ONLY, cursor.routingMode());
                 Assert.assertFalse("a disk-only read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
@@ -246,17 +260,15 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testIntervalFilteredReadReleasesTierPin() throws Exception {
-        // A designated-timestamp predicate (SELECT * FROM lv WHERE ts >= '...') is
-        // pushed into the page-frame scan as an interval filter. The projection is
-        // still full-schema and the scan still ascending, so the cursor took the
-        // fence branch - but an interval-filtered cursor exposes no LV-table seqTxn
-        // to fence against, so it can never route AND can never reach the
-        // isSlotNewerThanDisk() staleness retry either. It nonetheless held the slot
-        // pinned for its whole lifetime: two such reads straddling a tier swap pin
-        // BOTH slots, publishToInMemoryTier then fails, and the refresh worker
-        // emergency-flushes the lead every cycle. Such a structural fence miss must
-        // release the pin at open, like any other statically disk-only read.
+    public void testIntervalFilteredReadRoutesAndHoldsTierPin() throws Exception {
+        // A designated-timestamp predicate (SELECT * FROM lv WHERE ts >= '...') is pushed
+        // into the page-frame scan as an interval filter, so the disk side yields only the
+        // rows inside the interval. This used to be permanently disk-only: the slot had no
+        // filter of its own, so serving its band whole next to that scan would have emitted
+        // rows the query excluded. It routes lead-only now, because the same intervals cut
+        // the slot's band - and so it holds the pin for its lifetime, like any routed read.
+        // The seam stays out of reach: the interval narrows the disk scan beneath the
+        // wrapper, so its trailing rows are no longer the slot's overlap band.
         assertMemoryLeak(() -> {
             createIngestRefresh();
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -269,14 +281,30 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("an interval-filtered read must be disk-only", cursor.isRoutingEligible());
-                Assert.assertFalse(
-                        "an interval-filtered read must not hold the slot pin",
+                Assert.assertEquals("an interval-filtered read must route lead-only forward",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, cursor.routingMode());
+                Assert.assertTrue(
+                        "a routed interval read must hold the slot pin",
                         isPublishedSlotReaderPinned(tier)
                 );
             }
+            Assert.assertFalse(
+                    "closing the interval read releases the slot pin",
+                    isPublishedSlotReaderPinned(tier)
+            );
 
-            // Disk-only does not mean wrong: the applied rows still come back.
+            // An unsized scan cannot report a size, and the interval cursor never can - so
+            // the read gives up LIMIT pushdown rather than reporting a wrong number.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertEquals("an interval-filtered read cannot size itself", -1, cursor.size());
+            }
+
+            // The rows themselves are unchanged - this fixture's slot carries no un-flushed
+            // lead, so the interval read's answer was already right and only its route
+            // changed. testIntervalFilteredReadServesLeadFromRam covers the lead itself.
             assertQuery("SELECT ts, x, rn FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -536,17 +564,18 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             }
             Assert.assertFalse("closing the routed frame cursor releases the pin", isPublishedSlotReaderPinned(tier));
 
-            // An interval filter is pushed into the scan, so the disk band would miss
-            // rows the unfiltered slot still holds: it can never route, and must not
-            // hold the pin.
+            // An interval filter is pushed into the scan. The frame path routes it lead-only
+            // and cuts the slot's band by the same intervals, so it pins like any other
+            // routed read.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'");
                     PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
             ) {
-                Assert.assertFalse("an interval-filtered read must not route",
+                Assert.assertTrue("an interval-filtered read must route",
                         cursor instanceof LiveViewPageFrameCursor);
-                Assert.assertFalse("a disk-only frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+                Assert.assertTrue("a routed interval frame read must hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
+            Assert.assertFalse("closing the interval frame read releases the pin", isPublishedSlotReaderPinned(tier));
 
             // A backward frame order cannot serve the SEAM cut - it takes the scan's
             // leading rows, which descending are the newest - but it routes lead-only
@@ -579,6 +608,36 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             } finally {
                 slot.setLvSeqTxn(seqTxn);
             }
+        });
+    }
+
+    @Test
+    public void testWindowJoinSlaveOverAnIntervalFilteredLiveViewSeesAppliedPrefix() throws Exception {
+        // The interval-filtered twin of testWindowJoinSlaveSeesAppliedPrefixNotLead, and it
+        // is not a variation - it reaches ConcurrentTimeFrameState through a DIFFERENT walk.
+        // hasIntervalFilter() selects buildFrameCacheEagerly(), which enumerates every frame
+        // the cursor has rather than pre-computing counts from partition metadata and
+        // walking one partition at a time. toPartition() - the hook that keeps the tier out
+        // of the other walk - is never called on this one, so the slot's synthetic frames
+        // went straight into a model indexed by partition and the join died on
+        // "Index 524287 out of bounds for length 16" (the slot frame's reserved partition
+        // index). Unreachable until an interval-filtered read started routing.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk x = 1, 2, 3; un-flushed lead x = 4, 5
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            // The probe's +/-10s window spans every LV row; the interval keeps x >= 2. So
+            // the sum names both what the interval admitted and which tier answered: 5 is
+            // disk's x = 2, 3 - the applied prefix - while 14 would mean the lead came too
+            // and 6 would mean the interval never applied.
+            StringSink sink = new StringSink();
+            printSql("SELECT p.ts, sum(l.x) agg FROM probe p " +
+                    "WINDOW JOIN (SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:02.000000Z') l " +
+                    "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
+                    "EXCLUDE PREVAILING ORDER BY p.ts", sink);
+            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t5\n", sink.toString());
         });
     }
 
@@ -1355,21 +1414,227 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testModeBDisabledForIntervalFilter() throws Exception {
+    public void testEmptyLeadBandSkipsRowsAndServesDiskInFull() throws Exception {
+        // A lead-only read whose slot carries NO lead: the band is empty, so the slot side
+        // has to read as exhausted on the first ask, in both directions, and the disk scan
+        // must still serve every row. This is the ordinary steady state - the refresh worker
+        // has just flushed - not a corner, and it is also the shape that separates "the band
+        // is empty" from "the band is cut": the skip's fast path reads the slot side off
+        // leadStart / slotRowCount rather than off the bands, and only an empty band keeps
+        // the two answers the same.
+        assertMemoryLeak(() -> {
+            createSeamSplitLv(); // 5 disk rows (x = 1..5); the slot's 2 rows are all overlap
+
+            // Forward, timestamp-pruned so it routes lead-only rather than seaming.
+            InnerRead fwd = readInner("SELECT rn FROM lv");
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, fwd.routingMode);
+            Assert.assertEquals("no lead means no in-mem row is served", 0, fwd.inMemRowsServed);
+            Assert.assertEquals("rn\n1\n2\n3\n4\n5\n", fwd.output);
+
+            // ...and the skip walks the disk band alone, landing where an empty slot band
+            // leaves nothing behind it.
+            InnerRead skipped = readInnerAfterSkip("SELECT rn FROM lv", 3);
+            Assert.assertEquals("rn\n4\n5\n", skipped.output);
+            Assert.assertEquals(0, skipped.inMemRowsServed);
+
+            // Descending: the empty band must not stop the disk scan that follows it. The
+            // ORDER BY pulls ts back into the LV factory's own projection, so the inner read
+            // prints both columns whatever the outer SELECT asks for.
+            InnerRead desc = readInner("SELECT rn FROM lv ORDER BY ts DESC");
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
+            Assert.assertEquals(0, desc.inMemRowsServed);
+            Assert.assertEquals("rn\tts\n" +
+                    "5\t2023-11-14T22:13:25.000002Z\n" +
+                    "4\t2023-11-14T22:13:25.000001Z\n" +
+                    "3\t2023-11-14T22:13:20.000003Z\n" +
+                    "2\t2023-11-14T22:13:20.000002Z\n" +
+                    "1\t2023-11-14T22:13:20.000001Z\n", desc.output);
+            InnerRead descSkipped = readInnerAfterSkip("SELECT rn FROM lv ORDER BY ts DESC", 2);
+            Assert.assertEquals("rn\tts\n" +
+                    "3\t2023-11-14T22:13:20.000003Z\n" +
+                    "2\t2023-11-14T22:13:20.000002Z\n" +
+                    "1\t2023-11-14T22:13:20.000001Z\n", descSkipped.output);
+        });
+    }
+
+    @Test
+    public void testIntervalCutsTheLeadIntoTwoBandsAndWalksBoth() throws Exception {
+        // Two intervals landing inside the LEAD with a gap between them cut its band into
+        // two, and the record path's walk has to cross that boundary. Nothing else here
+        // produces more than one slot band: an interval set whose windows fall on different
+        // TIERS still leaves the lead a single band, so a walk that stopped at the first one
+        // would pass every other arm in this file. The gap is what makes it a walk rather
+        // than a range.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk ts 01..03 (x=1..3), un-flushed lead ts 04, 05
+
+            // ts = 04 OR ts = 05 resolves to two point intervals a second apart, so they do
+            // not merge - the lead's band [3,5) cuts into [3,4) and [4,5).
+            final String bothLeadRows =
+                    "ts = '2026-05-12T00:00:04.000000Z' OR ts = '2026-05-12T00:00:05.000000Z'";
+            InnerRead fwd = readInner("SELECT ts, x, rn FROM lv WHERE " + bothLeadRows);
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, fwd.routingMode);
+            // Both lead rows, from RAM: a walk that stopped at the first band serves x = 4
+            // alone, and one that ignored the cut would drag disk's rows in too.
+            Assert.assertEquals(2, fwd.inMemRowsServed);
+            Assert.assertEquals(2, fwd.leadRowsServed);
+            Assert.assertEquals("ts\tx\trn\n" +
+                    "2026-05-12T00:00:04.000000Z\t4\t4\n" +
+                    "2026-05-12T00:00:05.000000Z\t5\t5\n", fwd.output);
+
+            // The descending walk crosses the same boundary the other way.
+            InnerRead desc = readInner("SELECT ts, x, rn FROM lv WHERE " + bothLeadRows + " ORDER BY ts DESC");
+            Assert.assertEquals(LiveViewRecordCursor.ROUTING_LEAD_ONLY_DESC, desc.routingMode);
+            Assert.assertEquals(2, desc.leadRowsServed);
+            Assert.assertEquals("ts\tx\trn\n" +
+                    "2026-05-12T00:00:05.000000Z\t5\t5\n" +
+                    "2026-05-12T00:00:04.000000Z\t4\t4\n", desc.output);
+
+            // And a band per tier - one interval on disk, one in the lead - which is the
+            // shape that looks like it covers the above and does not.
+            InnerRead split = readInner("SELECT ts, x, rn FROM lv WHERE " +
+                    "ts = '2026-05-12T00:00:02.000000Z' OR ts = '2026-05-12T00:00:05.000000Z'");
+            Assert.assertEquals(1, split.leadRowsServed);
+            Assert.assertEquals("ts\tx\trn\n" +
+                    "2026-05-12T00:00:02.000000Z\t2\t2\n" +
+                    "2026-05-12T00:00:05.000000Z\t5\t5\n", split.output);
+        });
+    }
+
+    @Test
+    public void testIntervalFilteredReadCutsTheLeadByTheInterval() throws Exception {
+        // The cut itself, at the boundary that decides it. The lead is x = 6 (ts ...3Z) and
+        // x = 7 (ts ...4Z), so an upper bound BETWEEN the two must take one and drop the
+        // other - which no band-level decision can fake: serving the lead whole gives 7,
+        // dropping it gives 5, and only a ts search over the slot's ladder gives 6.
+        assertMemoryLeak(() -> {
+            buildEvictedOverlapPlusLead();
+
+            // Bound above the whole lead: every lead row survives.
+            assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000004Z'",
+                    "x\n1\n2\n3\n4\n5\n6\n7\n");
+            // Bound INSIDE the lead: x = 6 is in, x = 7 is out. A cut that rounded either
+            // way lands on a whole-band answer instead.
+            assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z'",
+                    "x\n1\n2\n3\n4\n5\n6\n");
+            // Bound below the lead: it drops out entirely, and disk still serves in full.
+            assertLvQuery("SELECT x FROM lv WHERE ts <= '2023-11-14T22:13:25.000002Z'",
+                    "x\n1\n2\n3\n4\n5\n");
+            // The interval's ends are CLOSED, so a bound sitting exactly on a lead row's
+            // timestamp includes that row. Asserted from below as well, since the two ends
+            // come from different searches.
+            assertLvQuery("SELECT x FROM lv WHERE ts >= '2023-11-14T22:13:25.000003Z'",
+                    "x\n6\n7\n");
+            assertLvQuery("SELECT x FROM lv WHERE ts > '2023-11-14T22:13:25.000003Z'",
+                    "x\n7\n");
+        });
+    }
+
+    @Test
+    public void testIntervalFilteredReadMatchesOracleAcrossShapes() throws Exception {
+        // A from-scratch recompute over the base table is the oracle: whatever the tier
+        // does, an interval-filtered live-view read must return exactly what the same
+        // interval over the base returns. Covers the shapes that take different paths -
+        // bare (record path), filtered (the parallel filter's frame path), descending, and
+        // aggregated - against one bound that splits the lead.
+        assertMemoryLeak(() -> {
+            buildEvictedOverlapPlusLead();
+            final String bound = "'2023-11-14T22:13:25.000003Z'";
+            assertLvMatchesOracle(
+                    "SELECT ts, x FROM lv WHERE ts <= " + bound,
+                    "SELECT ts, x FROM base WHERE ts <= " + bound);
+            assertLvMatchesOracle(
+                    "SELECT ts, x FROM lv WHERE ts <= " + bound + " AND x > 1",
+                    "SELECT ts, x FROM base WHERE ts <= " + bound + " AND x > 1");
+            assertLvMatchesOracle(
+                    "SELECT ts, x FROM lv WHERE ts <= " + bound + " ORDER BY ts DESC",
+                    "SELECT ts, x FROM base WHERE ts <= " + bound + " ORDER BY ts DESC");
+            assertLvMatchesOracle(
+                    "SELECT count(), sum(x), max(x) FROM lv WHERE ts <= " + bound,
+                    "SELECT count(), sum(x), max(x) FROM base WHERE ts <= " + bound);
+            // A multi-interval filter: two disjoint windows, one landing on disk alone and
+            // one inside the lead. The slot's band cuts into two sub-bands, so this is the
+            // arm that proves the walk crosses a band boundary rather than stopping at the
+            // first one.
+            assertLvMatchesOracle(
+                    "SELECT ts, x FROM lv WHERE ts IN '2023-11-14T22:13:20;1s' OR ts IN '2023-11-14T22:13:25.000004Z;1s'",
+                    "SELECT ts, x FROM base WHERE ts IN '2023-11-14T22:13:20;1s' OR ts IN '2023-11-14T22:13:25.000004Z;1s'");
+        });
+    }
+
+    @Test
+    public void testIntervalFilteredReadServesLeadFromRamViaPageFrames() throws Exception {
+        // The table row phase 3 was supposed to fix and did not: an interval-filtered read
+        // was blind to the lead by construction, on every execution, forever. The filter
+        // here puts it on the parallel filter's FRAME path, so a filter worker reads the
+        // lead off the tier's own frame - the interval having been applied to that frame's
+        // band as well as to the disk scan.
+        assertMemoryLeak(() -> {
+            buildEvictedOverlapPlusLead();
+
+            // The plan proves the read takes both: an Async filter over frames, and a
+            // LiveView that routes. Without it the row assertions below could pass on the
+            // record path and test nothing about the frame cursor.
+            assertQuery("SELECT ts, x FROM lv WHERE ts > '2023-11-14T22:13:20.000002Z' AND x > 2")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true", "Interval forward scan");
+
+            // Every arm here must skip the leak check: its battery calls engine.clear(),
+            // which drops the live-view registry and with it the un-flushed lead, so a
+            // checked arm silently asserts the disk-only read instead. x = 6 and 7 are the
+            // un-flushed lead - they exist nowhere but the slot.
+            assertQuery("SELECT ts, x FROM lv WHERE ts > '2023-11-14T22:13:20.000002Z' AND x > 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:20.000003Z\t3\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n" +
+                            "2023-11-14T22:13:25.000002Z\t5\n" +
+                            "2023-11-14T22:13:25.000003Z\t6\n" +
+                            "2023-11-14T22:13:25.000004Z\t7\n");
+
+            // The interval and the residual filter compose: the interval bounds the scan
+            // and the slot's band, the filter runs over both tiers' frames.
+            assertQuery("SELECT ts, x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z' AND x % 2 = 0")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:20.000002Z\t2\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n" +
+                            "2023-11-14T22:13:25.000003Z\t6\n");
+
+            // Descending, the dashboard's shape: the interval-cut lead band goes out first,
+            // reversed, then the interval-filtered disk scan.
+            assertQuery("SELECT ts, x FROM lv WHERE ts <= '2023-11-14T22:13:25.000003Z' AND x > 2 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:25.000003Z\t6\n" +
+                            "2023-11-14T22:13:25.000002Z\t5\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n" +
+                            "2023-11-14T22:13:20.000003Z\t3\n");
+        });
+    }
+
+    @Test
+    public void testModeBRoutesIntervalFilterLeadOnly() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
-            // A WHERE on the designated timestamp pushes an interval into the disk
-            // scan, so the disk side returns only a sub-range while the slot stays
-            // unfiltered. Mode B must route disk-only, or it would over-return the
-            // rows the interval excludes.
+            // A WHERE on the designated timestamp pushes an interval into the disk scan, so
+            // the disk side returns only a sub-range. Mode B routes it lead-only and cuts
+            // the slot's band by the same interval; the seam is out, because the narrowed
+            // scan's trailing rows are no longer the slot's overlap band.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2023-11-14T22:13:25.000000Z'");
                     LiveViewRecordCursor cursor = openLvCursor(factory)
             ) {
-                Assert.assertFalse("interval-filtered scan must not be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("interval-filtered scan must route lead-only forward",
+                        LiveViewRecordCursor.ROUTING_LEAD_ONLY_FWD, cursor.routingMode());
             }
-            // The disk-only path returns exactly the in-interval rows.
+            // And it returns exactly the in-interval rows, no more: this fixture's slot
+            // carries no un-flushed lead, so the cut must not add anything to the disk scan.
             assertQuery("SELECT ts, x FROM lv WHERE ts >= '2023-11-14T22:13:25.000000Z' ORDER BY ts")
+                    .noLeakCheck()
                     .timestamp("ts")
                     .returns("ts\tx\n" +
                             "2023-11-14T22:13:25.000001Z\t4\n" +

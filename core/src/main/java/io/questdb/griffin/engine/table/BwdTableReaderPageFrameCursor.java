@@ -129,6 +129,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public LongList getIntervals() {
+        return partitionFrameCursor != null ? partitionFrameCursor.getIntervals() : null;
+    }
+
+    @Override
     public long getRemainingRowsInInterval() {
         return remainingRowsInInterval;
     }
@@ -146,6 +151,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public boolean hasActivePushdownFilter() {
         return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
 
     @Override

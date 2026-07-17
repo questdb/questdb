@@ -321,12 +321,13 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * {@link LiveViewPageFrameCursor}.
      * <p>
      * The frame stream's direction picks the routing MODE rather than disqualifying the
-     * read, as it does on the record path: an ascending stream seams (the disk band cut by
-     * ROW COUNT, then the whole slot), a descending one routes lead-only (the reversed lead
-     * band, then the disk scan in full). The seam cannot serve a descending stream - its
-     * cut takes the scan's LEADING rows, which descending are the newest rather than the
-     * oldest - and lead-only gives up the hot-tail skip in exchange for needing no cut at
-     * all.
+     * read, as it does on the record path: an ascending unfiltered stream seams (the disk
+     * band cut by ROW COUNT, then the whole slot), while a descending one - or one carrying
+     * an interval filter, which narrows the base scan out from under the cut - routes
+     * lead-only (the lead band, then the disk scan in full). The seam cannot serve either:
+     * its cut takes the scan's LEADING rows, which descending are the newest rather than the
+     * oldest, and which under an interval are no longer the slot's overlap at all. Lead-only
+     * gives up the hot-tail skip in exchange for needing no cut.
      * <p>
      * The {@code order} ARGUMENT decides that, and it is the only thing that does - which
      * is worth stating because the base factory's own {@code getScanDirection()} looks like

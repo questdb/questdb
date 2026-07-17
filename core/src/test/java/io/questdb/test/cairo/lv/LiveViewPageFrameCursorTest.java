@@ -289,6 +289,176 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalCutsTheLeadBandAndTilesEachSubBand() throws Exception {
+        // An interval-filtered scan routes lead-only and cuts the slot's band by the same
+        // intervals. Two disjoint intervals over the lead produce two sub-bands, each tiled
+        // by the row limit - so this pins the cut, the tiling and the walk across a band
+        // boundary at once. Serving the band whole would emit the rows between them.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(2, 2);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 4)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // disk: ts 1..4. slot: 12 rows, no overlap, so leadStart = 0 and the lead is
+                // ts 5..16 at slot rows [0, 12).
+                fillSlot(tier, slotIdx, disk, 12, 12);
+
+                // Two windows over the lead: ts 5..8 (rows [0,4)) and ts 13..16 (rows
+                // [8,12)). The stub's disk frames must match the same filter, so it hands
+                // back none of its own rows - the intervals start above the disk ladder.
+                final LongList intervals = intervals(5_000, 8_000, 13_000, 16_000);
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns()).withIntervals(intervals), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+
+                    final LongList frameRanges = new LongList();
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        frameRanges.add(frame.getPartitionLo());
+                        frameRanges.add(frame.getPartitionHi());
+                    }
+                    // Each sub-band tiles independently and the gap between them is never
+                    // published: a cut that merged the two would read [0,2,2,4,4,6,...].
+                    Assert.assertEquals("slot frame ranges", "[0,2,2,4,8,10,10,12]", frameRanges.toString());
+
+                    // Unsized, because the interval scan under it cannot size itself - and
+                    // calculateSize must still land on the 8 rows the bands cover.
+                    Assert.assertEquals(-1, cursor.size());
+                    cursor.toTop();
+                    Assert.assertEquals(8, calculateSize(cursor));
+
+                    // ...and every row still decodes off its own rebased frame.
+                    cursor.toTop();
+                    final LongList timestamps = drainTimestamps(cursor, metadataOf(identityTierColumns()));
+                    Assert.assertEquals("[5000,6000,7000,8000,13000,14000,15000,16000]", timestamps.toString());
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testIntervalOverABackwardOrderReversesTheCutBands() throws Exception {
+        // The two mode selectors compose: a descending interval-filtered stream serves the
+        // cut lead band newest-first and then the disk scan in full. The bands must go out
+        // in REVERSE order and each tile downward, or a descending consumer sees the
+        // stream jump back up at a band boundary.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(2, 2);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 4)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                fillSlot(tier, slotIdx, disk, 12, 12);
+
+                final LongList intervals = intervals(5_000, 8_000, 13_000, 16_000);
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, bwdDiskCursor(disk, identityTierColumns()).withIntervals(intervals), true, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+
+                    final LongList frameRanges = new LongList();
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        frameRanges.add(frame.getPartitionLo());
+                        frameRanges.add(frame.getPartitionHi());
+                    }
+                    // The HIGH band first, tiled down from its own top, then the low one.
+                    Assert.assertEquals("slot frame ranges", "[10,12,8,10,2,4,0,2]", frameRanges.toString());
+
+                    // The rows come back non-increasing across both band boundaries.
+                    cursor.toTop();
+                    final LongList timestamps = drainTimestamps(cursor, metadataOf(identityTierColumns()), true);
+                    Assert.assertEquals("[16000,15000,14000,13000,8000,7000,6000,5000]", timestamps.toString());
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testIntervalSelectingNoSlotRowStillServesDisk() throws Exception {
+        // An interval bounded below the lead leaves the slot's band EMPTY. That is the
+        // common dashboard-of-the-past shape, and it must serve the disk scan in full
+        // rather than degrade: an empty band list has to read as "slot exhausted" on the
+        // first ask, in both directions, not as an index that walks off its own list.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 6)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // slot rows: overlap ts 5, 6 then lead ts 7, 8.
+                fillSlot(tier, slotIdx, disk, 4, 2);
+
+                // ts <= 6 keeps every disk row and no lead row.
+                final LongList intervals = intervals(Long.MIN_VALUE, 6_000);
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 6).withIntervals(intervals), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 6);
+                    cursor.toTop();
+                    Assert.assertEquals(6, calculateSize(cursor));
+                }
+
+                // Descending: the empty band must not stop the disk scan from following it.
+                // A fresh pin, since the cursor above released the first one on close.
+                final int descSlotIdx = tier.acquireRead();
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, bwdDiskCursor(disk, identityTierColumns(), 6).withIntervals(intervals), true, tier, descSlotIdx, tier.getSlot(descSlotIdx), tier.getSymbolCache(), identityTierColumns());
+                    final LongList timestamps = drainTimestamps(cursor, metadataOf(identityTierColumns()), true);
+                    Assert.assertEquals(6, timestamps.size());
+                    Assert.assertEquals(6_000, timestamps.getQuick(0));
+                    Assert.assertEquals(1_000, timestamps.getQuick(5));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIntervalServesTheDiskScanInFullAndNeverSeams() throws Exception {
+        // The interval routes lead-only, which means the disk scan is served WHOLE. The
+        // seam would cut it at base.size() - leadStart, and there are two independent
+        // reasons that is wrong here: the narrowed scan's trailing rows are no longer the
+        // slot's overlap, and the scan reports no size to cut against at all. So this pins
+        // that every disk frame survives and only the lead sits on top of them.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 6)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // slot: 4 rows - overlap ts 5, 6 (disk rows [4, 6)) then lead ts 7, 8.
+                fillSlot(tier, slotIdx, disk, 4, 2);
+
+                // An interval taking everything: the disk scan keeps all 6 rows and the
+                // lead's 2 survive the cut, so 8 rows in ts order with no gap or repeat.
+                // A seam cut would have dropped disk rows 4 and 5 and served the overlap
+                // from the slot instead - the same 8 rows, so only the DISK band's own
+                // extent can tell the two apart. Hence the frame ranges below.
+                final LongList intervals = intervals(Long.MIN_VALUE, Long.MAX_VALUE);
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 3, 6).withIntervals(intervals), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+
+                    final LongList frameRanges = new LongList();
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        frameRanges.add(frame.getPartitionLo());
+                        frameRanges.add(frame.getPartitionHi());
+                    }
+                    // Both disk frames whole ([0,3) and [3,6)), then the lead band alone
+                    // ([2,4) of the slot). A seam would report [0,3,3,4,0,4].
+                    Assert.assertEquals("frame ranges", "[0,3,3,6,2,4]", frameRanges.toString());
+
+                    cursor.toTop();
+                    assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 8);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPartitionScopedWalkServesTheDiskTierOnly() throws Exception {
         // toPartition() scopes the walk to one of the LV table's disk partitions, which
         // drops the tier out of the read until the next toTop(). The slot is not a
@@ -675,6 +845,16 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         return new TestDiskPageFrameCursor(store, tierColumns, true, frameHis);
     }
 
+    // Flat CLOSED (lo, hi) timestamp pairs, the encoding an interval partition frame cursor
+    // hands back.
+    private static LongList intervals(long... bounds) {
+        final LongList intervals = new LongList();
+        for (long bound : bounds) {
+            intervals.add(bound);
+        }
+        return intervals;
+    }
+
     private static long calculateSize(LiveViewPageFrameCursor cursor) {
         // Mirrors PageFrameRecordCursorImpl.calculateSize: the consumer adds the current
         // interval's tail itself, then asks the cursor for the rest.
@@ -949,6 +1129,11 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         private final IntList projection = new IntList();
         private final LiveViewInMemoryBuffer store;
         private final ObjList<TestCommittedSymbolTable> symbolTables = new ObjList<>();
+        // The intervals this scan confines its rows to, or null for an unfiltered scan. A
+        // real interval cursor hands its frames back ALREADY narrowed, so a test setting
+        // these is responsible for handing frameHis that match them - the stub does not
+        // filter, exactly as the real one does not re-check.
+        private LongList intervals;
         private int nextFrame;
         // Counts the frames the cursor above asked for, so a test can prove it stopped at
         // the seam instead of pulling the hot tail and dropping it.
@@ -974,7 +1159,21 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
 
         @Override
         public void calculateSize(RecordCursor.Counter counter) {
-            // One partition, so everything left is already in the current interval.
+            if (intervals != null) {
+                // An unsized interval scan can still count itself, which is the only way a
+                // consumer above it ever learns its size. It counts the rows of the frames
+                // it has NOT handed out - not the store's, which an interval scan does not
+                // serve in full - and one partition means none of them sit behind
+                // getRemainingRowsInInterval.
+                for (int i = nextFrame; i < frameHis.length; i++) {
+                    final int idx = isDescending ? frameHis.length - 1 - i : i;
+                    counter.add(frameHis[idx] - (idx == 0 ? 0 : frameHis[idx - 1]));
+                }
+                nextFrame = frameHis.length;
+                return;
+            }
+            // Unfiltered: a sized cursor counts through size(), and its calculateSize is a
+            // no-op - AbstractFullPartitionFrameCursor never overrides the interface's.
         }
 
         @Override
@@ -1003,6 +1202,16 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             // partition-scoped path, where nothing reads it; the routing fence, which does,
             // runs in the factory against a real scan.
             return null;
+        }
+
+        @Override
+        public LongList getIntervals() {
+            return intervals;
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return intervals != null;
         }
 
         @Override
@@ -1040,7 +1249,10 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
 
         @Override
         public long size() {
-            return store.rowCount();
+            // An interval cursor cannot size itself without walking its partitions, so it
+            // hard-reports unknown - the behaviour the cursor above forks its whole disk
+            // band accounting on.
+            return intervals != null ? -1 : store.rowCount();
         }
 
         @Override
@@ -1060,6 +1272,14 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             nextFrame = 0;
             nextCalls = 0;
             remainingRowsInInterval = 0;
+        }
+
+        // Declares the intervals this scan confines its rows to. The caller is responsible
+        // for handing frameHis that already match them, exactly as a real interval cursor
+        // hands back frames it has already narrowed.
+        private TestDiskPageFrameCursor withIntervals(LongList intervals) {
+            this.intervals = intervals;
+            return this;
         }
 
         private void computeFrame(long lo, long hi) {

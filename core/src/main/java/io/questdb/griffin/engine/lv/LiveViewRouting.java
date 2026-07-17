@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
@@ -48,8 +49,9 @@ import org.jetbrains.annotations.Nullable;
  * <ul>
  *   <li>the projection resolves against the tier's columns
  *   ({@link #buildTierColumnMapping});</li>
- *   <li>the disk scan is a plain, unfiltered table scan that exposes an
- *   LV-table seqTxn ({@link #diskReaderSeqTxn});</li>
+ *   <li>the disk scan is a table scan that exposes an LV-table seqTxn and either applies no
+ *   filter of its own or applies one the read can reproduce over the slot
+ *   ({@link #diskReaderSeqTxn}, {@link #diskIntervals});</li>
  *   <li>the slot holds rows and is stamped with that same seqTxn
  *   ({@link #isFenced}).</li>
  * </ul>
@@ -102,20 +104,47 @@ final class LiveViewRouting {
     }
 
     /**
+     * The intervals a routed read must apply to the slot's band, or null when it must apply
+     * none. Only meaningful for a cursor {@link #diskReaderSeqTxn} did not answer
+     * {@code LONG_NULL} for, which is what establishes that a reported interval filter also
+     * describes itself.
+     *
+     * @see LiveViewIntervalBands
+     */
+    static @Nullable LongList diskIntervals(@Nullable PageFrameCursor frameCursor) {
+        return frameCursor instanceof TablePageFrameCursor tpfc && tpfc.hasIntervalFilter()
+                ? tpfc.getIntervals()
+                : null;
+    }
+
+    /**
      * Returns the disk scan's LV-table seqTxn, or {@code LONG_NULL} when the scan is not a
-     * plain FULL table-reader scan we can fence cheaply.
+     * table-reader scan we can fence cheaply and reproduce over the slot.
      * <p>
-     * Routing assumes the disk side yields every LV-table row below the seam, so any scan
-     * shape that under-returns rows must disengage the fence (fail safe to disk-only): an
-     * interval filter (e.g. a WHERE on the designated timestamp, which the optimiser pushes
-     * into the scan) makes the disk band miss rows while the unfiltered slot over-returns,
-     * and an active parquet pushdown filter under-returns the same way. A non-table cursor
-     * (a synthetic or external frame source) carries no seqTxn at all.
+     * Routing assumes the disk side yields exactly the LV-table rows the slot's band is cut
+     * against, so any scan shape that under-returns rows relative to that band must
+     * disengage the fence (fail safe to disk-only). Two shapes do:
+     * <ul>
+     *   <li>an <b>interval filter</b> - a WHERE on the designated timestamp, which the
+     *   optimiser pushes into the scan. The disk side then yields only the rows inside the
+     *   intervals, so an unfiltered slot band would over-return. This is admissible only
+     *   because the cursor also hands back the intervals themselves
+     *   ({@link #diskIntervals}), which lets the read cut the slot's band by the same
+     *   filter; a cursor reporting an interval filter it cannot describe stays disk-only.
+     *   Note this permits the interval but does NOT permit the seam: the seam's cut takes
+     *   the disk scan's trailing {@code leadStart} rows, an identity an interval breaks by
+     *   narrowing the scan beneath the wrapper. Both paths route an interval-filtered read
+     *   lead-only.</li>
+     *   <li>an <b>active parquet pushdown filter</b> - row-group pruning drops rows the
+     *   frames still count, so the scan under-returns with nothing to reproduce the pruning
+     *   from.</li>
+     * </ul>
+     * A non-table cursor (a synthetic or external frame source) carries no seqTxn at all.
      */
     static long diskReaderSeqTxn(@Nullable PageFrameCursor frameCursor) {
         if (frameCursor instanceof TablePageFrameCursor tpfc
-                && !tpfc.hasIntervalFilter()
-                && !tpfc.hasActivePushdownFilter()) {
+                && !tpfc.hasActivePushdownFilter()
+                && (!tpfc.hasIntervalFilter() || tpfc.getIntervals() != null)) {
             final TableReader reader = tpfc.getTableReader();
             if (reader != null) {
                 return reader.getSeqTxn();
