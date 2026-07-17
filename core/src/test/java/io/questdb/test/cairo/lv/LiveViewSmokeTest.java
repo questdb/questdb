@@ -21190,6 +21190,99 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingDropLiveViewRemovesCheckpointsDir() throws Exception {
+        // Section 11.7's last lifecycle item, and the one the design flagged as
+        // "argued to collapse but NOT proven". The argument for collapsing it was
+        // that DROP LIVE VIEW needs no _ring special-casing because _checkpoints/
+        // rides the recursive table-directory removal, and that
+        // testDropLiveViewPurgesTableFiles already covers it. The first half is
+        // true. The second is not, and that gap is why this test exists.
+        //
+        // That test's only on-disk assertion is assertNotEquals(TABLE_EXISTS,...),
+        // and TableUtils.exists probes for _txn ALONE (:2727-2737) - a table
+        // directory holding nothing but _checkpoints/ reads TABLE_RESERVED and
+        // passes. So it pins that the partition data goes and says nothing
+        // whatever about the ring. It could not have said anything either: its
+        // view seals no .cp, so the directory it declines to enumerate is empty.
+        //
+        // The removal is type-driven rather than name-driven, which is what makes
+        // it correct and what makes it worth pinning: cleanDroppedTableDirectory
+        // (:260-301) keeps a subdirectory only when CairoKeywords.isTxnSeq or
+        // isWal matches, and both test the first byte ('t' / 'w') against
+        // _checkpoints' '_', so it falls to a recursive unlinkOrRemove. Nothing
+        // in that path names the ring, and nothing needs to - which is precisely
+        // the claim a reader cannot verify without this test.
+        //
+        // And the collapse argument named the WRONG mechanism, which the mutation
+        // run is the only way to see. It credits the recursive rmdir - i.e.
+        // WalPurgeJob's (:259), the second of the two stages. That rmdir does not
+        // carry this test at all: stubbing it to fullyDeleted=false leaves this
+        // GREEN, because the view's txn_seq/ and wal1/ shells outlive the purge
+        // loop and the directory terminates at TABLE_RESERVED - the very state
+        // the design flagged as the reason to doubt the collapse. It is stage
+        // one's unlinkOrRemove that removes _checkpoints/, and neutering that
+        // branch alone is what reddens the assertion below. So the doubt was
+        // right, the verdict is right, and the reason was wrong: the rmdir that
+        // was supposed to make this free never runs here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 20; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-05-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+            }
+
+            // The ring must be populated BEFORE the drop, or the assertion below
+            // holds against an empty directory and proves nothing - the trap
+            // testDropLiveViewPurgesTableFiles fell into from the other side.
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+            Assert.assertEquals(2, countCheckpointFiles(lv));
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            readRingManifest(lv, manifest);
+            Assert.assertEquals(2, manifest.getEntryCount());
+
+            execute("DROP LIVE VIEW lv");
+            // Both jobs, in turn, as testDropLiveViewPurgesTableFiles drives them:
+            // ApplyWal2TableJob reclaims the table's own files and WalPurgeJob
+            // then rmdir's the shell and deregisters the token.
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                for (int i = 0; i < 8; i++) {
+                    drainWalQueue();
+                    purgeJob.drain(0);
+                }
+            }
+
+            // Asserted on the directory rather than on TableUtils.exists, because
+            // the shell surviving at TABLE_RESERVED is a tolerated outcome and a
+            // leaked _checkpoints/ is not. Under a name-driven removal the .cp
+            // window snapshots - the largest thing the view owns - would outlive
+            // the view itself, on every drop, with nothing to ever collect them.
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot())
+                        .concat(lvToken)
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                Assert.assertFalse(
+                        "_checkpoints/ and the _ring manifest in it must not survive DROP LIVE VIEW [path=" + path + ']',
+                        ff.exists(path.$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueReportsCheckpointRingRecovery() throws Exception {
         // The catalogue half of the acceptance signal. A restart that trusted the
         // manifest must be legible without the logs: the entries the ring came
