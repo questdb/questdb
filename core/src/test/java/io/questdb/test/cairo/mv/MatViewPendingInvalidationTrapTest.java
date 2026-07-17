@@ -35,10 +35,15 @@ import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.cairo.mv.MatViewTimerJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -2960,6 +2965,75 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerSchedulesRefreshDespiteOwnerOnlyMarker() throws Exception {
+        assertMemoryLeak(() -> {
+            // A non-immediate view also carries an UPDATE_REFRESH_INTERVALS_TYPE timer (default period
+            // 15s), which would otherwise come due on the same 1-minute tick as the incremental-refresh
+            // timer and independently wake the parked owner from its own holder, muddying the
+            // exactly-once oracle below. Push it out past this test's timeline so only the intended
+            // incremental-refresh timer fires.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "1h");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
+            createBasePriceTable();
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH EVERY 1m START '2024-09-10T00:00:00.000000Z' AS (" +
+                    "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h" +
+                    ") PARTITION BY DAY");
+            drainWalQueue();
+            final MatViewFixture fixture = resolvePriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+
+            // Baseline: the timer is the only refresh driver for an EVERY view.
+            insertBasePriceRows();
+            drainWalQueue();
+            currentMicros += Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // An owner-only marker (a parked REFRESH FULL request, reason facet null) must not
+            // gate timer scheduling: MatViewTimerJob keys on hasPendingInvalidationReason().
+            // The retry-redelivery gate in processRefreshRetries rides the same predicate.
+            state.markAsPendingFullRefreshForTesting();
+
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.999, '2024-09-10T15:00')");
+            drainWalQueue();
+            // Reset the engine-wide FULL-enqueue counter right before the drain under test: the
+            // baseline phase above enqueued none, but resetting keeps this delta isolated to what
+            // follows regardless.
+            engineFullRefreshEnqueues.set(0);
+            currentMicros += Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            // The insert becomes visible only through the timer-scheduled incremental refresh -- the
+            // owner-only marker did not block scheduling. That incremental holder's own finalize then
+            // wakes the parked FULL owner (any latch release re-reads the current marker, regardless of
+            // when it was set) and the same drain executes the woken FULL_REFRESH task, consuming the
+            // owner. The count oracle pins that the wake fired exactly once, distinguishing "the owner
+            // executed" from "the owner was silently dropped" -- the property a plain marker-survives
+            // check cannot observe, since a single drain call always runs the wake-enqueued task too.
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            Assert.assertEquals(
+                    "the incremental holder's finalize must wake the parked owner exactly once",
+                    1,
+                    engineFullRefreshEnqueues.get()
+            );
+            Assert.assertFalse("the woken FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateRefreshIntervalsHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -3004,6 +3078,47 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
                             price_1h\tbase_price\tinvalid\tupdate operation
                             """);
+        });
+    }
+
+    @Test
+    public void testWalPurgeTreatsOwnerOnlyMarkerAsValidView() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            // Leave the view lagging: a new base commit applied to the base table only.
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.777, '2024-09-10T16:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseToken);
+
+            // Control: a plain valid lagging view clamps the purge frontier; the WAL survives.
+            engine.releaseInactive();
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertTrue("plain valid lagging view must retain the base WAL", baseWalDirExists(baseToken));
+
+            // An owner-only marker must purge identically: WalPurgeJob's invalid fold keys on
+            // hasPendingInvalidationReason(), so a parked FULL owner is not "invalid" and the
+            // lagging-view clamp still applies.
+            state.markAsPendingFullRefreshForTesting();
+            engine.releaseInactive();
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertTrue("owner-only marker must not lift the purge clamp", baseWalDirExists(baseToken));
+            clearPendingInvalidation(state);
+
+            // Falsifiability: once the view catches up, the same purge deletes the WAL.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            engine.releaseInactive();
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+            Assert.assertFalse("a caught-up view must release the WAL", baseWalDirExists(baseToken));
         });
     }
 
@@ -3092,6 +3207,13 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             while (stateStore.tryDequeueRefreshTask(unexpectedTask)) {
                 unexpectedTask.clear();
             }
+        }
+    }
+
+    private boolean baseWalDirExists(TableToken baseToken) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(baseToken).concat(WalUtils.WAL_NAME_BASE).put(1);
+            return configuration.getFilesFacade().exists(path.$());
         }
     }
 
