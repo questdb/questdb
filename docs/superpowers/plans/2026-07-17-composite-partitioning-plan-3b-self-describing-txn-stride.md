@@ -66,7 +66,32 @@
 
 ---
 
-### Task 3: Static `TxReader.findPartitionRawIndex` stride-correctness (PartitionOverwriteControl)
+### Task 3: Marker authoritative from creation — write marker at create + symmetric read (fixes reused-reader stale stride)
+
+**Why (found in Task 2):** Task 1's read is *upgrade-only* (marker `0` → leave stride as-is) because `createTxn` writes a literal `0` marker even for composite tables (their marker only becomes `8` on first commit). Consequence: a `TxReader` REUSED across tables (`TableStorageRecordCursorFactory` confirmed; `ColumnPurgeOperator`/`DatabaseCheckpointAgent` are candidates) upgrades to stride 8 on a composite table, then reads a subsequent PLAIN table at the stale stride 8 → **under-counts** (repro: plain reports 1 instead of 3). Fix: write the correct marker at CREATE and make the read symmetric, so the marker is authoritative per-table from creation — removing the create-window that forced upgrade-only.
+
+**Files:**
+- Modify: `core/src/main/java/io/questdb/cairo/TableUtils.java` — `createTxn` (the initial `_txn` base-header write, ~`:839`, currently `putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, 0)`) must write the table's real stride marker via `partitionStrideMarker(...)`. Thread composite-ness (a `boolean composite` or the stride) from `createTxn`'s caller(s) — the CREATE TABLE path, which has the partition spec (`git grep` the callers and update them).
+- Modify: `core/src/main/java/io/questdb/cairo/TxReader.java` — `unsafeLoadBaseOffset` marker read: replace upgrade-only with SYMMETRIC (`marker == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE` → composite stride; else plain stride). Safe now because a composite `_txn` carries marker `8` from creation, so the read no longer stomps an uncommitted-composite's stride.
+- Test: `CompositeTxnConsumerSitesTest` (reuse repro) + `CompositeTxStrideMarkerTest` (create-time marker == 8).
+
+**Interfaces:**
+- Consumes: Task 1 marker infra (`TX_BASE_OFFSET_PARTITION_STRIDE_32`, `TableUtils.partitionStrideMarker`).
+- Produces: the marker is authoritative from creation for every `TxReader`, including readers reused across tables. `setComposite`/`reloadAttachedPartitionsAfterComposite` REMAIN (they now agree with the marker); do NOT remove them here (keep churn minimal) — just confirm they still agree.
+
+- [ ] **Step 1: Write the failing tests** — (a) reuse repro: read a composite table (3 partitions) THEN a plain table (3 partitions) through ONE reused `TxReader` (or the `table_storage()` SQL path across both tables in one query); assert the plain table reports 3, not an under-count. (b) create-time marker: `CREATE` a composite table and, WITHOUT committing any partition, assert the raw marker byte on disk == `8`.
+
+- [ ] **Step 2: Run** — FAIL: (a) plain under-counts (~1) at the stale stride; (b) create-time marker is `0`.
+
+- [ ] **Step 3: Implement** — `createTxn` writes `partitionStrideMarker(compositeStride)` (thread composite-ness from its callers); `unsafeLoadBaseOffset` symmetric read.
+
+- [ ] **Step 4: Run** — PASS. Regression MUST stay green: full `Composite*` suite + `TableReaderTest` + `TxnTest`. Critically confirm `CompositeTxCellTest#testStrideDerivedFromComposite` and the writer create-window tests still pass — symmetric read must NOT re-break them (it won't, because `createTxn` now writes marker 8 for composite, so the uncommitted-create window reads 8). If any writer create-window test regresses, STOP and report (means a composite `_txn` create path was missed by the marker write).
+
+- [ ] **Step 5: Commit** — `fix(cairo): _txn stride marker authoritative from creation (symmetric read) — fixes reused-reader stale composite stride`
+
+---
+
+### Task 4: Static `TxReader.findPartitionRawIndex` stride-correctness (PartitionOverwriteControl)
 
 **Files:**
 - Modify: `core/src/main/java/io/questdb/cairo/TxReader.java` — the static `findPartitionRawIndex` (`~:904`) hardcodes `LONGS_PER_TX_ATTACHED_PARTITION_MSB`; make it read the stride marker from the mapped base header, or take an explicit stride/`longsPerAttachedPartition` parameter.
@@ -89,7 +114,7 @@
 
 ---
 
-### Task 4: Broadened dormant-composite end-to-end == 1-D (capstone)
+### Task 5: Broadened dormant-composite end-to-end == 1-D (capstone)
 
 **Files:** Test-only: `CompositeEndToEndTest.java` (SQL-level, fluent `assertQuery`/`assertSql`). Add a fix only if a path still diverges.
 
@@ -115,10 +140,10 @@
 
 ## Self-Review
 
-**Spec coverage:** the addendum's marker (write/read/byte-identity) → Task 1; reader-authoritative + the six misreading sites → Task 2 (self-heal via the marker) + Task 4 (end-to-end proof); the static-helper exception → Task 3; dormant equivalence → Task 4.
+**Spec coverage:** the addendum's marker (write/read/byte-identity) → Task 1; reader-authoritative + the six misreading sites → Task 2 (self-heal via the marker) + Task 5 (end-to-end proof); reused-reader stale-stride fix (marker authoritative from creation, symmetric read) → Task 3; the static-helper exception → Task 4; dormant equivalence → Task 5.
 
 **Byte-identity:** marker `0`=plain preserves plain `_txn` bytes; proven field-level in Task 1 and end-to-end in Task 4 (plain twin comparison).
 
-**Ordering:** Task 1 fixes the read ordering (marker before partition-region division). Task 2 depends on Task 1 (removes the now-redundant reader threading only after the marker is authoritative). Task 3 is independent (static helper). Task 4 is the capstone after 1–3.
+**Ordering:** Task 1 fixes the read ordering (marker before partition-region division). Task 2 depends on Task 1. Task 3 (marker authoritative from creation — symmetric read) supersedes Task 1's upgrade-only workaround and fixes reused-reader stale stride; do it before the capstone. Task 4 is independent (static helper). Task 5 is the capstone after 1–4.
 
 **Type consistency:** marker is an `int` at `TX_BASE_OFFSET_PARTITION_STRIDE_32`; values `0`/`8` map to `longsPerAttachedPartition` `4`/`8` and `attachedPartitionsShl` `2`/`3` — the same fields Plan 3 Task 1 introduced.
