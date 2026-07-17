@@ -998,9 +998,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         boolean isFullRefreshDeferred = false;
-        // Set once the auth-refusal catch below defers this invocation's own refused owner; the
+        // Set once the auth-refusal catch below defers this invocation's own refused owner, or once
+        // the rename branch below re-enqueues this invocation's owner under the updated token; the
         // finally hands it to finalizeAndUnlock0, which suppresses only that owner's wake.
-        Object authRefusedOwner = null;
+        Object suppressedFullRefreshOwner = null;
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
             if (baseTableToken == null) {
@@ -1096,7 +1097,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // The refresh gates key on hasPendingInvalidationReason(), so an owner-only marker
                 // does not freeze the view: the next ordinary refresh holder IS the redelivery.
                 isFullRefreshDeferred = true;
-                authRefusedOwner = fullRefreshOwner;
+                suppressedFullRefreshOwner = fullRefreshOwner;
                 LOG.debug().$("materialized view full refresh deferred, node is read-only [view=").$(viewToken).I$();
                 return false;
             }
@@ -1104,7 +1105,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // throw; clearing ownership in finally would otherwise lose both marker and task.
             isFullRefreshDeferred = true;
             if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
-                // Full refresh is re-scheduled.
+                // Full refresh is re-scheduled. The only handleErrorRetryRefresh branch reachable from
+                // here is the rename branch (the catch above intercepts authorization errors first),
+                // and it re-enqueued this task's owner for the updated token. That re-enqueue is the
+                // single authoritative redelivery: hand the owner to the finally so finalizeAndUnlock0
+                // does not queue a duplicate wake for the stale token. A newer FULL publication minted
+                // a different owner and still wakes normally.
+                suppressedFullRefreshOwner = fullRefreshOwner;
                 return false;
             }
             isFullRefreshDeferred = false;
@@ -1125,14 +1132,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // A base invalidation newer than the full snapshot, from another base token/epoch, or without
                 // txn provenance remains pending; the post-release handoff wakes it. A successful full pump
                 // consumed only a known marker covered by its fixed reader. finalizeAndUnlock0 additionally
-                // suppresses the wake for this invocation's own auth-refused owner (authRefusedOwner):
-                // re-queueing that one self-feeds against a sticky refusal. A newer FULL publication minted
-                // a different owner and wakes normally. The nested finally keeps the unlock unconditional:
-                // clearPendingFullRefresh allocates a replacement marker when a reason shares it, and a
-                // clear that throws must not leave the latch held (the surviving owner facet is then
+                // suppresses the wake for this invocation's own handed-off owner (suppressedFullRefreshOwner):
+                // the auth-refusal branch retains it for out-of-band redelivery, and the rename branch already
+                // re-enqueued it for the updated token, so re-queueing either would double-feed. A newer FULL
+                // publication minted a different owner and wakes normally. The nested finally keeps the unlock
+                // unconditional: clearPendingFullRefresh allocates a replacement marker when a reason shares it,
+                // and a clear that throws must not leave the latch held (the surviving owner facet is then
                 // redelivered by the handoff and re-runs once, which is bounded and safe). Same pattern as
                 // clearBlockedFullRefresh.
-                finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, authRefusedOwner);
+                finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, suppressedFullRefreshOwner);
             }
         }
 
@@ -1267,6 +1275,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
                             stateStore.enqueueIncrementalRefresh(updatedToken);
                         } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
+                            // fullRefresh suppresses its finalize owner wake when this branch fires (the
+                            // re-enqueue below is the single authoritative redelivery of the owner under
+                            // the updated token).
                             stateStore.enqueueFullRefresh(updatedToken, refreshTask.fullRefreshOwner);
                         } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                             stateStore.enqueueRangeRefresh(updatedToken, refreshTask.rangeFrom, refreshTask.rangeTo);

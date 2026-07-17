@@ -2326,6 +2326,53 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameDuringFullRefreshRedeliversOwnerExactlyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            engineFullRefreshEnqueues.set(0);
+            engine.getMatViewStateStore().enqueueFullRefresh(viewToken, null);
+            Assert.assertEquals(1, engineFullRefreshEnqueues.get());
+
+            // Rename the view before the job dequeues: the dequeued task carries a stale token,
+            // the refresh path throws table-does-not-exist, and handleErrorRetryRefresh's rename
+            // branch re-enqueues the task's owner for the updated token. That re-enqueue is the
+            // single authoritative redelivery; the finalize owner wake must be suppressed.
+            // RENAME TABLE is rejected for materialized views via SQL (checkMatViewModification),
+            // so this uses the storage-level rename mechanism instead, same as
+            // MatViewTest#testMatViewTableRename.
+            final TableToken renamedToken = viewToken.renamed("price_1h_renamed");
+            engine.applyTableRename(viewToken, renamedToken);
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                drainMatViewQueue(job);
+                drainWalQueue();
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+
+            Assert.assertEquals(
+                    "the rename redelivery must be the only extra FULL enqueue; 3 means the finalize owner wake duplicated it",
+                    2,
+                    engineFullRefreshEnqueues.get()
+            );
+            Assert.assertFalse(
+                    "the redelivered FULL must consume its owner",
+                    state.hasPendingFullRefreshOwnerForTesting()
+            );
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h_renamed\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testResumeWalRedeliversSuspendedInvalidation() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
