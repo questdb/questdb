@@ -20385,10 +20385,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // nothing and refreshInstance is never called - Step 11 fixed the inner gate
         // and left this outer one. Its existing pair does not notice, because
         // rewinding _lv.s makes the view LAG the base, and lag is its own selection
-        // reason. The cost is deferral, not corruption: refreshInstance runs the
+        // reason. The cost is deferral and nothing worse: refreshInstance runs the
         // restore block ahead of the drain, so the first commit to arrive recovers
-        // before it consumes anything, which is what this test asserts. Do not read
-        // the deferral as a contract; see the handoff's Step 14 finding.
+        // before it consumes anything, which is what this test asserts.
+        //
+        // That the deferral is harmless is not free, and was not always true. The
+        // wait also leaves every WalPurgeJob floor arm unstamped, which released
+        // the base WAL this restore replays and invalidated the view; the startup
+        // read pins the floor at the manifest's newest entry to hold it across the
+        // wait. See testCheckpointRingDeferredRestoreHoldsWalPurgeFloor. Do not
+        // read the deferral itself as a contract.
         final AtomicBoolean failCheckpointDirScan = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
