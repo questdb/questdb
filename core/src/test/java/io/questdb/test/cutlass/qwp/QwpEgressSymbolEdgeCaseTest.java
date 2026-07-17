@@ -24,12 +24,22 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
+import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.ObjList;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,6 +57,7 @@ import org.junit.Test;
  *   <li>4-byte UTF-8 via surrogate pairs (emoji / supplementary plane);</li>
  *   <li>long symbol values (dict heap growth);</li>
  *   <li>all-NULL / single-value columns (bitmap edge cases + tiny dict);</li>
+ *   <li>native-key and dynamic-text symbol-table paths;</li>
  *   <li>multi-batch streaming: schema reference + delta section coexistence;</li>
  *   <li>fresh connection gets a fresh dict (server state isolation).</li>
  * </ul>
@@ -109,6 +120,59 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
                 }
                 Assert.assertEquals(5, rowCount[0]);
                 Assert.assertEquals(5, nullCount[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testDynamicSymbolUsesTextWithoutMaterializingKeys() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+
+            final SymbolTable dynamicSymbolTable = new SymbolTable() {
+                @Override
+                public CharSequence valueBOf(int key) {
+                    throw new AssertionError("dynamic symbol table key path must not be used");
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    throw new AssertionError("dynamic symbol table key path must not be used");
+                }
+            };
+            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return dynamicSymbolTable;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return dynamicSymbolTable;
+                }
+            };
+            final Record record = new Record() {
+                @Override
+                public int getInt(int col) {
+                    throw new AssertionError("dynamic symbol must be read through getSymA");
+                }
+
+                @Override
+                public CharSequence getSymA(int col) {
+                    return "dynamic_value";
+                }
+            };
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, symbolTableSource, dict);
+                batch.appendRow(record);
+                batch.appendRow(record);
+                Assert.assertEquals(2, batch.getRowCount());
+                Assert.assertEquals("the connection dictionary still deduplicates text values", 1, dict.size());
             }
         });
     }
@@ -488,6 +552,113 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
                     });
                 }
                 Assert.assertEquals(1000, count[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testStaticSymbolTableWrappedInFunctionUsesNativeKeyPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+
+            final int[] valueOfCalls = {0};
+            final StaticSymbolTable staticTable = new StaticSymbolTable() {
+                @Override
+                public boolean containsNullValue() {
+                    return false;
+                }
+
+                @Override
+                public int getSymbolCount() {
+                    return 1;
+                }
+
+                @Override
+                public int keyOf(CharSequence value) {
+                    return "wrapped_static".contentEquals(value) ? 0 : VALUE_NOT_FOUND;
+                }
+
+                @Override
+                public CharSequence valueBOf(int key) {
+                    return valueOf(key);
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    valueOfCalls[0]++;
+                    return key == 0 ? "wrapped_static" : null;
+                }
+            };
+            final SymbolFunction wrapper = new SymbolFunction() {
+                @Override
+                public int getInt(Record rec) {
+                    return rec.getInt(0);
+                }
+
+                @Override
+                public StaticSymbolTable getStaticSymbolTable() {
+                    return staticTable;
+                }
+
+                @Override
+                public CharSequence getSymbol(Record rec) {
+                    return rec.getSymA(0);
+                }
+
+                @Override
+                public CharSequence getSymbolB(Record rec) {
+                    return rec.getSymB(0);
+                }
+
+                @Override
+                public boolean isSymbolTableStatic() {
+                    return true;
+                }
+
+                @Override
+                public CharSequence valueBOf(int key) {
+                    return staticTable.valueBOf(key);
+                }
+
+                @Override
+                public CharSequence valueOf(int key) {
+                    return staticTable.valueOf(key);
+                }
+            };
+            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return wrapper;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return wrapper;
+                }
+            };
+            final Record record = new Record() {
+                @Override
+                public int getInt(int col) {
+                    return 0;
+                }
+
+                @Override
+                public CharSequence getSymA(int col) {
+                    throw new AssertionError("wrapped static symbol must use the native-key path");
+                }
+            };
+
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, symbolTableSource, dict);
+                batch.appendRow(record);
+                batch.appendRow(record);
+                Assert.assertEquals(2, batch.getRowCount());
+                Assert.assertEquals(1, dict.size());
+                Assert.assertEquals("native key must resolve only on first sight", 1, valueOfCalls[0]);
             }
         });
     }

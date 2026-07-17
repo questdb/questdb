@@ -87,8 +87,14 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         return base;
     }
 
-    public ObjList<Function> getFunctions() {
-        return functions;
+    @TestOnly
+    public Function getFunction(int index) {
+        return functions.getQuick(index);
+    }
+
+    @TestOnly
+    public int getFunctionCount() {
+        return functions.size();
     }
 
     @TestOnly

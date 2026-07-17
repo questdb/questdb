@@ -184,8 +184,11 @@ public class UnionSymbolProjectionConstructionLeakTest extends AbstractCairoTest
 
         @Override
         public void close() {
-            allocation.close();
-            getArg().close();
+            try {
+                allocation.close();
+            } finally {
+                super.close();
+            }
         }
     }
 }

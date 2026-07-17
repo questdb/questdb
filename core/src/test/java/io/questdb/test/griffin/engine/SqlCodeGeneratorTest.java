@@ -8556,7 +8556,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertEquals(
                         "only the SYMBOL column should have a projection function",
                         1,
-                        projection.getFunctions().size()
+                        projection.getFunctionCount()
                 );
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -9789,19 +9789,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     private static ObjList<CastStrToSymbolFunctionFactory.Func> findUnionSymbolCasts(RecordCursorFactory factory) {
         final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = new ObjList<>();
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof VirtualRecordCursorFactory || current instanceof UnionSymbolCastRecordCursorFactory) {
-                final ObjList<Function> functions = current instanceof VirtualRecordCursorFactory
-                        ? ((VirtualRecordCursorFactory) current).getFunctions()
-                        : ((UnionSymbolCastRecordCursorFactory) current).getFunctions();
+            if (current instanceof VirtualRecordCursorFactory) {
+                final ObjList<Function> functions = ((VirtualRecordCursorFactory) current).getFunctions();
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     final Function function = functions.getQuick(i);
                     if (function instanceof CastStrToSymbolFunctionFactory.Func) {
                         symbolCasts.add((CastStrToSymbolFunctionFactory.Func) function);
                     }
                 }
-                if (symbolCasts.size() > 0) {
-                    return symbolCasts;
+            } else if (current instanceof UnionSymbolCastRecordCursorFactory) {
+                final UnionSymbolCastRecordCursorFactory projection = (UnionSymbolCastRecordCursorFactory) current;
+                for (int i = 0, n = projection.getFunctionCount(); i < n; i++) {
+                    final Function function = projection.getFunction(i);
+                    if (function instanceof CastStrToSymbolFunctionFactory.Func) {
+                        symbolCasts.add((CastStrToSymbolFunctionFactory.Func) function);
+                    }
                 }
+            }
+            if (symbolCasts.size() > 0) {
+                return symbolCasts;
             }
         }
         Assert.fail("could not find the union symbol casts in the factory chain");

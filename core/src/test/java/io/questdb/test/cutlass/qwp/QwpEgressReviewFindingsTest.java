@@ -25,10 +25,6 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
@@ -36,7 +32,6 @@ import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressRequestDecoder;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -60,166 +55,6 @@ import java.util.Arrays;
  * keeps them useful as regression guards.
  */
 public class QwpEgressReviewFindingsTest {
-
-    @Test
-    public void testStaticSymbolTableWrappedInFunctionUsesNativeKeyPath() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
-            QwpEgressColumnDef def = new QwpEgressColumnDef();
-            def.of("s", ColumnType.SYMBOL);
-            cols.add(def);
-
-            final int[] valueOfCalls = {0};
-            final StaticSymbolTable staticTable = new StaticSymbolTable() {
-                @Override
-                public boolean containsNullValue() {
-                    return false;
-                }
-
-                @Override
-                public int getSymbolCount() {
-                    return 1;
-                }
-
-                @Override
-                public int keyOf(CharSequence value) {
-                    return "wrapped_static".contentEquals(value) ? 0 : VALUE_NOT_FOUND;
-                }
-
-                @Override
-                public CharSequence valueBOf(int key) {
-                    return valueOf(key);
-                }
-
-                @Override
-                public CharSequence valueOf(int key) {
-                    valueOfCalls[0]++;
-                    return key == 0 ? "wrapped_static" : null;
-                }
-            };
-            final SymbolFunction wrapper = new SymbolFunction() {
-                @Override
-                public int getInt(Record rec) {
-                    return rec.getInt(0);
-                }
-
-                @Override
-                public StaticSymbolTable getStaticSymbolTable() {
-                    return staticTable;
-                }
-
-                @Override
-                public CharSequence getSymbol(Record rec) {
-                    return rec.getSymA(0);
-                }
-
-                @Override
-                public CharSequence getSymbolB(Record rec) {
-                    return rec.getSymB(0);
-                }
-
-                @Override
-                public boolean isSymbolTableStatic() {
-                    return true;
-                }
-
-                @Override
-                public CharSequence valueBOf(int key) {
-                    return staticTable.valueBOf(key);
-                }
-
-                @Override
-                public CharSequence valueOf(int key) {
-                    return staticTable.valueOf(key);
-                }
-            };
-            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
-                @Override
-                public SymbolTable getSymbolTable(int columnIndex) {
-                    return wrapper;
-                }
-
-                @Override
-                public SymbolTable newSymbolTable(int columnIndex) {
-                    return wrapper;
-                }
-            };
-            final Record record = new Record() {
-                @Override
-                public int getInt(int col) {
-                    return 0;
-                }
-
-                @Override
-                public CharSequence getSymA(int col) {
-                    throw new AssertionError("wrapped static symbol must use the native-key path");
-                }
-            };
-
-            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
-                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
-                batch.beginBatch(cols, symbolTableSource, dict);
-                batch.appendRow(record);
-                batch.appendRow(record);
-                Assert.assertEquals(2, batch.getRowCount());
-                Assert.assertEquals(1, dict.size());
-                Assert.assertEquals("native key must resolve only on first sight", 1, valueOfCalls[0]);
-            }
-        });
-    }
-
-    @Test
-    public void testDynamicSymbolUsesTextWithoutMaterializingKeys() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
-            QwpEgressColumnDef def = new QwpEgressColumnDef();
-            def.of("s", ColumnType.SYMBOL);
-            cols.add(def);
-
-            final SymbolTable dynamicSymbolTable = new SymbolTable() {
-                @Override
-                public CharSequence valueBOf(int key) {
-                    throw new AssertionError("dynamic symbol table key path must not be used");
-                }
-
-                @Override
-                public CharSequence valueOf(int key) {
-                    throw new AssertionError("dynamic symbol table key path must not be used");
-                }
-            };
-            final SymbolTableSource symbolTableSource = new SymbolTableSource() {
-                @Override
-                public SymbolTable getSymbolTable(int columnIndex) {
-                    return dynamicSymbolTable;
-                }
-
-                @Override
-                public SymbolTable newSymbolTable(int columnIndex) {
-                    return dynamicSymbolTable;
-                }
-            };
-            final Record record = new Record() {
-                @Override
-                public int getInt(int col) {
-                    throw new AssertionError("dynamic symbol must be read through getSymA");
-                }
-
-                @Override
-                public CharSequence getSymA(int col) {
-                    return "dynamic_value";
-                }
-            };
-
-            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
-                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
-                batch.beginBatch(cols, symbolTableSource, dict);
-                batch.appendRow(record);
-                batch.appendRow(record);
-                Assert.assertEquals(2, batch.getRowCount());
-                Assert.assertEquals("the connection dictionary still deduplicates text values", 1, dict.size());
-            }
-        });
-    }
 
     @Test
     public void testComputeDeltaSizeMatchesEmitDeltaSection() throws Exception {
