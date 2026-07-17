@@ -105,6 +105,7 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -333,6 +334,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private BlockFileWriter blockFileWriter;
+    // Per-commit memoization of packed-ordinal-tuple -> cellKey for composite tables (see
+    // resolveCellKey(int[])). Null until the first composite resolveCellKey() call (never
+    // allocated for a plain table); cleared at commit/rollback boundaries by resetCellKeyMemo()
+    // so a stale entry can never survive a rolled-back registry truncation.
+    private LongIntHashMap cellKeyMemo;
     private int columnCount;
     private long commitRowCount;
     private long committedMasterRef;
@@ -2352,6 +2358,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getSeqTxn() + txWriter.getLagTxnCount();
     }
 
+    /**
+     * The number of distinct packed-ordinal-tuples currently memoized by {@link #resolveCellKey(int[])}
+     * since the last commit/rollback boundary. Test-only introspection of {@link #cellKeyMemo}.
+     */
+    @TestOnly
+    public int getCellKeyMemoSize() {
+        return cellKeyMemo != null ? cellKeyMemo.size() : 0;
+    }
+
     public int getColumnCount() {
         return columns.size();
     }
@@ -3294,6 +3309,75 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
     }
 
+    /**
+     * Resolves a row's dense composite {@code cellKey} from its already-resolved per-dimension
+     * ordinals -- for {@code IDENTITY} the ordinal is the source SYMBOL column's own resolved
+     * global symbol key (read directly off the column at O3 time, no dictionary lookup needed at
+     * this layer); see {@link #internDimensionValue(int, CharSequence)} for how HASH/TRUNCATE
+     * ordinals are derived from a string when only a string is available. Delegates to
+     * {@link CellRegistry#internCell(int[], int)}, memoizing the packed-ordinal-tuple -&gt;
+     * cellKey mapping in {@link #cellKeyMemo} for the life of the current transaction, so a
+     * repeated tuple within one commit is a plain hash-map lookup rather than a re-encode-and-
+     * intern through the {@code _cell} symbol map -- {@code internCell} is already idempotent
+     * (repeated calls with an equal tuple return the same ordinal, per its own javadoc), so this
+     * memo is purely a cheap-lookup optimization, never a correctness requirement. The memo is
+     * cleared at every commit/rollback boundary by {@code resetCellKeyMemo()} (called from
+     * {@code commitTxWriter}, {@code commitTxWriterAndPublishPendingPostingSealPurges}, and
+     * {@code rollback}) -- the rollback case matters for correctness, not just hygiene: a
+     * rollback can truncate the {@code _cell} registry back past a memoized tuple's slot, and a
+     * surviving stale cache entry would then hand out a cellKey the registry no longer agrees
+     * with.
+     * <p>
+     * The packed-{@code long} memo key only covers arity 1-2 losslessly (the shapes reachable
+     * today -- a single dimension in practice, or two per a parsed multi-dimension spec, see
+     * {@code CompositePartitionParseTest#testParseTwoDimsAndOrderBy}); for a hypothetically
+     * larger arity this still returns the correct cellKey (interning is idempotent regardless),
+     * just without the memo fast path -- packing more than two 32-bit ordinals losslessly into
+     * one 64-bit key isn't possible without a second collision-verification structure this task
+     * doesn't need yet.
+     * <p>
+     * Only ever valid on a composite table ({@code getPartitionSpec().getDimensionCount() > 0});
+     * a plain table must never reach this method and incurs zero cost from it (never called, and
+     * {@link #cellKeyMemo} is never allocated). Not yet called from the O3/WAL-apply write path --
+     * wiring a real per-row call into {@code processO3Block} is composite-partitioning Plan 4a
+     * Task 4.
+     *
+     * @param dimOrdinals per-dimension resolved ordinals; only indices {@code [0, dimCount)} are
+     *                    read, so callers may reuse one scratch array across many rows without
+     *                    reallocating
+     * @return the dense cellKey for this ordinal tuple (0 for the first-ever distinct tuple, 1
+     *         for the next distinct one, ...)
+     */
+    public int resolveCellKey(int[] dimOrdinals) {
+        int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        if (dimCount <= 0) {
+            throw new UnsupportedOperationException(
+                    "resolveCellKey() must not be called on a non-composite table [table=" + tableToken + ']'
+            );
+        }
+
+        if (dimCount <= 2) {
+            long memoKey = dimCount == 1
+                    ? Integer.toUnsignedLong(dimOrdinals[0])
+                    : Numbers.encodeLowHighInts(dimOrdinals[0], dimOrdinals[1]);
+            if (cellKeyMemo == null) {
+                cellKeyMemo = new LongIntHashMap();
+            } else {
+                int cached = cellKeyMemo.get(memoKey);
+                if (cached != LongIntHashMap.NO_ENTRY_VALUE) {
+                    return cached;
+                }
+            }
+            int cellKey = getCompositeDictionaries().cellRegistry().internCell(dimOrdinals, dimCount);
+            cellKeyMemo.put(memoKey, cellKey);
+            return cellKey;
+        }
+
+        // arity > 2: no lossless single-long packing attempted (yet); internCell is idempotent,
+        // so this remains correct, just unmemoized.
+        return getCompositeDictionaries().cellRegistry().internCell(dimOrdinals, dimCount);
+    }
+
     @Override
     public void rollback() {
         checkDistressed();
@@ -3314,6 +3398,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables(true);
+                resetCellKeyMemo();
                 columnVersionWriter.readUnsafe();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
@@ -5196,14 +5281,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void commitTxWriter() {
         txWriter.commit(denseSymbolMapWriters);
+        resetCellKeyMemo();
         publishDeferredPostingSealPurges(txWriter.getTxn(), false);
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges() {
         txWriter.commit(denseSymbolMapWriters);
+        resetCellKeyMemo();
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
+    }
+
+    /**
+     * Clears {@link #cellKeyMemo} (see {@code resolveCellKey(int[])}). Called at every
+     * commit/rollback boundary: a successful commit no longer needs entries computed for a
+     * transaction that has now been made durable, and a rollback may have truncated the
+     * {@code _cell} registry back past a memoized tuple's slot -- clearing here prevents a stale
+     * cached cellKey from outliving the registry state it was computed against.
+     */
+    private void resetCellKeyMemo() {
+        if (cellKeyMemo != null) {
+            cellKeyMemo.clear();
+        }
     }
 
     private void configureAppendPosition() {
