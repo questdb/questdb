@@ -34,7 +34,6 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
@@ -442,8 +441,7 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
 
                         final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                 engine,
-                                circuitBreakerConfiguration,
-                                MemoryTag.NATIVE_DEFAULT
+                                circuitBreakerConfiguration
                         );
                         try {
                             context.with(
