@@ -172,6 +172,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(tableToken)
                     .I$();
+            // Plan 3b Task 2 investigated retiring this setComposite() call (Task 1's _txn marker makes
+            // it redundant for any table with >= 1 committed partition -- see TxReader#unsafeLoadBaseOffset).
+            // Reverted: a composite table that has been CREATEd but never yet committed a single partition
+            // has an on-disk marker still at 0 (upgrade-only -- TableUtils#createTxn writes 0, and nothing
+            // has run finishABHeader with stride 8 yet), so a TableReader opened in that window has no
+            // signal at all without this call and silently reports the plain stride. Confirmed empirically:
+            // CompositeTxCellTest#testStrideDerivedFromComposite opens getReader("c") on a just-CREATEd,
+            // zero-partition composite table and asserts getLongsPerAttachedPartition() == 8; with this
+            // call removed it deterministically read back 4 instead. See Plan 3b Task 2 report.
             txFile = new TxReader(ff);
             txFile.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
             txFile.ofRO(
@@ -227,6 +236,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", table=").$(tableToken)
                     .$(", srcTxn=").$(srcReader.getTxn())
                     .I$();
+            // Plan 3b Task 2: kept -- see the primary constructor's comment above its own txFile.ofRO()
+            // a few dozen lines up (the removal was reverted; a zero-partition composite table's on-disk
+            // marker is still 0, so there is no signal without this call).
             txFile = new TxReader(ff);
             txFile.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
             txFile.ofRO(

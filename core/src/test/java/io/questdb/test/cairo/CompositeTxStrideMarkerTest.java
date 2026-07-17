@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -172,6 +173,57 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
                     Assert.assertEquals(101L, txReader.getPartitionNameTxn(1));
                 }
             }
+        });
+    }
+
+    /**
+     * Plan 3b, Task 2: the real {@link TableReader} -- not just a standalone {@link TxReader}, as above
+     * -- must correctly self-detect a composite table's true stride and true partition content. A
+     * completely ordinary {@code getReader()} open of a (dormant, single-cell -- real (ts, cellKey)
+     * write-routing is Plan 4) composite table, built via real SQL inserts across several day partitions,
+     * must report the TRUE partition count and TRUE row content -- identical to an equivalent plain table
+     * built from the same rows.
+     * <p>
+     * Task 2 investigated retiring {@link TableReader}'s metadata-threaded {@code setComposite(metadata
+     * .getPartitionSpec().getDimensionCount() > 0)} call in favour of relying on the marker alone (this
+     * test would keep passing either way, since both committed tables here have real partitions and are
+     * therefore already marker-upgradeable). That removal was REVERTED: {@code
+     * CompositeTxCellTest#testStrideDerivedFromComposite} proved it unsafe for a composite table with
+     * ZERO ever-committed partitions (a fresh {@code CREATE TABLE}, before any insert -- the on-disk
+     * marker is still 0 in that window, upgrade-only, so a reader opened then has no signal at all
+     * without the explicit call). See the task report for the full RED/GREEN evidence. This test remains
+     * a regression lock for ordinary (non-empty) composite {@link TableReader} correctness regardless.
+     * <p>
+     * Separately, see the task report for the RED/GREEN discrimination proving the MARKER itself (not
+     * leftover threading) is what makes {@code table_storage()} -- a site that has never called {@code
+     * setComposite} at all -- self-heal ({@link CompositeTxnConsumerSitesTest}).
+     */
+    @Test
+    public void testTableReaderPartitionCountAndFullScanMatchPlainEquivalent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            execute("create table p (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day");
+
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), " +
+                    "('2020-01-01T12:00:00.000000Z','A',2.0), " +
+                    "('2020-01-02T00:00:00.000000Z','A',3.0), " +
+                    "('2020-01-03T06:00:00.000000Z','A',4.0)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            engine.releaseInactive(); // cold reopen -- no pooled reader may mask a fresh self-detect
+
+            try (TableReader cr = getReader("c"); TableReader pr = getReader("p")) {
+                Assert.assertEquals(
+                        "composite TableReader must report the TRUE partition count, equal to an " +
+                                "equivalent plain table's",
+                        pr.getPartitionCount(), cr.getPartitionCount());
+                Assert.assertEquals(3, cr.getPartitionCount());
+            }
+
+            assertSqlCursors("select ts, exchange, x from p order by ts", "select ts, exchange, x from c order by ts");
         });
     }
 }
