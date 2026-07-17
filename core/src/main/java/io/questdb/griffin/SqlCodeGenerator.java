@@ -1733,6 +1733,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    private boolean checkIfSetCastIsRequired(
+            RecordMetadata metadataA,
+            RecordMetadata metadataB,
+            boolean symbolDisallowed,
+            IntList symbolUnionColumns,
+            boolean seedSymbolUnionColumns
+    ) {
+        int columnCount = metadataA.getColumnCount();
+        assert columnCount == metadataB.getColumnCount();
+        assert !seedSymbolUnionColumns || symbolUnionColumns.size() == 0;
+
+        boolean castIsRequired = false;
+        int candidateIndex = 0;
+        final int candidateCount = symbolUnionColumns.size();
+        int nextCandidate = !seedSymbolUnionColumns && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
+        int retainedCandidateCount = 0;
+        // This compatibility pass already has to read every column in a UNION segment. Seed the
+        // sorted SYMBOL candidate list here, then compact it in place on later legs so tracking
+        // adds no second metadata traversal and no work proportional to eliminated candidates.
+        for (int i = 0; i < columnCount; i++) {
+            int typeA = metadataA.getColumnType(i);
+            int typeB = metadataB.getColumnType(i);
+            if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
+                castIsRequired = true;
+            }
+            if (seedSymbolUnionColumns) {
+                if (isSymbol(typeA) && isSymbol(typeB)) {
+                    symbolUnionColumns.add(i);
+                }
+            } else if (i == nextCandidate) {
+                if (isSymbol(typeB)) {
+                    symbolUnionColumns.setQuick(retainedCandidateCount++, i);
+                }
+                nextCandidate = ++candidateIndex < candidateCount
+                        ? symbolUnionColumns.getQuick(candidateIndex)
+                        : -1;
+            }
+        }
+        if (!seedSymbolUnionColumns) {
+            symbolUnionColumns.setPos(retainedCandidateCount);
+        }
+        return castIsRequired;
+    }
+
     @Nullable
     private Function compileFilter(
             IntrinsicModel intrinsicModel,
@@ -10339,7 +10383,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param factoryA           is compiled first argument
      * @param executionContext   execution context for authorization and parallel execution purposes
      * @param symbolUnionColumns tracks columns that are SYMBOL on every branch seen so far in a UNION [ALL]
-     *                           segment; null at the head of a segment (accumulateUnionSymbolColumns seeds it
+     *                           segment; null at the head of a segment (the compatibility pass seeds it
      *                           from the first branch). A pending segment is re-symbolised before an EXCEPT /
      *                           INTERSECT so the next operation observes the same metadata as a parenthesised union.
      * @return factory that performs a SET operation
@@ -10349,7 +10393,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IQueryModel model,
             RecordCursorFactory factoryA,
             SqlExecutionContext executionContext,
-            @Nullable BitSet symbolUnionColumns
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         RecordCursorFactory factoryB = null;
         ObjList<Function> castFunctionsA = null;
@@ -10375,7 +10419,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
-                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final boolean seedSymbolUnionColumns = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = seedSymbolUnionColumns ? new IntList(0) : symbolUnionColumns;
+                    final boolean castIsRequired = checkIfSetCastIsRequired(
+                            metadataA,
+                            metadataB,
+                            true,
+                            nextSymbolUnionColumns,
+                            seedSymbolUnionColumns
+                    );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -10391,11 +10443,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsB,
                             unionMetadata,
                             SET_UNION_CONSTRUCTOR,
-                            accumulateUnionSymbolColumns(symbolUnionColumns, metadataA, metadataB)
+                            nextSymbolUnionColumns
                     );
                 }
                 case IQueryModel.SET_OPERATION_UNION_ALL: {
-                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final boolean seedSymbolUnionColumns = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = seedSymbolUnionColumns ? new IntList(0) : symbolUnionColumns;
+                    final boolean castIsRequired = checkIfSetCastIsRequired(
+                            metadataA,
+                            metadataB,
+                            true,
+                            nextSymbolUnionColumns,
+                            seedSymbolUnionColumns
+                    );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
@@ -10410,7 +10470,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA,
                             castFunctionsB,
                             unionMetadata,
-                            accumulateUnionSymbolColumns(symbolUnionColumns, metadataA, metadataB)
+                            nextSymbolUnionColumns
                     );
                 }
                 case IQueryModel.SET_OPERATION_EXCEPT: {
@@ -11295,7 +11355,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordMetadata unionMetadata,
-            @Nullable BitSet symbolUnionColumns
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         final RecordCursorFactory unionFactory = new UnionAllRecordCursorFactory(
                 unionMetadata,
@@ -11320,7 +11380,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<Function> castFunctionsB,
             RecordMetadata unionMetadata,
             SetRecordCursorFactoryConstructor constructor,
-            @Nullable BitSet symbolUnionColumns
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
         writeSymbolAsString.clear();
         valueTypes.clear();
@@ -11363,29 +11423,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return maybeResymboliseUnion(unionFactory, symbolUnionColumns);
     }
 
-    // Accumulates, across a UNION [ALL] chain, the columns that are SYMBOL on every contributing
-    // branch. Seeds from the first branch (metadataA) when acc is null, then clears any column that
-    // is not SYMBOL in the next branch (metadataB). At recursive levels acc is non-null and metadataA
-    // is the STRING-downcast running union, so this method deliberately does not re-read it.
-    // maybeResymboliseUnion casts the survivors back to SYMBOL once, at the end of the chain.
-    private BitSet accumulateUnionSymbolColumns(@Nullable BitSet acc, RecordMetadata metadataA, RecordMetadata metadataB) {
-        final int columnCount = metadataA.getColumnCount();
-        if (acc == null) {
-            acc = new BitSet();
-            for (int i = 0; i < columnCount; i++) {
-                if (isSymbol(metadataA.getColumnType(i))) {
-                    acc.set(i);
-                }
-            }
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (acc.get(i) && !isSymbol(metadataB.getColumnType(i))) {
-                acc.unset(i);
-            }
-        }
-        return acc;
-    }
-
     // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in
     // symbolUnionColumns) and that the chain downcast to STRING (see getUnionCastType). The cast
     // sits outside the union, so it builds one dictionary over the merged stream instead of trying
@@ -11398,23 +11435,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // union factory as-is when there is nothing to re-symbolise.
     private RecordCursorFactory maybeResymboliseUnion(
             RecordCursorFactory unionFactory,
-            @Nullable BitSet symbolUnionColumns
+            @Nullable IntList symbolUnionColumns
     ) throws SqlException {
-        if (symbolUnionColumns == null) {
+        if (symbolUnionColumns == null || symbolUnionColumns.size() == 0) {
             return unionFactory;
         }
         final RecordMetadata baseMetadata = unionFactory.getMetadata();
         final int columnCount = baseMetadata.getColumnCount();
-        boolean isResymboliseRequired = false;
-        for (int i = 0; i < columnCount; i++) {
-            if (symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING) {
-                isResymboliseRequired = true;
-                break;
-            }
-        }
-        if (!isResymboliseRequired) {
-            return unionFactory;
-        }
         // Own unionFactory from here on: the guard assert and the metadata/list allocations below can
         // all throw (an OutOfMemoryError, say), and for a distinct UNION unionFactory already holds a
         // native OrderedMap, so the catch must free it on every failure path, not just a build-loop throw.
@@ -11434,10 +11461,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
             final IntList columnToFunctionIndex = new IntList(columnCount);
             functions = new ObjList<>();
+            int symbolColumnIndex = 0;
+            int nextSymbolColumn = symbolUnionColumns.getQuick(0);
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = baseMetadata.getColumnName(i);
-                final boolean isSymbolCastRequired = symbolUnionColumns.get(i) && tagOf(baseMetadata.getColumnType(i)) == STRING;
+                final boolean isSymbolCastRequired = i == nextSymbolColumn;
                 if (isSymbolCastRequired) {
+                    assert tagOf(baseMetadata.getColumnType(i)) == STRING;
+                    nextSymbolColumn = ++symbolColumnIndex < symbolUnionColumns.size()
+                            ? symbolUnionColumns.getQuick(symbolColumnIndex)
+                            : -1;
                     // Register baseColumn before wrapping it: the hook and wrapper construction can
                     // throw, and the catch can only free objects already owned by this list. Once the
                     // symbol function is built it owns baseColumn, so replace the slot to avoid a

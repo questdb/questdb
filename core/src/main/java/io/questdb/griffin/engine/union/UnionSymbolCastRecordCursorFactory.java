@@ -51,6 +51,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Re-exposes STRING-downcast all-SYMBOL UNION columns as SYMBOL without routing unrelated
@@ -88,6 +89,11 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     public ObjList<Function> getFunctions() {
         return functions;
+    }
+
+    @TestOnly
+    public void setCursorTestHook(@Nullable CursorTestHook testHook) {
+        cursor.testHook = testHook;
     }
 
     @Override
@@ -355,6 +361,8 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         private MemoryTracker memoryTracker;
         @Nullable
         private IntObjHashMap<SourceState> sourceStates;
+        @Nullable
+        private CursorTestHook testHook;
 
         private UnionSymbolCastRecordCursor(
                 IntList columnToFunctionIndex,
@@ -491,27 +499,35 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             if (sourceIndex == currentSourceIndex) {
                 return currentSourceState;
             }
-            currentSourceIndex = sourceIndex;
             if (sourceStates == null) {
                 sourceStates = new IntObjHashMap<>();
             }
-            currentSourceState = sourceStates.get(sourceIndex);
-            if (currentSourceState == null) {
-                final SourceState state = new SourceState(sourceTracker.getCursor(), symbolColumns, memoryTracker);
+            SourceState sourceState = sourceStates.get(sourceIndex);
+            if (sourceState == null) {
+                SourceState state = null;
                 try {
+                    state = new SourceState(sourceTracker.getCursor(), symbolColumns, memoryTracker);
+                    if (testHook != null) {
+                        testHook.onSourceStateRegistration();
+                    }
                     sourceStates.put(sourceIndex, state);
-                    currentSourceState = state;
+                    sourceState = state;
                 } catch (RuntimeException | Error th) {
-                    currentSourceState = null;
-                    state.close();
+                    Misc.free(state);
                     throw th;
                 }
             }
-            return currentSourceState;
+            currentSourceIndex = sourceIndex;
+            return currentSourceState = sourceState;
         }
     }
 
     private static CastStrToSymbolFunctionFactory.Func symbolFunction(Function function) {
         return (CastStrToSymbolFunctionFactory.Func) function;
+    }
+
+    @TestOnly
+    public interface CursorTestHook {
+        void onSourceStateRegistration();
     }
 }
