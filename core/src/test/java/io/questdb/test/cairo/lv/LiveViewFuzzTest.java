@@ -263,6 +263,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
     };
+    // Durable-ring restart verdicts, harvested per restart because the counters
+    // live on the LiveViewInstance and a restart replaces it. JUnit builds a new
+    // test class instance per method, so all three start at zero per run.
+    private int ringMaxRehydratedEntries;
+    private int ringRecoveryFallbacks;
+    private int ringRehydrations;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -730,6 +736,54 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 runReplaceRangeFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
                         rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
             }
+        });
+    }
+
+    @Test
+    public void testFuzzRestartWithDurableRing() throws Exception {
+        // Restarts with the durable checkpoint ring enabled, so each one
+        // rehydrates the retained ring from the _ring manifest and resumes off an
+        // anchor the manifest names instead of falling back to the highest .cp.
+        // Three ingestion shapes run, because none of them reaches what the
+        // others do. A full shuffle spreads every commit over the whole range, so
+        // its minTs sits at the bottom, the retire unseals the ring entire and
+        // the restart only ever gets the head back: it resumes, on a one-entry
+        // ring. In-order ingestion never retires, so the ring accumulates to the
+        // retention count and the restart rehydrates a multi-entry manifest -
+        // but no late row ever arrives to resume from one of its older entries.
+        // Only the near-order shape does both, and it is the shape the durable
+        // ring is for: a bounded lateness leaves a commit's minTs near the
+        // frontier, so the ring keeps its older entries and a late row resumes
+        // from the nearest one below it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            for (int v = 0; v < variantCount(); v++) {
+                runFuzz(rnd, v, 140, false, true, false, rnd.nextBoolean());
+            }
+            for (int v = 0; v < variantCount(); v++) {
+                runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean());
+            }
+            for (int v = 0; v < variantCount(); v++) {
+                runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean(), false, false, 8 + rnd.nextInt(8));
+            }
+            // The oracle alone does not make this arm a ring test: a fallback
+            // rebuilds correctly, so the recompute stays green whether or not a
+            // single restart ever trusts a manifest. A clean restart at a
+            // quiescent point publishes covered = the floor it reconciles to, so
+            // every one of them must rehydrate rather than decline.
+            Assert.assertTrue("no restart rehydrated the ring", ringRehydrations > 0);
+            Assert.assertEquals("a clean restart fell back to the highest .cp", 0, ringRecoveryFallbacks);
+            // On the full-shuffle arm alone every restart rehydrates exactly the
+            // head, which is the shape a promoted restored head already produces
+            // with no manifest at all. This is what holds the other two arms in
+            // place: drop them and the soak still passes its oracle while testing
+            // none of what a durable ring is for.
+            Assert.assertTrue(
+                    "no restart rehydrated more than the head, was " + ringMaxRehydratedEntries,
+                    ringMaxRehydratedEntries > 1
+            );
         });
     }
 
@@ -1293,16 +1347,38 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Row indices [lo, lo+1, ..., hi-1], shuffled in place when o3 is set so
     // insertion order diverges from ts order (the source of out-of-order writes).
     private static int[] segmentOrder(Rnd rnd, int lo, int hi, boolean o3) {
+        return segmentOrder(rnd, lo, hi, o3, 0);
+    }
+
+    // As above, but maxLateness bounds how far a row may travel from its ts
+    // position. The default (0) shuffles the whole segment, which spreads every
+    // commit across the entire time range: a commit's minTs then sits at the
+    // bottom of the data, so its retire unseals every retained checkpoint and
+    // the ring never holds more than the entry the cycle itself writes. A
+    // positive maxLateness displaces a row by at most that many positions, so a
+    // commit's minTs stays near the ingestion frontier and the retire unseals
+    // only the newest few entries - which is what lets the ring accumulate while
+    // late rows still arrive to resume from an older entry of it.
+    private static int[] segmentOrder(Rnd rnd, int lo, int hi, boolean o3, int maxLateness) {
         final int[] a = new int[hi - lo];
         for (int k = 0; k < a.length; k++) {
             a[k] = lo + k;
         }
-        if (o3) {
+        if (o3 && maxLateness <= 0) {
             for (int k = a.length - 1; k > 0; k--) {
                 int j = rnd.nextInt(k + 1);
                 int tmp = a[k];
                 a[k] = a[j];
                 a[j] = tmp;
+            }
+        } else if (o3) {
+            for (int k = 0; k < a.length - 1; k++) {
+                if (rnd.nextInt(4) == 0) {
+                    final int j = k + 1 + rnd.nextInt(Math.min(maxLateness, a.length - k - 1));
+                    final int tmp = a[k];
+                    a[k] = a[j];
+                    a[j] = tmp;
+                }
             }
         }
         return a;
@@ -1617,6 +1693,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 types.setQuick(idx, newType);
             }
             default -> throw new IllegalStateException("op=" + op);
+        }
+    }
+
+    /**
+     * Accumulates the restart verdict off an instance that is about to be
+     * discarded (or off the last one at the end of a run). The verdict reads
+     * LONG_NULL until the post-restart refresh decides, so an instance that
+     * never restored - the one a CREATE builds, or one whose restart drew no
+     * later commit to refresh - contributes to no counter at all.
+     */
+    private void harvestCheckpointRingVerdict(LiveViewInstance instance) {
+        if (instance == null || !engine.getConfiguration().isLiveViewCheckpointRingDurableEnabled()) {
+            return;
+        }
+        ringRecoveryFallbacks += (int) instance.getCheckpointRingRecoveryFallbackCount();
+        final long recovered = instance.getCheckpointRingRecoveredEntries();
+        if (recovered != Numbers.LONG_NULL && recovered > 0) {
+            ringRehydrations++;
+            ringMaxRehydratedEntries = Math.max(ringMaxRehydratedEntries, (int) recovered);
         }
     }
 
@@ -2964,6 +3059,21 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean inMemReadBack,
             boolean leadReadBack
     ) throws Exception {
+        runFuzz(rnd, variant, rowCount, o3, restart, seed, inMemory, inMemReadBack, leadReadBack, 0);
+    }
+
+    private void runFuzz(
+            Rnd rnd,
+            int variant,
+            int rowCount,
+            boolean o3,
+            boolean restart,
+            boolean seed,
+            boolean inMemory,
+            boolean inMemReadBack,
+            boolean leadReadBack,
+            int maxLateness
+    ) throws Exception {
         // Drive a controllable clock so FLUSH EVERY flush gating is deterministic.
         // Pin "now" a day BEFORE the data start (2026-01-01). A non-seed
         // view's lower bound is the wall-clock CREATE moment, and O3 head-miss
@@ -3110,7 +3220,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // Post-CREATE: segment [preCount, rowCount), refreshed per commit so a
             // later (older-ts) commit is genuinely O3 vs the materialized state.
             if (preCount < rowCount) {
-                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3);
+                final int[] postOrder = segmentOrder(rnd, preCount, rowCount, o3, maxLateness);
                 final int[] cb = commitBounds(rnd, postOrder.length);
                 for (int c = 0; c + 1 < cb.length; c++) {
                     insertCommit(sink, postOrder, cb[c], cb[c + 1], tsv, symIdx, iv, xv, xNull, dLit);
@@ -3122,6 +3232,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            harvestCheckpointRingVerdict(inst);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -3132,6 +3243,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             driveRefreshToQuiescence(job);
+            harvestCheckpointRingVerdict(engine.getLiveViewRegistry().getViewInstance("lv"));
 
             if (inMemReadBack) {
                 // Top up with one clean forward row above the global max ts so the
