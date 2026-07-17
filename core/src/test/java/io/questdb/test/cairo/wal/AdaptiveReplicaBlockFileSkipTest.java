@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -181,6 +182,54 @@ public class AdaptiveReplicaBlockFileSkipTest extends AbstractCairoTest {
                     "ALWAYS_ON (default) must sync " + MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME + ", but got 0",
                     trackFf.getSyncCount() > 0
             );
+        });
+    }
+
+    // ---------- (d) SequencerMetadata.create definition waiver (review Finding 5.1) ----------
+
+    /**
+     * Finding 5.1 (waiver — the DELIBERATE opposite of (a)/(b)): the CREATE-time view/mat-view DEFINITION
+     * writes in {@code SequencerMetadata.create} ({@code txn_seq/_mv}, {@code txn_seq/_view}) use the RAW
+     * configured commit mode DELIBERATELY — they are intentionally NOT routed through
+     * {@code LocalDurabilityPolicy.resolveCommitMode} the way the apply-side sites in (a)/(b) are. A view
+     * definition is structural DDL (not the lazily-applied column data the durable epoch protects), so it
+     * must stay durable under {@code commitMode != NOSYNC} REGARDLESS of role. This test pins that: even with
+     * {@link LocalDurabilityPolicy#REPLICA_SKIP} installed and {@code commit_mode=adaptive} (the ONLY mode
+     * {@code resolveCommitMode} would downgrade to NOSYNC on a replica), {@code CREATE MATERIALIZED VIEW}
+     * still fsyncs the sequencer's {@code _mv} definition. If a future change wrongly routed this site through
+     * the policy, the sync would vanish under REPLICA_SKIP and this test would fail.
+     */
+    @Test
+    public void testSequencerMetaCreateMatViewDefinitionStaysDurableRegardlessOfRole() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        final BlockFileSyncTrackingFacade trackFf = new BlockFileSyncTrackingFacade(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table base_price (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal");
+
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                trackFf.reset(); // isolate the CREATE MATERIALIZED VIEW below
+                execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
+
+                // Under REPLICA_SKIP + adaptive, every POLICY-AWARE (resolveCommitMode) site downgrades to
+                // NOSYNC and does NOT sync — so ANY _mv sync here comes from a RAW-commitMode (waiver) site.
+                // Assert specifically that SequencerMetadata.create's sequencer-dir (txn_seq) _mv was synced:
+                // the definition stays durable regardless of role.
+                boolean seqMvSynced = false;
+                for (String p : trackFf.getSyncedPaths()) {
+                    if (p.contains(WalUtils.SEQ_DIR) && p.endsWith(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME)) {
+                        seqMvSynced = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue(
+                        "SequencerMetadata.create must keep the mat-view definition durable regardless of role "
+                                + "(REPLICA_SKIP); synced=" + trackFf.getSyncedPaths(),
+                        seqMvSynced
+                );
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
         });
     }
 
