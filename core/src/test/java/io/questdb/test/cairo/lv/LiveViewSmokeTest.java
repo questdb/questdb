@@ -20310,6 +20310,125 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingRestoresWhenCheckpointDirEnumerationFails() throws Exception {
+        // Section 11.6 lists directory enumeration among the faults to inject, and
+        // it is the only one that blinds the SWEEP while leaving the manifest
+        // intact: readRingCandidate addresses _ring by name and checks its entries
+        // with exists(), neither of which enumerates, so it reads a perfectly good
+        // allow-list while sweepCheckpoints' findFirst returns nothing and the
+        // fallback head comes back LONG_NULL.
+        //
+        // That lands Step 11 item 2's headless restart - an ACTIVE primary with
+        // materialised rows and no head - without a lost _lv.s persist, which is
+        // the only route the existing pair uses. Two mechanisms then meet:
+        // needsHeadlessRestartRecovery routes the worker into the restore on its
+        // own account rather than gating on the sweep's head, and
+        // rehydrateCheckpointRing names a head the blind sweep could not (Step 8's
+        // "a trusted manifest can name a head the sweep would not"). The ring comes
+        // back whole and nothing rebuilds.
+        //
+        // The recovery waits for the next base commit, and that is a real gap
+        // rather than this test's convenience - it is why the assertions below sit
+        // after an insert instead of after a bare tick. scanForLaggingViews selects
+        // a quiescent view for a restore only when a head is stamped
+        // ("needsRestore = !isCheckpointRestoreAttempted() && getHeadCheckpointLvSeqTxn()
+        // != LONG_NULL"), so a view that is caught up AND headless is selected by
+        // nothing and refreshInstance is never called - Step 11 fixed the inner gate
+        // and left this outer one. Its existing pair does not notice, because
+        // rewinding _lv.s makes the view LAG the base, and lag is its own selection
+        // reason. The cost is deferral, not corruption: refreshInstance runs the
+        // restore block ahead of the drain, so the first commit to arrive recovers
+        // before it consumes anything, which is what this test asserts. Do not read
+        // the deferral as a contract; see the handoff's Step 14 finding.
+        final AtomicBoolean failCheckpointDirScan = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long findFirst(LPSZ path) {
+                if (failCheckpointDirScan.get()
+                        && Utf8s.endsWithAscii(path, LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)) {
+                    return 0;
+                }
+                return super.findFirst(path);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LongList expectedRing = new LongList();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(3, lv.getRetainedCheckpointCount());
+                lv.copyRetainedCheckpointsTo(expectedRing);
+            }
+
+            // The sweep goes blind across the restart: every .cp survives on disk,
+            // and it cannot see one of them.
+            failCheckpointDirScan.set(true);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            failCheckpointDirScan.set(false);
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(
+                    "the blind sweep must find no fallback head",
+                    Numbers.LONG_NULL,
+                    reloaded.getHeadCheckpointLvSeqTxn()
+            );
+            Assert.assertNotNull("the manifest read does not enumerate, so it still lands", reloaded.getCheckpointRingCandidate());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The restore runs ahead of the drain, so this row is consumed
+                // against restored accumulators rather than cold ones. Deliberately
+                // NOT asserting that a bare tick leaves the restore unattempted:
+                // that is the gap described above, and pinning it would make the
+                // fix for it arrive as a red test.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            // The manifest carried the whole recovery, with no sweep input at all:
+            // three entries back and no fallback, off an allow-list the blind sweep
+            // could not have contributed a single .cp to.
+            Assert.assertEquals(3, reloaded.getCheckpointRingRecoveredEntries());
+            Assert.assertEquals(0, reloaded.getCheckpointRingRecoveryFallbackCount());
+            // The rehydrated ring is the pre-restart one, with this cycle's fresh
+            // head appended - so its first three entries are verbatim.
+            final LongList restoredRing = new LongList();
+            reloaded.copyRetainedCheckpointsTo(restoredRing);
+            Assert.assertTrue(restoredRing.size() >= expectedRing.size());
+            for (int i = 0, n = expectedRing.size(); i < n; i++) {
+                Assert.assertEquals("ring entry " + i, expectedRing.getQuick(i), restoredRing.getQuick(i));
+            }
+            // No rebuild: the accumulators came off the restored head, not off a scan
+            // from the view's lower bound. rn continuing to 4 is what says so.
+            Assert.assertEquals(0, reloaded.getO3BoundaryReplayRows());
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                            "2026-11-01T00:00:20.000000Z\t20\t2\n" +
+                            "2026-11-01T00:00:30.000000Z\t30\t3\n" +
+                            "2026-11-01T00:00:40.000000Z\t40\t4\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCheckpointRingTrustedAgainstReconciledFloorNotRawState() throws Exception {
         // The v1 regression, and the reason the trust decision runs on the
         // refresh worker rather than in the startup sweep.
@@ -20481,6 +20600,146 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
             }
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingNotTrustedWhenCoveredLeadsFloor() throws Exception {
+        // The other half of the trust rule's inequality, and the half nothing else
+        // pins: covered running AHEAD of the reconciled floor.
+        //
+        // Section 6 publishes the ring BEFORE the commit that walks the floor, so a
+        // cycle dying in between leaves _ring claiming a covered the view never
+        // durably reached - section 10's "after the in-order publication, before the
+        // commit". publishCheckpointRingOnAdvance's javadoc states the intended
+        // outcome outright ("a crash the other way (published, commit lost) leaves
+        // covered above the floor, which reads as the conservative fallback, not a
+        // wrong answer"), and section 7.3 argues it is correct: the manifest claims
+        // its entries are sealed at W', and the view sits at W''.
+        //
+        // The rule is one symmetric comparison, so weakening it to covered < floor
+        // leaves every other ring test green - this is the only case that reddens.
+        // Read that honestly: under that mutation this view still ANSWERS
+        // correctly, because trusting covered > floor only bites when a listed
+        // entry sits above the floor, and here none does - the add path seals a
+        // .cp only after its own commit and _lv.s persist, so a listed entry is at
+        // or below the floor by construction. What the equality buys is the
+        // inference the trusted head rests on (lvSeqTxn <= covered == floor): the
+        // newest listed entry becomes the head even above the raw watermark, and
+        // restoring one above the FLOOR would walk setAppliedWatermark up over base
+        // commits the LV table never materialised. Weaken the equality and that
+        // inference stops following from the manifest and starts depending on an
+        // invariant enforced three call sites away. So this pins the rule, not a
+        // corruption; the corruption needs the LV table's block to be unreadable
+        // too, and no harness builds that.
+        //
+        // Building it needs a cycle that walks the floor with NO LV commit behind
+        // it. Fail the _lv.s write on a cycle that emitted rows and the commit still
+        // landed, so reconcileAppliedFloorAfterRestart clamps the floor straight
+        // back up to covered and the ring is trusted - which is precisely what
+        // testCheckpointRingTrustedAgainstReconciledFloorNotRawState asserts, off
+        // this same fault. The two tests differ in nothing but whether the cycle had
+        // rows. An all-filtered cycle is the no-commit shape: the no-row branch
+        // walks lvConsumedSeqTxn through _lv.s alone ("nothing to apply, but
+        // lvConsumedSeqTxn must still advance"), so with that write failed the LV
+        // table holds no block at W' for the reconcile to find.
+        final AtomicBoolean failStatePersist = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStatePersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 100");
+
+            final long floorBeforeLostAdvance;
+            final long ringCovered;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Two qualifying rows, one .cp each, so the manifest has a
+                // membership worth discarding rather than an empty one.
+                for (int seconds = 10; seconds <= 20; seconds += 10) {
+                    setCurrentMicros(seconds * 20_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:" + seconds + ".000000Z', " + (100 + seconds) + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                floorBeforeLostAdvance = lv.getStateReader().getAppliedWatermark();
+
+                // The cycle that dies between the publication and the floor: every
+                // row is below the filter, so the drain emits nothing and commits
+                // nothing, and the only durable trace the floor advance would leave
+                // is the _lv.s write this fault takes away.
+                failStatePersist.set(true);
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                failStatePersist.set(false);
+
+                ringCovered = lv.getLastPublishedRingCoveredBaseSeqTxn();
+                Assert.assertTrue(
+                        "the ring must be published ahead of the floor it names, was covered="
+                                + ringCovered + " floor=" + floorBeforeLostAdvance,
+                        ringCovered > floorBeforeLostAdvance
+                );
+                // The discriminator against the trusted twin, and the reason this
+                // shape survives the reconcile: the LV table carries no block at
+                // covered, so there is nothing to clamp the floor up from.
+                Assert.assertEquals(
+                        "the LV table must not hold a block at covered, or the reconcile lifts the floor onto it",
+                        floorBeforeLostAdvance,
+                        engine.readLiveViewAppliedMaxBaseSeqTxn(lv.getLiveViewToken())
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            // The manifest is structurally fine - it is only its claim that is
+            // unbacked, which is a decision the refresh worker makes, not the sweep.
+            Assert.assertNotNull(reloaded.getCheckpointRingCandidate());
+            Assert.assertEquals(ringCovered, reloaded.getCheckpointRingCandidate().getCoveredBaseSeqTxn());
+            Assert.assertEquals(floorBeforeLostAdvance, reloaded.getStateReader().getAppliedWatermark());
+            final long fallbackHead = reloaded.getHeadCheckpointLvSeqTxn();
+            Assert.assertTrue(fallbackHead != Numbers.LONG_NULL);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            Assert.assertNull(reloaded.getCheckpointRingCandidate());
+            // The verdict: declined, and highest-only. The listed membership never
+            // becomes an anchor even though every one of its .cp files is still
+            // readable on disk.
+            Assert.assertEquals(1, reloaded.getCheckpointRingRecoveryFallbackCount());
+            Assert.assertEquals(1, reloaded.getRetainedCheckpointCount());
+            Assert.assertEquals(fallbackHead, reloaded.getRetainedCheckpointLvSeqTxn(0));
+            Assert.assertEquals(fallbackHead, reloaded.getHeadCheckpointLvSeqTxn());
+            // Falling back costs the ring, never the answer: the re-drained
+            // all-filtered seqTxn still emits nothing and the view is intact.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-11-01T00:00:10.000000Z\t110\t1\n" +
+                            "2026-11-01T00:00:20.000000Z\t120\t2\n");
             execute("DROP LIVE VIEW lv");
         });
     }
