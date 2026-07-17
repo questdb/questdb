@@ -45,6 +45,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -1981,6 +1982,75 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertTrue("the armed retry must deliver exactly one wake", store.tryDequeueRefreshTask(task));
             Assert.assertEquals(MatViewRefreshTask.INVALIDATE, task.operation);
             Assert.assertFalse("the concurrent scan attempt must not deliver a duplicate", store.tryDequeueRefreshTask(task));
+        });
+    }
+
+    @Test
+    public void testPutBackFailureUnderPromoteGateRecoversViaRetryFlags() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final TableToken viewToken = fixture.viewToken();
+
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                // Phase 1: an INVALIDATE task is lost by a failing promote-window put-back.
+                state.markAsPendingInvalidation("update operation");
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "update operation");
+                job.setOnRefreshTaskDequeuedForTesting(() -> {
+                    // The promote gate flips AFTER processNotifications' top-of-method check and
+                    // BEFORE the post-dequeue re-check: the exact TOCTOU the put-back handles.
+                    // engine.isMatViewRefreshSuspended() is constant false in OSS (CairoEngine:1600);
+                    // the injected engine override makes the promote-window branch reachable, and
+                    // InstrumentedStateStore's armed reenqueueRefreshTask models the impl-level
+                    // flag-on-throw contract that a genuine queue-growth failure would hit.
+                    isRefreshSuspended.set(true);
+                    isPutBackFailureArmed.set(true);
+                });
+                try {
+                    drainMatViewQueue(job);
+                    Assert.fail("the modeled put-back failure must propagate");
+                } catch (OutOfMemoryError e) {
+                    TestUtils.assertContains(e.getMessage(), "test put-back enqueue failure");
+                }
+                job.setOnRefreshTaskDequeuedForTesting(null);
+                isRefreshSuspended.set(false);
+
+                // The lost task's facet survives via the retry flag; the next tick redelivers.
+                drainMatViewQueue(job);
+                drainWalQueue();
+                Assert.assertTrue("the redelivered INVALIDATE must mint invalid state", state.isInvalid());
+                Assert.assertFalse(state.isPendingInvalidation());
+
+                // Phase 2: a FULL task carrying its owner; the owner-facet flag redelivers and
+                // the rebuild recovers the invalid view.
+                state.markAsPendingFullRefreshForTesting();
+                final Object owner = state.getPendingFullRefreshOwnerForTesting();
+                Assert.assertNotNull(owner);
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken, owner);
+                job.setOnRefreshTaskDequeuedForTesting(() -> {
+                    isRefreshSuspended.set(true);
+                    isPutBackFailureArmed.set(true);
+                });
+                try {
+                    drainMatViewQueue(job);
+                    Assert.fail("the modeled put-back failure must propagate");
+                } catch (OutOfMemoryError e) {
+                    TestUtils.assertContains(e.getMessage(), "test put-back enqueue failure");
+                }
+                job.setOnRefreshTaskDequeuedForTesting(null);
+                isRefreshSuspended.set(false);
+
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+            Assert.assertFalse(state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
         });
     }
 

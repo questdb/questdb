@@ -1043,10 +1043,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             refreshContext,
                             refreshTriggerTimestamp
                     );
-                    // intervalIterator == null with an unchanged watermark is a successful no-row FULL:
-                    // insertAsSelect skips only the no-op state commit. Other false returns have an
-                    // iterator and represent a handled refresh failure, so they must not publish coverage.
-                    if (didRefresh || refreshContext.intervalIterator == null) {
+                    // A null interval iterator cannot leave didRefresh false here: the pump reset the
+                    // watermark to -1 (resetInvalidState), findRefreshIntervals stamps toBaseTxn with the
+                    // reader's seqTxn (>= 0 for a WAL table), so insertAsSelect's no-interval branch always
+                    // advances the watermark and returns true, and the truncate barrier is unreachable in
+                    // FULL (only the incremental WAL scan raises it). The assert pins that invariant.
+                    assert didRefresh || refreshContext.intervalIterator != null;
+                    if (didRefresh) {
                         assert !refreshContext.hasTruncateBarrier;
                         viewState.recordFullRefreshSuccess(baseTableToken, refreshContext.toBaseTxn);
                         if (!viewState.clearPendingInvalidationIfCoveredByLastFullRefresh()
