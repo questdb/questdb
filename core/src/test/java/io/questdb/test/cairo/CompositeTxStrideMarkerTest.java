@@ -190,9 +190,12 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
      * therefore already marker-upgradeable). That removal was REVERTED: {@code
      * CompositeTxCellTest#testStrideDerivedFromComposite} proved it unsafe for a composite table with
      * ZERO ever-committed partitions (a fresh {@code CREATE TABLE}, before any insert -- the on-disk
-     * marker is still 0 in that window, upgrade-only, so a reader opened then has no signal at all
-     * without the explicit call). See the task report for the full RED/GREEN evidence. This test remains
-     * a regression lock for ordinary (non-empty) composite {@link TableReader} correctness regardless.
+     * marker was still 0 in that window under Task 1/2's upgrade-only read, so a reader opened then had
+     * no signal at all without the explicit call). See the task report for the full RED/GREEN evidence.
+     * Task 3 later closed that specific window (createTxn now writes the real marker, 8 for composite,
+     * from CREATE) and made the read symmetric, but did not re-investigate this removal -- out of that
+     * task's scope. This test remains a regression lock for ordinary (non-empty) composite
+     * {@link TableReader} correctness regardless.
      * <p>
      * Separately, see the task report for the RED/GREEN discrimination proving the MARKER itself (not
      * leftover threading) is what makes {@code table_storage()} -- a site that has never called {@code
@@ -224,6 +227,76 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
             }
 
             assertSqlCursors("select ts, exchange, x from p order by ts", "select ts, exchange, x from c order by ts");
+        });
+    }
+
+    /**
+     * Plan 3b, Task 3: the marker must be correct from the moment the table is CREATEd, not just once
+     * a first commit runs. Before this task, {@code TableUtils#createTxn} -- the physical file-creation
+     * write, before any {@link TxWriter}/metadata object exists -- always wrote the literal plain
+     * default {@code 0}, even for a composite table, relying on the marker "catching up" to {@code 8}
+     * only once {@code TxWriter#finishABHeader} ran the table's first real commit. That create-time
+     * window is exactly what forced {@link TxReader#unsafeLoadBaseOffset()}'s marker read to be
+     * upgrade-only in the first place (see that method's Task 1 comment: a symmetric read taken at face
+     * value during the window would have stomped an uncommitted composite table's stride back to
+     * plain). This test proves the window is now closed: immediately after {@code CREATE TABLE}, with
+     * NO row ever inserted and NO commit ever run, the on-disk marker already reads {@code 8} for a
+     * composite table -- pre-fix this read back {@code 0}.
+     */
+    @Test
+    public void testCreateTimeMarkerIsCompositeBeforeAnyCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive(); // no pooled writer/reader may keep _txn open under our direct use
+
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (RandomAccessFile raf = new RandomAccessFile(path.toString(), "r")) {
+                    raf.seek(TX_BASE_OFFSET_PARTITION_STRIDE_32);
+                    // RandomAccessFile#readInt() is big-endian (java.io.DataInput contract); QuestDB's
+                    // off-heap memory (Unsafe.putInt, native byte order) writes little-endian on
+                    // x86/ARM. reverseBytes reconciles the two -- without it a real 8 misreads as
+                    // 0x08000000 (134217728), not 0, so this is NOT byte-identity-neutral like the
+                    // existing plain-marker (0) checks, which happen to be order-invariant.
+                    int marker = Integer.reverseBytes(raf.readInt());
+                    Assert.assertEquals(
+                            "composite table's _txn marker must already be 8 right after CREATE TABLE, " +
+                                    "before any insert/commit -- createTxn must write the real marker " +
+                                    "from creation, not always the plain default",
+                            8, marker);
+                }
+            }
+        });
+    }
+
+    /**
+     * Companion byte-identity check for the test above, from the SAME create-time call site: a plain
+     * table's marker must still read back {@code 0} immediately after {@code CREATE TABLE} -- unchanged
+     * by threading composite-ness into {@code createTxn}'s caller.
+     */
+    @Test
+    public void testCreateTimeMarkerIsZeroForPlainTableBeforeAnyCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, x double) timestamp(ts) partition by day");
+            engine.releaseInactive();
+
+            TableToken tableToken = engine.verifyTableName("p");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (RandomAccessFile raf = new RandomAccessFile(path.toString(), "r")) {
+                    raf.seek(TX_BASE_OFFSET_PARTITION_STRIDE_32);
+                    // See the composite test above for why reverseBytes is required here (it is a no-op
+                    // for 0 either way, but kept for consistency with that test's real requirement).
+                    int marker = Integer.reverseBytes(raf.readInt());
+                    Assert.assertEquals(
+                            "plain table's _txn marker must remain 0 right after CREATE TABLE",
+                            0, marker);
+                }
+            }
         });
     }
 }

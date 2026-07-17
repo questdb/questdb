@@ -754,28 +754,42 @@ public class TxReader implements Closeable, Mutable {
         // callers) folds the raw attached-partitions region at the RIGHT stride. This makes a TxReader
         // self-detect composite-ness purely from the file, with no setComposite() call required.
         // <p>
-        // UPGRADE-ONLY: marker == 8 always forces composite. marker == 0 deliberately does NOT force a
-        // reset back to plain -- it leaves longsPerAttachedPartition/attachedPartitionsShl exactly as
-        // they already are. This matters for a genuinely-fresh COMPOSITE table that has not yet
-        // completed its first base-header write: TableUtils#createTxn (physical file creation, before
-        // any TxWriter/metadata exists) always writes marker 0, so the on-disk marker only catches up to
-        // 8 once TxWriter#finishABHeader/TxReader#dumpTo first runs with the correct stride. Two already
-        // -shipped call patterns rely on an explicit setComposite(true) surviving a load that happens
-        // while the on-disk marker still reads 0 this way: (a) the standalone TxWriter/TxReader test
-        // idiom (setCompositeForTest(true) called BEFORE ofRW/ofRO, whose own unsafeLoadAll() would
-        // otherwise immediately stomp it back to plain on a brand-new table); and (b) TableWriter's
-        // constructor, which blind-loads via the 1-arg ofRW() before metadata/compositeness is known,
-        // calls setComposite(true) once metadata is available, then -- for an ALREADY-partitioned
-        // composite table -- reloadAttachedPartitionsAfterComposite() forces a SECOND unsafeLoadAll() to
-        // heal the first blind load's stride-4 mis-fold; that second load must not itself undo the
-        // setComposite(true) that just ran, for a fresh/still-uncommitted composite table. A table's
-        // compositeness never changes across its lifetime, so "upgrade-only" never masks a genuine
-        // plain-to-composite transition that doesn't exist; it only avoids treating "the marker hasn't
-        // been corrected on disk yet" as "this table is plain."
+        // SYMMETRIC (Plan 3b Task 3): every load sets longsPerAttachedPartition/attachedPartitionsShl
+        // from whatever the marker says, in EITHER direction -- marker == 8 forces composite, anything
+        // else forces plain. This used to be upgrade-only (marker == 8 forced composite; marker == 0
+        // left the stride exactly as it already was) because TableUtils#createTxn, the genuinely-fresh
+        // physical file-creation write, used to always write marker 0 -- even for a composite table --
+        // until that table's first commit (TxWriter#finishABHeader) corrected it. A symmetric read taken
+        // at face value during that window would have stomped an explicit setComposite(true) survived
+        // across a blind load back to plain, for a still-uncommitted composite table.
+        // <p>
+        // Task 3 closed that window at the source: createTxn now writes the table's real marker at
+        // creation (threaded in from the CREATE TABLE path's own PartitionSpec), so a composite table's
+        // on-disk marker is 8 from the moment it exists, not just from its first commit onward. There is
+        // no longer a marker-reads-0-but-the-table-is-actually-composite window for this read to
+        // mis-stomp, which is what makes the read safe to make symmetric: every one of the previously
+        // -upgrade-only-dependent call patterns now finds the marker already agreeing with them the very
+        // first time it is read --
+        //   (a) the standalone TxWriter/TxReader test idiom (setCompositeForTest(true) called BEFORE
+        //       ofRW/ofRO): the on-disk marker for a real composite table's _txn is 8 from creation, so
+        //       the first unsafeLoadAll() reads 8 and agrees with the explicit call instead of undoing it;
+        //   (b) TableWriter's constructor, which blind-loads via the 1-arg ofRW() before metadata is
+        //       known, then calls setComposite(true) and (for an already-partitioned composite table)
+        //       reloadAttachedPartitionsAfterComposite() to force a second unsafeLoadAll(): the blind load
+        //       itself now already reads marker 8 and sets the correct stride, making setComposite(true)
+        //       redundant-but-harmless and the forced reload a safe, stride-preserving no-op re-fold
+        //       rather than a correcting one. Both callers remain in place -- removing them is not this
+        //       task's job -- they simply no longer have anything left to correct.
+        // A table's compositeness never changes across its lifetime, so this read never has to react to
+        // a genuine plain-to-composite transition; it only ever confirms, on every load, which one this
+        // table's _txn has always been.
         int partitionStrideMarker = roTxMemBase.getInt(TX_BASE_OFFSET_PARTITION_STRIDE_32);
         if (partitionStrideMarker == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
             longsPerAttachedPartition = LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE;
             attachedPartitionsShl = LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB;
+        } else {
+            longsPerAttachedPartition = LONGS_PER_TX_ATTACHED_PARTITION;
+            attachedPartitionsShl = LONGS_PER_TX_ATTACHED_PARTITION_MSB;
         }
 
         // Before extending file, check that values read are not dirty

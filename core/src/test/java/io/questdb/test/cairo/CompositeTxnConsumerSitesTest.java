@@ -24,7 +24,14 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -56,10 +63,19 @@ import org.junit.Test;
  * table_storage()} cursor walk -- even with a {@code WHERE tableName = '...'} filter, which only
  * discards non-matching ROWS after the shared reader has already been mutated for them -- can carry a
  * stride-8 upgrade over into the plain table's fold and silently UNDER-count it (confirmed empirically:
- * 1 instead of the true 3, i.e. floor(12 longs / 8) instead of 12 longs / 4). That is a real, separate
- * latent bug in this reused-single-instance call site, out of THIS task's scope (see task report) -- not
- * a reason to doubt the marker itself, which is exactly why each test below only ever has one user table
- * in the engine at a time.
+ * 1 instead of the true 3, i.e. floor(12 longs / 8) instead of 12 longs / 4). That was a real, separate
+ * latent bug in this reused-single-instance call site, out of Task 2's scope (see that task's report) --
+ * not a reason to doubt the marker itself, which is exactly why the two tests above each only ever have
+ * one user table in the engine at a time.
+ * <p>
+ * Plan 3b, Task 3 closes that separate gap: {@code TableUtils#createTxn} now writes the table's real
+ * marker at CREATE time (instead of always writing the plain-default {@code 0}, even for a composite
+ * table), and {@code TxReader#unsafeLoadBaseOffset()}'s marker read is now SYMMETRIC -- every load
+ * re-derives the stride from whichever marker value it just read, in EITHER direction -- rather than
+ * upgrade-only. {@link #testReusedTxReaderDoesNotLeakCompositeStrideIntoPlainTable()} below is the direct
+ * repro/regression lock for that fix: it deliberately drives a composite table and then a plain table
+ * through the SAME reused {@code TxReader}, in that order -- precisely the scenario the two tests above
+ * avoid.
  */
 public class CompositeTxnConsumerSitesTest extends AbstractCairoTest {
 
@@ -110,5 +126,71 @@ public class CompositeTxnConsumerSitesTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("partitionCount\n3\n");
         });
+    }
+
+    /**
+     * Plan 3b, Task 3: the actual reused-reader repro. Builds a composite table {@code c} (3 day
+     * partitions) and a plain table {@code p} (3 day partitions), then drives ONE {@link TxReader}
+     * instance across both -- {@code c} first, {@code p} second -- via the exact same {@code
+     * TableUtils#setTxReaderPath} + {@code unsafeLoadRowCount()} call sequence {@code
+     * TableStorageRecordCursor#getTableStats} uses on its single reused reader field (see {@link
+     * #loadLikeTableStorage}). Pre-fix, reading {@code c} first upgrades the shared reader to stride 8
+     * (Task 1's marker read was upgrade-only), and reading {@code p} right after leaves that stride-8 in
+     * place (plain's marker {@code 0} "leaves the stride as-is" under the old rule), silently folding
+     * {@code p}'s stride-4 region at stride 8 and under-counting it to 1. Post-fix, the read is
+     * symmetric, so the read of {@code p} always re-derives stride 4 from {@code p}'s own on-disk marker,
+     * regardless of what the reader just read for {@code c}.
+     */
+    @Test
+    public void testReusedTxReaderDoesNotLeakCompositeStrideIntoPlainTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            execute("insert into c values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), " +
+                    "('2020-01-03T00:00:00.000000Z','A',3.0)");
+
+            execute("create table p (ts timestamp, x double) timestamp(ts) partition by day");
+            execute("insert into p values " +
+                    "('2020-01-01T00:00:00.000000Z',1.0), " +
+                    "('2020-01-02T00:00:00.000000Z',2.0), " +
+                    "('2020-01-03T00:00:00.000000Z',3.0)");
+            engine.releaseAllWriters();
+
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                TableToken cToken = engine.verifyTableName("c");
+                loadLikeTableStorage(txReader, cToken);
+                Assert.assertEquals(
+                        "sanity: composite table must report its true partition count first",
+                        3, txReader.getPartitionCount());
+
+                TableToken pToken = engine.verifyTableName("p");
+                loadLikeTableStorage(txReader, pToken);
+                Assert.assertEquals(
+                        "reused TxReader must not leak the composite table's stride into the very next " +
+                                "plain-table read -- pre-fix this under-counted to 1",
+                        3, txReader.getPartitionCount());
+            }
+        });
+    }
+
+    /**
+     * Mirrors {@code TableStorageRecordCursor.TableStorageRecord#getTableStats}'s exact reuse idiom: the
+     * SAME {@link TxReader} instance, repointed at a different table's {@code _txn} file via {@code
+     * TableUtils#setTxReaderPath}, then reloaded via {@code unsafeLoadRowCount()} -- with no
+     * table-metadata-derived compositeness signal threaded in anywhere, exactly like the real call site.
+     */
+    private void loadLikeTableStorage(TxReader txReader, TableToken token) {
+        CairoConfiguration configuration = engine.getConfiguration();
+        int partitionBy;
+        int timestampType;
+        try (TableMetadata tm = engine.getTableMetadata(token)) {
+            partitionBy = tm.getPartitionBy();
+            timestampType = tm.getTimestampType();
+        }
+        final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName());
+        TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy);
+        txReader.unsafeLoadRowCount();
     }
 }

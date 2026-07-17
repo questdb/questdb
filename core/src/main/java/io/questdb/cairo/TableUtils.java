@@ -808,7 +808,13 @@ public final class TableUtils {
 
             // Create TXN file last, it is used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+            // Plan 3b Task 3: composite-ness is known right here, from the same PartitionSpec the
+            // interner-dictionary setup above already consulted -- mirrors the exact predicate
+            // TableWriter/TableReader use for their own setComposite(...) calls
+            // (metadata.getPartitionSpec().getDimensionCount() > 0), so createTxn's marker always agrees
+            // with what this table's first real commit (TxWriter#finishABHeader) will derive too.
+            boolean composite = structure.getPartitionSpec().getDimensionCount() > 0;
+            createTxn(mem, symbolMapCount, composite, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
             mem.sync(false);
         } finally {
             if (dirFd > 0) {
@@ -820,6 +826,7 @@ public final class TableUtils {
     public static void createTxn(
             MemoryMW txMem,
             int symbolMapCount,
+            boolean composite,
             long txn,
             long seqTxn,
             long dataVersion,
@@ -831,12 +838,18 @@ public final class TableUtils {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
-        // Plan 3b Task 1: this is genuinely-fresh physical file creation, before any TxWriter/metadata
-        // object exists to say whether the table will be composite, so this always writes the plain
-        // default (0) -- byte-identical to the zero padding this offset held before this task. A real
-        // COMPOSITE table's writer corrects this the first time it writes the base header (TxWriter's
-        // own longsPerAttachedPartition, set from metadata, drives that write).
-        txMem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, 0);
+        // Plan 3b Task 3: this is genuinely-fresh physical file creation, before any TxWriter object
+        // exists -- but the caller (the CREATE TABLE path) already knows composite-ness from the
+        // table's own PartitionSpec at this point, so the marker is written correctly from the start:
+        // 0 (byte-identical to the legacy zero padding) for a plain table, 8 for a composite one. This
+        // closes the create-time window where the marker used to read 0 for an as-yet-uncommitted
+        // composite table (Task 1's rationale for making the read upgrade-only); TxWriter#finishABHeader
+        // keeps writing the same marker (derived the same way, from its own longsPerAttachedPartition)
+        // on every subsequent commit, so the two never disagree.
+        txMem.putInt(
+                TX_BASE_OFFSET_PARTITION_STRIDE_32,
+                partitionStrideMarker(composite ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : LONGS_PER_TX_ATTACHED_PARTITION)
+        );
         resetTxn(
                 txMem,
                 TX_BASE_HEADER_SIZE,
@@ -855,7 +868,7 @@ public final class TableUtils {
     // Derives the self-describing TX_BASE_OFFSET_PARTITION_STRIDE_32 marker value from a table's
     // attached-partition record stride: LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE (8) for composite,
     // 0 (byte-identical to the legacy zero padding) for plain. Single source of truth shared by
-    // TxReader#dumpTo and TxWriter#finishABHeader.
+    // TableUtils#createTxn (Plan 3b Task 3), TxReader#dumpTo and TxWriter#finishABHeader.
     public static int partitionStrideMarker(int longsPerAttachedPartition) {
         return longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : 0;
     }
