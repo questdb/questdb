@@ -52,28 +52,49 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Exposes a live view's two tiers as one page-frame stream: the LV table's own
- * disk frames cut at the seam, then synthetic frames over the pinned in-memory
- * slot. It is the page-frame twin of {@link LiveViewRecordCursor}'s
- * seam split, and serves exactly the same rows in the same order - so a read
- * routed through here sees the un-flushed lead without giving up the engine's
- * frame machinery (the parallel filter, the JIT filter, LIMIT pushdown), which
- * the record-cursor path cannot offer.
+ * disk frames plus synthetic frames over the pinned in-memory slot. It is the
+ * page-frame twin of {@link LiveViewRecordCursor}'s routing modes, and serves
+ * exactly the same rows in the same order - so a read routed through here sees the
+ * un-flushed lead without giving up the engine's frame machinery (the parallel
+ * filter, the JIT filter, LIMIT pushdown), which the record-cursor path cannot
+ * offer.
  * <p>
- * <b>Where the cut falls.</b> Under the seqTxn fence the slot's overlap band -
- * rows {@code [0, leadStart)}, where {@code leadStart = rowCount - leadRowCount} -
- * is exactly the disk scan's trailing {@code leadStart} rows, the ones at or above
- * {@code seamTs}. So this cursor serves the disk scan's leading
- * {@code base.size() - leadStart} rows and then the whole slot, which covers every
- * row exactly once: disk below the seam, slot at or above it. The cut is taken by
- * ROW COUNT rather than by comparing each row's timestamp against {@code seamTs}.
- * The two are the same boundary, but the row count is the identity
- * {@link LiveViewRecordCursor#size} and {@code skipRows} already use, so all three
- * agree by construction rather than by an invariant holding; it also needs no
+ * <b>The two modes</b>, picked in {@link #of} from the direction the base's frames
+ * arrive in, mirror the record path's own (see {@link LiveViewRecordCursor}'s
+ * {@code ROUTING_*} constants). A slot's rows split at
+ * {@code leadStart = rowCount - leadRowCount}: rows {@code [0, leadStart)} are the
+ * overlap (also on disk), rows {@code [leadStart, rowCount)} the un-flushed lead.
+ * <ul>
+ *   <li><b>Seam split</b>, for an ascending frame stream: the disk scan's leading
+ *   {@code base.size() - leadStart} frames, then the whole slot. Under the seqTxn
+ *   fence the overlap band IS the disk scan's trailing {@code leadStart} rows - the
+ *   ones at or above {@code seamTs} - so this covers every row exactly once, disk
+ *   below the seam and slot at or above it, and serves the LV table's hot tail
+ *   partition(s) from RAM instead.</li>
+ *   <li><b>Lead-only descending</b>, for a descending one: the lead band alone,
+ *   reversed, then the disk scan in FULL. Disk holds every applied row and the lead
+ *   holds exactly what disk lacks, so the union still covers every row once - with no
+ *   cut to take. It gives up the hot-tail skip, which is the right trade for a read the
+ *   seam cannot serve at all: the seam's cut takes the scan's LEADING rows, which over a
+ *   descending stream are the newest rather than the oldest, so it would serve the slot
+ *   on top of rows it already yielded.</li>
+ * </ul>
+ * Both cuts are taken by ROW COUNT rather than by comparing each row's timestamp
+ * against {@code seamTs}. The two are the same boundary, but the row count is the
+ * identity {@link LiveViewRecordCursor#size} and {@code skipRows} already use, so all
+ * three agree by construction rather than by an invariant holding; it also needs no
  * timestamp read, which a parquet frame or a metadata-only skip frame cannot serve
- * anyway. The tie at {@code seamTs} is handled for free - the split is by row, so a
- * lead row sharing a timestamp with a disk row is still a distinct row.
- * {@code leadStart == 0} (a slot that is pure lead) collapses to "disk serves
- * everything", matching {@link LiveViewRecordCursor#hasNext}'s branch for it.
+ * anyway. It disposes of the lead/disk timestamp tie for free - the split is by row, so
+ * a lead row sharing a timestamp with a disk row is still a distinct row, and neither
+ * mode may assert a strict {@code >} on that boundary. {@code leadStart == 0} (a slot
+ * that is pure lead) collapses the seam to "disk serves everything", matching
+ * {@link LiveViewRecordCursor#hasNext}'s branch for it.
+ * <p>
+ * <b>Why descending serves the lead FIRST.</b> The bound is
+ * {@code min(lead ts) >= max(disk ts)}, so the reversed lead runs down to the on-disk
+ * maximum and the disk scan continues down from it: the stream stays non-increasing
+ * across the band boundary. Equal-ts neighbours across it need no particular relative
+ * order.
  * <p>
  * <b>Slot lifetime.</b> The cursor carries the tier pin for its whole life and
  * drops it in {@link #close()}. The synthetic frame publishes the slot's native
@@ -126,10 +147,19 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // Disk rows covered by the frames returned so far.
     private long diskRowsEmitted;
     private boolean isDiskExhausted;
+    // The routing mode, snapshotted in of() from the direction the base's frames arrive
+    // in: lead-only descending when set (the reversed lead band, then the disk scan in
+    // full), the seam split when not. See the class doc.
+    private boolean isLeadOnlyDescending;
     // Set by toPartition(), cleared by toTop(): the walk is scoped to one disk partition,
     // so next() hands straight to the base and the tier stays out of it. See toPartition().
     private boolean isPartitionScoped;
     private LiveViewInMemoryBuffer slot;
+    // The first slot row this cursor serves: 0 under the seam, which serves the whole
+    // slot, and leadStart under lead-only, which serves the lead band alone. Snapshotted
+    // in of() alongside diskRoutedRows - the two are the mode's band split, and size()
+    // holds whichever way they fall.
+    private long slotBandLo;
     private int slotIdx;
     // The pinned slot's row count, snapshotted in of(). The slot is frozen for the
     // cursor's life, but snapshotting keeps the frame's row range and size() consistent
@@ -152,8 +182,9 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
      * contract {@code PageFrameRecordCursorImpl.calculateSize} implements - it adds
      * {@code getRemainingRowsInInterval()} itself and then calls this - and it is what
      * the base cursor does too, so this mirrors it rather than the interface javadoc's
-     * looser wording. The two together add the disk rows left below the seam plus the
-     * whole slot.
+     * looser wording. The two together add whatever is left of the mode's two bands, and
+     * they say nothing about the order the bands go out in - a lead-only descending read
+     * has already served its slot band by the time it reaches the disk one.
      */
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
@@ -165,9 +196,10 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             isDiskExhausted = true;
             diskRowsEmitted = diskRoutedRows;
         }
-        if (slotRowsEmitted < slotRowCount) {
-            counter.add(slotRowCount - slotRowsEmitted);
-            slotRowsEmitted = slotRowCount;
+        final long slotRoutedRows = slotRowCount - slotBandLo;
+        if (slotRowsEmitted < slotRoutedRows) {
+            counter.add(slotRoutedRows - slotRowsEmitted);
+            slotRowsEmitted = slotRoutedRows;
         }
     }
 
@@ -199,8 +231,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             // keeps the two halves disjoint whether the slot is one frame or many.
             return 0;
         }
-        // The base counts every row left in its current partition; this cursor only
-        // serves the ones below the seam, so clamp to what is left of the disk band.
+        // The base counts every row left in its CURRENT partition; this cursor may serve
+        // fewer (the seam's band stops short of the scan's end), so clamp to what is left
+        // of the disk band. A lead-only descending read that is still on its slot band has
+        // not asked the base for a frame yet, so the base reports 0 and so does this -
+        // which leaves both bands to calculateSize, exactly as the sum contract wants.
         return Math.min(base.getRemainingRowsInInterval(), diskRoutedRows - diskRowsEmitted);
     }
 
@@ -249,37 +284,15 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             // A partition-scoped walk is a disk-tier walk; see toPartition().
             return base.next(skipTarget);
         }
-        if (!isDiskExhausted) {
-            final long remainingDiskRows = diskRoutedRows - diskRowsEmitted;
-            if (remainingDiskRows > 0) {
-                final PageFrame frame = base.next(skipTarget);
-                if (frame != null) {
-                    final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
-                    if (frameRows <= remainingDiskRows) {
-                        diskRowsEmitted += frameRows;
-                        return frame;
-                    }
-                    // The frame straddles the seam: serve its prefix and stop the disk
-                    // side - the rest of it is the slot's overlap, which the slot frame
-                    // serves from RAM. This is the hot-tail skip the seam exists for.
-                    isDiskExhausted = true;
-                    diskRowsEmitted = diskRoutedRows;
-                    return seamCutFrame.of(frame, remainingDiskRows);
-                }
-                // The base ran out before the seam. Under the fence this means the disk
-                // snapshot is smaller than of() measured it, which cannot happen for the
-                // frozen reader this cursor holds; fail safe by serving what disk gave.
-                assert false : "disk scan ended " + remainingDiskRows + " rows short of the seam";
-            }
-            isDiskExhausted = true;
+        if (isLeadOnlyDescending) {
+            // The reversed lead, then the disk scan in full: the lead sits at or above the
+            // on-disk maximum, so serving it first keeps the stream non-increasing.
+            final PageFrame slotFrame = nextSlotFrame();
+            return slotFrame != null ? slotFrame : nextDiskFrame(skipTarget);
         }
-        if (slotRowsEmitted < slotRowCount) {
-            final long lo = slotRowsEmitted;
-            final long hi = Math.min(slotRowCount, lo + slotRowLimit);
-            slotRowsEmitted = hi;
-            return slotFrame.of(lo, hi);
-        }
-        return null;
+        // The seam: the disk band below the cut, then the whole slot above it.
+        final PageFrame diskFrame = nextDiskFrame(skipTarget);
+        return diskFrame != null ? diskFrame : nextSlotFrame();
     }
 
     /**
@@ -289,16 +302,22 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
      * <p>
      * The caller must have pinned {@code slotIdx} through
      * {@link LiveViewInMemoryTier#acquireRead()} and must have established the routing
-     * preconditions {@link LiveViewRecordCursor#of} checks: a tier-addressable
-     * projection (which is what {@code tierColumns} records), an ascending unfiltered
-     * base scan whose {@link PageFrameCursor#size()} is known, and the seqTxn fence
-     * (slot and disk reader on the same LV-table version). Routing a read that fails
-     * any of them through here would over-return the slot's rows against a disk scan
-     * they do not line up with.
+     * preconditions {@link LiveViewRouting} holds: a tier-addressable projection (which is
+     * what {@code tierColumns} records), an unfiltered base scan whose
+     * {@link PageFrameCursor#size()} is known, and the seqTxn fence (slot and disk reader
+     * on the same LV-table version). Routing a read that fails any of them through here
+     * would over-return the slot's rows against a disk scan they do not line up with.
+     * Scan direction is not among them - it picks the mode instead, through
+     * {@code isDescending}.
      *
      * @param executionContext the read's context; sizes the slot's frames through the row
      *                         bounds {@code changePageFrameSizes} may have narrowed
      * @param base             the LV table's own frame cursor; owned from here on
+     * @param isDescending     whether {@code base} yields its frames newest-first, which
+     *                         selects lead-only descending over the seam split. It is the
+     *                         consumer's requested frame order, not the base factory's
+     *                         natural scan direction - see
+     *                         {@link LiveViewRecordCursorFactory#getPageFrameCursor}.
      * @param tier             the pinned tier; its pin is released by {@link #close()}
      * @param slotIdx          the pinned slot's index, as {@link LiveViewInMemoryTier#acquireRead()} returned it
      * @param slot             the pinned slot, i.e. {@code tier.getSlot(slotIdx)}
@@ -308,6 +327,7 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     public LiveViewPageFrameCursor of(
             SqlExecutionContext executionContext,
             TablePageFrameCursor base,
+            boolean isDescending,
             LiveViewInMemoryTier tier,
             int slotIdx,
             LiveViewInMemoryBuffer slot,
@@ -322,20 +342,8 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         this.slot = slot;
         this.tierColumns.clear();
         this.tierColumns.addAll(tierColumns);
+        this.isLeadOnlyDescending = isDescending;
         this.slotRowCount = slot.rowCount();
-        // The slot is this scan's last partition, so it splits into frames the same way a
-        // disk partition of the same row count does - same helper, same bounds, same
-        // trailing-frame rounding. Sharing it is not just tidiness: those bounds carry the
-        // engine's hard cap on a frame's row count (Map.BATCH_ROW_INDEX_MASK + 1, the width
-        // of the frame-relative row index a batched GROUP BY packs into its entries), which
-        // a slot published as one frame would breach for a wide enough IN MEMORY window.
-        this.slotRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                0,
-                slotRowCount,
-                executionContext.getPageFrameMinRows(),
-                executionContext.getPageFrameMaxRows(),
-                executionContext.getSharedQueryWorkerCount()
-        );
         final long diskSize = base.size();
         // The fence admits only a plain entity scan, whose size is always known. A -1
         // would make the seam cut below meaningless (the disk band's row count IS the
@@ -347,7 +355,30 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         // row count and serve disk rows twice.
         assert leadStart >= 0 : "leadStart " + leadStart + " is negative";
         assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
-        this.diskRoutedRows = diskSize - leadStart;
+        if (isDescending) {
+            // Lead-only: disk serves every applied row and the slot adds the lead band
+            // alone, so there is no cut to take and no overlap to skip.
+            this.slotBandLo = leadStart;
+            this.diskRoutedRows = diskSize;
+        } else {
+            // The seam: the slot's overlap band stands in for the disk scan's trailing
+            // leadStart rows, so the disk band stops leadStart rows short of its end.
+            this.slotBandLo = 0;
+            this.diskRoutedRows = diskSize - leadStart;
+        }
+        // The slot band is this scan's last partition, so it splits into frames the same
+        // way a disk partition of the same row count does - same helper, same bounds, same
+        // trailing-frame rounding. Sharing it is not just tidiness: those bounds carry the
+        // engine's hard cap on a frame's row count (Map.BATCH_ROW_INDEX_MASK + 1, the width
+        // of the frame-relative row index a batched GROUP BY packs into its entries), which
+        // a slot published as one frame would breach for a wide enough IN MEMORY window.
+        this.slotRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                slotBandLo,
+                slotRowCount,
+                executionContext.getPageFrameMinRows(),
+                executionContext.getPageFrameMaxRows(),
+                executionContext.getSharedQueryWorkerCount()
+        );
         // The overlay resolves against the slot this cursor pins, for as long as it pins
         // it - which is exactly the cursor's life, and the life of every frame it hands
         // out.
@@ -379,11 +410,13 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public long size() {
-        // The disk band below the seam plus the whole slot, i.e. base.size() +
-        // leadRowCount: the slot's overlap is already counted in base.size(), and only
-        // the un-flushed lead sits on top of it. Same identity LiveViewRecordCursor.size()
-        // reports, so a routed read sizes the same through either path.
-        return diskRoutedRows + slotRowCount;
+        // The mode's disk band plus its slot band, which comes to base.size() +
+        // leadRowCount whichever way the two fall: the seam serves (diskSize - leadStart)
+        // disk rows plus the whole slot, lead-only every disk row plus the lead alone. The
+        // slot's overlap is on disk either way, so base.size() already counts it and only
+        // the un-flushed lead sits on top. Same identity LiveViewRecordCursor.size()
+        // reports, so a routed read sizes the same through either path and either mode.
+        return diskRoutedRows + slotRowCount - slotBandLo;
     }
 
     @Override
@@ -423,6 +456,66 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         isPartitionScoped = false;
         diskRowsEmitted = 0;
         slotRowsEmitted = 0;
+    }
+
+    // The disk band's next frame, or null once the band is spent. The band is the scan's
+    // LEADING diskRoutedRows rows either way: under the seam that stops at the cut,
+    // leaving the hot tail to the slot's frames, while under lead-only it is every row
+    // the base has.
+    private @Nullable PageFrame nextDiskFrame(long skipTarget) {
+        if (isDiskExhausted) {
+            return null;
+        }
+        final long remainingDiskRows = diskRoutedRows - diskRowsEmitted;
+        if (remainingDiskRows > 0) {
+            final PageFrame frame = base.next(skipTarget);
+            if (frame != null) {
+                final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
+                if (frameRows <= remainingDiskRows) {
+                    diskRowsEmitted += frameRows;
+                    return frame;
+                }
+                // The frame straddles the seam: serve its prefix and stop the disk side -
+                // the rest of it is the slot's overlap, which the slot frame serves from
+                // RAM. This is the hot-tail skip the seam exists for, and it is why the
+                // band is a row count rather than the base's own end. Lead-only never
+                // reaches it: its band is every row the base has, so no frame can straddle.
+                isDiskExhausted = true;
+                diskRowsEmitted = diskRoutedRows;
+                return seamCutFrame.of(frame, remainingDiskRows);
+            }
+            // The base ran out before the band did. Under the fence this means the disk
+            // snapshot is smaller than of() measured it, which cannot happen for the
+            // frozen reader this cursor holds; fail safe by serving what disk gave.
+            assert false : "disk scan ended " + remainingDiskRows + " rows short of the routed band";
+        }
+        isDiskExhausted = true;
+        return null;
+    }
+
+    // The next frame over the slot band this mode serves - the whole slot under the seam,
+    // the lead [leadStart, rowCount) under lead-only - or null once the band is spent. The
+    // band tiles into slotRowLimit-row frames, walking UP from slotBandLo under the seam
+    // and DOWN from the slot's top under lead-only, each in the order its mode serves them.
+    private @Nullable PageFrame nextSlotFrame() {
+        final long slotRoutedRows = slotRowCount - slotBandLo;
+        if (slotRowsEmitted >= slotRoutedRows) {
+            return null;
+        }
+        final long lo;
+        final long hi;
+        if (isLeadOnlyDescending) {
+            // Rounding down from the top leaves the band's LOWEST frame the short one,
+            // which is the frame boundary BwdTableReaderPageFrameCursor gives a disk
+            // partition of the same row count.
+            hi = slotRowCount - slotRowsEmitted;
+            lo = Math.max(slotBandLo, hi - slotRowLimit);
+        } else {
+            lo = slotBandLo + slotRowsEmitted;
+            hi = Math.min(slotRowCount, lo + slotRowLimit);
+        }
+        slotRowsEmitted += hi - lo;
+        return slotFrame.of(lo, hi);
     }
 
     private void releaseSlot() {
@@ -575,10 +668,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     }
 
     /**
-     * A synthetic frame over rows {@code [lo, hi)} of the pinned slot. The slot's rows -
-     * overlap band and un-flushed lead together, since the seam cut above already stopped
-     * disk where {@code lo == 0} starts - are tiled by {@code slotRowLimit}-row frames, so
-     * a parallel filter's workers share the tier the way they share a disk partition.
+     * A synthetic frame over rows {@code [lo, hi)} of the pinned slot. The band the mode
+     * serves - the whole slot under the seam, whose cut already stopped disk where row 0
+     * starts, or the lead alone under lead-only - is tiled by {@code slotRowLimit}-row
+     * frames, so a parallel filter's workers share the tier the way they share a disk
+     * partition.
      * <p>
      * It publishes the slot's own column regions as the frame's page addresses. The
      * buffer's layout is the native one a frame already wants: {@code dataMem} carries

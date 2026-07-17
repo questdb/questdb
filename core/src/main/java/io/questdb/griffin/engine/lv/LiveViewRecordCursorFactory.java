@@ -61,7 +61,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * holds it serves disk rows with {@code ts < seamTs} and the pinned in-mem slot
  * for {@code ts >= seamTs}, skipping the hot tail partition(s) of the LV table.
  * The fence ({@code slot.lvSeqTxn == diskReader.seqTxn}) plus a
- * tier-addressable-projection, ascending, unfiltered-scan requirement keep this
+ * tier-addressable-projection and unfiltered-scan requirement keep this
  * safe; anything else falls back to disk-only. See {@link LiveViewRecordCursor} for the routing details.
  * {@link #toPlan} surfaces the static, query-shape part of this decision as the
  * {@code inMemory} EXPLAIN attribute (see {@link #isInMemRoutable}).
@@ -135,10 +135,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean followedOrderByAdvice() {
-        // The cursor yields rows in the base scan's order - disk-only passes the
-        // base order straight through, and tier routing only engages for a forward
-        // (ascending) base - so whatever advice the base scan followed, this
-        // wrapper still honours. The default (false) claims the wrapper ignored
+        // The cursor yields rows in the base scan's order - disk-only passes the base
+        // order straight through, and every routing mode serves its two bands in that
+        // same order (see LiveViewRecordCursor) - so whatever advice the base scan
+        // followed, this wrapper still honours. The default (false) claims the wrapper ignored
         // the advice, which costs a redundant sort on a parent model that reads
         // the flag: generateOrderBy's own scan-direction check only rescues the
         // single-column designated-timestamp case, so an LV read ordered by
@@ -217,6 +217,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private PageFrameCursor bindFrameCursor(
             SqlExecutionContext executionContext,
             PageFrameCursor diskCursor,
+            boolean isDescending,
             LiveViewInstance instance,
             boolean isLastAttempt
     ) {
@@ -264,7 +265,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
                     cursor = new LiveViewPageFrameCursor();
                     // of() adopts diskCursor and the pin before anything that can throw, so
                     // from here close() is what releases them - hence the catch's fork.
-                    cursor.of(executionContext, tableDiskCursor, tier, pin, slot, symbolCache, tierColumns);
+                    cursor.of(executionContext, tableDiskCursor, isDescending, tier, pin, slot, symbolCache, tierColumns);
                     return cursor;
                 }
             }
@@ -312,41 +313,42 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * The page-frame twin of {@link #getCursor}: the base scan's frames cut at the seam,
-     * followed by synthetic frames over the pinned in-mem slot, so a frame consumer sees
-     * the un-flushed lead too. Falls back to the base scan's frames unchanged whenever
-     * routing cannot engage - the shape rules it out, the tier is absent or empty, or the
-     * seqTxn fence misses - which serves the applied prefix, correct and at worst one flush
-     * cycle stale. See {@link LiveViewPageFrameCursor}.
+     * The page-frame twin of {@link #getCursor}: the base scan's frames plus synthetic
+     * frames over the pinned in-mem slot, so a frame consumer sees the un-flushed lead too.
+     * Falls back to the base scan's frames unchanged whenever routing cannot engage - the
+     * shape rules it out, the tier is absent or empty, or the seqTxn fence misses - which
+     * serves the applied prefix, correct and at worst one flush cycle stale. See
+     * {@link LiveViewPageFrameCursor}.
      * <p>
-     * Routing needs an ascending frame stream: the seam cut takes the disk band by ROW
-     * COUNT ({@code base.size() - leadStart}) and then serves the slot, which is ascending
-     * by construction. Over a descending stream that cut would take the newest rows instead
-     * of the oldest and serve the slot on top of them, duplicating some rows and dropping
-     * others.
+     * The frame stream's direction picks the routing MODE rather than disqualifying the
+     * read, as it does on the record path: an ascending stream seams (the disk band cut by
+     * ROW COUNT, then the whole slot), a descending one routes lead-only (the reversed lead
+     * band, then the disk scan in full). The seam cannot serve a descending stream - its
+     * cut takes the scan's LEADING rows, which descending are the newest rather than the
+     * oldest - and lead-only gives up the hot-tail skip in exchange for needing no cut at
+     * all.
      * <p>
      * The {@code order} ARGUMENT decides that, and it is the only thing that does - which
      * is worth stating because the base factory's own {@code getScanDirection()} looks like
      * it should have a say and does not. The base builds a forward page-frame cursor for
      * {@code ORDER_ASC} / {@code ORDER_ANY} and a backward one otherwise, whatever its
      * natural scan direction, so this consumer's request fully determines which way the
-     * frames arrive. Checking the base's direction on top would only refuse reads whose
-     * frames ascend anyway.
-     * <p>
-     * Unlike the record path, a backward read gets no lead-only fallback here; it serves
-     * the applied prefix. Lead-only over frames means narrowing the slot frame to
-     * {@code [leadStart, rowCount)}, which needs the per-sub-frame aux rebasing the single
-     * whole-slot frame avoids by starting at 0 (see {@link LiveViewPageFrameCursor}).
+     * frames arrive. A negative LIMIT is the shape that makes the two part company: the
+     * async filter reverses the base's order to walk it, and asks a forward base for
+     * descending frames.
      */
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        if (!inMemRoutable || (order != ORDER_ASC && order != ORDER_ANY)) {
+        if (!inMemRoutable) {
             return base.getPageFrameCursor(executionContext, order);
         }
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
         if (instance == null) {
             return base.getPageFrameCursor(executionContext, order);
         }
+        // Mirrors the base's own fork rather than testing for ORDER_DESC, so the two cannot
+        // disagree on which way the frames this method routes over actually arrive.
+        final boolean isDescending = order != ORDER_ASC && order != ORDER_ANY;
         // Staleness retry against the disk-open / slot-pin race; see getCursor for why a
         // slot newer than the disk snapshot must not be served as-is.
         for (int attempt = 0; ; attempt++) {
@@ -357,7 +359,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
                 // opposite - see below.
                 return null;
             }
-            final PageFrameCursor cursor = bindFrameCursor(executionContext, diskCursor, instance, attempt >= MAX_STALE_DISK_RETRIES);
+            final PageFrameCursor cursor = bindFrameCursor(executionContext, diskCursor, isDescending, instance, attempt >= MAX_STALE_DISK_RETRIES);
             if (cursor != null) {
                 return cursor;
             }
@@ -369,9 +371,10 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        // The cursor yields rows in the base scan's order: disk-only passes the
-        // base order straight through, and tier routing only engages for a
-        // forward (ascending) base, so it never reorders either. Delegating keeps
+        // The cursor yields rows in the base scan's order: disk-only passes the base
+        // order straight through, and a routing mode serves its two bands in that order
+        // too - a backward read serves the reversed lead first, since the lead sits at or
+        // above the on-disk maximum - so it never reorders either. Delegating keeps
         // the optimizer's order reasoning correct - e.g. ORDER BY ts DESC over an
         // LV whose base is a backward scan no longer adds a redundant sort.
         return base.getScanDirection();
@@ -486,14 +489,9 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * disk-only (see {@link LiveViewRecordCursor}). Keeping them here would have made a
      * {@code false} result unreliable, which is the one property this flag has.
      * <p>
-     * A {@code true} result is a capability flag, not a guarantee, and the gap is wider
-     * than a static plan can show. It cannot see the runtime seqTxn fence, the tier's
-     * population state, or a timestamp-interval filter pushed into the scan, any of which
-     * still route an individual cursor disk-only. Nor does it distinguish the two read
-     * paths: {@link #getPageFrameCursor} routes only an ascending scan, so a backward
-     * FRAME read (e.g. a filtered {@code ORDER BY ts DESC}, which the parallel filter
-     * takes) reports {@code true} and still serves disk alone, while the same read without
-     * the filter takes the record path and routes lead-only.
+     * A {@code true} result is a capability flag, not a guarantee. It cannot see the
+     * runtime seqTxn fence, the tier's population state, or a timestamp-interval filter
+     * pushed into the scan, any of which still route an individual cursor disk-only.
      * <p>
      * A {@code false} result, by contrast, stays reliable: the read is always disk-only,
      * since an unsupported column type is a hard disqualifier on both paths.

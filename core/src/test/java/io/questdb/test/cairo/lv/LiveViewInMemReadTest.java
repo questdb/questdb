@@ -548,17 +548,20 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 Assert.assertFalse("a disk-only frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
 
-            // A backward frame order cannot serve the seam cut, which serves the disk
-            // band and then the ascending slot. The order is the consumer's ask, not the
-            // base's shape, so it is checked in its own right.
+            // A backward frame order cannot serve the SEAM cut - it takes the scan's
+            // leading rows, which descending are the newest - but it routes lead-only
+            // instead of falling back to disk, and so pins the slot like any other routed
+            // read. The order is the consumer's ask, not the base's shape, so the same
+            // factory answers it either way.
             try (
                     RecordCursorFactory factory = select("SELECT * FROM lv");
                     PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_DESC)
             ) {
-                Assert.assertFalse("a backward frame order must not route",
+                Assert.assertTrue("a backward frame order must route lead-only",
                         cursor instanceof LiveViewPageFrameCursor);
-                Assert.assertFalse("a backward frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+                Assert.assertTrue("a routed backward frame cursor must hold the slot pin", isPublishedSlotReaderPinned(tier));
             }
+            Assert.assertFalse("closing the backward frame cursor releases the pin", isPublishedSlotReaderPinned(tier));
 
             // A version-fence miss does not route either. Unlike the record path - which
             // keeps the pin so getCursor's staleness retry can still read the slot - the
@@ -1265,19 +1268,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     public void testBackwardFilteredReadServesEveryDiskRowViaPageFrames() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
-            // A backward FRAME read is disk-only - the frame path's seam cut takes the disk
-            // band by row count, which a descending frame stream would cut at the wrong end,
-            // and lead-only over frames would need a narrowed slot frame the cursor does not
-            // build. So the factory hands the read to the base's page frames unchanged,
-            // which is also what lets the parallel / JIT filter and LIMIT pushdown engage.
-            // The fixture is the interesting case for that bypass: the pinned slot holds
-            // only the 2 most recent rows while disk holds all 5, so a page-frame read that
-            // mistakenly served the slot, or stopped at the seam, would drop the 3 rows
-            // below it. Every applied row must come back.
-            //
-            // inMemory reports true here while the read is disk-only: the attribute tracks
-            // the read SHAPE, and the same query WITHOUT the filter takes the record path
-            // and routes lead-only descending. That gap is the flag's known limit.
+            // A backward FRAME read routes lead-only: the reversed lead, then the disk scan
+            // in FULL. This fixture is the case that pins the "in full" - its slot carries
+            // no lead at all (both cycles flushed), and holds only the 2 most recent rows
+            // as overlap while disk holds all 5. So the lead band is empty and disk must
+            // still serve every row: a mode that cut the disk band at the seam, or served
+            // the whole slot, would drop or duplicate the 3 rows below the overlap.
             assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
                     .noLeakCheck()
                     .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true", "Row backward scan");
@@ -1294,6 +1290,67 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     .returns("ts\tx\n" +
                             "2023-11-14T22:13:25.000002Z\t5\n" +
                             "2023-11-14T22:13:25.000001Z\t4\n");
+        });
+    }
+
+    @Test
+    public void testBackwardFilteredReadServesLeadFromRamViaPageFrames() throws Exception {
+        // The read this step exists for, and the one shape the goal "no query shape is
+        // permanently blind to the lead" still missed: a filtered ORDER BY ts DESC - the
+        // dashboard's "show me the latest" - takes the parallel filter's frame path, which
+        // refused a backward order outright and served the applied prefix. The lead is
+        // exactly the rows that read wants most.
+        assertMemoryLeak(() -> {
+            buildEvictedOverlapPlusLead();
+
+            // The plan proves it takes both: an Async filter over frames, and a LiveView
+            // that routes. Without it the row assertions below would pass on the record
+            // path and test nothing new.
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async", "Filter", "LiveView", "inMemory: true", "Row backward scan");
+
+            // Every arm here must skip the leak check: its battery calls engine.clear(),
+            // which drops the live-view registry and with it the un-flushed lead, so a
+            // checked arm silently asserts the disk-only read instead. That is what makes
+            // these assertions worth anything - x = 6 and 7 come back only while the tier
+            // is alive.
+            //
+            // x = 6 and 7 are the un-flushed lead: they exist nowhere but the slot, so a
+            // filter worker can only have read them off the tier's frame. x = 4, 5 are the
+            // slot's overlap and x = 3 sits below it on disk alone - all five must come
+            // back exactly once, in descending order across the band boundary.
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:25.000004Z\t7\n" +
+                            "2023-11-14T22:13:25.000003Z\t6\n" +
+                            "2023-11-14T22:13:25.000002Z\t5\n" +
+                            "2023-11-14T22:13:25.000001Z\t4\n" +
+                            "2023-11-14T22:13:20.000003Z\t3\n");
+
+            // LIMIT pushed into the filter: it stops inside the lead band, which is the
+            // half of the stream a disk-only read could not reach at all.
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 ORDER BY ts DESC LIMIT 2")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:25.000004Z\t7\n" +
+                            "2023-11-14T22:13:25.000003Z\t6\n");
+
+            // A NEGATIVE limit is the shape where the requested frame order and the base's
+            // own scan direction part company: the base scan is FORWARD and the async
+            // filter asks it for descending frames so it can take the last N. Routing keys
+            // off the order argument alone, so this routes lead-only over a forward base -
+            // and the rows come back ascending, as the negative-limit cursor reverses them.
+            assertQuery("SELECT ts, x FROM lv WHERE x > 2 LIMIT -2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\n" +
+                            "2023-11-14T22:13:25.000003Z\t6\n" +
+                            "2023-11-14T22:13:25.000004Z\t7\n");
         });
     }
 

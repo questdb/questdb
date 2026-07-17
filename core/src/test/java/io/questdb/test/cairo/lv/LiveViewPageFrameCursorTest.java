@@ -101,6 +101,104 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     private static final int TIER_COLUMN_COUNT = 4;
 
     @Test
+    public void testBackwardOrderSizesTheLeadBandNotTheWholeSlot() throws Exception {
+        // size() and calculateSize() must agree with the rows lead-only actually serves,
+        // which is a DIFFERENT split of the same total to the seam's: every disk row plus
+        // the lead, where the seam takes the disk band short and the whole slot. The total
+        // is the same either way (that is the identity both modes rest on), so a size()
+        // left on the seam's split still lands on the right number and only the split
+        // itself can catch it - the lesson calculateSize's own arm records.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 12)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // leadStart = 4: the slot holds disk rows [8, 12) as overlap plus a 2-row
+                // lead, so lead-only serves 12 + 2 = 14 rows.
+                fillSlot(tier, slotIdx, disk, 6, 2);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, bwdDiskCursor(disk, identityTierColumns(), 8, 12), true, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertEquals(14, cursor.size());
+                    Assert.assertEquals(14, calculateSize(cursor));
+
+                    // The slot band goes out FIRST here, so one frame in leaves the whole
+                    // disk scan and nothing else: 12. A mode that counted the slot's
+                    // overlap too would report 14.
+                    cursor.toTop();
+                    Assert.assertNotNull(cursor.next());
+                    Assert.assertEquals(12, calculateSize(cursor));
+                    Assert.assertEquals(0, calculateSize(cursor));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardOrderTilesTheLeadBandDownFromTheSlotsTop() throws Exception {
+        // Lead-only descending, where the whole mode lives. The band is the LEAD alone -
+        // starting at leadStart, not at 0 - because the disk scan below it serves every
+        // applied row, so a band that reached down into the overlap would serve those rows
+        // from both tiers. And it tiles DOWNWARD: the frames go out newest-first, which is
+        // the order a descending consumer reads them in.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 12)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // disk: ts 1..12. slot: 12 rows, the first 4 the overlap (ts 9..12, also
+                // disk rows [8, 12)) and the last 8 the lead (ts 13..20). leadStart = 4,
+                // so the band is [4, 12) - 8 rows over a 4-row limit, i.e. 2 frames.
+                fillSlot(tier, slotIdx, disk, 12, 8);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, bwdDiskCursor(disk, identityTierColumns(), 8, 12), true, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    final LongList frameRanges = new LongList();
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        if (frame.getPartitionIndex() == Rows.MAX_SAFE_PARTITION_INDEX) {
+                            frameRanges.add(frame.getPartitionLo());
+                            frameRanges.add(frame.getPartitionHi());
+                        }
+                    }
+                    // The lead band, tiled top-down and stopping at leadStart. A band
+                    // floored at 0 would add a [0, 4) frame - the overlap, which the disk
+                    // scan below already serves.
+                    Assert.assertEquals("slot frame ranges", "[8,12,4,8]", frameRanges.toString());
+
+                    // ...and the rows come back strictly descending across both bands: the
+                    // reversed lead (ts 20..13) and then every disk row (ts 12..1). The
+                    // lead sits at or above the on-disk maximum, so the boundary between
+                    // them neither repeats a row nor drops one.
+                    cursor.toTop();
+                    final LongList timestamps = new LongList();
+                    final ObjList<String> strings = new ObjList<>();
+                    final ObjList<String> symbols = new ObjList<>();
+                    drain(cursor, metadataOf(identityTierColumns()), true, (record) -> {
+                        timestamps.add(record.getTimestamp(COL_TS));
+                        strings.add(Chars.toString(record.getStrA(COL_S)));
+                        symbols.add(Chars.toString(record.getSymA(COL_G)));
+                    });
+                    assertDescendingTimestamps(timestamps, 20, 1);
+                    for (int i = 0; i < 20; i++) {
+                        // Row i carries ts (20 - i), i.e. the store's logical row 19 - i.
+                        final long logicalRow = 19 - i;
+                        Assert.assertEquals("row " + i, stringValue(logicalRow), strings.getQuick(i));
+                        // The 8 lead rows lead the output; every row below them is disk's,
+                        // and a disk row can only carry the committed symbol.
+                        Assert.assertEquals("row " + i, i < 8 ? LEAD_SYMBOL : COMMITTED_SYMBOL, symbols.getQuick(i));
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testCalculateSizeCountsTheSlotRowsNoFrameHasCovered() throws Exception {
         // A slot that spans several frames can be left half-served, which a single
         // whole-slot frame made unreachable. A boolean "the slot went out" flag answers
@@ -117,7 +215,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 12, 12);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     Assert.assertEquals(16, cursor.size());
                     Assert.assertEquals(16, calculateSize(cursor));
 
@@ -152,7 +250,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 // Closed twice on the happy path - once here, once by the block. The second
                 // must be a no-op; a releaseRead without a matching pin corrupts the count.
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
 
                     Assert.assertNull("a reader pins the slot, so the writer must trail", tier.tryAcquireWrite(slotIdx));
                     cursor.close();
@@ -181,7 +279,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
 
                 final TestDiskPageFrameCursor base = diskCursor(disk, identityTierColumns(), 8, 12);
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, base, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, base, false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final LongList served = drainTimestamps(cursor, metadataOf(identityTierColumns()));
                     assertTimestamps(served, 1, 14);
                     Assert.assertEquals("the frame above the seam must never be pulled", 1, base.nextCalls);
@@ -208,7 +306,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
 
                     cursor.toPartition(0);
                     // Every disk row, and not one lead row: 12, not 14. The routed walk
@@ -242,7 +340,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, tierColumns, 4, 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), tierColumns);
+                    cursor.of(sqlExecutionContext, diskCursor(disk, tierColumns, 4, 8), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), tierColumns);
                     // The slot holds disk rows [4, 8) as overlap plus 2 lead rows, so the
                     // disk band is 8 - 4 = 4 rows and the whole 6-row slot follows: ts 1..10.
                     final LongList served = new LongList();
@@ -280,7 +378,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 3, 3);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 3, 6, 8), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 3, 6, 8), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     Assert.assertEquals(11, cursor.size());
                     assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 11);
                 }
@@ -304,7 +402,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     // disk.size() + leadRowCount = 12 + 2. The overlap is already counted in
                     // disk.size(); only the un-flushed lead sits on top.
                     Assert.assertEquals(14, cursor.size());
@@ -329,7 +427,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     Assert.assertEquals(14, cursor.size());
                     Assert.assertEquals(14, calculateSize(cursor));
 
@@ -373,7 +471,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 5, 5);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final LongList timestamps = new LongList();
                     final ObjList<String> strings = new ObjList<>();
                     final ObjList<String> symbols = new ObjList<>();
@@ -415,7 +513,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 final LiveViewInMemoryBuffer slot = tier.getSlot(slotIdx);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, slot, tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), false, tier, slotIdx, slot, tier.getSymbolCache(), identityTierColumns());
                     // The disk frame, then the slot's [0, 4). The [4, 8) frame below is the
                     // first whose lo is not 0 - the one a whole-slot frame never had.
                     Assert.assertNotNull(cursor.next());
@@ -485,7 +583,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 12, 12);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final LongList frameRanges = new LongList();
                     PageFrame frame;
                     while ((frame = cursor.next()) != null) {
@@ -540,7 +638,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 fillSlot(tier, slotIdx, disk, 6, 2);
 
                 try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
-                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 5, 10, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
                     final RecordMetadata metadata = metadataOf(identityTierColumns());
                     final LongList first = drainTimestamps(cursor, metadata);
                     cursor.toTop();
@@ -552,6 +650,16 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         });
     }
 
+    // The descending twin of assertTimestamps: hiTs*1000 down to loTs*1000 inclusive, with
+    // no gap and no repeat - i.e. lead-only joined the reversed lead to the disk scan
+    // exactly once, and neither band strayed into the other's rows.
+    private static void assertDescendingTimestamps(LongList served, int hiTs, int loTs) {
+        Assert.assertEquals("row count", hiTs - loTs + 1, served.size());
+        for (int i = 0, n = served.size(); i < n; i++) {
+            Assert.assertEquals("row " + i, (hiTs - i) * 1_000L, served.getQuick(i));
+        }
+    }
+
     // Asserts served holds ts loTs*1000 .. hiTs*1000 inclusive, ascending, with no gap
     // and no repeat - i.e. the seam boundary joined the two tiers exactly once.
     private static void assertTimestamps(LongList served, int loTs, int hiTs) {
@@ -559,6 +667,12 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         for (int i = 0, n = served.size(); i < n; i++) {
             Assert.assertEquals("row " + i, (loTs + i) * 1_000L, served.getQuick(i));
         }
+    }
+
+    // The backward twin of diskCursor: the same frames, yielded newest-first, as the base
+    // hands back for an ORDER_DESC read. frameHis still names them in ascending row order.
+    private static TestDiskPageFrameCursor bwdDiskCursor(LiveViewInMemoryBuffer store, IntList tierColumns, int... frameHis) {
+        return new TestDiskPageFrameCursor(store, tierColumns, true, frameHis);
     }
 
     private static long calculateSize(LiveViewPageFrameCursor cursor) {
@@ -582,12 +696,22 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     // A stub disk scan over store, projecting tierColumns and split at the named row
     // boundaries (each is a frame's exclusive high row, the last one the store's size).
     private static TestDiskPageFrameCursor diskCursor(LiveViewInMemoryBuffer store, IntList tierColumns, int... frameHis) {
-        return new TestDiskPageFrameCursor(store, tierColumns, frameHis);
+        return new TestDiskPageFrameCursor(store, tierColumns, false, frameHis);
+    }
+
+    private static void drain(LiveViewPageFrameCursor cursor, RecordMetadata metadata, RowSink sink) {
+        drain(cursor, metadata, false, sink);
     }
 
     // Reads every row of every frame the cursor yields, through the same address cache /
     // memory pool / record stack a real page-frame scan uses.
-    private static void drain(LiveViewPageFrameCursor cursor, RecordMetadata metadata, RowSink sink) {
+    //
+    // A frame's rows are stored ascending whichever way the stream runs, so isDescending
+    // reverses the WITHIN-frame walk and nothing else - the frames' own order is the
+    // cursor's to get right. That is the real consumer's contract: an async filter over a
+    // descending stream reduces each frame ascending and then reads it back through
+    // AsyncFilteredRecordCursor.rowIndex(), which is (frameRowCount - frameRowIndex - 1).
+    private static void drain(LiveViewPageFrameCursor cursor, RecordMetadata metadata, boolean isDescending, RowSink sink) {
         try (
                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
                 PageFrameMemoryPool pool = new PageFrameMemoryPool(FRAME_CACHE_BYTES);
@@ -604,7 +728,7 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
                 record.init(frameMemory);
                 final long rows = frame.getPartitionHi() - frame.getPartitionLo();
                 for (long r = 0; r < rows; r++) {
-                    record.setRowIndex(r);
+                    record.setRowIndex(isDescending ? rows - r - 1 : r);
                     sink.accept(record);
                 }
                 frameIndex++;
@@ -613,8 +737,12 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     }
 
     private static LongList drainTimestamps(LiveViewPageFrameCursor cursor, RecordMetadata metadata) {
+        return drainTimestamps(cursor, metadata, false);
+    }
+
+    private static LongList drainTimestamps(LiveViewPageFrameCursor cursor, RecordMetadata metadata, boolean isDescending) {
         final LongList timestamps = new LongList();
-        drain(cursor, metadata, (record) -> timestamps.add(record.getTimestamp(COL_TS)));
+        drain(cursor, metadata, isDescending, (record) -> timestamps.add(record.getTimestamp(COL_TS)));
         return timestamps;
     }
 
@@ -809,6 +937,11 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         private final ColumnMapping columnMapping = new ColumnMapping();
         private final int[] frameHis;
         private final StoreFrame frame = new StoreFrame();
+        // Whether the stub yields its frames newest-first, as a backward table cursor does
+        // for an ORDER_DESC read. It reverses the FRAME order only: a frame's own rows stay
+        // stored ascending and it is the consumer that walks them back to front (see
+        // AsyncFilteredRecordCursor.rowIndex, and drain(..., isDescending) above).
+        private final boolean isDescending;
         private final LongList pageAddresses = new LongList();
         private final LongList pageSizes = new LongList();
         // Output column -> store column, the same mapping the cursor under test resolves
@@ -822,9 +955,10 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         private int nextCalls;
         private long remainingRowsInInterval;
 
-        private TestDiskPageFrameCursor(LiveViewInMemoryBuffer store, IntList projection, int[] frameHis) {
+        private TestDiskPageFrameCursor(LiveViewInMemoryBuffer store, IntList projection, boolean isDescending, int[] frameHis) {
             this.store = store;
             this.frameHis = frameHis;
+            this.isDescending = isDescending;
             this.projection.addAll(projection);
             this.columnCount = projection.size();
             for (int i = 0; i < columnCount; i++) {
@@ -889,8 +1023,12 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             if (nextFrame >= frameHis.length) {
                 return null;
             }
-            final long lo = nextFrame == 0 ? 0 : frameHis[nextFrame - 1];
-            final long hi = frameHis[nextFrame++];
+            // frameHis names the frames in ascending row order either way; a descending
+            // walk takes them from the far end.
+            final int idx = isDescending ? frameHis.length - 1 - nextFrame : nextFrame;
+            nextFrame++;
+            final long lo = idx == 0 ? 0 : frameHis[idx - 1];
+            final long hi = frameHis[idx];
             computeFrame(lo, hi);
             return frame;
         }
@@ -950,7 +1088,10 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             }
             frame.partitionLo = lo;
             frame.partitionHi = hi;
-            remainingRowsInInterval = store.rowCount() - hi;
+            // The rows of this (single) partition the walk has yet to reach, which is what
+            // the real cursors report: below the frame going backward, above it going
+            // forward.
+            remainingRowsInInterval = isDescending ? lo : store.rowCount() - hi;
         }
 
         private class StoreFrame implements PageFrame {
