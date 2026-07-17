@@ -56,6 +56,38 @@ import org.junit.Test;
 public class UnionSymbolCastCursorLifecycleTest extends AbstractCairoTest {
 
     @Test
+    public void testCursorReuseWithoutCloseResolvesAgainstRebuiltDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
+            final TrackingCursorFactory base = new TrackingCursorFactory(new String[][]{{"alpha"}});
+            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try (UnionSymbolCastRecordCursorFactory factory = newFactory(base, functions)) {
+                // Prime the per-source cache: intern "alpha" and cache its source-key -> result-key
+                // translation.
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                Assert.assertTrue(cursor.hasNext());
+                final int firstKey = cursor.getRecord().getInt(0);
+                TestUtils.assertEquals("alpha", cursor.getSymbolTable(0).valueOf(firstKey));
+
+                // Re-acquire the cursor WITHOUT closing it. getCursor() re-runs Function.init(),
+                // which empties the re-symbolising dictionary; the per-source key cache must be
+                // dropped in lockstep. Otherwise the stale cache serves a result key that no longer
+                // exists in the rebuilt dictionary, so valueOf() reads back null. Same cursor
+                // instance is reused, so the enclosing factory owns the single close.
+                cursor = factory.getCursor(sqlExecutionContext);
+                Assert.assertTrue(cursor.hasNext());
+                final int secondKey = cursor.getRecord().getInt(0);
+                final CharSequence resolved = cursor.getSymbolTable(0).valueOf(secondKey);
+                Assert.assertNotNull("reused cursor must rebuild the dictionary, not read a stale cached key", resolved);
+                TestUtils.assertEquals("alpha", resolved);
+            }
+            Assert.assertEquals("all query-tracked native state must be released", 0, tracker.getUsed());
+            releaseTracker(tracker);
+        });
+    }
+
+    @Test
     public void testFactoryCloseReleasesCursorOwnedState() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();

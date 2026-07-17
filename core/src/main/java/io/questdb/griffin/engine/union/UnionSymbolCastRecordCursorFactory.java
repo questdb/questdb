@@ -490,6 +490,13 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         private void of(RecordCursor baseCursor, MemoryTracker memoryTracker) {
+            // getCursor() re-runs Function.init(), which releases each re-symbolising dictionary
+            // (CastStrToSymbolFunctionFactory.Func.init). The per-source key caches translate source
+            // keys into those dictionaries, so they must be discarded in lockstep: a reused cursor
+            // (getCursor() without an intervening close()) would otherwise resolve a stale cached key
+            // against the emptied dictionary and silently return null. close() clears them on the
+            // normal path; clearing here keeps the two reset points symmetric with init()'s release.
+            closeSourceStates();
             this.baseCursor = baseCursor;
             this.memoryTracker = memoryTracker;
             if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
