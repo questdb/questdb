@@ -739,6 +739,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * {@link TableWriter#getTxn()}, read right after its A/B commit point.
      */
     private void advance(TableToken tableToken, TableWriter writer, SeqTxnTracker tracker, long nowMs) {
+        // Finding 2 (hygiene re-check): a demote (Enterprise installs REPLICA_SKIP + clears the epoch trio)
+        // can land in the window between maybeAdvanceDurableEpoch's gate (line ~689) and the fsync below,
+        // letting this in-flight apply RE-CREATE the epoch trio on a node that is now a replica. Re-read the
+        // policy here, as the FIRST thing advance() does, and bail before writing anything if local
+        // durability is no longer enabled. This NARROWS the window at the apply source; it is not the full
+        // HARD guarantee (quiescing apply, or re-clearing the trio behind a barrier after the Enterprise
+        // epoch-clear) — that is an Enterprise companion item, out of OSS scope. Benign today regardless (a
+        // replica recovers by re-download and never reads its local epoch), so a leftover trio is harmless.
+        if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            LOG.info().$("adaptive durable epoch skipped: local durability disabled between the epoch gate and "
+                    + "fsync (demote in window) [table=").$(tableToken).I$();
+            return;
+        }
+
         // Step 1: make the materialized state fully durable + write the durable epoch copies.
         writer.fsyncMaterializedState();
 
