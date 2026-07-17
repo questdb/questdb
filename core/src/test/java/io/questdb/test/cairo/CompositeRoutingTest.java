@@ -27,10 +27,20 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CompositeDimensionTransform;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Plan 4a (composite partitioning write routing), Task 1: the per-row {@code cellKey} resolver
@@ -309,5 +319,115 @@ public class CompositeRoutingTest extends AbstractCairoTest {
                         3, w.getDimensionOrdinalMemoSize());
             }
         });
+    }
+
+    /**
+     * Task 4 (Plan 4a, the CRUX task): the ACCEPTANCE TEST. Ends dormancy -- rows for two exchanges
+     * across two days, all in ONE commit, must physically route into 4 distinct on-disk cell
+     * directories (2 exchanges x 2 days), not the single dormant cellKey-0 directory Plan 1-3b left
+     * every row in. Compares a composite table {@code c} (partition by day, exch) against an
+     * identically-populated plain twin {@code p} (partition by day) throughout, mirroring {@link
+     * CompositeEndToEndTest}'s own twin-comparison idiom.
+     * <p>
+     * Day 2 (the chronologically-last day in this one commit) is where a naive implementation would
+     * be most tempted to use the writer's append fast path for both exchanges' rows -- exactly the
+     * scenario {@code processO3BlockComposite}'s own docs identify as unsafe to do naively (the
+     * writer's single shared open-column-file-handle set can only point at one cell's files at a
+     * time), so this test exercises that exact case, not just an easier all-archival scenario.
+     */
+    @Test
+    public void testMultiCellCommitRoutesToFourCellDirectoriesAndMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            // Explicit WAL: a same-order VALUES insert on a BYPASS WAL table (the harness default,
+            // confirmed empirically -- CompositeEndToEndTest's own SHOW CREATE TABLE output shows
+            // "BYPASS WAL" for a bare CREATE TABLE) never reaches processO3Block at all -- strictly
+            // increasing timestamps take TableWriter#newRow's direct ROW_ACTION_SWITCH_PARTITION path
+            // (switchPartition/openPartition), never o3Commit. A WAL table's apply, by contrast, always
+            // funnels through processWalCommitFinishApply -> processO3Block regardless of row order
+            // (see processO3BlockComposite's own docs) -- the actual mechanism Task 4 rewrites.
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // Two exchanges, two days, deliberately INTERLEAVED (A, B, A, B) within one commit so the
+            // O3 sorted-by-timestamp range for EACH day genuinely spans both cellKeys -- the multi-cell
+            // regrouping path, not just the single-cellKey fast path.
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            drainWalQueue();
+
+            engine.releaseInactive(); // cold reopen -- no pooled reader/writer may mask a fresh self-detect
+
+            // 1. PHYSICAL: 4 cell directories on disk -- exch=A and exch=B under EACH of the 2 days,
+            // not 2 bare day directories and not everything collapsed into one dormant cell.
+            TableToken tableToken = engine.verifyTableName("c");
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertEquals(
+                    "day 2020-01-01 must contain exactly the two cell directories, no dormant leftover",
+                    setOf("exch=A", "exch=B"),
+                    listCellDirNames(ff, tableToken, "2020-01-01"));
+            Assert.assertEquals(
+                    "day 2020-01-02 must contain exactly the two cell directories, no dormant leftover",
+                    setOf("exch=A", "exch=B"),
+                    listCellDirNames(ff, tableToken, "2020-01-02"));
+
+            // 2. LOGICAL: c must match p row-for-row -- full scan, count, and a per-exchange filter.
+            assertSqlCursors("select ts, exch, px from p order by ts, exch", "select ts, exch, px from c order by ts, exch");
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+            assertSqlCursors("select count() from p", "select count() from c");
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = 'A' order by ts",
+                    "select ts, exch, px from c where exch = 'A' order by ts");
+            assertQuery("select count() from c where exch = 'A'").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            // 3. CATALOGUE: table_partitions() row count reflects the CELL count (4), not the day
+            // count (2) -- TxReader.getPartitionCount() is a bare attachedPartitions.size() /
+            // longsPerAttachedPartition, already stride/cellKey-aware since Plan 3; this is the direct
+            // proof real routing now populates 4 distinct (ts, cellKey) attached-partition records.
+            assertQuery("select count() from table_partitions('c')").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+        });
+    }
+
+    private static Set<String> setOf(String... values) {
+        Set<String> set = new HashSet<>();
+        for (String v : values) {
+            set.add(v);
+        }
+        return set;
+    }
+
+    /**
+     * Lists the immediate child directory names of {@code <dbRoot>/<tableToken>/<dayDirName>},
+     * stripping each entry's trailing {@code .<nameTxn>} version suffix (e.g. {@code "exch=A.3"} ->
+     * {@code "exch=A"}) so the result is comparable regardless of the exact nameTxn a real commit
+     * happened to assign. Mirrors {@code ShowPartitionsRecordCursorFactory#scanDetachedAndAttachablePartitions}'s
+     * own {@code ff.findFirst/findName/findType/findNext/findClose} idiom.
+     */
+    private static Set<String> listCellDirNames(FilesFacade ff, TableToken tableToken, String dayDirName) {
+        Set<String> names = new HashSet<>();
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(dayDirName).$();
+            long pFind = ff.findFirst(path.$());
+            Assert.assertTrue("expected day directory to exist: " + path, pFind > 0L);
+            try {
+                StringSink nameSink = new StringSink();
+                do {
+                    nameSink.clear();
+                    long name = ff.findName(pFind);
+                    Utf8s.utf8ToUtf16Z(name, nameSink);
+                    int type = ff.findType(pFind);
+                    if (type == Files.DT_DIR && !Chars.equals(nameSink, ".") && !Chars.equals(nameSink, "..")) {
+                        String entry = nameSink.toString();
+                        int dot = entry.lastIndexOf('.');
+                        names.add(dot > -1 ? entry.substring(0, dot) : entry);
+                    }
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+            }
+        }
+        return names;
     }
 }

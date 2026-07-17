@@ -54,6 +54,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -899,6 +900,55 @@ public class TableReader implements Closeable, SymbolTableSource {
      * bucket cannot be un-hashed), so this returns {@code null}. {@code EXPRESSION} dimensions are
      * not supported here (Plan 4).
      */
+    /**
+     * Read-side counterpart of {@link TableWriter#renderCellSegment(CharSink, int)} (composite-
+     * partitioning Plan 4a Task 4): renders this table's on-disk cell-directory segment for a
+     * resolved {@code cellKey}, per {@link PartitionSpec#getNamingMode()} -- {@code MODE_HIVE} renders
+     * each dimension as {@code <sourceColumnName>=<value>}, {@code MODE_PLAIN} the bare {@code <value>};
+     * an arity-&gt;1 spec joins segments with {@code '/'}. Reuses {@link #valueOfDimensionKey(int, int)}
+     * (already dispatches IDENTITY/TRUNCATE reverse-lookup correctly, {@code null} for HASH) rather than
+     * re-deriving the per-kind dispatch the writer's version hand-rolls, since the reader-side reverse
+     * lookup already exists as a public method for an unrelated caller.
+     * <p>
+     * Needed because {@link #formatNativePartitionDirName(int, Path, long)} -- confirmed the SOLE
+     * native-partition-path construction site in this class -- previously called the plain (no cell
+     * segment) {@link TableUtils#setPathForNativePartition(Path, int, int, long, long)} overload
+     * unconditionally; every partition-open path in this class (openPartition0, reconcileOpenPartitions,
+     * etc.) funnels through it, so a composite table's non-dormant (non-zero cellKey) partitions could
+     * never actually be opened for reading before this fix -- confirmed directly (this exact gap is what
+     * surfaced this method's necessity: an O3-routed composite commit's cell files went unread, "file does
+     * not exist" against the bare day directory).
+     *
+     * @throws UnsupportedOperationException if called on a non-composite table, or if any dimension is
+     *                                        {@code KIND_EXPRESSION}
+     */
+    public void renderCellSegment(CharSink<?> sink, int cellKey) {
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        if (dimCount <= 0) {
+            throw new UnsupportedOperationException(
+                    "renderCellSegment() must not be called on a non-composite table [table=" + tableToken + ']'
+            );
+        }
+        int[] tuple = new int[dimCount];
+        getCompositeDictionaries().cellRegistry().getTuple(cellKey, tuple);
+        byte namingMode = spec.getNamingMode();
+        for (int i = 0; i < dimCount; i++) {
+            if (i > 0) {
+                sink.put('/');
+            }
+            PartitionDimension dim = spec.getDimension(i);
+            if (namingMode == PartitionSpec.MODE_HIVE) {
+                sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+            }
+            if (dim.getKind() == PartitionDimension.KIND_HASH) {
+                sink.put(tuple[i]);
+            } else {
+                TableUtils.putPathSafe(sink, valueOfDimensionKey(i, tuple[i]));
+            }
+        }
+    }
+
     public CharSequence valueOfDimensionKey(int dimIndex, int key) {
         PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
         switch (dim.getKind()) {
@@ -1305,23 +1355,76 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.indexes = toIndexReaders;
     }
 
+    /**
+     * Composite-partitioning (Plan 4a Task 4): resolves partition {@code partitionIndex}'s cell
+     * segment for path construction, or {@code null} if this partition is DORMANT -- written before
+     * Task 4's real per-row routing ever ran for this table (e.g. via the direct {@code newRow}/
+     * {@code switchPartition} commit path, which never calls {@code resolveCellKey}/{@code
+     * CellRegistry.internCell} at all; also every pre-Task-4-created composite table, such as every
+     * {@code CompositeEndToEndTest}/{@code CompositePartitionDdlTest} fixture -- composite tables
+     * with real rows but an EMPTY {@code _cell} registry, confirmed directly, not hypothetical).
+     * {@code _txn}'s cellKey slot defaults to 0 as a bare structural value in that case (Plan 3:
+     * "real writes only ever produce cellKey 0 today"), NOT as a genuinely-interned ordinal --
+     * reverse-looking it up via {@link #renderCellSegment(CharSink, int)} would either throw
+     * (reading past an empty/short symbol map) or return nonsense. A cellKey is only a safe
+     * reverse-lookup target once the registry has actually interned that many entries ({@code
+     * internCell} assigns dense ordinals {@code [0, size)} in intern order) -- otherwise this
+     * partition predates real routing and must keep the exact pre-Task-4 bare-directory layout.
+     *
+     * @param scratchSink reused as the render target when non-dormant; caller-provided so both call
+     *                    sites (native partition path, error-message path) can pick their own
+     *                    allocation lifetime/sharing policy
+     */
+    private CharSequence resolveCellSegmentOrNullIfDormant(int partitionIndex, StringSink scratchSink) {
+        if (metadata.getPartitionSpec().getDimensionCount() <= 0) {
+            return null;
+        }
+        int cellKey = getPartitionCellKey(partitionIndex);
+        if (cellKey >= getCompositeDictionaries().cellRegistry().size()) {
+            return null;
+        }
+        renderCellSegment(scratchSink, cellKey);
+        return scratchSink;
+    }
+
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
+        // Composite-partitioning (Plan 4a Task 4): mirrors formatNativePartitionDirName's own
+        // cellSegment rendering -- see that method's and resolveCellSegmentOrNullIfDormant's own
+        // docs. Error-message-only, not a write/read hot path, so a fresh scratch sink (not the
+        // shared thread-local one, to avoid clobbering whatever the CALLER might itself be
+        // assembling into a thread-local sink) is fine here.
         TableUtils.setSinkForNativePartition(
                 sink,
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                -1
+                -1,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 
     private void formatNativePartitionDirName(int partitionIndex, Path sink, long nameTxn) {
+        // Composite-partitioning (Plan 4a Task 4): render this partition's own cell segment (null for
+        // a plain/dormant table -- byte-identical to the pre-Task-4 behavior this replaces). Every
+        // native-partition path construction in this class funnels through this one method.
+        // A FRESH StringSink (not the shared Misc.getThreadLocalSink() instance) is deliberate, not
+        // an over-caution: renderCellSegment -> valueOfDimensionKey -> SymbolMapReader.valueOf(key)
+        // (IDENTITY reverse lookup) internally decodes through that SAME shared thread-local sink,
+        // so using it as this method's own accumulator too is genuinely reentrant -- confirmed by
+        // reproducing it directly (the shared sink's own decode of the FIRST dimension's value
+        // clobbered/prefixed what this method had already accumulated for a later dimension/column-
+        // name write, corrupting the rendered segment). Partition-open is not a per-row hot path, so
+        // a small fresh allocation per call is the right trade-off here, unlike the writer-side
+        // per-cell-dispatch sink (cellSegmentSink in dispatchCompositeCellRange), which reuses one
+        // instance across many dispatches within a call but is never handed to a reverse-lookup that
+        // itself reenters the same shared sink.
         TableUtils.setPathForNativePartition(
                 sink,
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
+                nameTxn,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 

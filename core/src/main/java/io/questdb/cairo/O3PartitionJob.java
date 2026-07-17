@@ -71,6 +71,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -808,7 +809,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dedupColSinkAddr,
             boolean isParquet,
             long o3TimestampLo,
-            long o3TimestampHi
+            long o3TimestampHi,
+            @Nullable CharSequence cellSegment
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
@@ -892,7 +894,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tableWriter.getMetadata().getTimestampType(),
                             partitionBy,
                             partitionTimestamp,
-                            txn - 1
+                            txn - 1,
+                            cellSegment
                     );
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
@@ -955,7 +958,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    cellSegment
             );
         } else {
             long srcTimestampAddr = 0;
@@ -995,7 +999,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tableWriter.getMetadata().getTimestampType(),
                             partitionBy,
                             partitionTimestamp,
-                            srcNameTxn
+                            srcNameTxn,
+                            cellSegment
                     );
 
                     // also track the fd that we need to eventually close
@@ -1580,7 +1585,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tableWriter.getMetadata().getTimestampType(),
                             partitionBy,
                             partitionTimestamp,
-                            txn
+                            txn,
+                            cellSegment
                     );
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
@@ -1644,7 +1650,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    cellSegment
             );
         }
     }
@@ -1682,6 +1689,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final boolean isParquet = task.isParquet();
         final long o3TimestampLo = task.getO3TimestampLo();
         final long o3TimestampHi = task.getO3TimestampHi();
+        final CharSequence cellSegment = task.getCellSegment();
 
         subSeq.done(cursor);
 
@@ -1710,7 +1718,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 dedupColSinkAddr,
                 isParquet,
                 o3TimestampLo,
-                o3TimestampHi
+                o3TimestampHi,
+                cellSegment
         );
     }
 
@@ -3043,7 +3052,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment
     ) {
         while (cursor == -2) {
             Os.pause();
@@ -3097,7 +3107,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    cellSegment
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -3145,7 +3156,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    cellSegment
             );
         }
     }
@@ -3196,7 +3208,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -3244,7 +3257,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                cellSegment
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -3287,7 +3301,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             AtomicInteger columnCounter,
             O3Basket o3Basket,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            @Nullable CharSequence cellSegment
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -3601,7 +3616,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                cellSegment
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -3650,7 +3666,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                cellSegment
                         );
                     }
                 } catch (Throwable e) {

@@ -1487,7 +1487,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment
     ) {
         final long mergeRowCount;
         if (mergeType == O3_BLOCK_MERGE) {
@@ -1507,7 +1508,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 oldPartitionTimestamp,
-                srcNameTxn
+                srcNameTxn,
+                cellSegment
         );
         int plen = pathToOldPartition.size();
 
@@ -1518,7 +1520,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 partitionTimestamp,
-                partitionAppend ? srcNameTxn : txn
+                partitionAppend ? srcNameTxn : txn,
+                cellSegment
         );
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
@@ -1747,6 +1750,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcDataNewPartitionSize = task.getSrcDataNewPartitionSize();
         final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
         final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
+        final CharSequence cellSegment = task.getCellSegment();
 
         subSeq.done(cursor);
 
@@ -1795,7 +1799,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                cellSegment
         );
     }
 

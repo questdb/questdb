@@ -27,12 +27,15 @@ package io.questdb.tasks;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.Path;
+// NOTE: O3PartitionTask lives in this same package (io.questdb.tasks) -- no import needed for the
+// javadoc {@link} below.
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
     private long activeFixFd;
     private long activeVarFd;
+    private CharSequence cellSegment;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -76,6 +79,14 @@ public class O3OpenColumnTask {
     private long timestampMergeIndexSize;
     private long timestampMin;
     private long txn;
+
+    /**
+     * Composite-partitioning (Plan 4a Task 4): see {@link O3PartitionTask#getCellSegment()}'s docs --
+     * same contract (immutable snapshot, {@code null} for a plain table).
+     */
+    public CharSequence getCellSegment() {
+        return cellSegment;
+    }
 
     public long getActiveFixFd() {
         return activeFixFd;
@@ -302,8 +313,10 @@ public class O3OpenColumnTask {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            CharSequence cellSegment
     ) {
+        this.cellSegment = cellSegment;
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;
         this.columnCounter = columnCounter;

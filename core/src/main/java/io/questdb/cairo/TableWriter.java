@@ -179,6 +179,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    // Composite-partitioning (Plan 4a Task 4): a partition-dimension's source column is always
+    // SYMBOL-typed (Plan 1 Task 2, locked), whose O3 buffer element is a plain int32 key -- this is
+    // the shl resolveRowCellKey reads dimension ordinals at.
+    private static final int COMPOSITE_DIMENSION_SOURCE_COLUMN_SHL = ColumnType.pow2SizeOf(ColumnType.SYMBOL);
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
@@ -403,6 +407,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<Runnable> o3NullSetters1;
     private ObjList<Runnable> o3NullSetters2;
     private PagedDirectLongList o3PartitionUpdateSink;
+    // Composite-partitioning (Plan 4a Task 4): side-table from a partitionUpdateSinkAddr block's
+    // address to the cellKey it was dispatched for. The shared partitionUpdateSinkAddr block layout
+    // (PARTITION_SINK_SIZE_LONGS, consumed by O3CopyJob/O3OpenColumnJob/O3PartitionJob too) has no
+    // spare slot to carry cellKey natively, so o3ConsumePartitionUpdateSink resolves it through this
+    // TableWriter-local map instead (keyed by the block's own address, which allocateBlock() already
+    // returns as a stable value for the life of one processO3Block* call). Absent entries mean
+    // cellKey 0 (a plain table never populates this map at all, so it stays null forever -- zero
+    // cost). Lazily allocated on first composite dispatch; cleared at the same point
+    // o3PartitionUpdateSink itself is reset (top of processO3BlockComposite) since block addresses
+    // are only meaningful within one call.
+    private LongIntHashMap o3PartitionUpdateSinkCellKeys;
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
@@ -8689,6 +8704,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampLo,
             long o3TimestampHi
     ) {
+        // Plain (non-composite) dispatch: byte-identical to before Plan 4a Task 4 -- this table's own
+        // o3Columns/sortedTimestampsAddr, no cell segment. See the cell-aware overload below, used only
+        // by processO3BlockComposite.
+        o3CommitPartitionAsync(
+                columnCounter, maxTimestamp, sortedTimestampsAddr, srcOooLo, srcOooHi, srcOooMax,
+                oooTimestampMin, partitionTimestamp, srcDataMax, last, srcNameTxn, o3Basket,
+                newPartitionSize, oldPartitionSize, partitionUpdateSinkAddr, dedupColSinkAddr, isParquet,
+                o3TimestampLo, o3TimestampHi, o3Columns, null
+        );
+    }
+
+    /**
+     * Composite-partitioning (Plan 4a Task 4) counterpart of {@link #o3CommitPartitionAsync(AtomicInteger,
+     * long, long, long, long, long, long, long, long, boolean, long, O3Basket, long, long, long, long,
+     * boolean, long, long)}, generalized to accept a possibly-DIFFERENT O3 column source
+     * ({@code oooColumnsForCell}, a per-cell scratch buffer set for the multi-cellKey regrouping path --
+     * see {@link #processO3BlockComposite}) and a cell-directory path segment. Called with
+     * {@code (o3Columns, null)} by the 19-arg overload above for the plain/unchanged case.
+     */
+    private void o3CommitPartitionAsync(
+            AtomicInteger columnCounter,
+            long maxTimestamp,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long partitionTimestamp,
+            long srcDataMax,
+            boolean last,
+            long srcNameTxn,
+            O3Basket o3Basket,
+            long newPartitionSize,
+            long oldPartitionSize,
+            long partitionUpdateSinkAddr,
+            long dedupColSinkAddr,
+            boolean isParquet,
+            long o3TimestampLo,
+            long o3TimestampHi,
+            ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
+            @Nullable CharSequence cellSegment
+    ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
             O3PartitionTask task = messageBus.getO3PartitionQueue().get(cursor);
@@ -8696,7 +8753,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path,
                     partitionBy,
                     columns,
-                    o3Columns,
+                    oooColumnsForCell,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -8717,7 +8774,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColSinkAddr,
                     isParquet,
                     o3TimestampLo,
-                    o3TimestampHi
+                    o3TimestampHi,
+                    cellSegment
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -8725,7 +8783,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path,
                     partitionBy,
                     columns,
-                    o3Columns,
+                    oooColumnsForCell,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -8746,7 +8804,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColSinkAddr,
                     isParquet,
                     o3TimestampLo,
-                    o3TimestampHi
+                    o3TimestampHi,
+                    cellSegment
             );
         }
     }
@@ -8779,7 +8838,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean isFirstPartitionReplaced = isCommitReplaceMode() && isMinPartitionUpdate;
 
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
-                int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                // Composite-partitioning (Plan 4a Task 4): resolve which cell this block was
+                // dispatched for via the side-table (see o3PartitionUpdateSinkCellKeys' own docs) --
+                // absent (a plain table, or cellKey 0 which is never bothered to be recorded) means 0,
+                // byte-identical to the pre-Task-4 bare resolver this replaces.
+                final int cellKey0 = o3PartitionUpdateSinkCellKeys != null
+                        ? o3PartitionUpdateSinkCellKeys.get(blockAddress)
+                        : LongIntHashMap.NO_ENTRY_VALUE;
+                final int cellKey = cellKey0 == LongIntHashMap.NO_ENTRY_VALUE ? 0 : cellKey0;
+                int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
                 // Existing partitions inherit their own format. Brand-new
                 // partitions on a FORMAT PARQUET table are born parquet.
                 boolean isParquet = partitionIndexRaw > -1
@@ -8792,8 +8859,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // This is partition split. Instead of rewriting partition because of O3 merge,
                     // the partition is kept, and its tail rewritten.
                     // The new partition overlaps in time with the previous one.
+                    // (For composite: also harmlessly re-fires, idempotently, for a genuinely brand-new
+                    // cell that simply has never been attached before -- getPartitionTimestampByTimestamp
+                    // re-floors an already-floored value to itself, and the re-lookup below stays
+                    // negative, falling through to the ordinary insert-on-miss handling further down.)
                     partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestamp);
-                    partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                    partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
                 }
 
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
@@ -8871,7 +8942,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .I$();
                     this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, newPartitionTimestamp);
                     txWriter.bumpPartitionTableVersion();
-                    txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
+                    // cellKey-aware (Plan 4a Task 4): newPartitionIndex can be a fresh insertion point
+                    // (a genuine split creates a brand-new sub-partition entry) -- the 4-arg overload
+                    // would otherwise hardcode cellKey 0, misplacing a non-zero-cellKey split.
+                    txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn, cellKey);
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Close the last partition without truncating it.
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
@@ -8982,7 +9056,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // the purge job to conflict with active readers.
                         txWriter.bumpPartitionTableVersion();
                     } else {
-                        txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                        // cellKey-aware (Plan 4a Task 4): partitionIndexRaw can be a fresh insertion
+                        // point (a genuinely brand-new cell) -- updatePartitionSizeByRawIndex's 3-arg
+                        // overload would otherwise hardcode cellKey 0 on insert, either colliding with
+                        // a real cell 0 or misplacing this cell entirely. Replicates that overload's own
+                        // txn-1 nameTxn convention while adding the resolved cellKey.
+                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, txWriter.getTxn() - 1, cellKey);
                         if (partitionTimestamp != lastPartitionTimestamp) {
                             txWriter.bumpPartitionTableVersion();
                         }
@@ -9891,7 +9970,81 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Composite-partitioning (Plan 4a Task 4) dispatcher: a PLAIN table ({@code dimCount == 0})
+     * takes the EXACT pre-existing code path ({@link #processO3BlockPlain}, untouched, renamed only)
+     * -- byte-identical behavior, no added cost beyond this one dimension-count check. A composite
+     * table is routed to {@link #processO3BlockComposite}, which finds the identical
+     * {@code [srcOooLo, srcOooHi]} time-partition ranges (same binary-search mechanism) but
+     * additionally groups each range's rows by their composite {@code cellKey} and dispatches every
+     * distinct cell independently -- see that method's own docs for the full design.
+     * <p>
+     * <b>Dormant-with-pre-existing-data migration guard.</b> A composite table can have real,
+     * already-committed partition data that predates Task 4's routing entirely -- written via the
+     * direct {@code newRow}/{@code switchPartition} commit path (in-order inserts on a non-WAL
+     * table), which never calls {@code resolveCellKey}/{@code CellRegistry.internCell} at all, so
+     * the table's {@code _cell} registry stays at size 0 even though rows exist (every {@code
+     * CompositeEndToEndTest}/{@code CompositePartitionDdlTest} fixture is exactly this shape --
+     * confirmed directly, not hypothetical: routing an out-of-order insert into one of those tables
+     * through {@link #processO3BlockComposite} unconditionally broke them, because it tried to
+     * resolve a REAL cell segment for cellKey 0 against pre-existing partitions that are still laid
+     * out in the OLD bare-directory convention). If this commit's FIRST row would be the table's
+     * first-ever intern (registry still empty) AND the table already has committed data as of this
+     * commit's start ({@code txWriter.getMaxTimestamp() != Long.MIN_VALUE}), this whole commit must
+     * stay dormant too, for consistency with what is already on disk -- route it through {@link
+     * #processO3BlockPlain} unchanged (cellKey 0, no segment, no per-cell grouping), exactly
+     * reproducing pre-Task-4 behavior. A genuinely brand-new table (no pre-existing data) still
+     * routes through {@link #processO3BlockComposite} normally and interns real cells from its very
+     * first row.
+     */
     private void processO3Block(
+            final long o3LagRowCount,
+            int timestampIndex,
+            long sortedTimestampsAddr,
+            final long srcOooMax,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            boolean flattenTimestamp,
+            long rowLo,
+            TableWriterPressureControl pressureControl,
+            // Max timestamp of already-committed data that is not part of the sorted O3 batch (see
+            // o3MoveUncommitted). Long.MIN_VALUE when there is no such data.
+            long committedDataMaxTimestamp
+    ) {
+        boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0
+                && !isDormantWithPreexistingData();
+        if (composite) {
+            processO3BlockComposite(
+                    o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
+                    o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
+            );
+        } else {
+            processO3BlockPlain(
+                    o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
+                    o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
+            );
+        }
+    }
+
+    /**
+     * See {@link #processO3Block}'s own docs for why this check exists. {@code true} only for a
+     * composite table that already has committed data ({@code maxTimestamp} set) from before Task 4
+     * routing ever ran for it (registry still empty) -- never true for a genuinely brand-new table
+     * (empty registry AND no data yet), which is exactly the case that must still route to real
+     * per-cell dispatch. Only meaningful for a composite table; callers gate on {@code dimCount > 0}
+     * first.
+     */
+    private boolean isDormantWithPreexistingData() {
+        return txWriter.getMaxTimestamp() != Long.MIN_VALUE && getCompositeDictionaries().cellRegistry().size() == 0;
+    }
+
+    /**
+     * Plain (non-composite) O3 block processing -- byte-for-byte the original {@code processO3Block}
+     * body (Plan 4a Task 4 renamed this method only; see {@link #processO3Block} for the new dispatcher
+     * and {@link #processO3BlockComposite} for the composite counterpart). One loop iteration per
+     * partition.
+     */
+    private void processO3BlockPlain(
             final long o3LagRowCount,
             int timestampIndex,
             long sortedTimestampsAddr,
@@ -10324,6 +10477,544 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     cthO3ShiftColumnInLagToTopRef
             );
         }
+    }
+
+    /**
+     * Composite-table counterpart of {@link #processO3BlockPlain} (composite-partitioning Plan 4a
+     * Task 4 -- the crux of write routing). Finds the identical {@code [srcOooLo, srcOooHi]}
+     * time-partition ranges via the SAME (untouched) partition-floor / ceiling-binary-search
+     * mechanism {@link #processO3BlockPlain} uses -- Task 4 does not touch the timestamp sort or that
+     * range-finding logic at all. For each range found, this additionally:
+     * <ol>
+     *     <li>Resolves every row's composite {@code cellKey} directly off the dimension source
+     *     column(s)' O3 buffers (see {@link #resolveRowCellKey(long, int[])}).</li>
+     *     <li>If every row in the range shares ONE cellKey (the common case -- a burst of
+     *     same-dimension-value rows), no physical reordering is needed at all: the range is dispatched
+     *     using the SAME {@code o3Columns}/{@code sortedTimestampsAddr} the table already has, just
+     *     resolving the raw partition index via {@link TxWriter#findAttachedPartitionRawIndexBy(long,
+     *     int)} and constructing the partition path via {@link #renderCellSegment(CharSink, int)}
+     *     instead of cellKey 0.</li>
+     *     <li>If the range spans MULTIPLE distinct cellKeys (a genuinely interleaved multi-dimension-
+     *     value micro-batch -- e.g. two exchanges' rows arriving interleaved within one commit's same
+     *     day), the range is physically regrouped: rows are STABLE-partitioned by cellKey (preserving
+     *     each cell's own relative timestamp order) into dedicated per-cell scratch O3 buffers (see
+     *     {@link #buildCompositeCellGroupScratch}) -- a fresh, self-contained "mini O3 batch" per cell
+     *     -- and each cell is dispatched independently.</li>
+     * </ol>
+     * <p>
+     * <b>Every composite dispatch always takes the async merge path ({@link O3PartitionJob}), never
+     * the append fast path</b> {@link #processO3BlockPlain} prefers when possible. This is a
+     * deliberate, explicit Task 4 scope decision: {@code this.columns} is the writer's SINGLE shared
+     * set of open column-file handles and can only ever point at one cell's files at a time (Plan 4
+     * research Fork (c): per-cell frontier tracking, which would let multiple cells safely share the
+     * append fast path within one commit, is deferred follow-up work). Forcing every composite
+     * dispatch through {@link O3PartitionJob} instead -- which always independently resolves/creates/
+     * opens its own files by path, per the {@code !last} branches {@link #processO3BlockPlain} already
+     * relies on for "another new partition in this same commit, not the active tail" -- sidesteps that
+     * hazard entirely (verified directly against {@code O3PartitionJob.processPartition}'s
+     * {@code srcDataMax<1}/{@code >=1} branches: neither reads {@code tableWriter.columns} in the
+     * {@code !last} shape) at the cost of the append fast path's performance. See
+     * {@link #dispatchCompositeCellRange} for where {@code last = false} is passed unconditionally;
+     * the true {@code last} computed by the range-finding loop below is still used for diagnostics.
+     * <p>
+     * <b>Explicit, loud (not silent) scope boundaries</b>:
+     * <ul>
+     *     <li>{@link #isCommitReplaceMode()} (the REPLACE-commit feature) is not supported for a
+     *     composite table and throws immediately -- Plan 4a is scoped to ordinary INSERT routing.</li>
+     *     <li>FORMAT PARQUET is not supported for a composite table and throws per-cell, as soon as a
+     *     cell resolves to a parquet partition -- {@code setPathForNativePartition}'s cellKey-aware
+     *     overload (Task 3) has no parquet counterpart yet.</li>
+     *     <li>Var-size (STRING/VARCHAR/BINARY/ARRAY) non-dimension columns are not yet supported in the
+     *     multi-cellKey regrouping path and throw if a genuinely-interleaved multi-cell range is ever
+     *     encountered on such a table (dimension source columns are always SYMBOL-typed, hence always
+     *     fixed-size, per Plan 1 Task 2 -- so this can never affect cellKey resolution itself, only
+     *     OTHER table columns). The overwhelmingly common single-cellKey-per-range case is unaffected
+     *     regardless of column types, since it needs no reordering at all.</li>
+     * </ul>
+     * <p>
+     * Also note (residual, non-blocking risk, flagged for a follow-up task): {@code
+     * o3ConsumePartitionUpdateSink}'s {@code closeActivePartition}/{@code setAppendPosition} special
+     * case for "this block's partitionTimestamp equals the table's lastPartitionTimestamp" is gated on
+     * a day-granularity, cellKey-blind comparison (Fork (c)) and is NOT specifically guarded against
+     * here; it is unreached by this task's acceptance/regression scenarios (a from-scratch table's
+     * first commit has {@code lastPartitionTimestamp == Long.MIN_VALUE} throughout), but a SECOND
+     * commit landing on a composite table's current last day has not been exercised or hardened here.
+     */
+    private void processO3BlockComposite(
+            final long o3LagRowCount,
+            int timestampIndex,
+            long sortedTimestampsAddr,
+            final long srcOooMax,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            boolean flattenTimestamp,
+            long rowLo,
+            TableWriterPressureControl pressureControl,
+            long committedDataMaxTimestamp
+    ) {
+        if (isCommitReplaceMode()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support the REPLACE commit mode [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
+        o3ErrorCount.set(0);
+        o3oomObserved = false;
+        lastErrno = 0;
+        partitionRemoveCandidates.clear();
+        o3ColumnCounters.clear();
+        o3BasketPool.clear();
+        commitRowCount = srcOooMax;
+
+        final long maxTimestamp = txWriter.getMaxTimestamp();
+
+        o3DoneLatch.reset();
+        o3PartitionUpdRemaining.set(0L);
+        if (o3PartitionUpdateSinkCellKeys != null) {
+            o3PartitionUpdateSinkCellKeys.clear();
+        }
+        boolean success = true;
+        int latchCount = 0;
+        long srcOoo = rowLo;
+        int pCount = 0;
+        int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
+        long partitionTimestamp = o3TimestampMin;
+
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] cellDimScratch = new int[dimCount];
+        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+        // Static per-table-schema property (Plan 1 Task 2: dimension source columns are always
+        // SYMBOL, hence always fixed-size -- so this can only ever be about a non-dimension column).
+        // Computed once, not per-range.
+        boolean hasVarSizeColumnScan = false;
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType >= 0 && i != timestampIndex && ColumnType.isVarSize(columnType)) {
+                hasVarSizeColumnScan = true;
+                break;
+            }
+        }
+        final boolean hasVarSizeColumn = hasVarSizeColumnScan;
+
+        // Scratch buffers built for the multi-cellKey path, kept alive until every dispatched unit
+        // this whole call issues has drained (the finally block below) -- freeing them any earlier
+        // would race an in-flight O3PartitionJob still reading them.
+        ObjList<MemoryCARW> compositeScratchColumnsToFree = null;
+        LongList compositeScratchRawBuffersToFree = null; // pairs: (addr, size)
+
+        try {
+            resizePartitionUpdateSink();
+
+            int inflightPartitions = 0;
+            while (srcOoo < srcOooMax) {
+                pressureControl.updateInflightPartitions(++inflightPartitions);
+                try {
+                    final long srcOooLo = srcOoo;
+                    final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                    partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
+                    assert o3Timestamp >= o3TimestampMin;
+
+                    final long srcOooHi;
+                    final long srcOooTimestampCeil = txWriter.getCurrentPartitionMaxTimestamp(o3Timestamp);
+                    if (srcOooTimestampCeil < o3TimestampMax) {
+                        srcOooHi = Vect.boundedBinarySearchIndexT(
+                                sortedTimestampsAddr, srcOooTimestampCeil, srcOooLo, srcOooMax - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    } else {
+                        srcOooHi = srcOooMax - 1;
+                    }
+
+                    final boolean last = partitionTimestamp == lastPartitionTimestamp;
+                    srcOoo = srcOooHi + 1;
+
+                    final long rangeLen = srcOooHi - srcOooLo + 1;
+                    if (rangeLen <= 0) {
+                        // Defensive only -- a non-replace commit's ranges are never empty.
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
+                        continue;
+                    }
+
+                    final int rangeLenInt = (int) rangeLen;
+                    final int[] rowCellKeys = new int[rangeLenInt];
+                    rowCellKeys[0] = resolveRowCellKey(srcOooLo, cellDimScratch);
+                    boolean multiCell = false;
+                    for (int j = 1; j < rangeLenInt; j++) {
+                        rowCellKeys[j] = resolveRowCellKey(srcOooLo + j, cellDimScratch);
+                        if (rowCellKeys[j] != rowCellKeys[0]) {
+                            multiCell = true;
+                        }
+                    }
+
+                    LOG.info().$("o3 composite range [table=").$(tableToken)
+                            .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", last=").$(last)
+                            .$(", srcOooLo=").$(srcOooLo).$(", srcOooHi=").$(srcOooHi)
+                            .$(", multiCell=").$(multiCell)
+                            .I$();
+
+                    if (!multiCell) {
+                        pCount++;
+                        latchCount += dispatchCompositeCellRange(
+                                rowCellKeys[0], partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
+                                maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                        );
+                    } else {
+                        if (hasVarSizeColumn) {
+                            throw CairoException.critical(0)
+                                    .put("composite partitioning: an interleaved multi-cell commit is not yet supported for a table with a var-size column [table=")
+                                    .put(tableToken.getTableName()).put(']');
+                        }
+
+                        // Stable-group the range's rows by cellKey (Integer boxing is fine -- this only
+                        // runs for the rare genuinely-interleaved case; Arrays.sort(Object[], Comparator)
+                        // is a guaranteed-stable sort, preserving each cellKey's own relative timestamp
+                        // order).
+                        final Integer[] order = new Integer[rangeLenInt];
+                        for (int j = 0; j < rangeLenInt; j++) {
+                            order[j] = j;
+                        }
+                        Arrays.sort(order, (a, b) -> Integer.compare(rowCellKeys[a], rowCellKeys[b]));
+
+                        int groupStart = 0;
+                        while (groupStart < rangeLenInt) {
+                            final int groupCellKey = rowCellKeys[order[groupStart]];
+                            int groupEnd = groupStart;
+                            while (groupEnd + 1 < rangeLenInt && rowCellKeys[order[groupEnd + 1]] == groupCellKey) {
+                                groupEnd++;
+                            }
+                            final int groupLen = groupEnd - groupStart + 1;
+
+                            if (compositeScratchColumnsToFree == null) {
+                                compositeScratchColumnsToFree = new ObjList<>();
+                                compositeScratchRawBuffersToFree = new LongList();
+                            }
+                            final CompositeCellScratch scratch = buildCompositeCellGroupScratch(
+                                    srcOooLo, order, groupStart, groupLen, sortedTimestampsAddr, timestampIndex,
+                                    compositeScratchColumnsToFree, compositeScratchRawBuffersToFree
+                            );
+
+                            pCount++;
+                            latchCount += dispatchCompositeCellRange(
+                                    groupCellKey, partitionTimestamp, 0, groupLen - 1, groupLen,
+                                    maxTimestamp, scratch.tsIndexAddr, scratch.columns, cellSegmentSink
+                            );
+
+                            groupStart = groupEnd + 1;
+                        }
+                    }
+                } catch (CairoException | CairoError e) {
+                    LOG.error().$((Sinkable) e).$();
+                    success = false;
+                    throw e;
+                }
+                if (inflightPartitions % partitionParallelism == 0) {
+                    o3ConsumePartitionUpdates();
+                    o3DoneLatch.await(latchCount);
+                    inflightPartitions = 0;
+                }
+                partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+            } // end while(srcOoo < srcOooMax)
+
+            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+            long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+            committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
+            txWriter.updateMaxTimestamp(committedMaxTimestamp);
+        } catch (Throwable th) {
+            LOG.error().$("failed to commit composite data block [table=").$(tableToken).$(", error=").$(th).I$();
+            throw th;
+        } finally {
+            LOG.debug()
+                    .$("o3 composite expecting updates [table=").$(tableToken)
+                    .$(", partitionsPublished=").$(pCount)
+                    .I$();
+
+            o3ConsumePartitionUpdates();
+            if (o3ErrorCount.get() == 0 && success) {
+                o3ConsumePartitionUpdateSink();
+            }
+            o3DoneLatch.await(latchCount);
+
+            o3InError = !success || o3ErrorCount.get() > 0;
+
+            if (compositeScratchColumnsToFree != null) {
+                for (int i = 0, n = compositeScratchColumnsToFree.size(); i < n; i++) {
+                    Misc.free(compositeScratchColumnsToFree.getQuick(i));
+                }
+            }
+            if (compositeScratchRawBuffersToFree != null) {
+                for (int i = 0, n = compositeScratchRawBuffersToFree.size(); i < n; i += 2) {
+                    Unsafe.free(compositeScratchRawBuffersToFree.getQuick(i), compositeScratchRawBuffersToFree.getQuick(i + 1), MemoryTag.NATIVE_O3);
+                }
+            }
+
+            if (success && o3ErrorCount.get() > 0) {
+                //noinspection ThrowFromFinallyBlock
+                throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
+            }
+        }
+
+        if (o3LagRowCount > 0 && !metadata.isWalEnabled()) {
+            LOG.info().$("shifting lag rows up [table=").$(tableToken).$(", lagCount=").$(o3LagRowCount).I$();
+            dispatchColumnTasks(
+                    o3LagRowCount,
+                    IGNORE,
+                    srcOooMax,
+                    0L,
+                    0,
+                    cthO3ShiftColumnInLagToTopRef
+            );
+        }
+    }
+
+    /**
+     * Dispatches one composite {@code (partitionTimestamp, cellKey)} cell's row range (composite-
+     * partitioning Plan 4a Task 4) -- always via the async merge path ({@link O3PartitionJob}, never
+     * the append fast path; see {@link #processO3BlockComposite}'s own docs for why {@code last} is
+     * unconditionally passed as {@code false}). Serves both the single-cellKey fast path
+     * ({@code srcOooLo}/{@code srcOooHi} are the REAL O3 batch's absolute bounds, {@code
+     * oooColumnsForCell}/{@code sortedTimestampsAddrForCell} are the table's real {@code o3Columns}/
+     * {@code sortedTimestampsAddr}) and the multi-cellKey regrouped path (bounds are LOCAL 0-based
+     * bounds into a dedicated per-cell scratch buffer pair built by {@link
+     * #buildCompositeCellGroupScratch}).
+     *
+     * @return 1 if a partition-processing unit was actually dispatched (the caller's {@code
+     *         latchCount} delta), 0 if this cell was skipped (read-only partition)
+     */
+    private int dispatchCompositeCellRange(
+            int cellKey,
+            long partitionTimestamp,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long maxTimestamp,
+            long sortedTimestampsAddrForCell,
+            ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
+            StringSink cellSegmentSink
+    ) {
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+        // Composite writes never use the writer's active-tail transientRowCount (Fork (c): which
+        // cell, if any, "owns" that single shared counter is not well-defined for a composite table
+        // yet) -- always resolve the cell's size from its own committed attached-partition record.
+        final long srcDataMax = partitionIndexRaw > -1 ? getPartitionSizeByRawIndex(partitionIndexRaw) : 0;
+        final long srcNameTxn = partitionIndexRaw > -1 ? getPartitionNameTxnByRawIndex(partitionIndexRaw) : txWriter.getTxn() - 1;
+
+        final boolean isParquet = partitionIndexRaw > -1
+                ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
+                : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
+        if (isParquet) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support FORMAT PARQUET [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
+        final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
+        if (partitionIsReadOnly) {
+            LOG.critical().$("o3 ignoring write on read-only composite cell [table=").$(tableToken)
+                    .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", cellKey=").$(cellKey)
+                    .$();
+            return 0;
+        }
+
+        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+        final long newPartitionSize = srcDataMax + srcOooBatchRowSize;
+
+        LOG.info().$("o3 composite cell task [table=").$(tableToken)
+                .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
+                .$(", cellKey=").$(cellKey)
+                .$(", srcOooLo=").$(srcOooLo)
+                .$(", srcOooHi=").$(srcOooHi)
+                .$(", srcDataMax=").$(srcDataMax)
+                .$(", newSize=").$(newPartitionSize)
+                .I$();
+
+        final O3Basket o3Basket = o3BasketPool.next();
+        o3Basket.checkCapacity(configuration, columnCount, indexCount);
+        final AtomicInteger columnCounter = o3ColumnCounters.next();
+
+        final long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
+        if (cellKey != 0) {
+            if (o3PartitionUpdateSinkCellKeys == null) {
+                o3PartitionUpdateSinkCellKeys = new LongIntHashMap();
+            }
+            o3PartitionUpdateSinkCellKeys.put(partitionUpdateSinkAddr, cellKey);
+        }
+        o3PartitionUpdRemaining.incrementAndGet();
+        Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+
+        // Immutable snapshot (see O3PartitionTask#getCellSegment's own docs): cellSegmentSink is a
+        // reused, mutable scratch sink -- an async worker may read this cell's task well after this
+        // method returns and the sink has been cleared/rewritten for a different cell.
+        cellSegmentSink.clear();
+        renderCellSegment(cellSegmentSink, cellKey);
+        final String cellSegment = cellSegmentSink.toString();
+
+        final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
+        final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);
+        final long o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooHi);
+
+        o3CommitPartitionAsync(
+                columnCounter,
+                maxTimestamp,
+                sortedTimestampsAddrForCell,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                o3TimestampLo,
+                partitionTimestamp,
+                srcDataMax,
+                false, // last -- composite dispatch never uses the append fast path, see class docs
+                srcNameTxn,
+                o3Basket,
+                newPartitionSize,
+                srcDataMax,
+                partitionUpdateSinkAddr,
+                dedupColSinkAddr,
+                false, // isParquet -- guarded above
+                o3TimestampLo,
+                o3TimestampHi,
+                oooColumnsForCell,
+                cellSegment
+        );
+        return 1;
+    }
+
+    /**
+     * Resolves the composite {@code cellKey} for one row of the current O3 batch (composite-
+     * partitioning Plan 4a Task 4), reading each dimension's ordinal directly off its source SYMBOL
+     * column's O3 buffer at {@code absoluteRow} -- an index into {@code o3Columns}/
+     * {@code sortedTimestampsAddr} using the SAME absolute row numbering {@link
+     * #processO3BlockComposite} uses throughout. By this point in the O3/WAL-apply pipeline the WAL
+     * symbol remap has already happened (see {@code remapWalSymbols}/{@code
+     * processWalCommitBlock_remapSymbols}), so every SYMBOL column's O3 buffer holds resolved GLOBAL
+     * symbol keys -- confirmed directly against this method's own {@code o3Columns} field, the
+     * identical field the ordinary per-column sort dispatch ({@code cthO3SortColumn}) reads from:
+     * <ul>
+     *     <li>{@code IDENTITY}: the ordinal IS the global symbol key -- read straight off the column,
+     *     no dictionary lookup at all.</li>
+     *     <li>{@code HASH}/{@code TRUNCATE}: the key is reverse-looked-up to its string via
+     *     {@link #symbolValueOf(int, int)} (a GLOBAL-dictionary lookup, since the key is global) and
+     *     then forward-resolved via {@link #resolveDimensionOrdinal(int, int, CharSequence)}, which
+     *     memoizes per {@code (dimIndex, sourceSymbolKey)} for the life of this commit -- global keys
+     *     are stable across the whole commit, so no per-segment memo reset is needed here (unlike a
+     *     hypothetical per-segment-local-key caller).</li>
+     * </ul>
+     *
+     * @param absoluteRow       the row's absolute index into {@code o3Columns}/{@code sortedTimestampsAddr}
+     * @param dimOrdinalScratch reused scratch array, sized to the table's dimension count
+     * @return the resolved dense cellKey for this row (see {@link #resolveCellKey(int[])})
+     */
+    private int resolveRowCellKey(long absoluteRow, int[] dimOrdinalScratch) {
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        for (int d = 0; d < dimCount; d++) {
+            PartitionDimension dim = spec.getDimension(d);
+            int colIndex = dim.getColumnIndex();
+            MemoryCR col = o3Columns.getQuick(getPrimaryColumnIndex(colIndex));
+            int globalSymbolKey = col.getInt(absoluteRow << COMPOSITE_DIMENSION_SOURCE_COLUMN_SHL);
+            if (dim.getKind() == PartitionDimension.KIND_IDENTITY) {
+                dimOrdinalScratch[d] = globalSymbolKey;
+            } else {
+                dimOrdinalScratch[d] = resolveDimensionOrdinal(d, globalSymbolKey, symbolValueOf(colIndex, globalSymbolKey));
+            }
+        }
+        return resolveCellKey(dimOrdinalScratch);
+    }
+
+    /**
+     * Builds one distinct cell's dedicated, self-contained "mini O3 batch" scratch buffers for the
+     * multi-cellKey regrouping path (composite-partitioning Plan 4a Task 4): {@code groupLen} rows,
+     * gathered from the ORIGINAL O3 batch's absolute rows {@code srcOooLo + order[groupStart ..
+     * groupStart+groupLen)}, reordered into this cell's own contiguous, 0-based local numbering.
+     * <p>
+     * The designated timestamp column's scratch "index" is a raw, hand-built array in the exact same
+     * 16-byte-per-row {@code (ts:8, rowid:8)} format {@code sortedTimestampsAddr} itself uses (see
+     * {@code Vect}'s native {@code index_t} struct: {@code {uint64_t ts; uint64_t i;}}, and {@code
+     * TableWriter#getTimestampIndexValue}'s matching stride-16 read) -- {@code ts} is this row's TRUE
+     * timestamp (so every downstream consumer that reads "the timestamp" off this scratch index,
+     * including the timestamp column's own on-disk bytes -- confirmed directly against both {@code
+     * O3OpenColumnJob}'s and {@code O3PartitionJob}'s identical {@code (i == timestampIndex) ?
+     * sortedTimestampsAddr : oooMem1.addressOf(0)} convention -- gets the correct value); the {@code
+     * rowid} field is unused downstream (nothing re-gathers FROM this already-materialized scratch
+     * buffer) and is filled with the row's original absolute index purely for debuggability.
+     * <p>
+     * Every other LIVE, FIXED-size column (dimension or not) is gathered via a plain per-row
+     * {@link Vect#memcpy} of exactly that column's element width -- width-agnostic, so it uniformly
+     * handles every fixed column type without a per-type switch. Var-size columns are rejected before
+     * this method is ever called (see the {@code hasVarSizeColumn} guard in
+     * {@link #processO3BlockComposite}); the timestamp column's own scratch slot is deliberately left
+     * unpopulated (null), mirroring the same convention that makes {@code oooColumns}' timestamp-column
+     * entry unused in both the append and async paths.
+     * <p>
+     * Every allocated buffer is appended to the caller-owned {@code scratchColumnsToFree}/
+     * {@code scratchRawBuffersToFree} accumulators rather than freed here -- they must outlive this
+     * cell's dispatched async work, which may still be draining when this method returns (see
+     * {@link #processO3BlockComposite}'s {@code finally} block, the actual free point).
+     */
+    private CompositeCellScratch buildCompositeCellGroupScratch(
+            long srcOooLo,
+            Integer[] order,
+            int groupStart,
+            int groupLen,
+            long sortedTimestampsAddr,
+            int timestampIndex,
+            ObjList<MemoryCARW> scratchColumnsToFree,
+            LongList scratchRawBuffersToFree
+    ) {
+        final long tsIndexSize = (long) groupLen << 4;
+        final long tsIndexAddr = Unsafe.malloc(tsIndexSize, MemoryTag.NATIVE_O3);
+        scratchRawBuffersToFree.add(tsIndexAddr);
+        scratchRawBuffersToFree.add(tsIndexSize);
+        for (int j = 0; j < groupLen; j++) {
+            long absoluteRow = srcOooLo + order[groupStart + j];
+            long ts = getTimestampIndexValue(sortedTimestampsAddr, absoluteRow);
+            Unsafe.putLong(tsIndexAddr + ((long) j << 4), ts);
+            Unsafe.putLong(tsIndexAddr + ((long) j << 4) + 8, absoluteRow);
+        }
+
+        final ObjList<MemoryCR> scratchColumns = new ObjList<>(columnCount * 2);
+        scratchColumns.setPos(columnCount * 2);
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType < 0 || i == timestampIndex) {
+                continue;
+            }
+            // hasVarSizeColumn already guarded this at the caller -- assert, don't re-check silently.
+            assert !ColumnType.isVarSize(columnType) : "var-size column reached composite scratch build";
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            final int colOffset = getPrimaryColumnIndex(i);
+            final long srcBase = o3Columns.getQuick(colOffset).addressOf(0);
+
+            final MemoryCARW scratchMem = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+            scratchColumnsToFree.add(scratchMem);
+            scratchMem.jumpTo((long) groupLen << shl);
+            final long dstBase = scratchMem.addressOf(0);
+            for (int j = 0; j < groupLen; j++) {
+                long absoluteRow = srcOooLo + order[groupStart + j];
+                Vect.memcpy(dstBase + ((long) j << shl), srcBase + (absoluteRow << shl), 1L << shl);
+            }
+            scratchColumns.setQuick(colOffset, scratchMem);
+            // secondary (aux) slot stays null -- every live column reaching here is fixed-size, and a
+            // null secondary slot for a fixed column is the SAME convention the real o3Columns/columns
+            // lists already use (see TableWriter#configureColumn: auxMem/o3AuxMem1/o3AuxMem2 are null
+            // for a non-var-size type).
+        }
+
+        CompositeCellScratch scratch = new CompositeCellScratch();
+        scratch.tsIndexAddr = tsIndexAddr;
+        scratch.columns = scratchColumns;
+        return scratch;
+    }
+
+    /**
+     * Plain data holder for {@link #buildCompositeCellGroupScratch}'s two return values (composite-
+     * partitioning Plan 4a Task 4) -- Java has no tuple type.
+     */
+    private static final class CompositeCellScratch {
+        ObjList<MemoryCR> columns;
+        long tsIndexAddr;
     }
 
     private void processPartitionRemoveCandidates() {
