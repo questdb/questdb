@@ -27,6 +27,8 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -40,11 +42,11 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -377,14 +379,6 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // Rebase is data-preserving (partitions are hard-linked into the new dir), so every crash-recovered state
     // must expose the seeded rows and never be suspended: the bar the commitRebaseSeed events-before-sequencer
     // ordering fix restores.
-    @Ignore("Reproduces a REAL but out-of-scope gap: REBASE WAL's clone (WalUtils.cloneTableDirForRebase) builds "
-            + "the new table's _meta/_txn/sequencer files via ff.copy + absolute-offset mmap writes and never "
-            + "msyncs/fsyncs them before the atomic rename publishes the table, so a power loss leaves a size-0 "
-            + "_meta and recovery suspends the table (fails at the clone crash points, before commitRebaseSeed's "
-            + "seed ops are even reached). Making it crash-safe is a multi-site durability rework of the clone "
-            + "construction (an instance of the engine-wide DDL msync/fsync gap), tracked separately. The "
-            + "commitRebaseSeed events-before-sequencer fix in this branch is correct by construction (exact "
-            + "mirror of truncateSoft); un-ignore once the clone is made durable so the full sweep can go green.")
     @Test
     public void testRebaseWalCrashSafeW0() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -395,57 +389,133 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new RebaseWalWorkload());
             Assert.assertFalse("rebase-wal sweep truncated (N > cap) — raise the cap", r.truncated);
+            // A swept crash can fire INSIDE a TableWriter.close()/commit (the facade throws to simulate power
+            // loss). The pooled WRITER it orphans is force-reclaimed per cycle by the base (releaseEngineHandles
+            // -> WriterPool.releaseCrashOrphanedWriters), and the honest cross-table-leak guard runs per cycle
+            // in RebaseWalWorkload.teardown() (assertNoForeignOwnedWriters). The same interruption can also
+            // leave CACHED fds open under a cf_rbs_* dir (clone copy / interrupted close); every cf_rbs table is
+            // dropped by now, so reclaim those dangling fds here — path-scoped, so it can never touch a live
+            // engine-root fd (tables.d etc.) — before assertMemoryLeak's open-fd check. Process death reclaims
+            // all of this on a real power loss; the live JVM cannot.
+            crashFf.reclaimCachedFdsUnder(RBS_TABLE);
         });
     }
 
     private static final String RBS_TABLE = "cf_rbs";
 
+    /**
+     * Honest cross-table-leak guard for the rebase sweep — the meaningful half of "assert dropped-tail
+     * instead of {@code busy writers == 0}", kept in the workload (the base's releaseEngineHandles() does the
+     * actual reclaim via {@link WriterPool#releaseCrashOrphanedWriters}).
+     * <p>
+     * A swept crash can fire INSIDE a {@link TableWriter#close()}/commit (the facade throws to simulate power
+     * loss), leaving the pool entry owned. {@code CairoEngine.rebaseWalTable0} is proven real-leak-free (every
+     * acquire is finally/try-with guarded), so any writer this single-threaded sweep leaves owned MUST belong
+     * to one of OUR {@code cf_rbs_*} tables — an owned writer on any other table would be a real leak. A crash
+     * mid-close leaves either a still-checked-out writer (table token available) or a locked entry whose writer
+     * {@code lock()} already nulled (fall back to the pool map key, the dir name); a {@code cf_rbs_*} table name
+     * and a {@code cf_rbs_*~<id>} dir name both start with {@link #RBS_TABLE}. Checked before the base reclaims.
+     */
+    private void assertNoForeignOwnedWriters() {
+        final long mainThread = Thread.currentThread().threadId();
+        for (Map.Entry<CharSequence, WriterPool.Entry> me : engine.getWriterPoolEntries().entrySet()) {
+            final WriterPool.Entry e = me.getValue();
+            if (e.getOwnerThread() != mainThread) {
+                continue; // not one of this single-threaded sweep's own orphans (UNALLOCATED / other)
+            }
+            final TableToken t = e.getTableToken();
+            final CharSequence id = t != null ? t.getTableName() : me.getKey();
+            Assert.assertTrue("rebase sweep left a writer owned on a non-sweep table/dir (real leak): " + id,
+                    id != null && id.toString().startsWith(RBS_TABLE));
+        }
+    }
+
     private final class RebaseWalWorkload implements AdaptiveCrashWorkload {
         private String fp;           // the single valid recovered fingerprint (rebase is data-preserving)
+        private String tableName;    // per-iteration table name — a fresh identity each crash point (see setup)
         private TableToken token;    // pre-rebase token; the rebase drops it, so recovery's re-publish of it is a harmless hint
 
         @Override
         public TableToken[] setup(int iteration) throws Exception {
-            execute("drop table if exists " + RBS_TABLE);
-            execute("create table " + RBS_TABLE + " (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into " + RBS_TABLE + " values" +
+            // Each crash point gets a FRESH table name (cf_rbs_<iteration>). REBASE mints a new durable table dir
+            // every run, and on a crash BEFORE the swap the old table wins so the new dir leaks as an unadopted
+            // orphan; with a fixed name those orphans — and dropped-but-not-yet-purged dirs — collide with a later
+            // create's reused tableId ("name is reserved"). Distinct names give each iteration its own dirs, so
+            // recoveries are independent and collisions are impossible by construction.
+            tableName = RBS_TABLE + '_' + iteration;
+            // Model a fresh restart's name-registry reload: rebuild the in-memory maps from tables.d so a prior
+            // iteration's crashed rebase leaves no stale in-memory entries behind (a real reboot does this).
+            engine.getTableNameRegistry().reload();
+            execute("create table " + tableName + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into " + tableName + " values" +
                     " ('2024-01-01T00:00:00.000000Z', 1)," +
                     " ('2024-01-01T06:00:00.000000Z', 2)," +
                     " ('2024-01-02T00:00:00.000000Z', 3)," +
                     " ('2024-01-02T06:00:00.000000Z', 4)");
             drainWalQueue();                                   // durable baseline == the only valid recovered state
-            token = engine.verifyTableName(RBS_TABLE);
+            token = engine.verifyTableName(tableName);
             if (fp == null) {
-                fp = fingerprint(RBS_TABLE);
+                fp = fingerprint(tableName);                   // data-preserving + name-independent -> constant across iterations
             }
             // REBASE WAL is a recovery op — permitted only on a suspended table. Suspend it here (dev-mode
             // gated) so the swept commit can rebase. Suspend is data-preserving; the seeded rows stay the only
             // valid recovered state.
-            execute("alter table " + RBS_TABLE + " suspend wal");
+            execute("alter table " + tableName + " suspend wal");
             return new TableToken[]{token};
         }
 
         @Override
         public void commit() throws Exception {
             // ALTER TABLE ... REBASE WAL -> CairoEngine.rebaseWalTable -> WalWriter.commitRebaseSeed().
-            execute("alter table " + RBS_TABLE + " rebase wal");
+            execute("alter table " + tableName + " rebase wal");
             drainWalQueue();
         }
 
         @Override
         public int oracle(int k, int n) throws Exception {
-            // The rebase re-points the name to a NEW token minted in commit() (unknown at setup()), so resolve
-            // by name and re-publish whatever token is live now: recoverAfterCrash only re-published the
-            // pre-rebase token, and the suspend we are hunting lives on the new one.
-            TableToken live = engine.getTableTokenIfExists(RBS_TABLE);
+            // The registry swap is crash-atomic (CairoEngine.rebaseWalTable0 -> swapTable -> logSwapTable), so
+            // recovery never needs orphan-adoption: the live name resolves either to the old table (crash before
+            // the swap) or to the new one (crash after), consistently in memory and on disk — no reload() here,
+            // which would mask the atomicity by falling back to reloadFromRootDirectory. Resolve by name (the
+            // rebase mints the new token in commit(), unknown at setup()) and re-publish it, since recoverAfterCrash
+            // only re-published the pre-rebase token and any suspend we hunt lives on the live one.
+            TableToken live = engine.getTableTokenIfExists(tableName);
             Assert.assertNotNull("rebased table vanished after crash at k=" + k, live);
+            // recoverAfterCrash clears the apply job's transient catch(Throwable) suspend only for the PRE-rebase
+            // token; the rebase mints a NEW token (resolved above) that a crash during the seed's apply can leave
+            // transiently suspended. Model the fresh restart for it too — then the re-publish + re-apply below
+            // exercises the DURABLE state: were the WAL/sequencer actually torn, the re-apply re-suspends (bar 2)
+            // or the data check fails, so this clears only the live-JVM artifact, never a real durability suspend.
+            if (engine.getTableSequencerAPI().isSuspended(live)) {
+                engine.getTableSequencerAPI().getTxnTracker(live).setUnsuspended();
+            }
             engine.notifyWalTxnRepublisher(live);
             drainWalQueue();
             Assert.assertFalse("table suspended after rebase-wal crash at k=" + k, anyTableSuspended(live)); // bar 2
-            String recovered = fingerprint(RBS_TABLE);
+            String recovered = fingerprint(tableName);
             Assert.assertTrue("rebase-wal crash at k=" + k + " changed committed data:\n" + recovered,
                     TestUtils.equals(fp, recovered));
             return 0;                                          // data-preserving op: single valid snapshot
+        }
+
+        @Override
+        public void teardown() throws Exception {
+            // Honest cross-table-leak guard, BEFORE the base's releaseEngineHandles() reclaims this cycle's
+            // close()-time writer orphan (if any): whatever is left owned must be one of OUR cf_rbs_* tables.
+            assertNoForeignOwnedWriters();
+            // Per-iteration hygiene: drop THIS iteration's table right after its oracle so each crash point is
+            // independent (bounds registry/recovery/dir churn to one table). This does NOT reclaim a writer a
+            // crash orphaned mid-close() — that entry is owned, and a plain drop cannot release it; the sweep's
+            // close()-time writer orphans are force-reclaimed per cycle by the base (WriterPool
+            // .releaseCrashOrphanedWriters). Unregistered crash-before-swap orphan dirs hold no writer and are
+            // the accepted (dir-only) leak.
+            try {
+                execute("drop table if exists " + tableName);
+                drainWalQueue();
+                drainPurgeJob();
+            } catch (Exception e) {
+                LOG.info().$("[rebase-wal sweep] teardown drop skipped for ").$(tableName).$(": ").$(e.getMessage()).$();
+            }
         }
     }
 }

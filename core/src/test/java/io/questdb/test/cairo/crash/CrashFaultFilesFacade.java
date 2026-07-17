@@ -4,6 +4,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -413,6 +414,65 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public int rename(LPSZ from, LPSZ to) {
+        final int res = super.rename(from, to);
+        if (res == io.questdb.std.Files.FILES_RENAME_OK) {
+            // POSIX rename carries the inode's durable data to the new name, so the path-keyed durability
+            // model must follow the file(s): re-key every tracked entry from the old path -- or old-dir
+            // prefix, for a directory rename -- to the new one. Without this a synced-then-renamed file is
+            // wrongly seen as never-synced and crash() truncates it to 0.
+            rekeyDurability(toAbsPath(from), toAbsPath(to));
+        }
+        return res;
+    }
+
+    private void rekeyDurability(String fromPath, String toPath) {
+        rekeyMap(durableContent, fromPath, toPath);
+        rekeyMap(deviceCacheContent, fromPath, toPath);
+        rekeyMap(durableSize, fromPath, toPath);
+        rekeyMap(writtenDataEnd, fromPath, toPath);
+        rekeyMap(syncedDataEnd, fromPath, toPath);
+        rekeyMap(journaledDataEnd, fromPath, toPath);
+        rekeyMap(pteFlushed, fromPath, toPath);
+        rekeyMap(tornTails, fromPath, toPath);
+        // trackedFiles is insertion-ordered (doFlush() determinism); rebuild preserving relative order.
+        final List<String> rebuilt = new ArrayList<>(trackedFiles.size());
+        boolean changed = false;
+        for (String k : new ArrayList<>(trackedFiles)) {
+            final String nk = remapKey(k, fromPath, toPath);
+            rebuilt.add(nk != null ? nk : k);
+            changed |= nk != null;
+        }
+        if (changed) {
+            trackedFiles.clear();
+            trackedFiles.addAll(rebuilt);
+        }
+    }
+
+    private static <V> void rekeyMap(Map<String, V> map, String fromPath, String toPath) {
+        if (map.isEmpty()) {
+            return;
+        }
+        for (String k : new ArrayList<>(map.keySet())) {
+            final String nk = remapKey(k, fromPath, toPath);
+            if (nk != null) {
+                map.put(nk, map.remove(k));
+            }
+        }
+    }
+
+    private static String remapKey(String key, String fromPath, String toPath) {
+        if (key.equals(fromPath)) {
+            return toPath;
+        }
+        final String prefix = fromPath + File.separator;
+        if (key.startsWith(prefix)) {
+            return toPath + File.separator + key.substring(prefix.length());
+        }
+        return null;
+    }
+
+    @Override
     public void msync(long addr, long len, boolean async) {
         super.msync(addr, len, async);
         String p = pathForAddr(addr);
@@ -576,6 +636,29 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public java.util.List<Long> noCacheOpenFdsSnapshot() {
         return new ArrayList<>(noCacheOpenFds);
+    }
+
+    /**
+     * Force-close every open CACHED fd ({@code openRW}/{@code openRO}/{@code openCleanRW}, tracked in
+     * {@code fdToPath}) whose path contains {@code dirMarker}, returning the count closed. Companion to
+     * {@link #noCacheOpenFdsSnapshot()}: a simulated crash can also leave a cached fd open when it unwinds an
+     * operation (e.g. a rebase clone's partition copy or an interrupted writer close) mid-flight, and on a
+     * live JVM that fd lingers where process death would reclaim it. Scoping to a table-dir marker is the
+     * safety net a blind fd-delta lacks: engine-root files (the {@code tables.d} name registry, config, id
+     * generator) live at the db root and never contain a table-dir marker, so this cannot touch a live
+     * registry/config fd — only fds under a (by call time, dropped) table dir. Routes through
+     * {@link #forceClose(long)} (proper cached close, robust to an already-gone fd).
+     */
+    public int reclaimCachedFdsUnder(String dirMarker) {
+        int closed = 0;
+        for (Long fd : new ArrayList<>(fdToPath.keySet())) {
+            final String p = fdToPath.get(fd);
+            if (p != null && p.contains(dirMarker)) {
+                forceClose(fd);
+                closed++;
+            }
+        }
+        return closed;
     }
 
     /**

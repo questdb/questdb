@@ -283,6 +283,13 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
     private void releaseEngineHandles() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        // Force-reclaim any writer this (single-threaded) sweep left checked out or locked when a simulated
+        // crash unwound a TableWriter.close()/unlock mid-operation: releaseAllWriters() above skips OWNED
+        // entries (only their owner can return them), so without this they linger busy with an open .lock fd
+        // and trip the enclosing assertMemoryLeak's busy-writer / open-fd checks. A real power loss's process
+        // death reclaims them; this models that on the live JVM, the writer-pool analogue of the non-cache fd
+        // reclaim in reclaimLingeringNonCacheFds. A no-op on a healthy engine (production never leaks a writer).
+        engine.releaseCrashOrphanedWriters();
         engine.releaseAllWalWriters();
         engine.releaseInactiveTableSequencers();
     }

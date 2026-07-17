@@ -1911,6 +1911,17 @@ public class CairoEngine implements Closeable, WriterSource {
         writerPool.releaseAll();
     }
 
+    /**
+     * Force-reclaim writers the calling thread left checked out or locked — a fault-injection crash-test
+     * artifact (a simulated power loss unwinds a {@link TableWriter#close()} with the pool entry still
+     * owned, which {@link #releaseAllWriters()} cannot reclaim). See {@link WriterPool#releaseCrashOrphanedWriters()}.
+     * No-op on a healthy engine.
+     */
+    @TestOnly
+    public int releaseCrashOrphanedWriters() {
+        return writerPool.releaseCrashOrphanedWriters();
+    }
+
     public boolean releaseInactive() {
         boolean useful = writerPool.releaseInactive();
         useful |= readerPool.releaseInactive();
