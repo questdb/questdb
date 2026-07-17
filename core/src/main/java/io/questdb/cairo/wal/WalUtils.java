@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -221,6 +222,73 @@ public class WalUtils {
         // markRebased is false there. No-op effect in OSS, which has no uploader to consume the marker.
         if (markRebased) {
             writeRebaseNewMarker(ff, dstDir);
+        }
+
+        // ADAPTIVE: durably publish the staging table. ff.copy / MemoryMARW.close's munmap / createSequencerFiles
+        // all leave the freshly built _meta/_txn/sequencer file contents in the page cache only, and the caller's
+        // atomic rename makes only the directory entry durable, not the contents. Recursively MS_SYNC + fdatasync
+        // every file so a power loss cannot publish a table with a size-0 _meta (which recovery would suspend on).
+        // Sync-BEFORE-rename is required: startup adopts the new dir by its presence at the final path, so it must
+        // already be durable when the rename makes it adoptable.
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            dstDir.trimTo(dstLen);
+            syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
+            dstDir.trimTo(dstLen);
+        }
+    }
+
+    // Recursively make every file under {@code dir} device-durable (full-range MS_SYNC msync + fdatasync of the
+    // mmap-written content), so an ALTER TABLE ... REBASE WAL staging table is crash-durable before the caller's
+    // atomic rename publishes it (see cloneTableDirForRebase). ADAPTIVE-gated by the caller. Hard-linked partition
+    // columns are synced too: durability is tracked per path, so an unsynced new path would be lost on a crash
+    // even though it shares the source table's durable inode. {@code dir} is restored to its entry length.
+    private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
+        final int len = dir.size();
+        final long pFind = ff.findFirst(dir.$());
+        if (pFind > 0) {
+            try {
+                do {
+                    final long pName = ff.findName(pFind);
+                    if (!Files.notDots(pName)) {
+                        continue;
+                    }
+                    dir.trimTo(len).concat(pName);
+                    if (ff.findType(pFind) == Files.DT_FILE) {
+                        fsyncMappedFile(ff, dir, fileOpts);
+                    } else {
+                        syncStagingTreeDurable(ff, dir, fileOpts);
+                    }
+                    dir.trimTo(len);
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                dir.trimTo(len);
+            }
+        }
+    }
+
+    // Map the file's full extent, MS_SYNC msync it (flushes the mmap-written content and advances its durable
+    // extent) then fdatasync for the on-device size. A no-op for a 0-length file.
+    private static void fsyncMappedFile(FilesFacade ff, Path filePath, int fileOpts) {
+        final long fd = ff.openRW(filePath.$(), fileOpts);
+        if (fd < 0) {
+            return;
+        }
+        try {
+            final long size = ff.length(fd);
+            if (size > 0) {
+                final long addr = ff.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_TABLE_WRITER);
+                if (addr != -1 && addr != 0) {
+                    try {
+                        ff.msync(addr, size, false);
+                    } finally {
+                        ff.munmap(addr, size, MemoryTag.MMAP_TABLE_WRITER);
+                    }
+                }
+                ff.fdatasync(fd);
+            }
+        } finally {
+            ff.close(fd);
         }
     }
 

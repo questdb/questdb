@@ -2837,19 +2837,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 renamed = true;
 
-                // Commit the swap in the registry: drop the old table (logs DROP to tables.d, marks the old
-                // dir dropped, evicts its metadata-cache entry), then register the rebuilt dir as the live
-                // table (logs ADD to tables.d, repoints the name, marks the new dir live, hydrates the cache).
-                // lockTableName reserves the now-free name so registerName can commit it. The drop and the
-                // register are NOT atomic: a crash between them leaves the new dir on disk but absent from
-                // tables.d, so startup's reloadFromRootDirectory adopts it (without the empty seeds below).
-                // Acceptable for this rare admin op - the table comes back, just unseeded.
-                if (!tableNameRegistry.dropTable(oldToken)) {
-                    throw CairoException.nonCritical()
-                            .put("could not drop old table from registry [table=").put(oldToken.getTableName()).put(']');
-                }
-                oldTableDropped = true;
-                final TableToken lockedToken = tableNameRegistry.lockTableName(
+                // Commit the swap in the registry as ONE crash-atomic durable step: drop the old table and
+                // register the rebuilt dir together (a single tables.d sync via logSwapTable), so a power
+                // loss can never leave the old table dropped with the new one unregistered. The dir was
+                // already renamed into place above; a crash before this swap leaves the new dir as a
+                // duplicate-name orphan and keeps the old table live, while a crash after it publishes the
+                // new (still-unseeded until commitRebaseSeed below) table. swapTable drops the old dir,
+                // evicts its metadata-cache entry, repoints the name to the new dir and hydrates its cache.
+                final TableToken swapped = tableNameRegistry.swapTable(
+                        oldToken,
                         tableName,
                         newDirName,
                         newTableId,
@@ -2857,16 +2853,14 @@ public class CairoEngine implements Closeable, WriterSource {
                         oldToken.isMatView(),
                         true
                 );
-                if (lockedToken == null) {
+                if (swapped == null) {
                     throw CairoException.nonCritical()
                             .put("rebase target name was taken concurrently [table=").put(tableName).put(']');
                 }
-                newToken = lockedToken;
-                try {
-                    tableNameRegistry.registerName(newToken);
-                } finally {
-                    tableNameRegistry.unlockTableName(newToken);
-                }
+                // The swap is the point of no return: the new dir is now the table (its hard links are the
+                // only surviving copy of the data), so the catch below must leave it on disk.
+                oldTableDropped = true;
+                newToken = swapped;
 
                 // Seed two empty transactions so real data starts at seqTxn 3 (the uploader skips seqTxn 1
                 // and records seqTxn 2 as first_txn=2). The second seed is what stops an idle rebased table

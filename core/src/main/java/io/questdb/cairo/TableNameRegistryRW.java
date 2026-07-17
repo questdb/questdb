@@ -120,6 +120,51 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public TableToken swapTable(TableToken oldToken, String tableName, String newDirName, int newTableId, boolean isView, boolean isMatView, boolean isWal) {
+        // Reserve the (shared) logical name for the whole swap so no concurrent create/drop can grab it
+        // while the old dir is repointed to the new one. Fails if the name is no longer bound to oldToken.
+        final ReverseTableMapItem oldReverse = dirNameToTableTokenMap.get(oldToken.getDirName());
+        if (oldReverse == null || !tableNameToTableTokenMap.replace(tableName, oldToken, LOCKED_DROP_TOKEN)) {
+            return null;
+        }
+        boolean published = false;
+        try {
+            // Build the authoritative new token, mirroring lockTableName's flag resolution.
+            final boolean isProtected = tableFlagResolver.isProtected(tableName);
+            final boolean isSystem = tableFlagResolver.isSystem(tableName);
+            final boolean isPublic = tableFlagResolver.isPublic(tableName);
+            final String dbLogName = engine.getConfiguration().getDbLogName();
+            final TableToken newToken = new TableToken(tableName, newDirName, dbLogName, newTableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+
+            // Metadata cache first (unsafe, can throw) — mirrors registerName ordering.
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.dropTable(oldToken);
+                if (!newToken.isView()) {
+                    metadataRW.hydrateTable(newToken);
+                }
+            }
+
+            // Single durable step: DROP old + ADD new (see GrowOnlyTableNameRegistryStore.logSwapTable).
+            nameStore.logSwapTable(oldToken, newToken);
+
+            // Reverse map: old dir marked dropped so the purge job reclaims it; new dir is live.
+            dirNameToTableTokenMap.put(oldToken.getDirName(), ReverseTableMapItem.ofDropped(oldToken));
+            dirNameToTableTokenMap.put(newDirName, ReverseTableMapItem.of(newToken));
+
+            // Publish: the logical name now resolves to the new dir. Queryable from this moment.
+            published = tableNameToTableTokenMap.replace(tableName, LOCKED_DROP_TOKEN, newToken);
+            assert published;
+            return newToken;
+        } finally {
+            if (!published) {
+                // Mid-swap failure before the durable commit: restore the name to the old table so it
+                // is not stranded as LOCKED_DROP_TOKEN (mirrors registerName's finally-unlock intent).
+                tableNameToTableTokenMap.replace(tableName, LOCKED_DROP_TOKEN, oldToken);
+            }
+        }
+    }
+
+    @Override
     public synchronized boolean reload(@Nullable ObjList<TableToken> convertedTables) {
         tableNameToTableTokenMap.clear();
         dirNameToTableTokenMap.clear();
