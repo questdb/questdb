@@ -50,7 +50,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -90,8 +89,7 @@ public class UpdateTest extends AbstractCairoTest {
                     public boolean checkConnection() {
                         return false;
                     }
-                },
-                MemoryTag.NATIVE_DEFAULT
+                }
         ) {
         };
         circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);

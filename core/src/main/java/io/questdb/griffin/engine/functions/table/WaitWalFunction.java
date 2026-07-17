@@ -152,7 +152,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
         // Legacy polling fallback: no continuation gateway, or yield refused.
         for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
             Os.sleep(1);
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             if (i % 1000 == 0) {
                 throwIfTerminated();
             }
