@@ -815,7 +815,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         null,
                                         -1,
                                         backfillFrontier,
-                                        matViewFrozenBoundaryFloor(token)
+                                        matViewFrozenBoundaryFloor(token),
+                                        matViewFrozenBoundaryLimitHoursOrMonths(token)
                                 );
                                 final MatViewState state = engine.getMatViewStateStore().getViewState(token);
                                 if (state != null) {
@@ -889,7 +890,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getRefreshIntervals(),
                             info.getRefreshIntervalsBaseTxn(),
                             matViewBackfillFrontier(token),
-                            matViewFrozenBoundaryFloor(token)
+                            matViewFrozenBoundaryFloor(token),
+                            matViewFrozenBoundaryLimitHoursOrMonths(token)
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -1036,7 +1038,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn,
             long backfillFrontier,
-            long frozenBoundaryFloor
+            long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -1050,6 +1053,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     refreshIntervalsBaseTxn,
                     backfillFrontier,
                     frozenBoundaryFloor,
+                    frozenBoundaryLimitHoursOrMonths,
                     stateWriter
             );
         }
@@ -1158,6 +1162,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return state != null ? state.getLastRefreshFrozenBoundaryFloor() : Numbers.LONG_NULL;
     }
 
+    private int matViewFrozenBoundaryLimitHoursOrMonths(TableToken viewToken) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+        return state != null ? state.getLastRefreshFrozenBoundaryLimitHoursOrMonths() : 0;
+    }
+
     /**
      * Persists the live backfill frontier (and boundary floor) of a mat view to its {@code _mv.s}
      * state file when a user backfill has advanced it since the last persist. This is the only place
@@ -1179,6 +1188,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return; // nothing new to persist
         }
         final long floor = state.getLastRefreshFrozenBoundaryFloor();
+        final int floorLimit = state.getLastRefreshFrozenBoundaryLimitHoursOrMonths();
         final Path path = Path.PATH2.get();
         path.of(engine.getConfiguration().getDbRoot()).concat(viewToken);
         final int rootLen = path.size();
@@ -1217,6 +1227,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         matViewStateReader.getRefreshIntervalsBaseTxn(),
                         frontier,
                         floor,
+                        floorLimit,
                         stateWriter
                 );
             } else {
@@ -1232,6 +1243,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         -1,
                         frontier,
                         floor,
+                        floorLimit,
                         stateWriter
                 );
             }

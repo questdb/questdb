@@ -45,6 +45,7 @@ public class MatViewStateReader implements Mutable {
     private final LongList refreshIntervals = new LongList();
     private long backfillFrontier = Long.MIN_VALUE;
     private long frozenBoundaryFloor = Numbers.LONG_NULL;
+    private int frozenBoundaryLimitHoursOrMonths;
     private boolean invalid;
     private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
@@ -62,6 +63,7 @@ public class MatViewStateReader implements Mutable {
         refreshIntervals.clear();
         backfillFrontier = Long.MIN_VALUE;
         frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
     }
 
     public long getBackfillFrontier() {
@@ -70,6 +72,10 @@ public class MatViewStateReader implements Mutable {
 
     public long getFrozenBoundaryFloor() {
         return frozenBoundaryFloor;
+    }
+
+    public int getFrozenBoundaryLimitHoursOrMonths() {
+        return frozenBoundaryLimitHoursOrMonths;
     }
 
     @Nullable
@@ -114,6 +120,7 @@ public class MatViewStateReader implements Mutable {
         // caller (WalUtils.readMatViewState) can overlay it from the _mv.s state file.
         backfillFrontier = Long.MIN_VALUE;
         frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         return this;
     }
 
@@ -131,6 +138,7 @@ public class MatViewStateReader implements Mutable {
         // caller (WalUtils.readMatViewState) can overlay it from the _mv.s state file.
         backfillFrontier = Long.MIN_VALUE;
         frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         return this;
     }
 
@@ -148,6 +156,7 @@ public class MatViewStateReader implements Mutable {
         // (and freshly-created views) have no block of this type.
         backfillFrontier = Long.MIN_VALUE;
         frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
@@ -188,6 +197,9 @@ public class MatViewStateReader implements Mutable {
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) {
                 backfillFrontier = block.getLong(0);
                 frozenBoundaryFloor = block.getLong(Long.BYTES);
+                if (block.length() >= 2L * Long.BYTES + Integer.BYTES) {
+                    frozenBoundaryLimitHoursOrMonths = block.getInt(2L * Long.BYTES);
+                }
             }
         }
         if (!matViewStateBlockFound) {
@@ -199,21 +211,25 @@ public class MatViewStateReader implements Mutable {
     }
 
     /**
-     * Overlays only the frozen-zone runtime fields (backfill frontier / boundary floor) from the
+     * Overlays only the frozen-zone runtime fields (backfill frontier, boundary floor, and its LIMIT) from the
      * {@code _mv.s} state file, leaving the refresh-state fields untouched. Used by
      * {@link io.questdb.cairo.wal.WalUtils#readMatViewState} when the refresh state was reconstructed
      * from a WAL event (which does not carry the frozen-zone fields) so the frontier still survives a
-     * restart. Resets the two fields to their defaults when the file has no frozen-zone block.
+     * restart. Resets the fields to their defaults when the file has no frozen-zone block.
      */
     public void ofFrozenZoneOverlay(@NotNull BlockFileReader reader) {
         backfillFrontier = Long.MIN_VALUE;
         frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) {
                 backfillFrontier = block.getLong(0);
                 frozenBoundaryFloor = block.getLong(Long.BYTES);
+                if (block.length() >= 2L * Long.BYTES + Integer.BYTES) {
+                    frozenBoundaryLimitHoursOrMonths = block.getInt(2L * Long.BYTES);
+                }
                 return;
             }
         }

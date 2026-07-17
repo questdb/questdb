@@ -233,7 +233,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                 ff.touch(path.$());
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
-                    MatViewState.append(1_000L, 7L, false, null, 50L, intervals, 5L, Long.MIN_VALUE, Numbers.LONG_NULL, writer);
+                    MatViewState.append(1_000L, 7L, false, null, 50L, intervals, 5L, Long.MIN_VALUE, Numbers.LONG_NULL, 48, writer);
                 }
 
                 // File B -- a legacy state with ONLY the first block (no ts/period/intervals blocks).
@@ -257,6 +257,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                 }
                 assertEquals(5L, reader.getRefreshIntervalsBaseTxn());
                 assertEquals(50L, reader.getLastPeriodHi());
+                assertEquals(48, reader.getFrozenBoundaryLimitHoursOrMonths());
 
                 // Read the legacy file with the SAME reader: the absent blocks' fields must reset, not carry.
                 try (BlockFileReader br = new BlockFileReader(configuration)) {
@@ -269,6 +270,8 @@ public class MatViewStateTest extends AbstractCairoTest {
                         -1L, reader.getRefreshIntervalsBaseTxn());
                 assertEquals("lastPeriodHi must reset when the period block is absent",
                         Numbers.LONG_NULL, reader.getLastPeriodHi());
+                assertEquals("frozen boundary limit must reset when the frozen block is absent",
+                        0, reader.getFrozenBoundaryLimitHoursOrMonths());
                 assertTrue("refreshIntervals must reset when the intervals block is absent",
                         reader.getRefreshIntervals() == null || reader.getRefreshIntervals().size() == 0);
             }

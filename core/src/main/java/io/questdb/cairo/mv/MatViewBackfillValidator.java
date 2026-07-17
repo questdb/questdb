@@ -53,7 +53,7 @@ import org.jetbrains.annotations.Nullable;
  * effective floor is the minimum of: (1) what this commit's own snapshot of
  * {@code min(max(base_ts), wallClock) - LIMIT}, snapped through the sampler,
  * produces, and (2) the snapped REPLACE_RANGE.lo the most recent refresh tick
- * published via {@link MatViewState#setLastRefreshFrozenBoundaryFloor(long)}.
+ * published via {@link MatViewState#setLastRefreshFrozenBoundaryFloor(long, int)}.
  * Taking the minimum keeps the accepted ceiling strictly below the lo of any
  * in-flight refresh's REPLACE_RANGE coverage even when ALTER SET REFRESH LIMIT
  * changes LIMIT between refresh publish and the user commit, because the

@@ -86,6 +86,7 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -3144,6 +3145,121 @@ public class CheckpointTest extends AbstractCairoTest {
                             2023-09-20T12:39:01.933062Z\tfoobar\t42
                             """);
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresMatViewFrozenBoundaryFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute(
+                    "CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute("INSERT INTO base_price VALUES('a', 9.0, '2024-09-13T12:00')");
+            drainWalQueue();
+            execute(
+                    "CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL DEFERRED AS " +
+                            "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h"
+            );
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 2 DAYS");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainWalAndMatViewQueues();
+
+            final long expectedFloor = parseFloorPartialTimestamp("2024-09-11T12:00:00.000000Z");
+            TableToken viewToken = engine.verifyTableName("price_1h");
+            MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(expectedFloor, viewState.getLastRefreshFrozenBoundaryFloor());
+            Assert.assertEquals(48, viewState.getLastRefreshFrozenBoundaryLimitHoursOrMonths());
+
+            execute("CHECKPOINT CREATE");
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            viewToken = engine.verifyTableName("price_1h");
+            viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(expectedFloor, viewState.getLastRefreshFrozenBoundaryFloor());
+            Assert.assertEquals(48, viewState.getLastRefreshFrozenBoundaryLimitHoursOrMonths());
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresMatViewFrozenZoneState() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute(
+                    "CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute(
+                    "INSERT INTO base_price VALUES" +
+                            "('a', 5.0, '2024-09-10T12:00')" +
+                            ",('a', 7.0, '2024-09-12T12:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL DEFERRED AS " +
+                            "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h"
+            );
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 2 DAYS");
+            drainWalQueue();
+
+            // Checkpoint the bootstrap window before the first refresh. The apply
+            // path must persist the frontier even though no refresh state exists yet.
+            execute("INSERT INTO price_1h VALUES('a', 1.0, '2024-09-10T18:00')");
+            drainWalQueue();
+
+            final long expectedFloor = Numbers.LONG_NULL;
+            final long expectedFrontier = parseFloorPartialTimestamp("2024-09-12T19:00:00.000000Z");
+            TableToken viewToken = engine.verifyTableName("price_1h");
+            MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(expectedFloor, viewState.getLastRefreshFrozenBoundaryFloor());
+            Assert.assertEquals(expectedFrontier, viewState.getBackfillFrontier());
+
+            execute("CHECKPOINT CREATE");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            viewToken = engine.verifyTableName("price_1h");
+            viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(expectedFloor, viewState.getLastRefreshFrozenBoundaryFloor());
+            Assert.assertEquals(expectedFrontier, viewState.getBackfillFrontier());
+
+            // Retreat max(base_ts) after restore and verify the restored frozen
+            // state still prevents FULL refresh from deleting the backfill.
+            execute("ALTER TABLE base_price DROP PARTITION LIST '2024-09-13'");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainWalAndMatViewQueues();
+
+            assertQuery("price_1h ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T18:00:00.000000Z
+                            a\t7.0\t2024-09-12T12:00:00.000000Z
+                            """);
+            execute("CHECKPOINT RELEASE");
         });
     }
 

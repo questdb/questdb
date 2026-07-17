@@ -161,6 +161,7 @@ public class MatViewState implements QuietCloseable {
     // value that survives an ALTER, so the validator clamps to it directly
     // instead of re-applying the (now-different) LIMIT.
     private volatile long lastRefreshFrozenBoundaryFloor = Numbers.LONG_NULL;
+    private volatile int lastRefreshFrozenBoundaryLimitHoursOrMonths;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     // Highest backfillFrontier value already written to the _mv.s state file. Lets the
@@ -203,6 +204,7 @@ public class MatViewState implements QuietCloseable {
             long refreshIntervalsBaseTxn,
             long backfillFrontier,
             long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -218,7 +220,7 @@ public class MatViewState implements QuietCloseable {
         appendRefreshIntervals(refreshIntervals, refreshIntervalsBaseTxn, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE);
         block = writer.append();
-        appendFrozenZoneState(backfillFrontier, frozenBoundaryFloor, block);
+        appendFrozenZoneState(backfillFrontier, frozenBoundaryFloor, frozenBoundaryLimitHoursOrMonths, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE);
         writer.commit();
     }
@@ -236,6 +238,7 @@ public class MatViewState implements QuietCloseable {
                     refreshState.getRefreshIntervalsBaseTxn(),
                     refreshState.getBackfillFrontier(),
                     refreshState.getFrozenBoundaryFloor(),
+                    refreshState.getFrozenBoundaryLimitHoursOrMonths(),
                     writer
             );
         } else {
@@ -249,15 +252,22 @@ public class MatViewState implements QuietCloseable {
                     -1,
                     Long.MIN_VALUE,
                     Numbers.LONG_NULL,
+                    0,
                     writer
             );
         }
     }
 
     // kept public for tests
-    public static void appendFrozenZoneState(long backfillFrontier, long frozenBoundaryFloor, @NotNull AppendableBlock block) {
+    public static void appendFrozenZoneState(
+            long backfillFrontier,
+            long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths,
+            @NotNull AppendableBlock block
+    ) {
         block.putLong(backfillFrontier);
         block.putLong(frozenBoundaryFloor);
+        block.putInt(frozenBoundaryLimitHoursOrMonths);
     }
 
     // kept public for tests
@@ -491,6 +501,10 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshFrozenBoundaryFloor;
     }
 
+    public int getLastRefreshFrozenBoundaryLimitHoursOrMonths() {
+        return lastRefreshFrozenBoundaryLimitHoursOrMonths;
+    }
+
     /**
      * The highest {@link #getBackfillFrontier() backfill frontier} value already written to the
      * {@code _mv.s} state file. The apply path persists the frontier only when it has advanced
@@ -568,6 +582,7 @@ public class MatViewState implements QuietCloseable {
         this.backfillFrontier.set(frontier);
         this.persistedBackfillFrontier = frontier;
         this.lastRefreshFrozenBoundaryFloor = reader.getFrozenBoundaryFloor();
+        this.lastRefreshFrozenBoundaryLimitHoursOrMonths = reader.getFrozenBoundaryLimitHoursOrMonths();
     }
 
     public boolean isClosed() {
@@ -826,9 +841,10 @@ public class MatViewState implements QuietCloseable {
         lastRefreshBaseTxn = txn;
     }
 
-    public void setLastRefreshFrozenBoundaryFloor(long floor) {
+    public void setLastRefreshFrozenBoundaryFloor(long floor, int limitHoursOrMonths) {
         assert latch.get();
         lastRefreshFrozenBoundaryFloor = floor;
+        lastRefreshFrozenBoundaryLimitHoursOrMonths = limitHoursOrMonths;
     }
 
     /**

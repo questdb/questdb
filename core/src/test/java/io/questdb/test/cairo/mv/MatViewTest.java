@@ -7956,7 +7956,8 @@ public class MatViewTest extends AbstractCairoTest {
             // Wall clock 09-13T12:30; anchor = min(max(base)=09-13T12:00, now) = 09-13T12:00,
             // boundary = 09-11T12:00. The view has NEVER been refreshed -- this is the
             // bootstrap window. Backfill a frozen-zone row below the boundary: accepted, and
-            // the validator records backfillFrontier = 09-13T12:00.
+            // the apply path records the minimal protective frontier 09-12T19:00
+            // (bucket end 09-10T19:00 + LIMIT).
             currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
             execute("insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
             drainQueues();
@@ -7965,14 +7966,15 @@ public class MatViewTest extends AbstractCairoTest {
             // Without the backfill frontier the refresh would anchor on max(base=09-10T12:00,
             // view_ts=09-10T18:00) = 09-10T18:00, boundary 09-08T18:00, and REPLACE_RANGE
             // [09-08T18:00,...) would recompute (wipe) the 09-10T18:00 backfill from a base
-            // that no longer has that row. The frontier pins the anchor at 09-13T12:00.
+            // that no longer has that row. The frontier keeps the boundary at 09-10T19:00,
+            // exactly at the backfilled bucket's exclusive end.
             execute("alter table base_price drop partition list '2024-09-13'");
             drainWalQueue();
 
             execute("refresh materialized view price_1h full;");
             drainQueues();
 
-            // The backfill at 09-10T18:00 survives (boundary stayed at 09-11T12:00, so the
+            // The backfill at 09-10T18:00 survives (boundary stayed at 09-10T19:00, so the
             // row remains in the frozen zone the refresh never touches).
             assertQueryNoLeakCheck(
                     replaceExpectedTimestamp("""
@@ -7983,6 +7985,106 @@ public class MatViewTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierSurvivesClockRetreat() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T09:00')" +
+                            ",('a', 9.0, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // At 12:30 the boundary is 11:00. The backfill lands in the frozen
+            // [10:00, 11:00) bucket and records a 12:00 protective frontier.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T10:00')");
+            drainQueues();
+
+            // Move the wall clock behind the recorded frontier. Capping the combined
+            // data/backfill frontier by now would retreat the boundary to 10:30, whose
+            // bucket floor lets FULL refresh delete the accepted 10:00 backfill.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T10:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewFrozenBoundarySurvivesClockRetreatWithoutBackfill() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-09T12:00')" +
+                            ",('a', 7.0, '2024-09-11T13:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 day;");
+            drainQueues();
+
+            // Materialize the 09-11 bucket, then advance the frozen floor past it.
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T14:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Remove the source partition and move the clock backward. Without the
+            // committed-floor clamp, 09-11 becomes managed again and FULL deletes
+            // the now-orphaned view bucket because the base no longer recomputes it.
+            execute("alter table base_price drop partition list '2024-09-11'");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2024-09-12T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t7.0\t2024-09-11T13:00:00.000000Z
+                            """),
+                    "price_1h where ts = '2024-09-11T13:00'",
+                    "ts",
+                    true,
+                    false
             );
         });
     }

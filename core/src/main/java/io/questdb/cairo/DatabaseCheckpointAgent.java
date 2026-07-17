@@ -698,6 +698,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         checkpointBaseSeqTxn,
                         matViewStateReader.getBackfillFrontier(),
                         matViewStateReader.getFrozenBoundaryFloor(),
+                        matViewStateReader.getFrozenBoundaryLimitHoursOrMonths(),
                         matViewFileWriter
                 );
 

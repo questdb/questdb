@@ -432,8 +432,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalAndMatViewQueues(refreshJob, main2.getEngine());
                 }
 
-                // VERDICT: R SURVIVES. The restored frontier (09-13T12:00) pins the refresh anchor, so
-                // boundary = 09-11T12:00 stays ABOVE R=09-10T18:00; the REPLACE_RANGE never reaches R.
+                // VERDICT: R SURVIVES. The restored frontier (09-12T19:00) keeps the boundary at
+                // 09-10T19:00, the backfilled bucket's exclusive end, so REPLACE_RANGE never reaches R.
                 // 09-12 is recomputed from base; 09-13 is gone (its base partition was dropped). Crucially,
                 // NO base-derived row appears at 09-10T12:00 -- that would mean the boundary retreated and
                 // wiped the user's backfill.
@@ -594,8 +594,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
-                // R survives: the live frontier (09-13T12:00) pins the anchor, boundary stays at
-                // 09-11T12:00, REPLACE_RANGE never reaches R.
+                // R survives: the live frontier (09-12T19:00) keeps the boundary at 09-10T19:00,
+                // the backfilled bucket's exclusive end, so REPLACE_RANGE never reaches R.
                 assertSql(
                         main1,
                         replaceExpectedTimestamp("""
