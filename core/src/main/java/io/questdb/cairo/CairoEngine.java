@@ -1026,6 +1026,23 @@ public class CairoEngine implements Closeable, WriterSource {
                             );
                             if (ringCandidate.isStructurallyValid()) {
                                 instance.setCheckpointRingCandidate(ringCandidate);
+                                // Hold WalPurgeJob's base WAL floor at the newest
+                                // listed entry until the refresh worker decides
+                                // trust. The head stamped below carries that
+                                // window only when the sweep finds a .cp: find
+                                // none while the manifest lists one and a
+                                // caught-up view is selected for a restore by
+                                // nothing, so the rehydrate that would stamp this
+                                // arm waits for a base commit while purge does
+                                // not. Floor only - naming the head off an
+                                // unverified manifest would pre-empt the trust
+                                // rule, where holding WAL only costs retention.
+                                final int ringEntryCount = ringCandidate.getEntryCount();
+                                if (ringEntryCount > 0) {
+                                    instance.adoptCheckpointRingPurgeFloor(
+                                            ringCandidate.getEntryBaseSeqTxn(ringEntryCount - 1)
+                                    );
+                                }
                             } else {
                                 // Absent, corrupt, version-skewed, or naming a
                                 // .cp that is gone. Sweep without an allow-list,

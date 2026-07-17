@@ -20477,6 +20477,130 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRingDeferredRestoreHoldsWalPurgeFloor() throws Exception {
+        // A blind directory scan leaves the sweep with no fallback head while the
+        // manifest read still lands an allow-list - readRingCandidate addresses
+        // _ring by name and checks entries with exists(), neither of which
+        // enumerates. A view that is ALSO caught up is then selected by nothing:
+        // scanForLaggingViews gates the restore on a stamped head, so the
+        // rehydrate that adopts the manifest waits for the next base commit.
+        //
+        // While it waits every arm of WalPurgeJob's base WAL floor reads LONG_NULL
+        // - no head, an empty in-memory ring, and a durable arm only a publication
+        // or a rehydrate stamps - so the floor drops to lvConsumed and releases
+        // the (newest listed entry, applied] WAL the deferred restore's
+        // replayToApplied needs. The restore then fails and invalidates the view
+        // permanently: strictly worse than the one scan a fallback would cost.
+        // Stamping the arm from the candidate the sweep already validated holds
+        // the floor across the deferral.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        // One .cp for the first commit (firstCp) and none after it: the cadence
+        // gap is what makes (newest listed entry, applied] a real replay range
+        // rather than an empty one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final AtomicBoolean failCheckpointDirScan = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long findFirst(LPSZ path) {
+                if (failCheckpointDirScan.get()
+                        && Utf8s.endsWithAscii(path, LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)) {
+                    return 0;
+                }
+                return super.findFirst(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // Pin the clock well past the epoch: the WAL purge sweep's interval
+            // gate (30s) skips every sweep while the clock sits near it. Every
+            // advance below stays under the checkpoint duration cadence, so the
+            // row cadence above is what decides the .cp writes.
+            final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
+            setCurrentMicros(t0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Base seqTxn 1..3, one WAL segment each.
+                for (int seconds = 10; seconds <= 30; seconds += 10) {
+                    setCurrentMicros(t0 + seconds * 100_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:" + seconds + ".000000Z', " + seconds + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                // The cadence sealed the first commit only, so the entry trails
+                // applied and the gap between them is the replay range.
+                Assert.assertEquals(1, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(1L, lv.getRetainedCheckpointBaseSeqTxn(0));
+                Assert.assertEquals("applied ran past the only entry", 3L, lv.getAppliedWatermark());
+
+                readRingManifest(lv, manifest);
+                Assert.assertEquals(1, manifest.getEntryCount());
+                Assert.assertEquals(1L, manifest.getEntryBaseSeqTxn(0));
+                Assert.assertEquals("covered tracks the applied floor, not the .cp cadence",
+                        3L, manifest.getCoveredBaseSeqTxn());
+            }
+
+            // Restart: the sweep goes blind, every .cp survives on disk, and the
+            // manifest read still lands.
+            failCheckpointDirScan.set(true);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            failCheckpointDirScan.set(false);
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals("the blind sweep must find no fallback head",
+                    Numbers.LONG_NULL, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertNotNull("the manifest read does not enumerate, so it still lands",
+                    reloaded.getCheckpointRingCandidate());
+
+            // No refresh job runs, so the view stays caught up and headless - the
+            // shape scanForLaggingViews selects for nothing, leaving the restore
+            // deferred and the floor to be carried by the candidate alone.
+            engine.releaseInactive();
+            drainPurgeJob();
+
+            // seqTxn 1 is the listed entry itself and sits at the floor, so its
+            // segment is purgeable either way - it is the proof the sweep actually
+            // ran, without which the retention assertions below would hold
+            // vacuously.
+            assertSegmentExistence(false, "base", 1, 0);
+            // seqTxn 2 and 3 are the (entry, applied] range the deferred restore
+            // replays. With every floor arm unstamped the floor sits at lvConsumed
+            // (3) and both are deleted.
+            assertSegmentExistence(true, "base", 1, 1);
+            assertSegmentExistence(true, "base", 1, 2);
+
+            // The next base commit selects the view, the restore runs ahead of the
+            // drain, and its replay finds the WAL it needs.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 5_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:40.000000Z', 40)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            Assert.assertFalse("the deferred restore must not invalidate the view", reloaded.isInvalid());
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            // rn continuing to 4 says the accumulators came off the restored entry
+            // plus its replay, not off a cold drain.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-06-01T00:00:10.000000Z\t10\t1\n" +
+                            "2026-06-01T00:00:20.000000Z\t20\t2\n" +
+                            "2026-06-01T00:00:30.000000Z\t30\t3\n" +
+                            "2026-06-01T00:00:40.000000Z\t40\t4\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCheckpointRingTrustedAgainstReconciledFloorNotRawState() throws Exception {
         // The v1 regression, and the reason the trust decision runs on the
         // refresh worker rather than in the startup sweep.
@@ -20645,6 +20769,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                                 .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$())
                 );
             }
+            // The startup read pinned WalPurgeJob's durable floor arm at the
+            // newest entry this manifest listed, to hold the base WAL until the
+            // verdict landed. The verdict removed the manifest, so the arm must
+            // let go: it tracks the durable listing, and there is no longer one.
+            // The fallback resumes from the head, whose own arm covers that.
+            Assert.assertEquals(
+                    "a discarded manifest must release the durable purge floor arm",
+                    Numbers.LONG_NULL,
+                    reloaded.getLastPublishedRingNewestBaseSeqTxn()
+            );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
             execute("DROP LIVE VIEW lv");
         });

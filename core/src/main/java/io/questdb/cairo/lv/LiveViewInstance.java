@@ -603,6 +603,31 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Stamps {@link #lastPublishedRingNewestBaseSeqTxn} from the manifest the
+     * startup sweep just read, holding WalPurgeJob's base WAL floor at what a
+     * trusting restart resumes from before the refresh worker decides trust.
+     * The sweep's head normally carries that window, but it is stamped only when
+     * the sweep finds a {@code .cp}: find none while the manifest lists one and a
+     * caught-up view is selected for a restore by nothing, so the rehydrate that
+     * would stamp this arm waits for the next base commit. Purge does not wait -
+     * it drops to {@code lvConsumed} and releases the (newest listed entry,
+     * applied] range that restore's replay needs, invalidating the view.
+     * <p>
+     * The base seqTxn only, never {@link #recordCheckpointRingPublication}'s
+     * generation or covered: this is not a publication and the manifest is not
+     * trusted yet. Holding base WAL a verdict later releases costs retention;
+     * naming an anchor early would resurrect state the trust rule exists to
+     * refuse. {@link #releaseCheckpointRingPurgeFloor()} is the other verdict.
+     * <p>
+     * Called from {@code CairoEngine.buildViewGraphs()} on the startup thread -
+     * the one mutator that is not the refresh worker under the refresh latch,
+     * safe because the write happens-before any worker starts.
+     */
+    public void adoptCheckpointRingPurgeFloor(long newestBaseSeqTxn) {
+        lastPublishedRingNewestBaseSeqTxn = newestBaseSeqTxn;
+    }
+
+    /**
      * Accumulates {@code n} in-order (forward-append) base rows dropped for
      * falling below {@code viewLowerBoundTimestamp}. Called from the refresh
      * worker at the in-order drain; the value is exposed via
@@ -1561,6 +1586,18 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordSeedCheckpointWritten(long key, long writtenUs) {
         this.headSeedCpKey = key;
         this.lastCheckpointWrittenUs = writtenUs;
+    }
+
+    /**
+     * Releases the floor {@link #adoptCheckpointRingPurgeFloor(long)} took, for
+     * the caller that has just removed {@code _checkpoints/_ring}: a gone
+     * manifest lists nothing, so an arm still naming its newest entry would pin
+     * base WAL against a claim no longer on disk. The fallback that removed it
+     * resumes from the sweep's head, whose own arm covers that. Runs on the
+     * refresh worker under the refresh latch.
+     */
+    public void releaseCheckpointRingPurgeFloor() {
+        lastPublishedRingNewestBaseSeqTxn = Numbers.LONG_NULL;
     }
 
     /**

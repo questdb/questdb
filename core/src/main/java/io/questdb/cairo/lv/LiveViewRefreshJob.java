@@ -5126,6 +5126,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // uses, so the two cannot drift.
         LiveViewCheckpointRingManifest.ringManifestPath(path, path);
         engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+        // The manifest listed the entry the startup read pinned the base WAL
+        // floor at, and it lists nothing now. Release the arm so the floor
+        // follows the head this fallback actually resumes from.
+        instance.releaseCheckpointRingPurgeFloor();
     }
 
     /**
