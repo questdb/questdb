@@ -1,7 +1,13 @@
 # Widening in-memory tier routing for live view reads
 
 Status: in progress - phases 0, 1 and 3 shipped; phase 2 is all that is left of the
-plan, and it is blocked on the `TIMESTAMP(col)` hole phase 0 surfaced. Phase 3's
+plan, and it is now UNBLOCKED: the `TIMESTAMP(col)` hole phase 0 surfaced is closed,
+rejected at CREATE by `CairoEngine.validateLiveViewTimestamp`. That hole turned out to
+be reachable only through `row_number() OVER ()` - every other window shape trips the
+cached-window gate first, and answers with a message about incremental refresh rather
+than about timestamps, so the shape reads as already-rejected until probed precisely.
+Before the fix a descending output ts made `seamTs` report the slot's MAXIMUM, which
+would have served every disk row below it from both tiers. Phase 3's
 keystone is IN - the frame cursor is wired up and routing, so the fresh-or-fast fork
 this document was written against is closed. A filtered live-view read now runs the parallel / JIT
 filter over the tier's own frame and sees the un-flushed lead. All three risks
@@ -28,7 +34,7 @@ step predicted - but it did find one in itself, and the finding outlives it: the
 raced nothing at all until the writers were paced to the refresh driver, because they
 finish inside its first tick at ANY row count. The reader-churn soaks alongside it share
 that shape and are worth a look on their own track. What remains in this document is
-phase 2 (blocked on the `TIMESTAMP(col)` hole) and the two follow-ups phase 3 named.
+phase 2 (unblocked, not started) and the two follow-ups phase 3 named.
 Branch context: `puzpuzpuz_live_view`
 Owner: Andrei Pechkurov
 
@@ -153,19 +159,18 @@ These need no fix. Chasing them adds machinery for staleness the `FLUSH EVERY`
 contract already bounds.
 
 *One exception to the "never wrong" framing, found by phase 0 and not otherwise
-part of this document's scope.* Everything above assumes the LV's output
-designated timestamp is the base's, which nothing validates - a view declaring
-`TIMESTAMP(col)` over a different column makes the refresh job's O3 detection
+part of this document's scope. CLOSED - see phase 0.* Everything above assumes the
+LV's output designated timestamp is the base's, which nothing validated - a view
+declaring `TIMESTAMP(col)` over a different column made the refresh job's O3 detection
 compare a base-space commit minimum against an output-space watermark. Late rows
-in the output ts space then escape diversion, which breaks the ts-ascending
+in the output ts space then escaped diversion, which breaks the ts-ascending
 premise the tier already relies on (`seamTs` as the slot minimum, the eviction
 binary search) and can put the lead below the on-disk max. Reproduced; see phase
 0. What this does *not* establish is that the materialized window results are
 themselves wrong - that was not tested, and the claim here is only about ordering.
-No phase below creates the hole and none depends on it being open: it is live on
-the shipped seam path today. But phase 1 widens the gate and so widens exposure to
-it, and phase 2 rests on the invariant outright, so it should close on its own
-track before either lands.
+No phase below created the hole and none depended on it being open: it was live on
+the shipped seam path. `CairoEngine.validateLiveViewTimestamp` now rejects the shape
+at CREATE, which retires this exception for every phase at once.
 
 **Systematic misses are the actual problem.** The shape disqualifiers in the table
 above are properties of the query *text*. A query that lands in that set never
@@ -248,7 +253,7 @@ monotone across the shared boundary: ascending serves disk (`..., X`) then lead
 and equal-ts neighbours need no particular relative order. What the tie forbids is
 purely negative: no strict `>` assertion anywhere on the lead/disk boundary, and
 no splitting of the two bands on a ts comparison. The `TIMESTAMP(col)` hole below
-must close before this ships.
+has closed, so the invariant now holds for every view that can be created.
 
 ### 3. Tier as a page-frame source (keystone, expensive)
 
@@ -398,21 +403,49 @@ depends on this; phase 1 does not.
 - **`rebuildInMemoryTier` is vacuous for this question.** It restages from the
   rewritten disk and sets `leadRowCount = 0`, so a rebuilt slot has no lead band.
   This is also why heavy-O3 workloads rarely hold a lead at all.
-- **Open hole: a `TIMESTAMP(col)` view breaks it.** Nothing validates that the
-  LV's output designated timestamp *is* the base's - the pass-through is emergent
-  from unrelated checks. `... AS SELECT ts2, ... FROM base TIMESTAMP(ts2)` is
-  accepted, and the frontier compare then reads `txnMinTs` in the base's ts space
-  against `latestSeen` in `ts2` space. With `ts2` descending against an ascending
-  base ts, nothing diverts, and the lead lands *below* the on-disk max with the
-  slot's rows in descending order - which also breaks the ts-ascending premise the
-  eviction binary search and `seamTs` already rely on. Phase 2 is blocked on
-  closing this (reject the shape at `CairoEngine.createLiveView`, where the output
-  ts index can be checked against the base's designated ts). It is a live bug for
-  the *existing* seam path too, not just for phase 2. Scope of the claim: the
-  reproduction establishes the *ordering* breakage above. It does not establish
-  that the materialized window results are wrong - plausible, since the rows are
-  processed in arrival rather than output-ts order, but untested. Worth settling
-  before deciding whether this is a routing fix or a data-correctness fix.
+- **~~Open hole: a `TIMESTAMP(col)` view breaks it.~~ CLOSED - the shape is now
+  rejected at CREATE.** Nothing validated that the LV's output designated timestamp
+  *is* the base's - the pass-through was emergent from unrelated checks.
+  `... AS SELECT ts2, ... FROM base TIMESTAMP(ts2)` was accepted, and the frontier
+  compare then read `txnMinTs` in the base's ts space against `latestSeen` in `ts2`
+  space. With `ts2` descending against an ascending base ts, nothing diverts, and the
+  lead lands *below* the on-disk max with the slot's rows in descending order - which
+  also breaks the ts-ascending premise the eviction binary search and `seamTs` already
+  rely on. It was a live bug for the *existing* seam path too, not just for phase 2.
+  `CairoEngine.validateLiveViewTimestamp` now rejects it, comparing the output
+  designated timestamp's name against the base's; phase 2 is unblocked.
+  - *The reproduction, before the fix, was blunter than the write-up above.* With `ts`
+    ascending and `ts2` descending the slot's ts ladder ran backwards outright and
+    `seamTs` reported the slot's MAXIMUM rather than its minimum - so the seam split
+    would serve every disk row below that maximum from BOTH tiers. Not a subtle
+    ordering wobble: duplicate rows.
+  - *Why it survived, and this is the part worth keeping:* the shape is reachable only
+    through `row_number() OVER ()`. That window needs no ORDER BY, so it stays
+    single-pass once `ts2` is designated. Every window that orders by the base's `ts`
+    needs a sort under the overridden timestamp and the cached-window gate rejects it
+    first - with a message about incremental refresh that says nothing about
+    timestamps. So the obvious probes of this hole all come back "rejected" for the
+    wrong reason, which is a good way to conclude it is already closed. It is not.
+  - *The name comparison is exact, which is not obvious and is what makes the fix a
+    one-liner.* An alias or an expression in the projection (`SELECT ts AS t, ...`)
+    fronts the scan with a `SelectedRecordCursorFactory` / `VirtualRecordCursorFactory`,
+    which `validateLiveViewFactory` already rejects - so every projected column is a
+    plain base column carrying its base name, and no alias can rename the output ts out
+    from under the check. A window function cannot occupy the ts index either: the
+    `TIMESTAMP(col)` clause binds to a base column, so the index always lands on a
+    pass-through.
+  - Scope of the claim, unchanged: the reproduction establishes the *ordering* breakage.
+    It does not establish that the materialized window results were wrong - plausible,
+    since the rows are processed in arrival rather than output-ts order, but untested.
+    Moot for the routing work now that the shape cannot be created.
+  - Tests: `LiveViewValidationTest.testRejectOverriddenDesignatedTimestamp` covers the
+    three reachable divergent shapes and two positive controls - a view that merely
+    PROJECTS a second timestamp column, and one that names the base's own designated
+    timestamp explicitly (`TIMESTAMP(ts)`), which must not be caught by the reject.
+    Disabling the check fails the arm. A `Chars.equals` mutant survives (an equivalent
+    mutant: the projection carries the base metadata's stored name, so the two sides
+    are byte-identical today) - `equalsIgnoreCase` stands because it is the right
+    comparison for a SQL identifier, not because a test forces it.
 - **Regression coverage:** `LiveViewFuzzTest.testFuzzLeadOrderingUnderO3` drives
   late-arriving commits at a resident un-flushed lead and asserts
   `min(lead ts) >= max(disk ts)` on every cycle where the seqTxn fence holds. The
@@ -461,8 +494,9 @@ lead. A timestamp-pruned projection is still disk-only - that is phase 2's.*
   and re-keying the symbol overlay by output column, each fail the new tests. The
   898-test LV suite is green.
 
-**Phase 2 - lead-only mode.** Phase 0 is done and the invariant holds, so the
-remaining gate is the `TIMESTAMP(col)` hole it surfaced.
+**Phase 2 - lead-only mode. UNBLOCKED, not started.** Phase 0 is done and the
+invariant holds; the `TIMESTAMP(col)` hole it surfaced is now closed at CREATE
+(see phase 0), so nothing gates this but the work itself.
 - Add the mode to `LiveViewRecordCursor` alongside seam routing; prefer the seam
   when its preconditions hold, fall back to lead-only, then to disk-only.
 - Drop the `timestampColumnIndex >= 0` and forward-scan preconditions on the
@@ -878,8 +912,9 @@ remaining gate is the `TIMESTAMP(col)` hole it surfaced.
   were already sitting.
 - **Phase 2 rests on an invariant that is weaker than assumed.** Phase 0 retired
   the question: the bound is non-strict (ties are legitimate), and a
-  `TIMESTAMP(col)` view violates it outright. Phase 2 must handle the tie and is
-  blocked on closing that hole; the hole also affects today's seam path.
+  `TIMESTAMP(col)` view violated it outright. Phase 2 must still handle the tie. The
+  hole is now closed - CREATE rejects the shape, so the invariant holds for every view
+  that can exist - and phase 2 is unblocked.
 - **Widening the gate widens exposure to the fence.** More shapes routing means
   more reads pinning slots, and sustained concurrent readers straddling a swap can
   pin both slots and force the refresh worker to emergency-flush the lead every
