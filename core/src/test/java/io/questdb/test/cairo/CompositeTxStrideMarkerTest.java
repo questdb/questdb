@@ -26,12 +26,14 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
@@ -295,6 +297,146 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
                     Assert.assertEquals(
                             "plain table's _txn marker must remain 0 right after CREATE TABLE",
                             0, marker);
+                }
+            }
+        });
+    }
+
+    /**
+     * Plan 3b, Task 4: the STATIC {@link TxReader#findPartitionRawIndex} helper is the one {@code _txn}
+     * partition-resolution path that does NOT go through a live {@link TxReader} instance, and so cannot
+     * self-detect stride the way {@link TxReader#unsafeLoadBaseOffset()} does -- it hardcoded the plain
+     * {@code LONGS_PER_TX_ATTACHED_PARTITION_MSB} unconditionally. Its sole production caller, {@link
+     * PartitionOverwriteControl#notifyPartitionMutates}, is gated off by default ({@code
+     * isPartitionO3OverwriteControlEnabled() == false}) but when enabled snapshots a reader's raw
+     * attached-partitions {@link LongList} once (via {@link TxReader#dumpRawTxPartitionInfo}, in {@code
+     * acquirePartitions}) and later re-resolves a partition's raw index from just a timestamp -- with no
+     * mapped memory / base header in reach at that point, only the flat list -- exactly what this test
+     * reproduces.
+     * <p>
+     * The two composite partitions below are deliberately built so that partition 0's cellKey (slot 4 of
+     * its 8-long record) equals partition 1's timestamp -- a legal composite state (cellKey and
+     * timestamp are independent dimensions), but one that makes a WRONG stride-4 block search land on
+     * that cellKey slot (raw index 4) and treat it as a false "found" match, instead of continuing on to
+     * partition 1's true record start (raw index 8). This is exactly the "stride-4 offset (wrong
+     * record)" failure the task brief describes: pre-fix this resolves to 4 (not even a multiple of the
+     * true stride, 8) and the nameTxn/size read back at that index belong to partition 0, not partition
+     * 1.
+     */
+    @Test
+    public void testStaticFindPartitionRawIndexResolvesCorrectRawIndexForComposite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exchange symbol, x double) " +
+                    "timestamp(ts) partition by day, exchange");
+            engine.releaseInactive();
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("c");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    txWriter.setCompositeForTest(true);
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+
+                    // partition 0: ts=1_000, size=10, nameTxn=111, cellKey=55_555 -- the cellKey
+                    // deliberately equals partition 1's timestamp below.
+                    txWriter.appendPartitionForTest(1_000L, 10L, 111L, 55_555);
+                    // partition 1: ts=55_555, size=20, nameTxn=222, cellKey=77 (arbitrary; unused by search)
+                    txWriter.appendPartitionForTest(55_555L, 20L, 222L, 77);
+                    txWriter.updateMaxTimestamp(55_555L + 1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                    txReader.unsafeLoadAll();
+
+                    Assert.assertEquals("must self-detect COMPOSITE stride", 8, txReader.getLongsPerAttachedPartition());
+                    Assert.assertEquals(2, txReader.getPartitionCount());
+
+                    // Mirrors PartitionOverwriteControl.acquirePartitions: snapshot the raw LongList --
+                    // completely decoupled from the mapped _txn memory / base header from this point on.
+                    LongList container = new LongList();
+                    txReader.dumpRawTxPartitionInfo(container);
+
+                    // Mirrors PartitionOverwriteControl.notifyPartitionMutates resolving partition 1's
+                    // raw index from just its timestamp, the way the real caller does. Uses the
+                    // test-only findPartitionRawIndexForTest seam (findPartitionRawIndex itself is
+                    // package-private in io.questdb.cairo, unreachable from this test package).
+                    int rawIndex = TxReader.findPartitionRawIndexForTest(
+                            container, 55_555L, txReader.getLongsPerAttachedPartition());
+
+                    Assert.assertEquals(
+                            "must resolve partition 1's TRUE record start (a multiple of the composite " +
+                                    "stride, 8) -- the hardcoded-plain-stride bug instead lands on raw index " +
+                                    "4, partition 0's cellKey slot",
+                            8, rawIndex);
+                    // Cross-check via the reader's own public, logical-index accessors: raw index 8 at
+                    // stride 8 is logical partition 1 -- must report partition 1's real nameTxn/size, not
+                    // partition 0's (which is what raw index 4 would alias into under the bug).
+                    int logicalIndex = rawIndex / txReader.getLongsPerAttachedPartition();
+                    Assert.assertEquals(1, logicalIndex);
+                    Assert.assertEquals(
+                            "nameTxn at the resolved partition must be partition 1's real nameTxn, not partition 0's",
+                            222L, txReader.getPartitionNameTxn(logicalIndex));
+                    Assert.assertEquals(
+                            "size at the resolved partition must be partition 1's real size, not partition 0's",
+                            20L, txReader.getPartitionSize(logicalIndex));
+                }
+            }
+        });
+    }
+
+    /**
+     * Companion to the test above: a PLAIN (stride-4) {@code _txn}'s static {@link
+     * TxReader#findPartitionRawIndex} resolution must be completely unaffected by threading the stride
+     * through explicitly -- {@code getLongsPerAttachedPartition() == 4} must reproduce exactly the
+     * pre-existing hardcoded-shl behavior, the only stride a plain table ever uses.
+     */
+    @Test
+    public void testStaticFindPartitionRawIndexUnaffectedForPlain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, x double) timestamp(ts) partition by day");
+            engine.releaseInactive();
+
+            final long day1 = 0L;
+            final long day2 = Micros.DAY_MICROS;
+
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            TableToken tableToken = engine.verifyTableName("p");
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+
+                try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                    // Deliberately no setCompositeForTest call -- a real plain table's writer.
+                    txWriter.ofRW(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                    txWriter.appendPartitionForTest(day1, 5L, 500L, 0);
+                    txWriter.appendPartitionForTest(day2, 7L, 501L, 0);
+                    txWriter.updateMaxTimestamp(day2 + 1);
+                    txWriter.finishPartitionSizeUpdate();
+                    txWriter.commit(new ObjList<>());
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(path.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+                    txReader.unsafeLoadAll();
+
+                    Assert.assertEquals(4, txReader.getLongsPerAttachedPartition());
+
+                    LongList container = new LongList();
+                    txReader.dumpRawTxPartitionInfo(container);
+
+                    int rawIndex = TxReader.findPartitionRawIndexForTest(
+                            container, day2, txReader.getLongsPerAttachedPartition());
+                    Assert.assertEquals(
+                            "plain-table resolution must be unaffected: still a multiple of 4, day2's true record start",
+                            4, rawIndex);
+                    int logicalIndex = rawIndex / txReader.getLongsPerAttachedPartition();
+                    Assert.assertEquals(1, logicalIndex);
+                    Assert.assertEquals(501L, txReader.getPartitionNameTxn(logicalIndex));
+                    Assert.assertEquals(7L, txReader.getPartitionSize(logicalIndex));
                 }
             }
         });

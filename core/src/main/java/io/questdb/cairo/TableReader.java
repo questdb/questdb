@@ -352,6 +352,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         txFile.dumpRawTxPartitionInfo(container);
     }
 
+    /**
+     * Returns this reader's attached-partition record stride: {@link TableUtils#LONGS_PER_TX_ATTACHED_PARTITION}
+     * (4, plain) or {@link TableUtils#LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE} (8, composite). Callers
+     * that snapshot this reader's raw partitions via {@link #dumpRawTxPartitionInfo} (e.g. {@code
+     * PartitionOverwriteControl}) must capture this stride at the same time -- the resulting flat
+     * {@link LongList} carries no self-describing marker of its own once decoupled from the mapped
+     * {@code _txn} memory.
+     */
+    public int getLongsPerAttachedPartition() {
+        return txFile.getLongsPerAttachedPartition();
+    }
+
     public long floorToPartitionTimestamp(long timestamp) {
         return txFile.getPartitionTimestampByTimestamp(timestamp);
     }

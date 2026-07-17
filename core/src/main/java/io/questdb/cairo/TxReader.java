@@ -947,8 +947,35 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
-    static int findPartitionRawIndex(LongList attachedPartitions, long partitionTimestamp) {
-        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
+    /**
+     * Resolves a partition's raw index from a bare, previously-{@link #dumpRawTxPartitionInfo}-dumped
+     * {@link LongList} snapshot -- the ONE {@code _txn} partition-resolution path that does not go
+     * through a live {@link TxReader} instance, and so cannot self-detect stride from the base-header
+     * marker the way {@link #unsafeLoadBaseOffset()} does: by the time {@link
+     * PartitionOverwriteControl#notifyPartitionMutates} calls this, the snapshot has been fully
+     * decoupled from the mapped {@code _txn} memory (and its base header) for as long as the reader
+     * that dumped it stays open. The caller must therefore pass the SAME stride that snapshot was built
+     * at -- {@code longsPerAttachedPartition}, i.e. {@link TableUtils#LONGS_PER_TX_ATTACHED_PARTITION}
+     * (4, plain) or {@link TableUtils#LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE} (8, composite), typically
+     * read via the owning reader's {@link #getLongsPerAttachedPartition()} at the same time as the dump.
+     */
+    static int findPartitionRawIndex(LongList attachedPartitions, long partitionTimestamp, int longsPerAttachedPartition) {
+        int shl = longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE
+                ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB
+                : LONGS_PER_TX_ATTACHED_PARTITION_MSB;
+        return attachedPartitions.binarySearchBlock(shl, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
+    }
+
+    /**
+     * Test-only: exposes the package-private static {@link #findPartitionRawIndex} outside this
+     * package -- the same seam pattern {@link #setCompositeForTest} uses for {@link #setComposite} --
+     * so a test living under {@code io.questdb.test.cairo} can exercise {@code
+     * PartitionOverwriteControl.notifyPartitionMutates}'s exact call shape (a raw {@link LongList}
+     * snapshot, as produced by {@link #dumpRawTxPartitionInfo}, plus a bare timestamp and the owning
+     * reader's stride) without needing to live in {@code io.questdb.cairo} itself.
+     */
+    public static int findPartitionRawIndexForTest(LongList attachedPartitions, long partitionTimestamp, int longsPerAttachedPartition) {
+        return findPartitionRawIndex(attachedPartitions, partitionTimestamp, longsPerAttachedPartition);
     }
 
     static long getPartitionNameTxnByRawIndex(LongList attachedPartitions, int index) {
