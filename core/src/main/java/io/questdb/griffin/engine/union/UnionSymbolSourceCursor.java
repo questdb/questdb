@@ -27,5 +27,30 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.sql.RecordCursor;
 
 interface UnionSymbolSourceCursor {
-    RecordCursor getCurrentSymbolSourceCursor();
+    int bindSymbolSourceTracker(SymbolSourceTracker tracker, int nextSourceIndex);
+
+    void updateSymbolSource();
+
+    class SymbolSourceTracker {
+        private RecordCursor cursor;
+        private int sourceIndex = -1;
+
+        void clear() {
+            cursor = null;
+            sourceIndex = -1;
+        }
+
+        RecordCursor getCursor() {
+            return cursor;
+        }
+
+        int getSourceIndex() {
+            return sourceIndex;
+        }
+
+        void of(RecordCursor cursor, int sourceIndex) {
+            this.cursor = cursor;
+            this.sourceIndex = sourceIndex;
+        }
+    }
 }

@@ -37,19 +37,19 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -62,7 +62,6 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     private final IntList columnToFunctionIndex;
     private final UnionSymbolCastRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final ObjList<Plannable> planColumns;
 
     public UnionSymbolCastRecordCursorFactory(
             RecordMetadata metadata,
@@ -75,10 +74,6 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         this.columnToFunctionIndex = columnToFunctionIndex;
         this.functions = functions;
         this.cursor = new UnionSymbolCastRecordCursor(columnToFunctionIndex, functions);
-        this.planColumns = new ObjList<>(metadata.getColumnCount());
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            planColumns.add(new ProjectedColumn(i, columnToFunctionIndex.getQuick(i) > -1));
-        }
     }
 
     @Override
@@ -138,7 +133,17 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     public void toPlan(PlanSink sink) {
         // Retain the established plan shape while the implementation uses a symbol-only record.
         sink.type("VirtualRecord");
-        sink.optAttr("functions", planColumns);
+        sink.attr("functions").val('[');
+        for (int i = 0, n = columnToFunctionIndex.size(); i < n; i++) {
+            if (i > 0) {
+                sink.val(',');
+            }
+            sink.putColumnName(i);
+            if (columnToFunctionIndex.getQuick(i) > -1) {
+                sink.val("::symbol");
+            }
+        }
+        sink.val(']');
         sink.child(base);
     }
 
@@ -183,80 +188,37 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     private static class NativeKeyMap implements QuietCloseable {
         private static final int NOT_FOUND = -1;
-        private long address;
-        private int capacity;
-        private MemoryTracker memoryTracker;
+        private final DirectIntIntHashMap map = new DirectIntIntHashMap(
+                4,
+                0.5,
+                SymbolTable.VALUE_IS_NULL,
+                NOT_FOUND,
+                MemoryTag.NATIVE_FUNC_RSS,
+                false
+        );
 
         @Override
         public void close() {
-            address = Unsafe.free(
-                    address,
-                    (long) capacity * Integer.BYTES,
-                    MemoryTag.NATIVE_FUNC_RSS,
-                    memoryTracker
-            );
-            capacity = 0;
-            memoryTracker = null;
+            map.close();
+            map.setMemoryTracker(null);
         }
 
         private int get(int sourceKey) {
-            if (sourceKey < 0 || sourceKey >= capacity) {
-                return NOT_FOUND;
-            }
-            return Unsafe.getInt(address + (long) sourceKey * Integer.BYTES);
+            return map.isOpen() ? map.get(sourceKey) : NOT_FOUND;
         }
 
         private void of(MemoryTracker memoryTracker) {
-            this.memoryTracker = memoryTracker;
+            map.setMemoryTracker(memoryTracker);
         }
 
         private void put(int sourceKey, int resultKey) {
             if (sourceKey < 0) {
                 throw CairoException.nonCritical().put("invalid union symbol key [key=").put(sourceKey).put(']');
             }
-            if (sourceKey >= capacity) {
-                int newCapacity = Math.max(4, capacity);
-                while (newCapacity <= sourceKey) {
-                    if (newCapacity > Integer.MAX_VALUE / 2) {
-                        throw CairoException.nonCritical().put("union symbol key cache capacity overflow");
-                    }
-                    newCapacity *= 2;
-                }
-                final long oldSize = (long) capacity * Integer.BYTES;
-                final long newSize = (long) newCapacity * Integer.BYTES;
-                if (address == 0) {
-                    address = Unsafe.malloc(newSize, MemoryTag.NATIVE_FUNC_RSS, memoryTracker);
-                } else {
-                    address = Unsafe.realloc(
-                            address,
-                            oldSize,
-                            newSize,
-                            MemoryTag.NATIVE_FUNC_RSS,
-                            memoryTracker
-                    );
-                }
-                Unsafe.setMemory(address + oldSize, newSize - oldSize, (byte) 0xff);
-                capacity = newCapacity;
+            if (!map.isOpen()) {
+                map.reopen();
             }
-            Unsafe.putInt(address + (long) sourceKey * Integer.BYTES, resultKey);
-        }
-    }
-
-    private static class ProjectedColumn implements Plannable {
-        private final int columnIndex;
-        private final boolean symbolCast;
-
-        private ProjectedColumn(int columnIndex, boolean symbolCast) {
-            this.columnIndex = columnIndex;
-            this.symbolCast = symbolCast;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.putColumnName(columnIndex);
-            if (symbolCast) {
-                sink.val("::symbol");
-            }
+            map.put(sourceKey, resultKey);
         }
     }
 
@@ -279,14 +241,12 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     private static class SourceState implements QuietCloseable {
         private final ObjList<SourceColumn> columns;
         private final Record record;
-        private final RecordCursor sourceCursor;
 
         private SourceState(
                 RecordCursor sourceCursor,
                 IntList symbolColumns,
                 MemoryTracker memoryTracker
         ) {
-            this.sourceCursor = sourceCursor;
             this.record = sourceCursor.getRecord();
             this.columns = new ObjList<>(symbolColumns.size());
             try {
@@ -322,15 +282,16 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     private static class UnionSymbolCastRecord extends UnionRecord {
         private final IntList columnToFunctionIndex;
+        private final UnionSymbolCastRecordCursor cursor;
         private final ObjList<Function> functions;
-        @Nullable
-        private SourceState sourceState;
 
         private UnionSymbolCastRecord(
                 IntList columnToFunctionIndex,
+                UnionSymbolCastRecordCursor cursor,
                 ObjList<Function> functions
         ) {
             this.columnToFunctionIndex = columnToFunctionIndex;
+            this.cursor = cursor;
             this.functions = functions;
         }
 
@@ -341,6 +302,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 return super.getInt(col);
             }
             final CastStrToSymbolFunctionFactory.Func function = symbolFunction(functions.getQuick(functionIndex));
+            final SourceState sourceState = cursor.getCurrentSourceState();
             final SourceColumn sourceColumn = sourceState.columns.getQuick(functionIndex);
             if (sourceColumn.symbolTable == null) {
                 return function.intern(function.getSymbol(recordA));
@@ -378,23 +340,21 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             super.of(baseRecord, null);
             super.setAb(true);
         }
-
-        private void of(SourceState sourceState) {
-            this.sourceState = sourceState;
-        }
     }
 
     private static class UnionSymbolCastRecordCursor implements NoRandomAccessRecordCursor {
         private final IntList columnToFunctionIndex;
         private final ObjList<Function> functions;
         private final UnionSymbolCastRecord record;
-        private final ObjList<SourceState> sourceStates = new ObjList<>();
+        private final UnionSymbolSourceCursor.SymbolSourceTracker sourceTracker = new UnionSymbolSourceCursor.SymbolSourceTracker();
         private final IntList symbolColumns = new IntList();
         private final ObjList<SymbolTable> symbolTables = new ObjList<>();
         private RecordCursor baseCursor;
-        private RecordCursor currentSourceCursor;
+        private int currentSourceIndex = -1;
         private SourceState currentSourceState;
         private MemoryTracker memoryTracker;
+        @Nullable
+        private IntObjHashMap<SourceState> sourceStates;
 
         private UnionSymbolCastRecordCursor(
                 IntList columnToFunctionIndex,
@@ -402,7 +362,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         ) {
             this.columnToFunctionIndex = columnToFunctionIndex;
             this.functions = functions;
-            this.record = new UnionSymbolCastRecord(columnToFunctionIndex, functions);
+            this.record = new UnionSymbolCastRecord(columnToFunctionIndex, this, functions);
             for (int column = 0, n = columnToFunctionIndex.size(); column < n; column++) {
                 final int functionIndex = columnToFunctionIndex.getQuick(column);
                 if (functionIndex > -1) {
@@ -420,8 +380,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             try {
-                Misc.freeObjListIfCloseable(sourceStates);
-                sourceStates.clear();
+                closeSourceStates();
             } finally {
                 try {
                     baseCursor = Misc.free(baseCursor);
@@ -429,9 +388,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                     for (int i = 0, n = functions.size(); i < n; i++) {
                         functions.getQuick(i).cursorClosed();
                     }
-                    currentSourceCursor = null;
+                    currentSourceIndex = -1;
                     currentSourceState = null;
                     memoryTracker = null;
+                    sourceTracker.clear();
                 }
             }
         }
@@ -456,36 +416,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
-            if (!baseCursor.hasNext()) {
-                return false;
-            }
-            RecordCursor sourceCursor = baseCursor;
-            if (baseCursor instanceof UnionSymbolSourceCursor source) {
-                sourceCursor = source.getCurrentSymbolSourceCursor();
-            }
-            if (sourceCursor != currentSourceCursor) {
-                currentSourceCursor = sourceCursor;
-                currentSourceState = null;
-                for (int i = 0, n = sourceStates.size(); i < n; i++) {
-                    final SourceState candidate = sourceStates.getQuick(i);
-                    if (candidate.sourceCursor == sourceCursor) {
-                        currentSourceState = candidate;
-                        break;
-                    }
-                }
-                if (currentSourceState == null) {
-                    currentSourceState = new SourceState(sourceCursor, symbolColumns, memoryTracker);
-                    try {
-                        sourceStates.add(currentSourceState);
-                    } catch (RuntimeException | Error th) {
-                        currentSourceState.close();
-                        currentSourceState = null;
-                        throw th;
-                    }
-                }
-            }
-            record.of(currentSourceState);
-            return true;
+            return baseCursor.hasNext();
         }
 
         @Override
@@ -505,6 +436,9 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         private void of(RecordCursor baseCursor, MemoryTracker memoryTracker) {
             this.baseCursor = baseCursor;
             this.memoryTracker = memoryTracker;
+            if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
+                sourceCursor.bindSymbolSourceTracker(sourceTracker, 0);
+            }
             this.record.of(baseCursor.getRecord());
             toTop();
         }
@@ -532,9 +466,48 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void toTop() {
             baseCursor.toTop();
-            currentSourceCursor = null;
+            currentSourceIndex = -1;
             currentSourceState = null;
-            record.sourceState = null;
+            sourceTracker.clear();
+            if (baseCursor instanceof UnionSymbolSourceCursor sourceCursor) {
+                sourceCursor.updateSymbolSource();
+            } else {
+                sourceTracker.of(baseCursor, 0);
+            }
+        }
+
+        private void closeSourceStates() {
+            if (sourceStates != null) {
+                final Object[] states = sourceStates.getValues();
+                for (int i = 0, n = states.length; i < n; i++) {
+                    states[i] = Misc.free((SourceState) states[i]);
+                }
+                sourceStates.clear();
+            }
+        }
+
+        private SourceState getCurrentSourceState() {
+            final int sourceIndex = sourceTracker.getSourceIndex();
+            if (sourceIndex == currentSourceIndex) {
+                return currentSourceState;
+            }
+            currentSourceIndex = sourceIndex;
+            if (sourceStates == null) {
+                sourceStates = new IntObjHashMap<>();
+            }
+            currentSourceState = sourceStates.get(sourceIndex);
+            if (currentSourceState == null) {
+                final SourceState state = new SourceState(sourceTracker.getCursor(), symbolColumns, memoryTracker);
+                try {
+                    sourceStates.put(sourceIndex, state);
+                    currentSourceState = state;
+                } catch (RuntimeException | Error th) {
+                    currentSourceState = null;
+                    state.close();
+                    throw th;
+                }
+            }
+            return currentSourceState;
         }
     }
 

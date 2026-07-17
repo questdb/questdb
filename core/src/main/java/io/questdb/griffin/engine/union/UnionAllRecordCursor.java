@@ -38,9 +38,12 @@ import io.questdb.std.ObjList;
 class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor, UnionSymbolSourceCursor {
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
-    private RecordCursor currentSymbolSourceCursor;
+    private boolean isUsingCursorA;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
+    private int symbolSourceIndexA = -1;
+    private int symbolSourceIndexB = -1;
+    private SymbolSourceTracker symbolSourceTracker;
 
     public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         if (castFunctionsA != null && castFunctionsB != null) {
@@ -55,6 +58,24 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         cursorA.calculateSize(circuitBreaker, counter);
         cursorB.calculateSize(circuitBreaker, counter);
+    }
+
+    @Override
+    public int bindSymbolSourceTracker(SymbolSourceTracker tracker, int nextSourceIndex) {
+        symbolSourceTracker = tracker;
+        if (cursorA instanceof UnionSymbolSourceCursor sourceCursor) {
+            nextSourceIndex = sourceCursor.bindSymbolSourceTracker(tracker, nextSourceIndex);
+            symbolSourceIndexA = -1;
+        } else {
+            symbolSourceIndexA = nextSourceIndex++;
+        }
+        if (cursorB instanceof UnionSymbolSourceCursor sourceCursor) {
+            nextSourceIndex = sourceCursor.bindSymbolSourceTracker(tracker, nextSourceIndex);
+            symbolSourceIndexB = -1;
+        } else {
+            symbolSourceIndexB = nextSourceIndex++;
+        }
+        return nextSourceIndex;
     }
 
     @Override
@@ -75,11 +96,6 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public RecordCursor getCurrentSymbolSourceCursor() {
-        return currentSymbolSourceCursor;
     }
 
     @Override
@@ -112,23 +128,29 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
         cursorA.skipRows(rowCount, maxRowsAfterSkip);
         if (rowCount.get() > 0) {
             cursorB.skipRows(rowCount, maxRowsAfterSkip);
+            isUsingCursorA = false;
             record.setAb(false);
             nextMethod = nextB;
+            updateSymbolSource();
         }
     }
 
     @Override
     public void toTop() {
+        isUsingCursorA = true;
         record.setAb(true);
-        currentSymbolSourceCursor = null;
         nextMethod = nextA;
         cursorA.toTop();
         cursorB.toTop();
     }
 
+    @Override
+    public void updateSymbolSource() {
+        updateSymbolSource(isUsingCursorA ? cursorA : cursorB, isUsingCursorA ? symbolSourceIndexA : symbolSourceIndexB);
+    }
+
     private boolean nextA() {
         if (cursorA.hasNext()) {
-            setCurrentSymbolSourceCursor(cursorA);
             return true;
         }
         return switchToSlaveCursor();
@@ -136,22 +158,27 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
 
     private boolean nextB() {
         if (cursorB.hasNext()) {
-            setCurrentSymbolSourceCursor(cursorB);
             return true;
         }
         return false;
     }
 
-    private void setCurrentSymbolSourceCursor(RecordCursor cursor) {
-        currentSymbolSourceCursor = cursor instanceof UnionSymbolSourceCursor sourceCursor
-                ? sourceCursor.getCurrentSymbolSourceCursor()
-                : cursor;
-    }
-
     private boolean switchToSlaveCursor() {
+        isUsingCursorA = false;
         record.setAb(false);
         nextMethod = nextB;
+        updateSymbolSource();
         return nextMethod.next();
+    }
+
+    private void updateSymbolSource(RecordCursor cursor, int sourceIndex) {
+        if (symbolSourceTracker != null) {
+            if (cursor instanceof UnionSymbolSourceCursor sourceCursor) {
+                sourceCursor.updateSymbolSource();
+            } else {
+                symbolSourceTracker.of(cursor, sourceIndex);
+            }
+        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {

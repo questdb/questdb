@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 
 public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable {
@@ -38,10 +39,16 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     private int capacity;
     private int free;
     private long mask;
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
     public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag) {
+        this(initialCapacity, loadFactor, noEntryKey, noEntryValue, memoryTag, true);
+    }
+
+    public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noEntryKey, int noEntryValue, int memoryTag, boolean openOnInit) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -53,8 +60,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         this.size = 0;
         this.free = (int) (capacity * loadFactor);
         this.mask = capacity - 1;
-        this.ptr = Unsafe.malloc(8L * capacity, memoryTag);
-        zero();
+        if (openOnInit) {
+            this.ptr = Unsafe.malloc(8L * capacity, memoryTag, memoryTracker);
+            zero();
+        }
     }
 
     public int capacity() {
@@ -71,7 +80,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
             size = 0;
@@ -84,6 +93,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
 
     public int get(int key) {
         return valueAt(keyIndex(key));
+    }
+
+    public boolean isOpen() {
+        return ptr != 0;
     }
 
     public int keyAt(long index) {
@@ -136,9 +149,9 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             final long oldCapacity = capacity;
             long newPtr;
             if (ptr == 0) {
-                newPtr = Unsafe.malloc(8L * initialCapacity, memoryTag);
+                newPtr = Unsafe.malloc(8L * initialCapacity, memoryTag, memoryTracker);
             } else {
-                newPtr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * initialCapacity, memoryTag);
+                newPtr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * initialCapacity, memoryTag, memoryTracker);
             }
             ptr = newPtr;
             capacity = initialCapacity;
@@ -146,6 +159,10 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         }
 
         clear();
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
     }
 
     public int size() {
@@ -184,7 +201,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         }
 
         final int oldCapacity = capacity;
-        long newPtr = Unsafe.malloc(8L * newCapacity, memoryTag);
+        long newPtr = Unsafe.malloc(8L * newCapacity, memoryTag, memoryTracker);
 
         long oldPtr = ptr;
         ptr = newPtr;
@@ -207,7 +224,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             }
         }
 
-        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag, memoryTracker);
     }
 
     private void zero() {
