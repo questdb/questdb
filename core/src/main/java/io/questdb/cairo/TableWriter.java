@@ -1736,7 +1736,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             columnVersionWriter.commit();
             // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), partitionRowCount);
             txWriter.setPartitionParquetGenerated(partitionIndex, true);
             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -1851,7 +1851,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rebuildPartitionIndexFiles(partitionTimestamp, newPartitionDirLen, parquetRowCount);
 
             // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), parquetRowCount);
             txWriter.resetPartitionParquetFormat(partitionTimestamp);
             txWriter.resetPartitionParquetGenerated(partitionIndex);
             txWriter.bumpPartitionTableVersion();
@@ -3151,7 +3151,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // To delete all the splits, start from the index that is next or equal to the timestamp parameter.
             partitionIndex = -partitionIndex - 1;
         }
-        partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
+        partitionIndex /= txWriter.getLongsPerAttachedPartition();
 
         boolean dropped = false;
         long partitionTimestamp;
@@ -3596,7 +3596,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), originalSize);
             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
             commitTxWriter();
@@ -8462,7 +8462,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Existing partitions inherit their own format. Brand-new
                 // partitions on a FORMAT PARQUET table are born parquet.
                 boolean isParquet = partitionIndexRaw > -1
-                        ? txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                        ? txWriter.isPartitionParquet(partitionIndexRaw / txWriter.getLongsPerAttachedPartition())
                         : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
                 final long newPartitionTimestamp = partitionTimestamp;
@@ -13907,7 +13907,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
                     FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
-                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * txWriter.getLongsPerAttachedPartition(), originalSize);
                     partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
                     targetPartitionNameTxn = txWriter.txn;
                 } finally {
