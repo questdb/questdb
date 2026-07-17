@@ -73,6 +73,11 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return factory.isNonDeterministic();
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

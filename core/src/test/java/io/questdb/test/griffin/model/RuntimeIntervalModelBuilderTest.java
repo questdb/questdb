@@ -832,7 +832,6 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         CloseCountingFunction hi = new CloseCountingFunction();
         builder.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
                 head,
-                new ObjList<>(),
                 lo,
                 (short) 0,
                 0L,
@@ -925,6 +924,67 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 Assert.assertEquals(0, model.calculateIntervals(sqlExecutionContext).size());
             }
         });
+    }
+
+    @Test
+    public void testMonotonicInverterCloseContinuesAfterHeadCloseFailure() {
+        // The inverter's close() owns the head and bound functions, which the outer best-effort
+        // dynamic-range list cleanup cannot reach. A close() failure on the head must not abandon
+        // the still-open bound functions: every distinct owner must see a close attempt and the
+        // original failure must be rethrown.
+        ThrowingCloseFunction head = new ThrowingCloseFunction("head");
+        CloseCountingFunction lo = new CloseCountingFunction();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
+                head,
+                lo,
+                (short) 0,
+                0L,
+                hi,
+                (short) 0,
+                0L,
+                true,
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
+        );
+        try {
+            inverter.close();
+            Assert.fail("head close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(head.failure, e);
+        }
+        Assert.assertEquals(1, head.closeCount);
+        Assert.assertEquals("head close failure must not abandon the lo bound", 1, lo.closeCount);
+        Assert.assertEquals("head close failure must not abandon the hi bound", 1, hi.closeCount);
+    }
+
+    @Test
+    public void testMonotonicInverterCloseSuppressesLaterFailuresOntoFirst() {
+        // When several distinct owners throw on close(), the first failure is rethrown and the rest
+        // attach as suppressed, and every owner is still closed exactly once.
+        ThrowingCloseFunction head = new ThrowingCloseFunction("head");
+        ThrowingCloseFunction lo = new ThrowingCloseFunction("lo");
+        CloseCountingFunction hi = new CloseCountingFunction();
+        TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
+                head,
+                lo,
+                (short) 0,
+                0L,
+                hi,
+                (short) 0,
+                0L,
+                true,
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
+        );
+        try {
+            inverter.close();
+            Assert.fail("head close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(head.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{lo.failure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, head.closeCount);
+        Assert.assertEquals(1, lo.closeCount);
+        Assert.assertEquals(1, hi.closeCount);
     }
 
     @Test

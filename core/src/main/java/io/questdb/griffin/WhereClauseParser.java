@@ -138,7 +138,7 @@ public final class WhereClauseParser implements Mutable {
 
     @Override
     public void clear() {
-        models.clear();
+        freeBorrowedModels();
         csPool.clear();
         clearTransientState();
         reentryDepth = 0;
@@ -327,6 +327,34 @@ public final class WhereClauseParser implements Mutable {
         return model;
     }
 
+    /**
+     * Frees every {@link IntrinsicModel} borrowed from the pool since the last reset, then resets
+     * the pool position. A borrowed model may own a scalar sub-query cursor factory that was
+     * transferred into its interval builder but not yet handed downstream via
+     * {@code buildIntervalModel()} - for example when a later LATEST BY residual-filter compilation
+     * throws mid-generation. {@link IntrinsicModel#clear()} frees such a factory when ownership was
+     * not transferred and is a no-op free once it was, so this is safe on both the success and the
+     * failure paths. Cleanup is best-effort: a close failure on one model does not stop the others,
+     * and the first failure is rethrown with the rest suppressed so a caller unwinding another
+     * exception can attach it.
+     */
+    void freeBorrowedModels() {
+        Throwable failure = null;
+        for (int i = 0, n = models.getPos(); i < n; i++) {
+            try {
+                models.peekQuick(i).clear();
+            } catch (Throwable th) {
+                if (failure == null) {
+                    failure = th;
+                } else {
+                    failure.addSuppressed(th);
+                }
+            }
+        }
+        models.clear();
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
     public IntrinsicModel getEmpty(int timestampType, int partitionBy, CairoConfiguration configuration) {
         IntrinsicModel model = models.next();
         model.of(timestampType, partitionBy, configuration);
@@ -380,8 +408,8 @@ public final class WhereClauseParser implements Mutable {
     }
 
     // A bound that resolves to a (runtime) function rather than a compile-time constant: either an
-    // ordinary function/bind-variable expression or a scalar subquery (QUERY). Used to decide when a
-    // monotonic-chain inverter needs its own copy of the shared tempMonotonicChain.
+    // ordinary function/bind-variable expression or a scalar subquery (QUERY). Used to recognize
+    // runtime-bound timestamp equality predicates for OR-union folding.
     private static boolean isRuntimeBound(ExpressionNode n) {
         return n != null && (isFunc(n) || n.type == ExpressionNode.QUERY);
     }
@@ -1360,14 +1388,13 @@ public final class WhereClauseParser implements Mutable {
         if (head == null) {
             return false;
         }
-        // A runtime bound (a non-constant function, or a scalar subquery) produces an inverter
-        // that RETAINS the monotonic chain, so it must get its own copy: the shared
-        // tempMonotonicChain is cleared/overwritten by the next predicate's compileMonotonicChain
-        // (and a subquery bound additionally re-enters compileMonotonicChain while being compiled).
-        // A constant/null bound is folded immediately and retains nothing, so it can alias the
-        // shared list.
-        final boolean boundIsRuntime = isRuntimeBound(loBoundNode) || isRuntimeBound(hiBoundNode);
-        final ObjList<MonotonicTimestampFunction> chain = boundIsRuntime ? new ObjList<>(tempMonotonicChain) : tempMonotonicChain;
+        // The inverter (for a runtime bound) RETAINS its monotonic chain, so it cannot reference the
+        // shared tempMonotonicChain, which the next predicate's compileMonotonicChain clears (and a
+        // subquery bound re-enters compileMonotonicChain mid-call, clobbering it). Instead of copying
+        // tempMonotonicChain, both the inverter's evaluate() and the compile-time probe below traverse
+        // the owned head's linked chain (head -> getTimestampArg() -> ...), which is stable and holds
+        // the same functions in the same outermost-first order. The constant path below runs before any
+        // runtime bound is resolved and no subquery can reach it, so it still reads tempMonotonicChain.
         Function loBound = null;
         Function hiBound = null;
         try {
@@ -1427,7 +1454,7 @@ public final class WhereClauseParser implements Mutable {
                     hiConst = t;
                 }
                 intervalScratch.of(loConst, hiConst);
-                final int soundness = foldInvert(chain, intervalScratch);
+                final int soundness = foldInvert(tempMonotonicChain, intervalScratch);
                 if (soundness == MonotonicTimestampFunction.NONE) {
                     return false;
                 }
@@ -1444,15 +1471,28 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
 
+            // A non-deterministic scalar SUBQUERY bound (e.g. >= (SELECT rnd_timestamp())) is
+            // compiled twice: once for this pruning inverter and once for the retained residual
+            // filter. Its two cursor opens can yield different values and drop rows, so skip pruning
+            // and let the residual filter be the single source of truth. This targets ONLY a
+            // non-deterministic ScalarSubQueryTimestampFunction: runtime-CONSTANT bounds (bind
+            // variables, now()) are stable within a query and are not ScalarSubQueryTimestampFunction,
+            // so they still prune; deterministic subquery bounds report isNonDeterministic()==false
+            // and still prune. The finally below frees loBound/hiBound/head (ownership has not yet
+            // transferred to the inverter).
+            if ((loBound instanceof ScalarSubQueryTimestampFunction && loBound.isNonDeterministic())
+                    || (hiBound instanceof ScalarSubQueryTimestampFunction && hiBound.isNonDeterministic())) {
+                return false;
+            }
+
             // A constant end of a mixed BETWEEN is carried into the inverter (as a point) rather than
             // applied statically, so both ends are resolved and normalized together at scan open.
-            final int soundness = foldInvertProbe(chain);
+            final int soundness = foldInvertProbe(head);
             if (soundness == MonotonicTimestampFunction.NONE) {
                 return false;
             }
             final TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(
                     head,
-                    chain,
                     loBound,
                     loBound != null ? adjustComparison(equalsTo, true) : 0,
                     loConst,
@@ -1465,7 +1505,10 @@ public final class WhereClauseParser implements Mutable {
             head = loBound = hiBound = null; // ownership transferred to the inverter
             model.intersectMonotonicTimestamp(inverter);
             // a runtime bound may not be invertible when the scan opens, so it only prunes
-            // and the predicate stays a residual filter
+            // and the predicate stays a residual filter. Non-deterministic scalar SUBQUERY bounds
+            // are handled above (pruning skipped, residual only); runtime-constant bounds (bind
+            // variables, now()) are stable and prune safely, and non-deterministic direct FUNCTION
+            // bounds (systimestamp/sysdate) are rejected by resolveScalarBound before reaching here.
             return false;
         } catch (SqlException | CairoException e) {
             return false;
@@ -2196,6 +2239,38 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
+     * Accumulates a scalar-subquery timestamp bound (ts = (select ...)) into the OR interval model
+     * as a UNION disjunct. Only a single-timestamp-column cursor qualifies; it is evaluated at scan
+     * open, exactly like a runtime-constant bound, and an empty/NULL result contributes nothing to
+     * the union (the empty-set identity). Returns true if the bound cannot be accumulated (the
+     * caller must bail and revert to a residual scan).
+     */
+    private boolean cannotAccumulateTimestampCursor(
+            IntrinsicModel model,
+            ExpressionNode queryNode,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function func = functionParser.parseFunction(queryNode, metadata, executionContext);
+        try {
+            if (checkCursorFunctionReturnsSingleTimestamp(func)) {
+                final Function ownedFunc = func;
+                func = null;
+                model.unionRuntimeTimestamp(ownedFunc, queryNode.position);
+                return false;
+            }
+            final Function ownedFunc = func;
+            func = null;
+            Misc.free(ownedFunc);
+            return true;
+        } catch (Throwable th) {
+            Misc.free(func, th);
+            throw th;
+        }
+    }
+
+    /**
      * Accumulates a timestamp function (like now()) into the OR interval model.
      * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
      * Returns true if the function cannot be accumulated (the caller must bail).
@@ -2229,11 +2304,11 @@ public final class WhereClauseParser implements Mutable {
             } else if (func.isRuntimeConstant()) {
                 final Function ownedFunc = func;
                 func = null;
-                if (isFirst) {
-                    model.intersectRuntimeTimestamp(ownedFunc, funcNode.position);
-                } else {
-                    model.unionRuntimeTimestamp(ownedFunc, funcNode.position);
-                }
+                // Every OR disjunct contributes to a union. A runtime bound that evaluates to NULL
+                // is the empty-set identity under UNION (see RuntimeIntervalModel), so the anchor
+                // uses UNION too: an INTERSECT anchor would collapse the whole disjunction to empty
+                // when its bound is NULL and silently drop the other disjuncts' rows.
+                model.unionRuntimeTimestamp(ownedFunc, funcNode.position);
             } else {
                 final Function ownedFunc = func;
                 func = null;
@@ -2706,19 +2781,17 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 valueNode = node.lhs;
             }
-            // NOTE: a scalar-subquery bound (ExpressionNode.QUERY) is deliberately NOT accepted here
-            // (isFunc excludes QUERY), so `ts = (select ...) OR ts = (select ...)` stays a residual
-            // full scan rather than an interval union. The union model anchors the first disjunct
-            // with an INTERSECT (see intersectRuntimeTimestamp) that collapses the whole set to
-            // empty when its bound evaluates to NULL; an empty scalar subquery is a normal runtime
-            // state, so extracting the union would silently drop the other disjuncts' rows. Making
-            // this sound needs a dedicated "union anchor" runtime interval op that contributes the
-            // empty set (like UNION) instead of collapsing (like INTERSECT) on NULL. The single-
-            // bound (ts >= (sub)), monotonic (dateadd(ts) >= (sub)) and BETWEEN (sub) AND (sub)
-            // subquery cases are safe because they intersect a genuine interval (empty bound ->
-            // correctly empty result), so only this OR-union case is excluded.
+            // A scalar-subquery bound (ExpressionNode.QUERY), e.g. `ts = (select ...) OR ts =
+            // (select ...)`, is accepted as a UNION disjunct. Every OR leaf unions into the model
+            // (including the anchor via unionRuntimeTimestamp), and a NULL/empty subquery bound is
+            // the empty-set identity under UNION (see RuntimeIntervalModel): it contributes nothing
+            // instead of collapsing the whole disjunction, so the other disjuncts' rows survive.
             if (isFunc(valueNode)) {
                 if (cannotAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
+                    return false;
+                }
+            } else if (valueNode.type == ExpressionNode.QUERY) {
+                if (cannotAccumulateTimestampCursor(model, valueNode, functionParser, metadata, executionContext)) {
                     return false;
                 }
             } else {
@@ -2753,9 +2826,26 @@ public final class WhereClauseParser implements Mutable {
         return soundness;
     }
 
-    private int foldInvertProbe(ObjList<MonotonicTimestampFunction> chain) {
+    private int foldInvertProbe(Function head) {
+        // Probe the owned head's linked chain with an unbounded interval; head survives the shared
+        // tempMonotonicChain being clobbered by a subquery bound compiled while resolving the bounds.
         intervalScratch.of(Long.MIN_VALUE, Long.MAX_VALUE);
-        return foldInvert(chain, intervalScratch);
+        int soundness = MonotonicTimestampFunction.EXACT;
+        Function f = head;
+        while (f instanceof MonotonicTimestampFunction m) {
+            final int grade = m.invertTimestampInterval(intervalScratch);
+            if (grade == MonotonicTimestampFunction.NONE) {
+                return MonotonicTimestampFunction.NONE;
+            }
+            if (grade == MonotonicTimestampFunction.SUPERSET) {
+                soundness = MonotonicTimestampFunction.SUPERSET;
+            }
+            if (intervalScratch.getLo() > intervalScratch.getHi()) {
+                return soundness;
+            }
+            f = m.getTimestampArg();
+        }
+        return soundness;
     }
 
     private CharSequence getStrFromFunction(
@@ -2864,13 +2954,15 @@ public final class WhereClauseParser implements Mutable {
             if (node.lhs == null || node.rhs == null) {
                 return false;
             }
-            // Check both orientations: timestamp = 'value' and 'value' = timestamp
+            // Check both orientations: timestamp = 'value' and 'value' = timestamp. The value side
+            // may be a constant, a function/bind variable, or a scalar subquery (QUERY): a QUERY
+            // bound unions into the interval model, with an empty result treated as the empty set.
             if (node.lhs.type == ExpressionNode.LITERAL && isTimestamp(node.lhs)
-                    && (node.rhs.type == ExpressionNode.CONSTANT || isFunc(node.rhs))) {
+                    && (node.rhs.type == ExpressionNode.CONSTANT || isRuntimeBound(node.rhs))) {
                 return true;
             }
             return node.rhs.type == ExpressionNode.LITERAL && isTimestamp(node.rhs)
-                    && (node.lhs.type == ExpressionNode.CONSTANT || isFunc(node.lhs));
+                    && (node.lhs.type == ExpressionNode.CONSTANT || isRuntimeBound(node.lhs));
         }
 
         return false;

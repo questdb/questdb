@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -81,21 +80,13 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
                 "('2021-11-23T17:59:17.060338001Z','s1', 45.0)");     // just above hi (excluded)
     }
 
-    private void assertUsesCoveringIndex(String sql) throws Exception {
-        sink.clear();
-        printSql("explain " + sql);
-        String plan = sink.toString();
-        Assert.assertTrue("expected covering index in plan but got:\n" + plan,
-                plan.contains("CoveringIndex on: series"));
-        Assert.assertFalse("unexpected async-filter fallback in plan:\n" + plan,
-                plan.contains("Async Filter") || plan.contains("Async JIT Filter"));
+    private void assertPlanContains(String sql, String needle) throws Exception {
+        assertQuery(sql).assertsPlanContaining(needle);
     }
 
-    private void assertPlanContains(String sql, String needle) throws Exception {
-        sink.clear();
-        printSql("explain " + sql);
-        String plan = sink.toString();
-        Assert.assertTrue("expected plan to contain '" + needle + "' but got:\n" + plan, plan.contains(needle));
+    private void assertUsesCoveringIndex(String sql) throws Exception {
+        assertQuery(sql).assertsPlanContaining("CoveringIndex on: series");
+        assertQuery(sql).assertsPlanNotContaining("Async Filter", "Async JIT Filter");
     }
 
     @Test
@@ -444,31 +435,42 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
 
     // A BETWEEN whose FIRST bound is a qualifying single-timestamp subquery but whose SECOND bound
     // is a non-qualifying subquery (wrong column count / non-timestamp) must not leak the first
-    // bound's compiled cursor factory. The query errors (type mismatch), but the retained first
-    // boundary function must still be freed on the rollback path. Runs under assertMemoryLeak.
+    // bound's compiled cursor factory. The parser adopts the first (lo) boundary function, then the
+    // second (hi) boundary fails to qualify and the BETWEEN falls back to the between(NCC) factory,
+    // which rejects the non-timestamp / multi-column hi cursor. The error position points at the
+    // SECOND subquery, proving the failure happens AFTER the first endpoint was adopted (not an
+    // early parse failure before it), and assertMemoryLeak proves the retained first boundary
+    // function is freed on the rollback path with no leak.
     @Test
     public void testBetweenSubqueryFirstBoundRetainedThenSecondBoundFails() throws Exception {
         assertMemoryLeak(() -> {
             createSchema();
             seedData();
+
+            // Control: the SAME qualifying first (lo) bound with a qualifying second (hi) bound
+            // compiles into a covering-index interval scan. This proves the first endpoint is
+            // genuinely adopted, so the failures below exercise the rollback-after-first-endpoint
+            // path rather than an early parse failure that never reaches the second endpoint.
+            assertUsesCoveringIndex("select ts, value from sensor where series = 's1' " +
+                    "and ts between (select lo from bounds where sel = 100) and (select hi from bounds where sel = 100)");
+
             // second bound subquery returns an INT column, not a timestamp -> does not qualify
-            String bad = "select ts, value from sensor where " +
+            String badType = "select ts, value from sensor where " +
                     "ts between (select lo from bounds where sel = 100) and (select sel from bounds where sel = 100)";
-            try {
-                execute(bad);
-                org.junit.Assert.fail("expected the malformed BETWEEN to error");
-            } catch (Exception expected) {
-                // expected: the BETWEEN cannot be satisfied with a non-timestamp bound
-            }
+            assertExceptionNoLeakCheck(
+                    badType,
+                    badType.lastIndexOf("(select") + 1,
+                    "cannot compare TIMESTAMP and INT"
+            );
+
             // second bound subquery returns TWO columns -> does not qualify
-            String bad2 = "select ts, value from sensor where " +
+            String badArity = "select ts, value from sensor where " +
                     "ts between (select lo from bounds where sel = 100) and (select lo, hi from bounds where sel = 100)";
-            try {
-                execute(bad2);
-                org.junit.Assert.fail("expected the malformed BETWEEN to error");
-            } catch (Exception expected) {
-                // expected
-            }
+            assertExceptionNoLeakCheck(
+                    badArity,
+                    badArity.lastIndexOf("(select") + 1,
+                    "select must provide exactly one column"
+            );
         });
     }
 
@@ -528,6 +530,79 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
         });
     }
 
+    // A strict '>' monotonic bound at the timestamp domain ceiling (dateadd(...) > MAX) is
+    // unsatisfiable: no value can exceed Long.MAX_VALUE. Before the guard the inverter turned the
+    // strict '>' into a closed '>= bound + 1'; at Long.MAX_VALUE that +1 wrapped to Numbers.LONG_NULL
+    // (the open-lower sentinel) and opened the runtime interval to the whole storable domain
+    // [MIN, MAX], scanning every row before the residual rejected them all (correct result, O(N)
+    // scan). The row result is 0 either way, so the runtime-evaluated interval in the plan is what
+    // proves the pruning: pre-fix intervals: [("MIN","MAX")], post-fix intervals: []. Covers both
+    // TIMESTAMP (micros) and TIMESTAMP_NS (nanos) precision.
+    @Test
+    public void testStrictGreaterOverflowBoundPrunesToEmptyInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("CREATE TABLE bmax (ts TIMESTAMP)");
+            execute("INSERT INTO bmax VALUES (9223372036854775807L::timestamp)"); // Long.MAX_VALUE
+            final String q = "SELECT ts, v FROM t WHERE dateadd('h', 1, ts) > (SELECT ts FROM bmax)";
+            assertQuery(q)
+                    .timestamp("ts")
+                    .noCircuitBreakerCheck()
+                    .withPlanContaining("Interval forward scan on: t", "intervals: []")
+                    .withPlanNotContaining("(\"MIN\"")
+                    .returns("ts\tv\n");
+
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tn VALUES ('2024-01-01T00:00:00.000000000Z', 1), ('2024-01-02T00:00:00.000000000Z', 2)");
+            execute("CREATE TABLE bmaxn (ts TIMESTAMP_NS)");
+            execute("INSERT INTO bmaxn VALUES (9223372036854775807L::timestamp_ns)"); // Long.MAX_VALUE
+            final String qn = "SELECT ts, v FROM tn WHERE dateadd('h', 1, ts) > (SELECT ts FROM bmaxn)";
+            assertQuery(qn)
+                    .timestamp("ts")
+                    .noCircuitBreakerCheck()
+                    .withPlanContaining("Interval forward scan on: tn", "intervals: []")
+                    .withPlanNotContaining("(\"MIN\"")
+                    .returns("ts\tv\n");
+        });
+    }
+
+    // The symmetric strict '<' monotonic bound at the domain floor (dateadd(...) < MIN+1) must NOT
+    // be pruned to an empty interval, unlike the '>' ceiling case above. A forward shift that
+    // overflows the long boundary (reachable for uncapped nanos designated timestamps) can push
+    // dateadd(ts) below the bound, so a real row could satisfy '< MIN+1'; the chain inversion
+    // correctly declines (NONE) and leaves the predicate to the residual filter (a full-domain scan,
+    // intervals: [("MIN","MAX")]). This pins that we did not add an unsafe symmetric guard that would
+    // silently drop such rows. On a normal table with no wrapping rows the result is 0 rows.
+    @Test
+    public void testStrictLessUnderflowBoundStaysResidual() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("CREATE TABLE bmin (ts TIMESTAMP)");
+            execute("INSERT INTO bmin VALUES ((-9223372036854775807L)::timestamp)"); // Long.MIN_VALUE + 1
+            final String q = "SELECT ts, v FROM t WHERE dateadd('h', 1, ts) < (SELECT ts FROM bmin)";
+            assertQuery(q)
+                    .timestamp("ts")
+                    .noCircuitBreakerCheck()
+                    .withPlanContaining("Interval forward scan on: t")
+                    .withPlanNotContaining("intervals: []")
+                    .returns("ts\tv\n");
+
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tn VALUES ('2024-01-01T00:00:00.000000000Z', 1), ('2024-01-02T00:00:00.000000000Z', 2)");
+            execute("CREATE TABLE bminn (ts TIMESTAMP_NS)");
+            execute("INSERT INTO bminn VALUES ((-9223372036854775807L)::timestamp_ns)"); // Long.MIN_VALUE + 1
+            final String qn = "SELECT ts, v FROM tn WHERE dateadd('h', 1, ts) < (SELECT ts FROM bminn)";
+            assertQuery(qn)
+                    .timestamp("ts")
+                    .noCircuitBreakerCheck()
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .withPlanNotContaining("intervals: []")
+                    .returns("ts\tv\n");
+        });
+    }
+
     // Two monotonic subquery-bound predicates with different transforms must each invert with
     // their OWN chain. The runtime inverter retains the monotonic chain, so it must be a private
     // copy (as for bind-variable bounds) rather than the shared tempMonotonicChain, otherwise the
@@ -552,12 +627,13 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
         });
     }
 
-    // OR of timestamp-equality subquery bounds (ts = (sub) OR ts = (sub)) is deliberately NOT
-    // interval-optimized: the OR interval model anchors the first disjunct with an INTERSECT that
-    // collapses the whole set to empty when that bound resolves to NULL (an empty subquery is a
-    // natural NULL source), which would silently drop the other disjunct's rows. So it must stay a
-    // correct residual full scan and, crucially, return the right rows in every ordering —
-    // including when the FIRST disjunct's subquery is empty.
+    // OR of timestamp-equality subquery bounds (ts = (sub) OR ts = (sub)) is interval-optimized as
+    // a runtime UNION: each disjunct unions its point into the model, and a NULL/empty subquery
+    // bound is the empty-set identity under UNION (it contributes nothing rather than collapsing
+    // the whole set). This test is the correctness safety net: it pins the SAME rows in every
+    // ordering - both non-empty, first empty, second empty, and both empty - so the optimization
+    // returns exactly the residual-scan rows. The companion plan test
+    // (testOrOfTimestampEqualsSubqueryBoundsUsesIntervalUnion) is the red proof of the plan change.
     @Test
     public void testOrOfTimestampEqualsSubqueryBoundsStaysCorrect() throws Exception {
         assertMemoryLeak(() -> {
@@ -570,6 +646,11 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
             // both non-empty: rows must match the constant-bounds oracle
             assertSqlCursors(orConst, orSub);
 
+            // reversed subquery order must produce the same rows (union is commutative)
+            String orSubReversed = "select ts, value from sensor where " +
+                    "ts = (select hi from bounds where sel = 100) or ts = (select lo from bounds where sel = 100)";
+            assertSqlCursors(orConst, orSubReversed);
+
             // first disjunct empty (NULL bound) must NOT drop the second disjunct's row
             String orFirstEmpty = "select ts, value from sensor where " +
                     "ts = (select lo from bounds where sel = 999) or ts = (select hi from bounds where sel = 100)";
@@ -581,6 +662,27 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
                     "ts = (select lo from bounds where sel = 100) or ts = (select hi from bounds where sel = 999)";
             String orSecondEmptyOracle = "select ts, value from sensor where ts = '2021-11-23T12:51:23.700716000Z'";
             assertSqlCursors(orSecondEmptyOracle, orSecondEmpty);
+
+            // both disjuncts empty (both bounds NULL): the union is the empty set, no rows
+            String orBothEmpty = "select ts, value from sensor where " +
+                    "ts = (select lo from bounds where sel = 999) or ts = (select hi from bounds where sel = 999)";
+            String orBothEmptyOracle = "select ts, value from sensor limit 0";
+            assertSqlCursors(orBothEmptyOracle, orBothEmpty);
+        });
+    }
+
+    // Plan red proof: `ts = (sub) OR ts = (sub)` now prunes via a runtime interval UNION instead of
+    // a residual full-partition scan. Pre-fix this was a Frame forward scan + Filter (O(N)); post-
+    // fix it is an Interval forward scan (O(H)). The correctness safety net above proves the rows
+    // are unchanged across every NULL/empty/non-empty ordering.
+    @Test
+    public void testOrOfTimestampEqualsSubqueryBoundsUsesIntervalUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createSchema();
+            seedData();
+            String orSub = "select ts, value from sensor where " +
+                    "ts = (select lo from bounds where sel = 100) or ts = (select hi from bounds where sel = 100)";
+            assertPlanContains(orSub, "Interval forward scan on: sensor");
         });
     }
 

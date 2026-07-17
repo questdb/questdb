@@ -59,6 +59,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private final int partitionBy;
     private final StringSink sink = new StringSink();
     private final TimestampDriver timestampDriver;
+    // Set true once calculateIntervals() has evaluated the dynamic bounds into outIntervals, so that a
+    // subsequent toPlan() call can render the already-computed intervals instead of re-evaluating the
+    // dynamic bounds (which would re-execute any scalar sub-query cursors). EXPLAIN opens the base data
+    // cursor to initialize bind-variable types, which computes the intervals; toPlan() then consumes
+    // that result rather than repeating the work.
+    private boolean hasComputedIntervals;
     // This used to assemble the result
     private LongList outIntervals;
 
@@ -114,6 +120,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             sqlExecutionContext.setIntervalFunctionType(oldIntervalType);
         }
 
+        hasComputedIntervals = true;
         return outIntervals;
     }
 
@@ -145,7 +152,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         if (intervals != null && intervals.size() > 0) {
             sink.val('[');
             try {
-                LongList intervals = calculateIntervals(sink.getExecutionContext());
+                // Reuse the intervals computed while opening the base cursor (EXPLAIN path) instead of
+                // re-evaluating the dynamic bounds, which would re-execute any scalar sub-query cursors.
+                LongList intervals = hasComputedIntervals ? outIntervals : calculateIntervals(sink.getExecutionContext());
+                hasComputedIntervals = false;
                 for (int i = 0, n = intervals.size(); i < n; i += 2) {
                     if (i > 0) {
                         sink.val(',');
@@ -281,6 +291,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                         if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
                             // functions evaluated to null
+                            if (operation == IntervalOperation.UNION) {
+                                // A NULL/empty bound under UNION is the empty-set identity: it
+                                // contributes no interval, so leave the accumulated union untouched
+                                // and drop this disjunct. Unlike INTERSECT, a NULL union leaf must
+                                // NOT collapse the whole set, or `ts = (empty sub) OR ts = x` would
+                                // wrongly drop x's rows.
+                                outIntervals.setPos(divider);
+                                continue;
+                            }
                             if (!negated) {
                                 // return an empty set if it's not negated
                                 outIntervals.clear();
@@ -321,9 +340,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                         outIntervals.extendAndSet(divider + 1, hi);
                         outIntervals.setQuick(divider, lo);
-                        if (divider == 0 && negated) {
+                        if (divider == 0 && negated && operation != IntervalOperation.UNION) {
                             // Divider == 0 means it's the first interval applied
-                            // Invert the interval, since it will not be applied negated to anything
+                            // Invert the interval, since it will not be applied negated to anything.
+                            // UNION shares the negated encoding range but is not a subtraction: a
+                            // union anchor must seed the interval verbatim, not its complement.
                             IntervalUtils.invert(outIntervals, divider);
                         }
                     } else {

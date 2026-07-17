@@ -288,6 +288,30 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if this factory can materialize a different result across two cursor opens
+     * because it evaluates a non-deterministic function (for example {@code rnd_*} or
+     * {@code systimestamp()}). Wrapping factories propagate the property from their retained
+     * filter and base factory; a factory that evaluates projected functions overrides this to OR
+     * in those functions' non-determinism.
+     * <p>
+     * Compile-time consumers (for example scalar-subquery timestamp bounds) use this to avoid
+     * pruning optimizations that would re-open the cursor and observe a different value. The
+     * property is conservative in one direction only: it must never return {@code false} for a
+     * value that is genuinely unstable across opens, but it may miss non-determinism buried in a
+     * factory that neither is a projection nor exposes its filter/base.
+     *
+     * @return true if two cursor opens can yield different values
+     */
+    default boolean isNonDeterministic() {
+        final Function filter = getFilter();
+        if (filter != null && filter.isNonDeterministic()) {
+            return true;
+        }
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.isNonDeterministic();
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a projection, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>

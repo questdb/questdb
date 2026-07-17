@@ -573,6 +573,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return functionParser.getFunctionFactoryCache();
     }
 
+    @TestOnly
+    public int getWhereClauseParserPoolSizeForTesting() {
+        return codeGenerator.getWhereClauseParserPoolSizeForTesting();
+    }
+
     @Override
     public QueryBuilder query() {
         queryBuilder.clear();
