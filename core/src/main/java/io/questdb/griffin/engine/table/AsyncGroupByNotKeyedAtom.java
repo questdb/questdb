@@ -58,7 +58,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.concurrent.CountDownLatch;
 
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {

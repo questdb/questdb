@@ -61,7 +61,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.concurrent.CountDownLatch;
 
 /**
  * Base class for multi-slave HORIZON JOIN atoms that manages per-worker x per-slave resources.

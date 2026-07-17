@@ -49,7 +49,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {

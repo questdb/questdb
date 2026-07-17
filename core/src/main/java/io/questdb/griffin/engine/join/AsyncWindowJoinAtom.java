@@ -70,7 +70,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.CountDownLatch;
 
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
