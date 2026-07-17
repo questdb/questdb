@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
+import io.questdb.griffin.engine.table.TimeFrameCursorImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -75,7 +76,14 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * same fence on both paths (see {@link LiveViewRouting}); a read that fails it gets
  * the base's frames unchanged.
  * <p>
- * Each {@link #getCursor(SqlExecutionContext)} / {@link #getPageFrameCursor} call
+ * {@link #getTimeFrameCursor} routes over that same cursor, so an ASOF / LT JOIN with the
+ * live view on the RHS - and a WINDOW / HORIZON JOIN slave, parallel or not - sees the lead
+ * too. It takes only the LEAD band from the tier, because a time-frame model builds its disk
+ * side from the table reader's own partitions and has already counted the slot's overlap
+ * there.
+ * <p>
+ * Each {@link #getCursor(SqlExecutionContext)} / {@link #getPageFrameCursor} /
+ * {@link #getTimeFrameCursor} call
  * allocates a fresh cursor: it pins a tier slot until {@code close()}, so reusing a
  * single cursor across consecutive calls would release the previous reader's pin if
  * both cursors are still live (e.g. a plan-explain probe over the same factory).
@@ -313,6 +321,46 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * Wraps an already-routed frame cursor in a time-frame model, taking ownership of it:
+     * every exit either hands it back inside the returned cursor or frees it.
+     * <p>
+     * The worker count MUST be the one the base built its frame cursor with, which for
+     * {@code getPageFrameCursor} is the shared query worker count. It sizes the frames
+     * {@code TimeFrameCursorImpl} pre-computes from partition metadata, and
+     * {@code ensurePartitionOpened} then asserts those line up with the frames the cursor
+     * itself hands out for the same partition - two different numbers there mis-patch column
+     * addresses in a release build rather than trip the assert.
+     */
+    private TimeFrameCursor openTimeFrameCursor(
+            SqlExecutionContext executionContext,
+            LiveViewPageFrameCursor frameCursor
+    ) {
+        final TimeFrameCursorImpl timeFrameCursor;
+        try {
+            timeFrameCursor = new TimeFrameCursorImpl(engine.getConfiguration(), base.getMetadata());
+        } catch (Throwable th) {
+            // Nothing owns frameCursor yet (of() has not run), so free it here - and with it
+            // the tier pin it carries.
+            Misc.free(frameCursor);
+            throw th;
+        }
+        try {
+            // of() takes ownership of frameCursor in its first statement, so from here
+            // close() is what releases it.
+            return timeFrameCursor.of(
+                    frameCursor,
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
+            );
+        } catch (Throwable th) {
+            Misc.free(timeFrameCursor);
+            throw th;
+        }
+    }
+
+    /**
      * The page-frame twin of {@link #getCursor}: the base scan's frames plus synthetic
      * frames over the pinned in-mem slot, so a frame consumer sees the un-flushed lead too.
      * Falls back to the base scan's frames unchanged whenever routing cannot engage - the
@@ -381,20 +429,75 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.getScanDirection();
     }
 
+    /**
+     * The time-frame twin of {@link #getPageFrameCursor}: an ASOF / LT JOIN with the live
+     * view on the RHS, and a non-parallel WINDOW / HORIZON JOIN slave, all reach the LV
+     * through here, and all now see the un-flushed lead.
+     * <p>
+     * It routes over a {@link LiveViewPageFrameCursor} - the same routed cursor, the same
+     * fence, the same staleness retry as the page-frame path - but takes the LEAD alone from
+     * it, never the seam's whole slot band. A time-frame model builds its disk side from the
+     * table reader's own per-partition row counts rather than from the cursor's stream, so it
+     * has already counted the slot's overlap by the time the tier is asked for anything; the
+     * lead is exactly what disk lacks, which makes the union exact. See
+     * {@link LiveViewPageFrameCursor#toLeadFrames}.
+     * <p>
+     * Falls back to the base's own disk-only time frames whenever routing cannot engage - the
+     * shape rules it out, the tier is absent or empty, or the seqTxn fence misses - which
+     * serves the applied prefix, correct and at worst one flush cycle stale.
+     * <p>
+     * The {@link TimeFrameCursorImpl} is fresh per call rather than cached, because the
+     * routed cursor under it holds a tier pin until {@code close()} and {@code of()} does not
+     * free the cursor it replaces: re-binding a cached instance would strand the previous
+     * reader's pin. The consumer closes what it gets (see e.g.
+     * {@code AbstractAsOfJoinFastRecordCursor.close}), which is what drops the pin.
+     */
     @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        // The time-frame cursor serves disk only: ASOF JOIN-as-RHS and interval
-        // intrinsics see the applied prefix and trail the in-mem lead by at most
-        // one flush cycle. A synthetic in-mem frame that bridges the lead is a
-        // deferred enhancement; the disk-only frame stays correct, just not as
-        // fresh as a record-cursor read that serves the lead.
-        return base.getTimeFrameCursor(executionContext);
+        if (!inMemRoutable) {
+            return base.getTimeFrameCursor(executionContext);
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
+        if (instance == null) {
+            return base.getTimeFrameCursor(executionContext);
+        }
+        // Staleness retry against the disk-open / slot-pin race; see getCursor for why a
+        // slot newer than the disk snapshot must not be served as-is.
+        for (int attempt = 0; ; attempt++) {
+            // ORDER_ASC because a time frame model only ever walks forward. The routed
+            // cursor's own mode follows from it - the seam for an unfiltered read, lead-only
+            // forward under an interval - and neither matters here: the lead-scoped walk
+            // hands out the same band either way.
+            final PageFrameCursor diskCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+            if (diskCursor == null) {
+                // The base does not frame this read, so there is nothing to route over. It
+                // may still have time frames of its own.
+                return base.getTimeFrameCursor(executionContext);
+            }
+            final PageFrameCursor cursor = bindFrameCursor(executionContext, diskCursor, false, instance, attempt >= MAX_STALE_DISK_RETRIES);
+            if (cursor instanceof LiveViewPageFrameCursor routedCursor) {
+                return openTimeFrameCursor(executionContext, routedCursor);
+            }
+            if (cursor != null) {
+                // Did not route, and bindFrameCursor has already released the pin. Hand the
+                // question to the base, which opens a cursor of its own for this path
+                // (initPageFrameCursor caches separately from getPageFrameCursor), so
+                // closing this one costs it nothing.
+                Misc.free(cursor);
+                return base.getTimeFrameCursor(executionContext);
+            }
+            // null asks for a retry; see getPageFrameCursor.
+        }
     }
 
     /**
-     * Serves disk only, for the same reason - and with the same consequence - as
-     * {@link #getTimeFrameCursor}: the read sees the applied prefix and trails the in-mem
-     * lead by at most one flush cycle.
+     * Serves disk only - but only in the sense that this factory adds nothing here. The
+     * caller ({@code AsyncWindowJoinAtom} and the HORIZON JOIN atoms) feeds the returned
+     * cursor a {@link ConcurrentTimeFrameState} built from whatever
+     * {@link #getPageFrameCursor} handed it, so a parallel WINDOW / HORIZON JOIN slave over a
+     * live view reads the lead through that state's own lead frames rather than through
+     * anything this method does. See {@link #getTimeFrameCursor}, which is the single-
+     * threaded half of the same bridge.
      * <p>
      * Delegating is not optional. {@link #supportsTimeFrameCursor()} governs whether a
      * caller may call this at all, and this factory answers that with the base's verdict,

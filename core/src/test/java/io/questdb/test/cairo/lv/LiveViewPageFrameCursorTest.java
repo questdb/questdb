@@ -459,6 +459,138 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadScopedWalkCutsTheLeadByTheInterval() throws Exception {
+        // The lead-scoped walk answers to the same interval the unscoped one does, and for
+        // the same reason: the time-frame model's disk side is the base's interval-filtered
+        // frames, so a lead band served uncut next to them emits rows the query excluded.
+        // Two intervals landing INSIDE the lead with a gap between them, so the walk has to
+        // step across bands rather than stop at its first - the record path's own band-walk
+        // mutant survived exactly this gap.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 4)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // slot: overlap ts 3, 4 (disk rows [2, 4)) then lead ts 5..10.
+                fillSlot(tier, slotIdx, disk, 8, 6);
+
+                // Keeps lead ts 5, 6 and 9, 10 - and would keep overlap ts 3, 4 if the walk
+                // ever reached below leadStart.
+                final LongList intervals = intervals(3_000, 6_000, 9_000, 10_000);
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 4).withIntervals(intervals), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertTrue(cursor.hasLeadFrames());
+                    // [2, 4) is lead ts 5, 6; [6, 8) is lead ts 9, 10. A band floored at 0
+                    // would add [0, 2) - the overlap ts 3, 4, which disk already serves.
+                    Assert.assertEquals("lead frame ranges", "[2,4,6,8]", leadFrameRanges(cursor));
+                    Assert.assertEquals("[5000,6000,9000,10000]", drainLeadTimestamps(cursor).toString());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLeadScopedWalkIsEmptyWithoutALead() throws Exception {
+        // A slot that is pure overlap - the steady state right after a flush - has nothing
+        // the disk tier lacks, so a time-frame model must add no pseudo-partition and no
+        // frames at all. hasLeadFrames() is what tells it so; reporting true here would
+        // file an empty partition and leave the model's estimates describing nothing.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 6)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                fillSlot(tier, slotIdx, disk, 4, 0); // 4 overlap rows, no lead
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 6), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertFalse(cursor.hasLeadFrames());
+                    Assert.assertEquals("lead frame ranges", "[]", leadFrameRanges(cursor));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLeadScopedWalkServesTheSameBandUnderEitherMode() throws Exception {
+        // The claim the whole time-frame bridge rests on: toLeadFrames() hands out the LEAD
+        // band whatever mode of() picked. Its caller builds the disk side from the table
+        // reader's own partitions rather than from this cursor's stream, so it has already
+        // counted the slot's overlap by the time it asks - and the seam's own band is the
+        // WHOLE slot, overlap included. A walk that handed out slotBands would serve those
+        // rows from both tiers.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 12)
+            ) {
+                // Slot holds disk rows [8, 12) as overlap (ts 9..12) plus lead ts 13, 14.
+                // leadStart = 4, so the seam's band is [0, 6) and the lead's is [4, 6):
+                // three different numbers, which is what lets this tell them apart.
+                final int seamSlotIdx = tier.acquireRead();
+                fillSlot(tier, seamSlotIdx, disk, 6, 2);
+
+                // The seam: ascending, unfiltered. Its own stream serves the whole slot.
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8, 12), false, tier, seamSlotIdx, tier.getSlot(seamSlotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertTrue(cursor.hasLeadFrames());
+                    Assert.assertEquals("lead frame ranges", "[4,6]", leadFrameRanges(cursor));
+                    Assert.assertEquals("[13000,14000]", drainLeadTimestamps(cursor).toString());
+
+                    // The scoped walk leaves the mode's own stream untouched: the seam still
+                    // serves its disk band plus the WHOLE slot, ts 1..8 then 9..14.
+                    cursor.toTop();
+                    assertTimestamps(drainTimestamps(cursor, metadataOf(identityTierColumns())), 1, 14);
+                    cursor.toTop();
+                    Assert.assertEquals(14, cursor.size());
+                }
+
+                // Lead-only descending over the same slot: a different mode, the same band,
+                // and still ascending - a time-frame model only ever walks forward.
+                final int descSlotIdx = tier.acquireRead();
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, bwdDiskCursor(disk, identityTierColumns(), 8, 12), true, tier, descSlotIdx, tier.getSlot(descSlotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertEquals("lead frame ranges", "[4,6]", leadFrameRanges(cursor));
+                    Assert.assertEquals("[13000,14000]", drainLeadTimestamps(cursor).toString());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLeadScopedWalkTilesTheLeadBandByItsOwnRowLimit() throws Exception {
+        // The lead band is a partition of its own to the model that walks it, so it is sized
+        // by ITS row count - the same rule every disk partition gets. Sharing the mode's
+        // slotRowLimit would size it against the seam's whole-slot band and leave a tiny
+        // trailing frame, which is the one thing calculatePageFrameRowLimit's rounding
+        // exists to prevent.
+        assertMemoryLeak(() -> {
+            // min 5 / max 7 is what pulls the two limits apart: over the seam's 12-row band
+            // the limit rounds to 7 and tiles the 8-row lead as 7 + 1, where the lead's own
+            // 8-row band rounds the limit up to 8 and tiles it whole.
+            sqlExecutionContext.changePageFrameSizes(5, 7);
+            try (
+                    LiveViewInMemoryTier tier = new LiveViewInMemoryTier(tierSchema(), COL_TS, PAGE_SIZE);
+                    LiveViewInMemoryBuffer disk = storeOf(0, 12)
+            ) {
+                final int slotIdx = tier.acquireRead();
+                // slot: 12 rows, overlap ts 9..12 then lead ts 13..20. leadStart = 4.
+                fillSlot(tier, slotIdx, disk, 12, 8);
+
+                try (LiveViewPageFrameCursor cursor = new LiveViewPageFrameCursor()) {
+                    cursor.of(sqlExecutionContext, diskCursor(disk, identityTierColumns(), 8, 12), false, tier, slotIdx, tier.getSlot(slotIdx), tier.getSymbolCache(), identityTierColumns());
+                    Assert.assertEquals("lead frame ranges", "[4,12]", leadFrameRanges(cursor));
+                    Assert.assertEquals(8, drainLeadTimestamps(cursor).size());
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testPartitionScopedWalkServesTheDiskTierOnly() throws Exception {
         // toPartition() scopes the walk to one of the LV table's disk partitions, which
         // drops the tier out of the read until the next toTop(). The slot is not a
@@ -916,6 +1048,15 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         }
     }
 
+    // The timestamps of every row the cursor's LEAD-scoped walk serves, in the order it
+    // serves them. Reads them back through the real address cache / memory pool / record
+    // stack, so a lead frame whose addresses are not rebased onto its own rows reads as
+    // wrong values rather than as a passing test.
+    private static LongList drainLeadTimestamps(LiveViewPageFrameCursor cursor) {
+        cursor.toLeadFrames();
+        return drainTimestamps(cursor, metadataOf(identityTierColumns()));
+    }
+
     private static LongList drainTimestamps(LiveViewPageFrameCursor cursor, RecordMetadata metadata) {
         return drainTimestamps(cursor, metadata, false);
     }
@@ -964,6 +1105,22 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
             tierColumns.add(i);
         }
         return tierColumns;
+    }
+
+    // The (lo, hi) row ranges of the frames the cursor's LEAD-scoped walk hands out, as a
+    // flat list. Asserting the ranges and not only the rows they decode to is deliberate: a
+    // band that reached into the overlap would still decode every value fine, and only the
+    // ranges say which rows the walk claimed.
+    private static String leadFrameRanges(LiveViewPageFrameCursor cursor) {
+        cursor.toLeadFrames();
+        final LongList ranges = new LongList();
+        PageFrame frame;
+        while ((frame = cursor.next()) != null) {
+            Assert.assertEquals("a lead frame is not a partition of the table", Rows.MAX_SAFE_PARTITION_INDEX, frame.getPartitionIndex());
+            ranges.add(frame.getPartitionLo());
+            ranges.add(frame.getPartitionHi());
+        }
+        return ranges.toString();
     }
 
     // Query metadata for the projection tierColumns describes.

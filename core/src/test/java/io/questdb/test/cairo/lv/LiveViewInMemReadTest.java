@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
@@ -612,16 +613,159 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testWindowJoinSlaveOverAnIntervalFilteredLiveViewSeesAppliedPrefix() throws Exception {
-        // The interval-filtered twin of testWindowJoinSlaveSeesAppliedPrefixNotLead, and it
-        // is not a variation - it reaches ConcurrentTimeFrameState through a DIFFERENT walk.
+    public void testTimeFrameReadPinLifetime() throws Exception {
+        // getTimeFrameCursor's twin of the frame-path arm above. It routes over the same
+        // LiveViewPageFrameCursor and so inherits the same pin, but through one more layer -
+        // the TimeFrameCursorImpl it hands back owns the routed cursor, so it is that
+        // cursor's close() that has to reach the tier. Nothing else drops the pin: the
+        // factory keeps no reference to either.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertFalse("no reader open -> slot unpinned", isPublishedSlotReaderPinned(tier));
+
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    TimeFrameCursor cursor = unwrapLvFactory(factory).getTimeFrameCursor(sqlExecutionContext)
+            ) {
+                Assert.assertNotNull(cursor);
+                Assert.assertTrue("a routed time-frame read must hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+            Assert.assertFalse("closing the time-frame cursor releases the pin", isPublishedSlotReaderPinned(tier));
+
+            // A version-fence miss does not route, and releases the pin inside the bind the
+            // way the frame path does - the time-frame cursor above it never sees the slot.
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            long seqTxn = slot.lvSeqTxn();
+            slot.setLvSeqTxn(mismatch(seqTxn));
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    TimeFrameCursor cursor = unwrapLvFactory(factory).getTimeFrameCursor(sqlExecutionContext)
+            ) {
+                Assert.assertNotNull(cursor);
+                Assert.assertFalse("a fence-miss time-frame read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+            } finally {
+                slot.setLvSeqTxn(seqTxn);
+            }
+        });
+    }
+
+    @Test
+    public void testTimeFrameReadFailurePathsReleaseTierPin() throws Exception {
+        // The time-frame twin of testPageFrameReadFailurePathsReleaseTierPin. It carries one
+        // failure window the other two paths do not: the routed frame cursor is already
+        // bound - pin and all - when the TimeFrameCursorImpl above it is built, so a throw
+        // there strands the slot unless that step hands it back itself.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
+
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                assertOpenFailsBeforePin(
+                        () -> unwrapLvFactory(factory).getTimeFrameCursor(sqlExecutionContext)
+                );
+                Assert.assertFalse(
+                        "a failure before the pin must leave the slot unpinned",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                assertOpenFailsWithPinHeld(
+                        () -> unwrapLvFactory(factory).getTimeFrameCursor(sqlExecutionContext)
+                );
+                Assert.assertFalse(
+                        "a failure while the slot is pinned must release the pin",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    TimeFrameCursor cursor = unwrapLvFactory(factory).getTimeFrameCursor(sqlExecutionContext)
+            ) {
+                Assert.assertNotNull("a read after the injected failures must still open", cursor);
+                Assert.assertTrue(
+                        "a read after the injected failures must still route",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testTimeFrameReadOverAColdReaderTakesTheLazyPartitionWalk() throws Exception {
+        // TimeFrameCursorImpl builds its disk side two ways, and the difference is invisible
+        // to every other arm here. A partition the reader has ALREADY opened is enumerated
+        // at build time and marked opened, so ensurePartitionOpened - the walk whose
+        // frame-count check the lead's pseudo-partition has to keep bounded by where the
+        // lead frames START rather than by the whole cache - never fires. A cold reader
+        // takes the lazy branch and does fire it. Every other LV arm reads the view before
+        // joining it, which opens the partition; dropping the readers is what leaves it
+        // cold, and it is the only reason this arm exists next to
+        // testAsOfJoinRhsSeesTheUnflushedLead.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk: ts 01..03 x=1..3; lead (RAM): ts 04,05 x=4,5
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe (ts, id) VALUES ('2026-05-12T00:00:06.000000Z', 1)");
+            drainWalQueue();
+
+            // Cold: the LV table's partition is unopened, so the frame model is pre-computed
+            // from partition metadata and patched in per partition on first access.
+            Assert.assertTrue(engine.releaseAllReaders());
+
+            StringSink sink = new StringSink();
+            printSql("SELECT p.ts, p.id, lv.x FROM probe p ASOF JOIN lv", sink);
+            Assert.assertEquals(
+                    "ts\tid\tx\n2026-05-12T00:00:06.000000Z\t1\t5\n",
+                    sink.toString());
+        });
+    }
+
+    @Test
+    public void testWindowJoinSlaveOverAnEvictedOverlapSeesEveryRowOnce() throws Exception {
+        // The arm above proves the lead arrives; this one proves the OVERLAP does not arrive
+        // twice, which the other fixture cannot ask. buildEvictedOverlapPlusLead is the only
+        // one where leadStart, the slot's row count and the disk size are three different
+        // numbers - the slot is a PROPER suffix of disk plus a lead - so a model that took
+        // the slot's whole band would serve the overlap from both tiers and nothing else
+        // would notice.
+        assertMemoryLeak(() -> {
+            buildEvictedOverlapPlusLead(); // disk x = 1..5; slot = overlap x = 4, 5 then lead x = 6, 7
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES (1700000005000000, 1)");
+            drainWalQueue();
+
+            // The probe's +/-10s window spans every LV row, so the sum is the whole view
+            // exactly once: 1+2+3+4+5+6+7 = 28. 15 would mean the lead never arrived, and 37
+            // that the overlap (x = 4, 5) came from the slot on top of disk's copy of it.
+            StringSink sink = new StringSink();
+            printSql("SELECT p.ts, sum(lv.x) AS agg FROM probe p " +
+                    "WINDOW JOIN lv RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
+                    "EXCLUDE PREVAILING ORDER BY p.ts", sink);
+            Assert.assertEquals("ts\tagg\n2023-11-14T22:13:25.000000Z\t28\n", sink.toString());
+        });
+    }
+
+    @Test
+    public void testWindowJoinSlaveOverAnIntervalFilteredLiveViewSeesTheUnflushedLead() throws Exception {
+        // The interval-filtered twin of testWindowJoinSlaveSeesTheUnflushedLead, and it is
+        // not a variation - it reaches ConcurrentTimeFrameState through a DIFFERENT walk.
         // hasIntervalFilter() selects buildFrameCacheEagerly(), which enumerates every frame
         // the cursor has rather than pre-computing counts from partition metadata and
-        // walking one partition at a time. toPartition() - the hook that keeps the tier out
-        // of the other walk - is never called on this one, so the slot's synthetic frames
-        // went straight into a model indexed by partition and the join died on
-        // "Index 524287 out of bounds for length 16" (the slot frame's reserved partition
-        // index). Unreachable until an interval-filtered read started routing.
+        // walking one partition at a time. So the lead's frames arrive there by a different
+        // route (the eager walk skips them and addLeadFrames takes them back) than in the
+        // lazy branch (which never sees them at all), and only this arm covers the first.
+        // The walk is also where routing an interval-filtered read once crashed the join on
+        // "Index 524287 out of bounds for length 16" - the slot frame's reserved partition
+        // index landing in a model indexed by real ones.
         assertMemoryLeak(() -> {
             buildFlushedPlusLead(); // disk x = 1, 2, 3; un-flushed lead x = 4, 5
             execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -629,47 +773,48 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             // The probe's +/-10s window spans every LV row; the interval keeps x >= 2. So
-            // the sum names both what the interval admitted and which tier answered: 5 is
-            // disk's x = 2, 3 - the applied prefix - while 14 would mean the lead came too
-            // and 6 would mean the interval never applied.
+            // the sum names both what the interval admitted and which tiers answered: 14 is
+            // disk's x = 2, 3 plus the lead's x = 4, 5. 5 would mean the lead never arrived,
+            // 15 that the interval never reached it, and 20 that the slot's whole band came
+            // through and served x = 2, 3 from both tiers.
             StringSink sink = new StringSink();
             printSql("SELECT p.ts, sum(l.x) agg FROM probe p " +
                     "WINDOW JOIN (SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:02.000000Z') l " +
                     "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
                     "EXCLUDE PREVAILING ORDER BY p.ts", sink);
-            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t5\n", sink.toString());
+            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t14\n", sink.toString());
         });
     }
 
     @Test
-    public void testWindowJoinSlaveSeesAppliedPrefixNotLead() throws Exception {
+    public void testWindowJoinSlaveSeesTheUnflushedLead() throws Exception {
         // A WINDOW JOIN slave asks its factory for page frames and casts the result to
         // TablePageFrameCursor, then drives it through ConcurrentTimeFrameState - which
-        // builds its whole frame model from the table reader's per-partition row counts
-        // and walks one partition at a time (toPartition). The in-mem slot is not a
-        // partition of that table, so it stays out of that walk and the join sees the
-        // applied prefix, exactly where getTimeFrameCursor already leaves an LV.
+        // builds its whole frame model from the table reader's per-partition row counts and
+        // walks one partition at a time (toPartition). The in-mem slot is not a partition of
+        // that table, so it used to stay out of that walk entirely and the join saw only the
+        // applied prefix. This arm's verdict is inverted: the state now takes the lead from
+        // the cursor's own lead-scoped walk, under a pseudo-partition of its own.
         //
-        // Reachable, and it was already broken before the frame path routed: the LV
+        // The disk-only stance was not merely a limitation, it was masking a bug: the LV
         // factory's own `assert !inMemRoutable` fired here, because supportsTimeFrameCursor()
         // (which gates the parallel window join) is true for very nearly the same shapes
-        // inMemRoutable is. Nothing covered it. Routing the frame path without making the
-        // routed cursor a TablePageFrameCursor would have turned that into a
-        // ClassCastException.
+        // inMemRoutable is. Nothing covered it.
         assertMemoryLeak(() -> {
             buildFlushedPlusLead();
             execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
             drainWalQueue();
 
-            // The probe's +/-10s window spans every LV row, flushed (x=1,2,3) and
-            // un-flushed lead (x=4,5) alike, so the sum names which tiers the slave read:
-            // 6 is the applied prefix, 15 would mean the lead came through.
+            // The probe's +/-10s window spans every LV row, flushed (x=1,2,3) and un-flushed
+            // lead (x=4,5) alike, so the sum names which tiers the slave read: 15 is every
+            // row exactly once. 6 would mean the lead never arrived, and 21 that the slot's
+            // whole band did - serving x = 1, 2, 3 from disk AND from the overlap.
             StringSink sink = new StringSink();
             printSql("SELECT p.ts, sum(lv.x) AS agg FROM probe p " +
                     "WINDOW JOIN lv RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
                     "EXCLUDE PREVAILING ORDER BY p.ts", sink);
-            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t6\n", sink.toString());
+            Assert.assertEquals("ts\tagg\n2026-05-12T00:00:03.000000Z\t15\n", sink.toString());
         });
     }
 
@@ -3392,14 +3537,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAsOfJoinRhsSeesAppliedPrefixNotLead() throws Exception {
-        // ASOF JOIN with the LV on the RHS consumes the LV's time-frame cursor,
-        // which is disk-only in V1: it serves the applied prefix and
-        // trails the un-flushed lead by at most one flush cycle. A documented
-        // freshness limitation, not a correctness issue - a flush lands the lead
-        // on disk and the join catches up. Pin the disk-only ASOF path so it stays
-        // explicit (the record-cursor read at the same instant DOES serve the
-        // lead, proving the join deliberately ignores the live lead).
+    public void testAsOfJoinRhsSeesTheUnflushedLead() throws Exception {
+        // ASOF JOIN with the LV on the RHS consumes the LV's TIME-frame cursor, which used
+        // to be disk-only: the join matched the applied prefix and trailed the lead by up to
+        // one flush cycle, while a record-cursor read at the same instant served it. That
+        // arm's verdict is inverted here - the time-frame cursor routes now, so the join
+        // matches the lead rows the tier holds and the two paths agree again.
         assertMemoryLeak(() -> {
             buildFlushedPlusLead(); // disk (applied): ts 01..03 x=1..3; lead (RAM): ts 04,05 x=4,5
 
@@ -3416,37 +3559,36 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             final String asofSql = "SELECT p.ts, p.id, lv.x FROM probe p ASOF JOIN lv";
 
-            // The plan confirms the disk-only fast (time-frame) ASOF path over the
-            // LV - never the record-cursor light path that would see the lead.
+            // The plan pins the fast (time-frame) ASOF path over the LV, so this is testing
+            // the bridged time frames and not the record-cursor light path, which sees the
+            // lead by an entirely different mechanism.
             assertQuery(asofSql).noLeakCheck().assertsPlanContaining("AsOf Join Fast", "LiveView");
 
-            // Even though the lead (ts 04,05 / x=4,5) is live in RAM, the join
-            // matches each probe row to the last *applied* lv row (ts 03, x=3).
-            // printSql keeps the tier alive, so this proves the join ignores the
-            // live lead, not that the tier happened to be empty.
-            StringSink trailing = new StringSink();
-            printSql(asofSql, trailing);
+            // Each probe row matches the last lv row at or below it, lead included: ts 04.5
+            // takes the lead's ts 04 (x=4) and ts 06 the lead's ts 05 (x=5). Disk's last row
+            // is ts 03 / x=3, which is the answer the disk-only cursor gave for both.
+            // printSql keeps the tier alive, so this reads the live lead rather than a
+            // flushed copy of it.
+            StringSink sink = new StringSink();
+            printSql(asofSql, sink);
             Assert.assertEquals(
                     "ts\tid\tx\n" +
-                            "2026-05-12T00:00:04.500000Z\t1\t3\n" +
-                            "2026-05-12T00:00:06.000000Z\t2\t3\n",
-                    trailing.toString());
+                            "2026-05-12T00:00:04.500000Z\t1\t4\n" +
+                            "2026-05-12T00:00:06.000000Z\t2\t5\n",
+                    sink.toString());
 
-            // A flush lands the lead on disk; the disk-only ASOF then catches up -
-            // the freshness gap is bounded by one flush cycle, not a lost match.
+            // The flush moves those same rows from the lead band to disk. The answer must
+            // not budge: it is the same row either way, and a model that took the whole slot
+            // band rather than the lead would start double-counting the overlap here.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(1_000_000L);
                 drainJob(job);
             }
             drainWalQueue();
 
-            StringSink caughtUp = new StringSink();
-            printSql(asofSql, caughtUp);
-            Assert.assertEquals(
-                    "ts\tid\tx\n" +
-                            "2026-05-12T00:00:04.500000Z\t1\t4\n" +
-                            "2026-05-12T00:00:06.000000Z\t2\t5\n",
-                    caughtUp.toString());
+            StringSink flushed = new StringSink();
+            printSql(asofSql, flushed);
+            Assert.assertEquals("the flush must not move the match", sink.toString(), flushed.toString());
         });
     }
 

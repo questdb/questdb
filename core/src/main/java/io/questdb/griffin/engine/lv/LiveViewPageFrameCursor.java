@@ -133,8 +133,15 @@ import org.jetbrains.annotations.Nullable;
  * {@code ExtraNullColumnCursorFactory} projections - cast what
  * {@link LiveViewRecordCursorFactory#getPageFrameCursor} hands back to this interface.
  * The table-shaped members delegate to the base cursor, which the routing fence has
- * already established is a plain table scan. See {@link #toPartition} for the one that
- * carries a behavioural decision.
+ * already established is a plain table scan.
+ * <p>
+ * <b>The two scoped walks.</b> A consumer that models this cursor as a table asks for its
+ * frames one group at a time rather than as the mode's stream: {@link #toPartition} hands
+ * out one disk partition's frames, {@link #toLeadFrames} the un-flushed lead's. Together
+ * they cover every row exactly once - disk holds every applied row, the lead exactly what
+ * disk lacks - which is lead-only's own union argument, reached through a different door.
+ * The seam has no place there and neither scope offers it: a caller assembling the whole
+ * disk scan from partitions has already counted the slot's overlap.
  */
 public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // Partition index the synthetic slot frame reports. Its only consumer is the
@@ -147,6 +154,20 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // index rather than reusing 0 keeps a lead row's update row id from aliasing a
     // real disk row's should a consumer ever read one.
     private static final int SLOT_PARTITION_INDEX = Rows.MAX_SAFE_PARTITION_INDEX;
+    // The scopes next() can walk in, set by toLeadFrames() / toPartition() and reset by
+    // toTop(). One field rather than a flag each, so they are exclusive by construction: a
+    // consumer that walks the table asks for one disk partition or the lead, never both at
+    // once, and nothing rests on the order two flags happen to be tested in.
+    private static final int WALK_LEAD = 2;
+    private static final int WALK_PARTITION = 1;
+    private static final int WALK_ROUTED = 0;
+    // The slot's LEAD rows - the un-flushed ones, held nowhere on disk - cut by the base
+    // scan's interval filter, as flat half-open (lo, hi) row pairs. Same shape and same cut
+    // as slotBands, and identical to it under either lead-only mode; they part company under
+    // the seam, whose band is the whole slot. Built in of() regardless of the mode, because
+    // the consumer that walks these does not take its disk side from this cursor's stream at
+    // all - see toLeadFrames().
+    private final LongList leadBands = new LongList();
     private final SeamCutPageFrame seamCutFrame = new SeamCutPageFrame();
     private final SlotPageFrame slotFrame = new SlotPageFrame();
     // The slot rows this cursor serves, as flat half-open (lo, hi) row pairs, ascending and
@@ -178,9 +199,14 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // in: lead-only descending when set (the reversed lead band, then the disk scan in
     // full), the seam split when not. See the class doc.
     private boolean isLeadOnlyDescending;
-    // Set by toPartition(), cleared by toTop(): the walk is scoped to one disk partition,
-    // so next() hands straight to the base and the tier stays out of it. See toPartition().
-    private boolean isPartitionScoped;
+    // Index of the band in leadBands the lead-scoped walk is tiling, and the rows it has
+    // covered within that band. Kept apart from the slotBand* pair so a lead-scoped walk
+    // leaves the mode's own walk exactly where it found it.
+    private int leadBandIdx;
+    private long leadBandRowsEmitted;
+    // Rows per synthetic frame over the lead band, sized in of() by the same helper - and so
+    // by the same bounds - a disk partition holding that many rows gets. Always >= 1.
+    private long leadRowLimit;
     private LiveViewInMemoryBuffer slot;
     // Index of the band in slotBands the frames are currently tiling. Moves up under an
     // ascending walk and down under a descending one; out of range means the slot side is
@@ -200,6 +226,9 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     // Slot rows covered by the frames returned so far.
     private long slotRowsEmitted;
     private LiveViewInMemoryTier tier;
+    // Which frames next() hands out: the routing mode's own stream (WALK_ROUTED), one disk
+    // partition's (WALK_PARTITION), or the lead's (WALK_LEAD). See the constants.
+    private int walkScope;
 
     public LiveViewPageFrameCursor() {
         this.slotIdx = -1;
@@ -321,6 +350,15 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasLeadFrames() {
+        // The un-flushed lead: rows the refresh worker has computed but not yet written to
+        // the LV's on-disk tier, so no partition of the LV table holds them. Empty right
+        // after a flush, and empty when an interval filter admits none of them - the
+        // ordinary steady state, not a corner.
+        return leadBands.size() > 0;
+    }
+
+    @Override
     public boolean isExternal() {
         // Both tiers belong to the LV's own table; neither is an external parquet file.
         return base.isExternal();
@@ -333,19 +371,14 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public @Nullable PageFrame next(long skipTarget) {
-        if (isPartitionScoped) {
+        return switch (walkScope) {
             // A partition-scoped walk is a disk-tier walk; see toPartition().
-            return base.next(skipTarget);
-        }
-        if (isLeadOnlyDescending) {
-            // The reversed lead, then the disk scan in full: the lead sits at or above the
-            // on-disk maximum, so serving it first keeps the stream non-increasing.
-            final PageFrame slotFrame = nextSlotFrame();
-            return slotFrame != null ? slotFrame : nextDiskFrame(skipTarget);
-        }
-        // The seam: the disk band below the cut, then the whole slot above it.
-        final PageFrame diskFrame = nextDiskFrame(skipTarget);
-        return diskFrame != null ? diskFrame : nextSlotFrame();
+            case WALK_PARTITION -> base.next(skipTarget);
+            // A lead-scoped walk is a tier walk, and the disk side stays out of it; see
+            // toLeadFrames().
+            case WALK_LEAD -> nextLeadFrame();
+            default -> nextRoutedFrame(skipTarget);
+        };
     }
 
     /**
@@ -435,6 +468,12 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         // not stale ones.
         slotBands.clear();
         LiveViewIntervalBands.cut(slot, slot.getTimestampColumnIndex(), slotBandLo, slotRowCount, intervals, slotBands);
+        // The lead band, cut by the same intervals, for the lead-scoped walk toLeadFrames()
+        // hands out. It is the mode's own band again under either lead-only mode, and a
+        // suffix of it under the seam; cutting it separately keeps this independent of the
+        // mode rather than resting on which one of()'s fork picked.
+        leadBands.clear();
+        LiveViewIntervalBands.cut(slot, slot.getTimestampColumnIndex(), leadStart, slotRowCount, intervals, leadBands);
         // The slot band is this scan's last partition, so it splits into frames the same
         // way a disk partition of the same row count does - same helper, same bounds, same
         // trailing-frame rounding. Sharing it is not just tidiness: those bounds carry the
@@ -444,6 +483,16 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         this.slotRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
                 0,
                 LiveViewIntervalBands.countRows(slotBands),
+                executionContext.getPageFrameMinRows(),
+                executionContext.getPageFrameMaxRows(),
+                executionContext.getSharedQueryWorkerCount()
+        );
+        // Sized off the LEAD band's own row count rather than shared with slotRowLimit: the
+        // seam's band is the whole slot, so its limit answers to a bigger partition than the
+        // lead-scoped walk actually tiles.
+        this.leadRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                0,
+                LiveViewIntervalBands.countRows(leadBands),
                 executionContext.getPageFrameMinRows(),
                 executionContext.getPageFrameMaxRows(),
                 executionContext.getSharedQueryWorkerCount()
@@ -503,19 +552,42 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     }
 
     /**
+     * Scopes the walk to the un-flushed LEAD - the rows no partition of the LV table holds -
+     * which drops the disk tier out of it: {@link #next} tiles {@link #leadBands} and nothing
+     * else until the next {@link #toTop}. The mirror image of {@link #toPartition}, and the
+     * other half of what a time-frame consumer needs.
+     * <p>
+     * Such a consumer ({@code TimeFrameCursorImpl}, {@code ConcurrentTimeFrameState})
+     * addresses frames by PARTITION index and builds its disk side from the table reader's
+     * own per-partition row counts rather than from this cursor's stream. So it takes the
+     * whole disk scan whatever mode {@link #of} picked, and the only thing left for the tier
+     * to add is the lead - never the seam's whole slot band, whose overlap that consumer
+     * already counted on disk. That is why the band this hands out is {@link #leadBands}
+     * rather than {@link #slotBands}, and why it is right regardless of the mode.
+     * <p>
+     * The frames are the same synthetic ones the unscoped walk publishes, so the pin's
+     * lifetime rule is unchanged: nothing that can still read one may outlive this cursor.
+     */
+    @Override
+    public void toLeadFrames() {
+        walkScope = WALK_LEAD;
+        leadBandIdx = 0;
+        leadBandRowsEmitted = 0;
+    }
+
+    /**
      * Scopes the walk to one of the LV table's disk partitions, which drops the tier out of
      * the read: {@link #next} hands straight to the base until the next {@link #toTop}.
      * <p>
      * The in-mem slot is not a partition of that table and has no index in its space, so
      * there is no partition this cursor could answer with the slot frame. The consumer that
-     * asks is {@code ConcurrentTimeFrameState} (a WINDOW / HORIZON JOIN slave), which
-     * derives its whole frame model from the table reader's per-partition row counts before
-     * walking a partition to patch in the addresses - a model the slot frame is invisible
-     * to, and one whose frame-count assert a surprise extra frame would trip. Serving that
-     * consumer the applied prefix leaves it exactly where
-     * {@link LiveViewRecordCursorFactory#getTimeFrameCursor} already puts an LV: correct,
-     * and at most one flush cycle behind the lead. Bridging the lead into a time frame is
-     * the deferred enhancement noted there, not something to smuggle in through here.
+     * asks is a time-frame model ({@code ConcurrentTimeFrameState}, {@code
+     * TimeFrameCursorImpl}), which derives its whole frame model from the table reader's
+     * per-partition row counts before walking a partition to patch in the addresses - a
+     * model the slot frame is invisible to, and one whose frame-count assert a surprise
+     * extra frame would trip. It reaches the lead through {@link #toLeadFrames} instead,
+     * which gives those rows a pseudo-partition of their own rather than smuggling them into
+     * a real partition's frames.
      * <p>
      * The tier pin stays held for the cursor's life regardless. It buys this walk nothing,
      * but the symbol overlay {@link #of} bound resolves against the slot, and a consumer may
@@ -523,15 +595,15 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
      */
     @Override
     public void toPartition(int partitionIndex) {
-        isPartitionScoped = true;
+        walkScope = WALK_PARTITION;
         base.toPartition(partitionIndex);
     }
 
     @Override
     public void toTop() {
         base.toTop();
+        walkScope = WALK_ROUTED;
         isDiskExhausted = false;
-        isPartitionScoped = false;
         diskRowsEmitted = 0;
         slotRowsEmitted = 0;
         slotBandRowsEmitted = 0;
@@ -584,6 +656,44 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
         }
         isDiskExhausted = true;
         return null;
+    }
+
+    // The next frame over the lead rows, or null once they are spent. Tiles leadBands
+    // ascending, which is the only order a time-frame model accepts - it addresses frames by
+    // index and expects their timestamps to ascend with it. Deliberately does NOT touch the
+    // mode's own walk state (slotBandIdx, slotRowsEmitted), so size() and calculateSize()
+    // keep answering for the unscoped stream.
+    private @Nullable PageFrame nextLeadFrame() {
+        final int bandCount = leadBands.size() / 2;
+        while (leadBandIdx < bandCount) {
+            final long bandLo = leadBands.getQuick(2 * leadBandIdx);
+            final long bandHi = leadBands.getQuick(2 * leadBandIdx + 1);
+            if (leadBandRowsEmitted >= bandHi - bandLo) {
+                leadBandIdx++;
+                leadBandRowsEmitted = 0;
+                continue;
+            }
+            final long lo = bandLo + leadBandRowsEmitted;
+            final long hi = Math.min(bandHi, lo + leadRowLimit);
+            leadBandRowsEmitted += hi - lo;
+            return slotFrame.of(lo, hi);
+        }
+        return null;
+    }
+
+    // The next frame of the routing mode's own stream - the union of both tiers, in the
+    // order the mode serves them. This is what an ordinary read walks; the two scoped walks
+    // above exist for consumers that want the tiers apart.
+    private @Nullable PageFrame nextRoutedFrame(long skipTarget) {
+        if (isLeadOnlyDescending) {
+            // The reversed lead, then the disk scan in full: the lead sits at or above the
+            // on-disk maximum, so serving it first keeps the stream non-increasing.
+            final PageFrame slotFrame = nextSlotFrame();
+            return slotFrame != null ? slotFrame : nextDiskFrame(skipTarget);
+        }
+        // The seam: the disk band below the cut, then the whole slot above it.
+        final PageFrame diskFrame = nextDiskFrame(skipTarget);
+        return diskFrame != null ? diskFrame : nextSlotFrame();
     }
 
     // The next frame over the slot rows this mode serves, or null once they are spent. Each

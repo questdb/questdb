@@ -96,6 +96,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private int frameCount = 0;
     private TablePageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
+    // Index of the pseudo-partition the frame cursor's LEAD frames are filed under, or -1
+    // when it has none. See addLeadFrames().
+    private int leadPartitionIndex = -1;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private int partitionCount;
@@ -142,6 +145,15 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             return null;
         }
         int partitionIndex = framePartitionIndexes.get(frameIndex);
+        if (partitionIndex == leadPartitionIndex) {
+            // A lead frame is not a partition of the reader, so there is no partition to ask
+            // for an index reader - null is the interface's own answer for "no indexed
+            // access", and it beats indexing the reader out of bounds. Unreachable today:
+            // only AsOfJoinIndexedRecordCursorFactory calls this, and it is gated on the
+            // slave column being INDEXED, which the one frame source that has lead frames -
+            // a live view - never reports (LiveViewTableStructure.isIndexed is false).
+            return null;
+        }
         assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
         return tableReader.getIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
@@ -348,6 +360,52 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     /**
+     * Appends the frame cursor's LEAD frames - rows no partition of the table holds, sorting
+     * at or above every row that a partition does hold (see
+     * {@link TablePageFrameCursor#hasLeadFrames()}). They come last because they sort last,
+     * which keeps the frame index ascending in timestamp exactly as the partition walk above
+     * leaves it.
+     * <p>
+     * They get a PSEUDO-PARTITION one past the reader's last, because this whole model
+     * addresses frames by partition index: {@link #ensurePartitionOpened(int)} keys off it,
+     * and so do the estimate lookups. Marking that pseudo-partition opened up front is what
+     * keeps {@code ensurePartitionOpened} from ever handing it to the frame cursor, which has
+     * no such partition to walk - the lead frames arrive with real addresses already, so
+     * there is nothing to patch. Counting it in {@code partitionCount} is what keeps the LAST
+     * real partition's frame-count check bounded by where the lead frames start rather than
+     * by the whole cache.
+     * <p>
+     * The estimates are the widest legal ones. {@code getTimestampEstimateLo} may read below
+     * the frame's true minimum and {@code getTimestampEstimateHi} above its true maximum, so
+     * {@code (MIN_VALUE, MAX_VALUE)} is correct for any lead; it costs a consumer the chance
+     * to skip these frames unopened, which is a small price for needing no timestamp read
+     * here and no timestamp column index this class cannot reliably know. A MAX_VALUE ceiling
+     * also keeps {@link #seekEstimate} from ever landing ON a lead frame, so a seek lands
+     * before them and walks in - the conservative direction.
+     */
+    private void addLeadFrames() {
+        leadPartitionIndex = -1;
+        if (!frameCursor.hasLeadFrames()) {
+            return;
+        }
+        leadPartitionIndex = partitionCount;
+        partitionTimestamps.add(Long.MIN_VALUE);
+        partitionCeilings.add(Long.MAX_VALUE);
+        partitionFirstFrame.extendAndSet(leadPartitionIndex, frameCount);
+        partitionOpened.set(leadPartitionIndex);
+        partitionCount++;
+
+        frameCursor.toLeadFrames();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            frameAddressCache.add(frameCount, frame);
+            framePartitionIndexes.add(leadPartitionIndex);
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
+        }
+    }
+
+    /**
      * Pre-computes and adds uninitialized frame entries for a native partition.
      * Replicates the column-top-aware splitting logic from
      * FwdTableReaderPageFrameCursor#computeNativeFrame().
@@ -494,6 +552,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             }
         }
 
+        addLeadFrames();
         isFrameCacheBuilt = true;
 
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
@@ -517,7 +576,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         while ((frame = frameCursor.next()) != null) {
             if (frame.getPartitionIndex() >= partitionCount) {
                 // Not a partition of this reader; see ConcurrentTimeFrameState's own eager
-                // walk for why such a frame has no place in a model indexed by them.
+                // walk for why such a frame has no place in a model indexed by them. It is
+                // not dropped from the read: addLeadFrames() takes the same rows back from
+                // the cursor's lead-scoped walk, under a pseudo-partition this model can
+                // address. Skipping here rather than filing them straight away is what keeps
+                // the two branches uniform - the lazy one never sees these frames at all.
                 continue;
             }
             frameAddressCache.add(frameCount, frame);
