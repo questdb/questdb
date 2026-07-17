@@ -1093,17 +1093,28 @@ public class PostingIndexWriter implements IndexWriter {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 
-                long keyFileSize = ff.length(keyFile);
+                // ff.length(keyFile) is safe as a MAP SIZE (it never exceeds the file's
+                // backed extent) but must NOT be trusted as the live-data high-water: during
+                // parallel WAL apply the reported length can lag the writer that extended this
+                // .pk, which would leave the head entry past a length-sized mapping (the reopen
+                // then reads past it). So seed the mapping from the length, then read the
+                // header's regionLimit -- the live-region high-water, self-consistent with the
+                // head entry it references -- and extend the mapping to it only when the
+                // reported length genuinely lags. On the dominant path (regionLimit <=
+                // keyFileSize) this leaves the whole entry region already visible to
+                // openExisting without an extra mremap/fstat/madvise on every reopen.
+                final long appendPageSize = configuration.getDataIndexKeyAppendPageSize();
+                final long keyFileSize = ff.length(keyFile);
                 if (keyFileSize < KEY_FILE_RESERVED) {
                     throw CairoException.critical(0)
                             .put("Index file too short [expected>=").put(KEY_FILE_RESERVED)
                             .put(", actual=").put(keyFileSize).put(']');
                 }
-
-                // Map the whole file so both header pages plus the entry
-                // region are visible. The chain helper's openExisting reads
-                // the head entry which lives past the two header pages.
-                keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+                keyMem.of(ff, keyFile, appendPageSize, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+                final long regionLimit = chain.peekRegionLimit(keyMem);
+                if (regionLimit > keyFileSize) {
+                    keyMem.jumpTo(regionLimit);
+                }
             }
             kFdUnassigned = false;
 
@@ -1148,7 +1159,26 @@ public class PostingIndexWriter implements IndexWriter {
 
             allocateNativeBuffers();
         } catch (Throwable e) {
-            close();
+            // A failed (re)open leaves chain.regionLimit at the reset sentinel
+            // (KEY_FILE_RESERVED): openExisting is what publishes the real
+            // regionLimit into the chain, and it may not have run yet (a throw
+            // from keyMem.of / peekRegionLimit / jumpTo, or from openExisting
+            // itself). The normal truncating close() sizes its .pk trim from
+            // that stale sentinel, so it would shrink the file back to
+            // KEY_FILE_RESERVED and discard the live chain region [8192,
+            // regionLimit) that is physically on disk. Release keyMem WITHOUT
+            // truncation so the on-disk index is left intact for the next open;
+            // the close() below then skips the already-closed keyMem. Do the
+            // keyMem release in a try/finally so a failure to release it still
+            // runs the full close() (freeing valueMem / native buffers and
+            // resetting state) instead of leaking them.
+            try {
+                if (keyMem.isOpen()) {
+                    keyMem.close(false);
+                }
+            } finally {
+                close();
+            }
             if (kFdUnassigned) {
                 LOG.error().$("could not open posting index [path=").$(path).$(']').$();
             }
@@ -5652,7 +5682,7 @@ public class PostingIndexWriter implements IndexWriter {
         // packedResiduals auto-grow at their use sites, so their pre-allocation
         // below is only a per-stride realloc saver.
         long maxBPStrideDataSize = Math.max(maxDirtyStrideTrialL, maxHeaderSize);
-        long mergedValuesSize = Math.max((long) maxDirtyStrideTotal, 1024L) * Long.BYTES;
+        long mergedValuesSize = Math.max(maxDirtyStrideTotal, 1024L) * Long.BYTES;
 
         // Pre-flight: if even the correctly-sized incremental buffers would
         // breach the RSS limit (one stride genuinely too large for this box),
