@@ -309,6 +309,114 @@ public class PostingIndexChainWriterTest {
     }
 
     @Test
+    public void testPeekRegionLimitRejectsBadFormatVersion() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        // Corrupt the active page's format version. The seqlock stays intact, so
+        // readUnderSeqlock returns the bogus value and peekRegionLimit rejects it.
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, 99L);
+
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        try {
+            w.peekRegionLimit(mem);
+            Assert.fail("expected CairoException for unsupported format version");
+        } catch (CairoException expected) {
+            Assert.assertTrue(expected.getMessage().contains("Unsupported Posting index version"));
+        }
+    }
+
+    @Test
+    public void testPeekRegionLimitRejectsInvertedRegion() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        // regionBase past the reserved window but regionLimit below it: an inverted
+        // (regionLimit < regionBase) region descriptor. headEntryOffset stays V2_NO_HEAD
+        // so only the region check can trip.
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, 16384L);
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, 12288L);
+
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        try {
+            w.peekRegionLimit(mem);
+            Assert.fail("expected CairoException for inverted region");
+        } catch (CairoException expected) {
+            Assert.assertTrue(expected.getMessage().contains("posting index header has invalid region"));
+        }
+    }
+
+    @Test
+    public void testPeekRegionLimitRejectsOutOfRegionHead() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        // Valid region [8192, 16384); a head pointer at regionLimit is out of the
+        // half-open range and must be rejected (the SIGSEGV guard). Pins the >= bound.
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, 16384L);
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, 16384L);
+
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        try {
+            w.peekRegionLimit(mem);
+            Assert.fail("expected CairoException for out-of-region head");
+        } catch (CairoException expected) {
+            Assert.assertTrue(expected.getMessage().contains("posting index header has out-of-region head"));
+        }
+    }
+
+    @Test
+    public void testPeekRegionLimitRejectsRegionBaseBelowReserved() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        // regionBase inside the reserved header window is inconsistent: the entry region
+        // must start at or past KEY_FILE_RESERVED.
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE,
+                PostingIndexUtils.KEY_FILE_RESERVED - 8L);
+
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        try {
+            w.peekRegionLimit(mem);
+            Assert.fail("expected CairoException for region base below reserved window");
+        } catch (CairoException expected) {
+            Assert.assertTrue(expected.getMessage().contains("posting index header has invalid region"));
+        }
+    }
+
+    @Test
+    public void testPeekRegionLimitRejectsUnreadableHeader() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        // Break the active page's seqlock (start != end) and leave the inactive page at
+        // its zero sequence, so no page ever reads stable and readUnderSeqlock gives up.
+        mem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START, 3L);
+
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        try {
+            w.peekRegionLimit(mem);
+            Assert.fail("expected CairoException for unreadable header");
+        } catch (CairoException expected) {
+            Assert.assertTrue(expected.getMessage().contains("posting index header unreadable"));
+        }
+    }
+
+    @Test
+    public void testPeekRegionLimitReturnsRegionLimitForEmptyChain() {
+        // The legitimate empty-region shape (regionBase == regionLimit == entry region base,
+        // head == V2_NO_HEAD) stays valid and returns the region limit.
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, w.peekRegionLimit(mem));
+    }
+
+    @Test
+    public void testPeekRegionLimitReturnsRegionLimitForNonEmptyChain() {
+        // A published non-empty chain: peekRegionLimit must return the same high-water the
+        // writer recorded, so a caller can size the mapping to cover the head entry.
+        PostingIndexChainWriter writer = new PostingIndexChainWriter();
+        writer.initialiseEmpty(mem);
+        writer.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        writer.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
+
+        PostingIndexChainWriter reader = new PostingIndexChainWriter();
+        Assert.assertEquals(writer.getRegionLimit(), reader.peekRegionLimit(mem));
+        Assert.assertTrue("a non-empty chain's region must extend past the header window",
+                reader.peekRegionLimit(mem) > PostingIndexUtils.KEY_FILE_RESERVED);
+    }
+
+    @Test
     public void testRecoveryDropAbandonedKeepsOnlyCommittedEntries() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
