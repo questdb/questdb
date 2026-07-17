@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -80,10 +81,22 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
+    // Counts every FULL enqueue that reaches the engine-installed store, across all callers.
+    // Reset to 0 before every test.
+    private static final AtomicInteger engineFullRefreshEnqueues = new AtomicInteger();
+    // While set, the next reenqueueRefreshTask on the engine store models the impl-level
+    // put-back failure contract (facet retry flag recorded, then OOM). One-shot.
+    private static final AtomicBoolean isPutBackFailureArmed = new AtomicBoolean();
     // A test-controlled read-only flip. The OSS engine reads a static isReadOnlyInstance() flag; the
     // injected engine below ORs this in so a test can turn the node read-only mid-hold, standing in for the
     // enterprise demote that toggles isReadOnlyMode() dynamically. Reset to false before every test.
     private static final AtomicBoolean isReadOnly = new AtomicBoolean();
+    // While set, the injected engine reports isMatViewRefreshSuspended() true, modelling the
+    // promote window where the refresh job must put dequeued tasks back. Reset before every test.
+    private static final AtomicBoolean isRefreshSuspended = new AtomicBoolean();
+    // While set, the next reenqueuePendingOnResume on the engine store models the impl-level
+    // redelivery failure contract (facet retry flags recorded, then OOM). One-shot.
+    private static final AtomicBoolean isResumeRedeliveryFailureArmed = new AtomicBoolean();
     // A test-controlled sticky writer refusal: while set, getWalWriter refuses this view's token with a
     // read-only authorization error even though isReadOnlyMode() stays false -- the enterprise TOCTOU
     // where a demote flips the writer chokepoint after invalidateView's top-of-method guard passed.
@@ -98,11 +111,21 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         // token, modelling the enterprise writer chokepoint refusing after the top-level guard passed.
         AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
             @Override
+            protected MatViewStateStore createMatViewStateStore() {
+                return new InstrumentedStateStore(super.createMatViewStateStore());
+            }
+
+            @Override
             public @NotNull WalWriter getWalWriter(TableToken tableToken) {
                 if (tableToken.equals(walRefusalToken.get())) {
                     throw CairoException.readOnlyAccess();
                 }
                 return super.getWalWriter(tableToken);
+            }
+
+            @Override
+            public boolean isMatViewRefreshSuspended() {
+                return isRefreshSuspended.get() || super.isMatViewRefreshSuspended();
             }
 
             @Override
@@ -118,7 +141,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         super.setUp();
         // Materialized views require dev mode; without it the engine installs a no-op state store.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        engineFullRefreshEnqueues.set(0);
+        isPutBackFailureArmed.set(false);
         isReadOnly.set(false);
+        isRefreshSuspended.set(false);
+        isResumeRedeliveryFailureArmed.set(false);
         walRefusalToken.set(null);
     }
 
@@ -220,98 +247,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentFullPublicationRetriesAfterReasonWinsCas() throws Exception {
-        assertMemoryLeak(() -> {
-            final MatViewFixture fixture = createUnseededAutoPriceViewFixture();
-
-            final TableToken viewToken = fixture.viewToken();
-            final MatViewState state = fixture.state();
-
-            final CountDownLatch hasReadEmptyMarker = new CountDownLatch(1);
-            final CountDownLatch resumeFullPublisher = new CountDownLatch(1);
-            final AtomicReference<Throwable> publisherFailure = new AtomicReference<>();
-            state.setOnPendingFullRefreshMarkerReadForTesting(() -> {
-                hasReadEmptyMarker.countDown();
-                try {
-                    if (!resumeFullPublisher.await(30, TimeUnit.SECONDS)) {
-                        throw new AssertionError("timed out waiting to resume the full-refresh publisher");
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError(e);
-                }
-            });
-
-            final Thread fullPublisher = new Thread(() -> {
-                try {
-                    state.markAsPendingFullRefreshForTesting();
-                } catch (Throwable th) {
-                    publisherFailure.set(th);
-                }
-            }, "full-refresh-publisher");
-            fullPublisher.start();
-            try {
-                Assert.assertTrue(
-                        "the full-refresh publisher must pause after reading the empty marker",
-                        hasReadEmptyMarker.await(30, TimeUnit.SECONDS)
-                );
-                state.markAsPendingInvalidation("update operation");
-            } finally {
-                resumeFullPublisher.countDown();
-                fullPublisher.join(30_000);
-            }
-
-            Assert.assertFalse("the full-refresh publisher did not terminate", fullPublisher.isAlive());
-            Assert.assertNull("the full-refresh publisher failed", publisherFailure.get());
-            assertPendingReasonAndFullFacets(viewToken, state, "update operation");
-        });
+        assertConcurrentCasRetryScenario(true);
     }
 
     @Test
     public void testConcurrentReasonPublicationRetriesAfterFullWinsCas() throws Exception {
-        assertMemoryLeak(() -> {
-            final MatViewFixture fixture = createUnseededAutoPriceViewFixture();
-
-            final TableToken viewToken = fixture.viewToken();
-            final MatViewState state = fixture.state();
-
-            final CountDownLatch hasReadEmptyMarker = new CountDownLatch(1);
-            final CountDownLatch resumeReasonPublisher = new CountDownLatch(1);
-            final AtomicReference<Throwable> publisherFailure = new AtomicReference<>();
-            state.setOnPendingInvalidationMarkerReadForTesting(() -> {
-                hasReadEmptyMarker.countDown();
-                try {
-                    if (!resumeReasonPublisher.await(30, TimeUnit.SECONDS)) {
-                        throw new AssertionError("timed out waiting to resume the invalidation publisher");
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError(e);
-                }
-            });
-
-            final Thread reasonPublisher = new Thread(() -> {
-                try {
-                    state.markAsPendingInvalidation("update operation");
-                } catch (Throwable th) {
-                    publisherFailure.set(th);
-                }
-            }, "invalidation-publisher");
-            reasonPublisher.start();
-            try {
-                Assert.assertTrue(
-                        "the invalidation publisher must pause after reading the empty marker",
-                        hasReadEmptyMarker.await(30, TimeUnit.SECONDS)
-                );
-                state.markAsPendingFullRefreshForTesting();
-            } finally {
-                resumeReasonPublisher.countDown();
-                reasonPublisher.join(30_000);
-            }
-
-            Assert.assertFalse("the invalidation publisher did not terminate", reasonPublisher.isAlive());
-            Assert.assertNull("the invalidation publisher failed", publisherFailure.get());
-            assertPendingReasonAndFullFacets(viewToken, state, "update operation");
-        });
+        assertConcurrentCasRetryScenario(false);
     }
 
     @Test
@@ -374,7 +315,6 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     @Test
     public void testDroppedViewFinalizeSkipsWakeWhenCloseRaces() throws Exception {
         assertMemoryLeak(() -> {
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
             final TableToken viewToken = new TableToken("dropped_view", "dropped_view~1", null, 1, true, false, false);
             // Isolates the isDropped clause that testDroppedViewLeavesDeferredInvalidationUntouched
             // cannot: that job-driven test always has tryCloseIfDropped win the just-freed latch and flip
@@ -394,25 +334,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     return false;
                 }
             };
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    invalidationWakeCount.incrementAndGet();
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), false, false, 0);
             try {
                 Assert.assertTrue(viewState.tryLock());
                 viewState.markAsPendingInvalidation("update operation");
                 viewState.markAsDropped();
                 MatViewRefreshJob.finalizeAndUnlock(engine, countingStore, viewToken, viewState, false);
 
-                Assert.assertEquals("finalize must not wake the marker for a dropped view", 0, invalidationWakeCount.get());
+                Assert.assertEquals("finalize must not wake the marker for a dropped view", 0, countingStore.invalidateEnqueues.get());
                 Assert.assertTrue("the marker dies with the dropped state, never consumed", viewState.isPendingInvalidation());
             } finally {
                 if (viewState.isLocked()) {
@@ -443,26 +372,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // isClosed/isInvalid); {@link #testDroppedViewFinalizeSkipsWakeWhenCloseRaces()} pins that
             // clause in isolation with a synthetic state modeling the race where tryCloseIfDropped loses
             // the latch and isClosed() stays false.
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    invalidationWakeCount.incrementAndGet();
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 0);
             final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
                 job.setOnHoldingLockForTesting(() -> {
@@ -488,7 +398,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertEquals("update operation", state.getPendingInvalidationReason());
             Assert.assertEquals(
                     "finalize must not wake the marker for a dropped view (the isDropped gate)",
-                    0, invalidationWakeCount.get()
+                    0, countingStore.invalidateEnqueues.get()
             );
 
             // The view is gone; the stranded marker died with the state and nothing re-enqueued for it.
@@ -512,27 +422,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = fixture.state();
 
             final AtomicBoolean hasFailedEnqueue = new AtomicBoolean();
-            final MatViewStateStore failOnceStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    if (hasFailedEnqueue.compareAndSet(false, true)) {
-                        throw new OutOfMemoryError("test queue growth failure");
-                    }
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final MatViewStateStore failOnceStore = new FailOnceStateStore(
+                    engine.getMatViewStateStore(), FailOnceStateStore.FAIL_INVALIDATE, "test queue growth failure"
+            );
 
             Assert.assertTrue(state.tryLock());
             try {
@@ -542,6 +434,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     Assert.fail("expected the fail-once queue wrapper to throw");
                 } catch (OutOfMemoryError expected) {
                     Assert.assertEquals("test queue growth failure", expected.getMessage());
+                    hasFailedEnqueue.set(true);
                 }
                 Assert.assertFalse("the holder must release the view latch before publication", state.isLocked());
             } finally {
@@ -573,31 +466,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             final TableToken viewToken = fixture.viewToken();
-            final MatViewStateStoreImpl stateStore = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewStateStoreImpl stateStore =
+                    (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
             final MatViewState state = fixture.state();
 
             final AtomicBoolean hasFailedEnqueue = new AtomicBoolean();
-            final MatViewStateStore failOnceStore = new ForwardingMatViewStateStore(stateStore) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    if (hasFailedEnqueue.compareAndSet(false, true)) {
-                        throw new OutOfMemoryError("test initial queue growth failure");
-                    }
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final MatViewStateStore failOnceStore = new FailOnceStateStore(
+                    stateStore, FailOnceStateStore.FAIL_INVALIDATE, "test initial queue growth failure"
+            );
 
             Assert.assertTrue(state.tryLock());
             try {
@@ -607,6 +483,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     Assert.fail("expected the fail-once queue wrapper to throw");
                 } catch (OutOfMemoryError expected) {
                     Assert.assertEquals("test initial queue growth failure", expected.getMessage());
+                    hasFailedEnqueue.set(true);
                 }
             } finally {
                 if (state.isLocked()) {
@@ -655,26 +532,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // the compile error. finalize then sees the view already invalid and must return early: the
             // counting store must observe zero invalidation wakes, proving no re-enqueued INVALIDATE
             // overwrote the fail reason, and the marker must survive untouched.
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    invalidationWakeCount.incrementAndGet();
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 0);
             final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
                 job.setOnHoldingLockForTesting(() -> {
@@ -701,7 +559,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertEquals("update operation", state.getPendingInvalidationReason());
             Assert.assertEquals(
                     "finalize must not wake the marker while the view is invalid (the isInvalid gate)",
-                    0, invalidationWakeCount.get()
+                    0, countingStore.invalidateEnqueues.get()
             );
 
             // The view carries the refresh-failure reason; the deferred "update operation" never minted.
@@ -1469,15 +1327,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // throw; finalizeAndUnlock0's catch must retain the owner and arm the allocation-free retry
             // signal so the next ordinary job tick redelivers it.
             final AtomicBoolean hasFailedEnqueue = new AtomicBoolean();
-            final MatViewStateStore failOnceStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
-                    if (hasFailedEnqueue.compareAndSet(false, true)) {
-                        throw new OutOfMemoryError("test full retry queue growth failure");
-                    }
-                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
-                }
-            };
+            final MatViewStateStore failOnceStore = new FailOnceStateStore(
+                    engine.getMatViewStateStore(), FailOnceStateStore.FAIL_FULL_REFRESH, "test full retry queue growth failure"
+            );
 
             Assert.assertTrue(state.tryLock());
             try {
@@ -1492,6 +1344,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             Assert.fail("expected the fail-once owner-wake queue wrapper to throw");
                         } catch (OutOfMemoryError expected) {
                             Assert.assertEquals("test full retry queue growth failure", expected.getMessage());
+                            hasFailedEnqueue.set(true);
                         }
 
                         Assert.assertTrue("the test must exercise the injected queue failure", hasFailedEnqueue.get());
@@ -2088,7 +1941,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final MatViewState state = fixture.state();
 
-            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewStateStoreImpl store =
+                    (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
             // Arm a claimable retry exactly as a failed finalize wake leaves it: a reason marker plus
             // the invalidation retry bit.
             Assert.assertTrue(state.tryLock());
@@ -2587,37 +2441,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // keep: no growth (each dequeue enqueues at most one task; the per-facet counters stay at
             // their expected exact values) and full recovery (once the refusal clears, whichever facet
             // runs next succeeds and the drain converges with both facets delivered).
-            final AtomicInteger fullWakeCount = new AtomicInteger();
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
-                    if (fullWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding full refresh loop detected");
-                    }
-                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
-                }
-
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    if (invalidationWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding invalidation loop detected");
-                    }
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 10);
 
             walRefusalToken.set(viewToken);
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
@@ -2639,9 +2463,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainMatViewQueue(job);
 
                 Assert.assertEquals("each refused FULL pass must wake the invalidation exactly once",
-                        2, invalidationWakeCount.get());
+                        2, countingStore.invalidateEnqueues.get());
                 Assert.assertEquals("each refused INVALIDATE pass and the final mint must wake the owner exactly once",
-                        2, fullWakeCount.get());
+                        2, countingStore.fullRefreshEnqueues.get());
             } finally {
                 walRefusalToken.set(null);
             }
@@ -2674,16 +2498,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // drain loop the owner-carrying task it just refused, and together they mint two tasks per
             // refused pass (unbounded queue growth; the drain never converges). The counting store and
             // the dequeue seam bound a regression deterministically instead of hanging the test.
-            final AtomicInteger fullWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
-                    if (fullWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding full refresh loop detected");
-                    }
-                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 10);
 
             walRefusalToken.set(viewToken);
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
@@ -2696,7 +2511,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
                 drainMatViewQueue(job);
 
-                Assert.assertEquals("the refused holder must not wake its own owner", 0, fullWakeCount.get());
+                Assert.assertEquals("the refused holder must not wake its own owner", 0, countingStore.fullRefreshEnqueues.get());
                 Assert.assertTrue("the refused full refresh must be deferred (owner pending)", state.isPendingInvalidation());
                 Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
                 Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
@@ -2737,16 +2552,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // The commit-fence face of the same refusal: the writer acquire succeeds, the refusal lands
             // inside the pump (rethrowReadOnlyRefusal re-throws it to the outer catch), and the deferral
             // must take the same no-requeue path as the acquire face.
-            final AtomicInteger fullWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
-                    if (fullWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding full refresh loop detected");
-                    }
-                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 10);
 
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
                 final AtomicInteger dequeueCount = new AtomicInteger();
@@ -2762,7 +2568,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
                 drainMatViewQueue(job);
 
-                Assert.assertEquals("the refused holder must not wake its own owner", 0, fullWakeCount.get());
+                Assert.assertEquals("the refused holder must not wake its own owner", 0, countingStore.fullRefreshEnqueues.get());
                 Assert.assertTrue("the refused full refresh must be deferred (owner pending)", state.isPendingInvalidation());
                 Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
                 Assert.assertFalse("a mid-pump refusal must not mark the view invalid", state.isInvalid());
@@ -2796,35 +2602,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // that the very next drain pass feeds back into the same refused acquire forever. The counting
             // store bounds that spin: with the self-feed present, every pass re-enqueues the INVALIDATE it
             // just dequeued and the counter trips within the first few iterations instead of hanging the test.
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    if (invalidationWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding invalidation loop detected");
-                    }
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 10);
 
             walRefusalToken.set(viewToken);
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
                 engine.getMatViewStateStore().enqueueInvalidate(viewToken, "sticky refusal witness");
                 drainMatViewQueue(job);
 
-                Assert.assertEquals("the refused holder must not wake its own marker", 0, invalidationWakeCount.get());
+                Assert.assertEquals("the refused holder must not wake its own marker", 0, countingStore.invalidateEnqueues.get());
                 Assert.assertTrue("the refused invalidation must be deferred (pending)", state.isPendingInvalidation());
                 Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
 
@@ -2905,28 +2690,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // must wake it (identity mismatch) -- suppression is strictly for the holder's own refused
             // marker. The wake re-delivers, the retry publishes its own marker, refuses, matches identity,
             // and stops: exactly one wake, no self-feed.
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    if (invalidationWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding invalidation loop detected");
-                    }
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 10);
 
             walRefusalToken.set(viewToken);
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
@@ -2942,7 +2706,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainMatViewQueue(job);
 
                 Assert.assertEquals("the concurrent publication must be woken exactly once",
-                        1, invalidationWakeCount.get());
+                        1, countingStore.invalidateEnqueues.get());
                 Assert.assertTrue("the refused invalidation must be deferred (pending)", state.isPendingInvalidation());
                 Assert.assertEquals("the retained marker must carry the concurrent publication's reason",
                         "concurrent publication", state.getPendingInvalidationReason());
@@ -3036,16 +2800,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // identity mismatch and must wake it -- suppression is strictly for the holder's own refused
             // owner. The woken retry publishes nothing new, refuses, matches identity, and stops:
             // exactly one wake, no self-feed.
-            final AtomicInteger fullWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
-                    if (fullWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding full refresh loop detected");
-                    }
-                    super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 10);
 
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
                 final AtomicBoolean hasPublishedNewerOwner = new AtomicBoolean();
@@ -3062,7 +2817,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainMatViewQueue(job);
 
                 Assert.assertTrue("the test must publish a newer owner mid-hold", hasPublishedNewerOwner.get());
-                Assert.assertEquals("the newer owner must be woken exactly once", 1, fullWakeCount.get());
+                Assert.assertEquals("the newer owner must be woken exactly once", 1, countingStore.fullRefreshEnqueues.get());
                 Assert.assertTrue("the refused full refresh must stay deferred (owner pending)", state.isPendingInvalidation());
                 Assert.assertNull("the deferral must be owner-only (no invalidation reason)", state.getPendingInvalidationReason());
                 Assert.assertFalse("a writer refusal must not mark the view invalid", state.isInvalid());
@@ -3161,6 +2916,69 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
                             price_1h\tbase_price\tinvalid\tupdate operation
                             """);
+        });
+    }
+
+    private void assertConcurrentCasRetryScenario(boolean isFullOwnerPublishedInBackground) throws Exception {
+        // merged body; the flag selects which facet publishes from the background thread
+        // and which marker-read seam parks it
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createUnseededAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final String backgroundRole = isFullOwnerPublishedInBackground ? "full-refresh" : "invalidation";
+
+            final CountDownLatch hasReadEmptyMarker = new CountDownLatch(1);
+            final CountDownLatch resumeBackgroundPublisher = new CountDownLatch(1);
+            final AtomicReference<Throwable> publisherFailure = new AtomicReference<>();
+            final Runnable onMarkerRead = () -> {
+                hasReadEmptyMarker.countDown();
+                try {
+                    if (!resumeBackgroundPublisher.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting to resume the " + backgroundRole + " publisher");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            };
+            if (isFullOwnerPublishedInBackground) {
+                state.setOnPendingFullRefreshMarkerReadForTesting(onMarkerRead);
+            } else {
+                state.setOnPendingInvalidationMarkerReadForTesting(onMarkerRead);
+            }
+
+            final Thread backgroundPublisher = new Thread(() -> {
+                try {
+                    if (isFullOwnerPublishedInBackground) {
+                        state.markAsPendingFullRefreshForTesting();
+                    } else {
+                        state.markAsPendingInvalidation("update operation");
+                    }
+                } catch (Throwable th) {
+                    publisherFailure.set(th);
+                }
+            }, backgroundRole + "-publisher");
+            backgroundPublisher.start();
+            try {
+                Assert.assertTrue(
+                        "the " + backgroundRole + " publisher must pause after reading the empty marker",
+                        hasReadEmptyMarker.await(30, TimeUnit.SECONDS)
+                );
+                if (isFullOwnerPublishedInBackground) {
+                    state.markAsPendingInvalidation("update operation");
+                } else {
+                    state.markAsPendingFullRefreshForTesting();
+                }
+            } finally {
+                resumeBackgroundPublisher.countDown();
+                backgroundPublisher.join(30_000);
+            }
+
+            Assert.assertFalse("the " + backgroundRole + " publisher did not terminate", backgroundPublisher.isAlive());
+            Assert.assertNull("the " + backgroundRole + " publisher failed", publisherFailure.get());
+            assertPendingReasonAndFullFacets(viewToken, state, "update operation");
         });
     }
 
@@ -3274,6 +3092,173 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
         Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
         return new MatViewFixture(viewToken, state);
+    }
+
+    /**
+     * Counts facet enqueues and optionally trips on unbounded re-enqueue. A facet with its
+     * isDelegating* flag false is a count-only sink: the call is counted and dropped.
+     * maxEnqueuesPerFacet <= 0 disables the bound.
+     */
+    private static final class CountingStateStore extends ForwardingMatViewStateStore {
+        final AtomicInteger fullRefreshEnqueues = new AtomicInteger();
+        final AtomicInteger invalidateEnqueues = new AtomicInteger();
+        private final boolean isDelegatingFullRefresh;
+        private final boolean isDelegatingInvalidate;
+        private final int maxEnqueuesPerFacet;
+
+        CountingStateStore(
+                MatViewStateStore delegate,
+                boolean isDelegatingInvalidate,
+                boolean isDelegatingFullRefresh,
+                int maxEnqueuesPerFacet
+        ) {
+            super(delegate);
+            this.isDelegatingInvalidate = isDelegatingInvalidate;
+            this.isDelegatingFullRefresh = isDelegatingFullRefresh;
+            this.maxEnqueuesPerFacet = maxEnqueuesPerFacet;
+        }
+
+        @Override
+        public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
+            checkBound(fullRefreshEnqueues.incrementAndGet(), "FULL");
+            if (isDelegatingFullRefresh) {
+                super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+            }
+        }
+
+        @Override
+        public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
+            checkBound(invalidateEnqueues.incrementAndGet(), "INVALIDATE");
+            if (isDelegatingInvalidate) {
+                super.enqueueInvalidate(matViewToken, invalidationReason);
+            }
+        }
+
+        @Override
+        public void enqueueInvalidate(
+                TableToken matViewToken,
+                String invalidationReason,
+                @Nullable TableToken invalidationBaseTableToken,
+                long invalidationBaseTxn,
+                boolean isInvalidationForced
+        ) {
+            checkBound(invalidateEnqueues.incrementAndGet(), "INVALIDATE");
+            if (isDelegatingInvalidate) {
+                super.enqueueInvalidate(
+                        matViewToken, invalidationReason, invalidationBaseTableToken, invalidationBaseTxn, isInvalidationForced
+                );
+            }
+        }
+
+        private void checkBound(int count, String facet) {
+            if (maxEnqueuesPerFacet > 0 && count > maxEnqueuesPerFacet) {
+                Assert.fail("unbounded " + facet + " re-enqueue: " + count);
+            }
+        }
+    }
+
+    /**
+     * Throws a one-shot OutOfMemoryError from the selected facet's enqueue, then passes through.
+     */
+    private static final class FailOnceStateStore extends ForwardingMatViewStateStore {
+        static final int FAIL_FULL_REFRESH = 1;
+        static final int FAIL_INVALIDATE = 0;
+
+        private final int failingFacet;
+        private final AtomicBoolean hasFired = new AtomicBoolean();
+        private final String message;
+
+        FailOnceStateStore(MatViewStateStore delegate, int failingFacet, String message) {
+            super(delegate);
+            this.failingFacet = failingFacet;
+            this.message = message;
+        }
+
+        @Override
+        public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
+            if (failingFacet == FAIL_FULL_REFRESH && hasFired.compareAndSet(false, true)) {
+                throw new OutOfMemoryError(message);
+            }
+            super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+        }
+
+        @Override
+        public void enqueueInvalidate(
+                TableToken matViewToken,
+                String invalidationReason,
+                @Nullable TableToken invalidationBaseTableToken,
+                long invalidationBaseTxn,
+                boolean isInvalidationForced
+        ) {
+            if (failingFacet == FAIL_INVALIDATE && hasFired.compareAndSet(false, true)) {
+                throw new OutOfMemoryError(message);
+            }
+            super.enqueueInvalidate(
+                    matViewToken, invalidationReason, invalidationBaseTableToken, invalidationBaseTxn, isInvalidationForced
+            );
+        }
+    }
+
+    /**
+     * Permanently wraps the engine-installed store. Pass-through unless a static hook is armed.
+     * The armed overrides MODEL the impl-level failure contract of {@code MatViewStateStoreImpl}
+     * (record the per-facet retry flag, then throw) because the store's task queue is private:
+     * a genuine queue-growth failure cannot be injected through the engine seam. The real
+     * flag-on-throw catches live in enqueueInvalidate0, the owner overload of enqueueFullRefresh,
+     * and reenqueueRefreshTask.
+     * {@code reenqueuePendingOnResume} models the same flag-recording contract with two independent
+     * live reads of the current marker rather than a single atomic snapshot, since the store's own
+     * snapshot accessors are package-private to {@code io.questdb.cairo.mv}; the hook only ever fires
+     * synchronously inside a test-driven RESUME WAL flow, so the theoretical read-tear is inert here.
+     */
+    private static final class InstrumentedStateStore extends ForwardingMatViewStateStore {
+        private final MatViewStateStore delegate;
+
+        InstrumentedStateStore(MatViewStateStore delegate) {
+            super(delegate);
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
+            engineFullRefreshEnqueues.incrementAndGet();
+            super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+        }
+
+        @Override
+        public void reenqueuePendingOnResume(TableToken matViewToken) {
+            if (isResumeRedeliveryFailureArmed.compareAndSet(true, false)) {
+                final MatViewState state = delegate.getViewState(matViewToken);
+                if (state != null) {
+                    if (state.getPendingInvalidationReason() != null) {
+                        delegate.requestPendingInvalidationReenqueue(state);
+                    }
+                    if (state.hasPendingFullRefreshOwnerForTesting()) {
+                        delegate.requestPendingFullRefreshReenqueue(state);
+                    }
+                }
+                throw new OutOfMemoryError("test resume redelivery failure");
+            }
+            super.reenqueuePendingOnResume(matViewToken);
+        }
+
+        @Override
+        public void reenqueueRefreshTask(MatViewRefreshTask task) {
+            if (isPutBackFailureArmed.compareAndSet(true, false)) {
+                if (task.matViewToken != null) {
+                    final MatViewState state = delegate.getViewState(task.matViewToken);
+                    if (state != null) {
+                        if (task.operation == MatViewRefreshTask.FULL_REFRESH && task.fullRefreshOwner != null) {
+                            delegate.requestPendingFullRefreshReenqueue(state);
+                        } else if (task.operation == MatViewRefreshTask.INVALIDATE) {
+                            delegate.requestPendingInvalidationReenqueue(state);
+                        }
+                    }
+                }
+                throw new OutOfMemoryError("test put-back enqueue failure");
+            }
+            super.reenqueueRefreshTask(task);
+        }
     }
 
     private record MatViewFixture(TableToken viewToken, MatViewState state) {

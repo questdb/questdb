@@ -583,6 +583,11 @@ public class MatViewState implements QuietCloseable {
     }
 
     @TestOnly
+    public Object getPendingFullRefreshOwnerForTesting() {
+        return getPendingFullRefreshOwner(pendingInvalidationMarker);
+    }
+
+    @TestOnly
     public TableToken getPendingInvalidationBaseTableTokenForTesting() {
         return getPendingInvalidationBaseTableToken(pendingInvalidationMarker);
     }
