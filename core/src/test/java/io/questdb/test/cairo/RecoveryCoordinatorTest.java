@@ -25,14 +25,22 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -348,6 +356,95 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        }
+    }
+
+    /**
+     * Finding C2 (invariant pin) — locks the {@code TxReader.unsafeLoadAll} SLOT-SELECTION property that
+     * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
+     * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
+     * (version - 1) when the latest is torn — never an older slot. So {@code unsafeReadVersion() -
+     * getVersion()} is exactly 0 on a clean load and exactly 1 on the torn-latest fallback. Together with the
+     * version word being durably floored at the epoch cut, that is WHY a single-lineage post-crash {@code
+     * _txn} can never load cleanly BELOW the epoch, so the recovery guard's SKIP is only ever the genuine
+     * multi-lineage / stale-epoch case (never a slot-selection artifact).
+     * <p>
+     * The recovery guard's clean-load branch (diff 0) is exercised end-to-end by
+     * {@link #testRecoverRestoresTxnToEpochCut} (proceed) and {@link #testRecoverSkipsEpochAheadOfRestoredTxn}
+     * (skip). This test pins the tolerated FALLBACK branch (diff 1) directly and deterministically, using the
+     * proven two-commit {@code TxWriter} torn-body pattern (A and B both hold a valid checksummed record), so
+     * a regression that narrowed the assert to "must be the latest" (which would wrongly reject the
+     * legitimate torn-latest fallback) or widened slot selection to return an older slot is caught here.
+     */
+    @Test
+    public void testUnsafeLoadAllReturnsLatestOrImmediatePredecessorSlot() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String tableName = "slotpin";
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            // Two commits (fixedRowCount 100 then 200) => the A and B areas each hold a valid, body-checksummed
+            // record, so the version-selected latest is 200 and its immediate predecessor is 100.
+            final TableModel model = new TableModel(engine.getConfiguration(), tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final int timestampType = TableUtils.getTimestampType(model);
+            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+            try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, engine.getConfiguration())) {
+                final TableToken tableToken = engine.verifyTableName(tableName);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                txWriter.updatePartitionSizeByTimestamp(0, 10);
+                txWriter.updatePartitionSizeByTimestamp(Micros.HOUR_MICROS, 11);
+                txWriter.setMaxTimestamp(Micros.HOUR_MICROS);
+                txWriter.reset(100L, txWriter.getTransientRowCount(), txWriter.getMaxTimestamp(), symbolCounts);
+                txWriter.reset(200L, txWriter.getTransientRowCount(), txWriter.getMaxTimestamp(), symbolCounts);
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            // (1) CLEAN load returns the version-selected (latest) slot -> diff 0.
+            final long latestBaseOffset;
+            try (Path path = new Path(); TxReader tx = new TxReader(ff)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                tx.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(tx.unsafeLoadAll());
+                Assert.assertEquals("clean load must return the latest committed record", 200L, tx.getFixedRowCount());
+                Assert.assertEquals("clean load must return the version-selected (latest) slot: diff 0",
+                        0L, tx.unsafeReadVersion() - tx.getVersion());
+                latestBaseOffset = tx.getBaseOffset();
+            }
+
+            // Tear ONLY the latest slot's fixedRowCount, leaving its checksum stale (positional write, no
+            // truncation) — the realistic torn-latest post-crash cut; the predecessor slot stays intact.
+            pokeLongTxn(ff, tableToken, latestBaseOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0xdead_beefL);
+
+            // (2) TORN-LATEST load falls back to the IMMEDIATE predecessor -> diff EXACTLY 1, returning the
+            // prior (100) record — never an older slot.
+            try (Path path = new Path(); TxReader tx = new TxReader(ff)) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                tx.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue("torn-latest _txn must load via the A/B predecessor fallback", tx.unsafeLoadAll());
+                Assert.assertEquals("fallback must return the prior (predecessor) record", 100L, tx.getFixedRowCount());
+                Assert.assertEquals("torn-latest fallback must return the IMMEDIATE predecessor: diff 1",
+                        1L, tx.unsafeReadVersion() - tx.getVersion());
+            }
+        });
+    }
+
+    /** Positional 8-byte write of a table's {@code _txn} — corrupts a committed record WITHOUT truncating. */
+    private void pokeLongTxn(FilesFacade ff, TableToken tt, long offset, long value) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME).$();
+            final long fd = ff.openRW(p.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putLong(buf, value);
+                Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, offset));
+                ff.fsync(fd);
+            } finally {
+                Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
         }
     }
 

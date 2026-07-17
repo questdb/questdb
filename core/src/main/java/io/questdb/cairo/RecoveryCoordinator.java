@@ -375,7 +375,57 @@ public class RecoveryCoordinator {
             tablePath(scratch, token).concat(TableUtils.TXN_FILE_NAME);
             liveTxn = new TxReader(ff);
             liveTxn.ofRO(scratch.$(), timestampType, partitionBy);
-            return liveTxn.unsafeLoadAll() && liveTxn.getSeqTxn() < epochSeqTxn;
+            if (!liveTxn.unsafeLoadAll()) {
+                // Torn / short / garbage live _txn = the genuine post-crash case this mechanism exists to
+                // repair -> NOT "ahead" -> allow the roll-forward.
+                return false;
+            }
+
+            // INVARIANT PIN (review Finding C2). The return-true SKIP below is only SOUND because, on a
+            // SINGLE lineage, a CLEAN unsafeLoadAll() can never report a seqTxn BELOW the durable epoch.
+            // That rests on a SLOT-SELECTION property of TxReader which we pin here so a future A/B refactor
+            // cannot silently turn a genuine post-crash cut into a wrongful skip:
+            //
+            //   unsafeLoadAll() returns the record from the VERSION-WORD-selected (latest) A/B slot, and
+            //   ONLY when that latest slot is torn does it fall back to its IMMEDIATE predecessor
+            //   (version - 1). It never returns an older slot. So the loaded record's version (getVersion(),
+            //   == its stored txn) is either the on-disk version word (clean latest) or exactly one below it
+            //   (torn-latest fallback): versionWord - getVersion() in {0, 1}.
+            //
+            // Why that yields loadedSeqTxn >= epochSeqTxn on ONE lineage:
+            //   - The version word is MONOTONE and durably floored at V_E: fsyncMaterializedState() fsync'd
+            //     the live _txn at version=V_E / seqTxn=epochSeqTxn BEFORE copying it to _txn.epoch, and lazy
+            //     apply only advances the word afterwards, so the post-crash word is >= V_E.
+            //   - The predecessor (version - 1) is reached only when the latest is torn, and the latest can
+            //     be torn only when the word > V_E (at word == V_E the latest slot IS the durable, un-torn
+            //     epoch record — a torn latest implies a strictly-later write overwrote/advanced it), so
+            //     version - 1 >= V_E there too.
+            //   - seqTxn is monotone with version within a lineage, hence loadedSeqTxn >= epochSeqTxn.
+            // A clean load BELOW the epoch is therefore NEVER a slot-selection artifact — it is the genuine
+            // multi-lineage / stale-epoch case (a restore/PITR rewound the live _txn beneath a leftover,
+            // higher-lineage epoch), which is exactly what the return-true SKIP handles.
+            //
+            // Why NOT a blanket `assert loadedSeqTxn >= epochSeqTxn`: that WRONG form would fire on the
+            // legitimate multi-lineage skip this method exists to detect (there loadedSeqTxn < epochSeqTxn by
+            // design). The invariant is single-lineage-scoped; we can soundly pin only the lineage-INDEPENDENT
+            // slot-selection property (latest, or its immediate predecessor), which holds equally in the
+            // multi-lineage case (a restored _txn is self-consistent and loads its own latest slot). At
+            // recovery there is no concurrent writer, so the on-disk version word is stable and this is
+            // race-free.
+            final long loadedVersion = liveTxn.getVersion();
+            final long versionWord = liveTxn.unsafeReadVersion();
+            assert versionWord - loadedVersion >= 0 && versionWord - loadedVersion <= 1
+                    : "TxReader A/B slot-selection regression under adaptive recovery: unsafeLoadAll must "
+                    + "return the version-selected (latest) _txn slot, or its immediate predecessor when the "
+                    + "latest is torn — never an older slot [table=" + token.getTableName()
+                    + ", loadedVersion=" + loadedVersion + ", versionWord=" + versionWord + ']';
+
+            return liveTxn.getSeqTxn() < epochSeqTxn;
+        } catch (AssertionError ae) {
+            // The invariant pin above must stay LOUD — never fail-open. A slot-selection regression is a real
+            // bug, not the torn-_txn condition the broad catch below deliberately tolerates, so re-throw it
+            // (otherwise the catch (Throwable) would swallow it into a silent "not ahead").
+            throw ae;
         } catch (Throwable e) {
             // Torn / unreadable live _txn = the genuine post-crash case -> NOT "ahead" -> allow recovery.
             return false;
