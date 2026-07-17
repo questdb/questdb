@@ -47,67 +47,71 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
     // by key. This pins the contract: a value seen only through getSymbol consumes no
     // symbol key, so the first value routed through getInt is assigned key 0.
     @Test
-    public void testGetSymbolIsPassThroughAndConsumesNoSymbolKey() {
-        final FeedFunction arg = new FeedFunction();
-        final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
-        try {
+    public void testGetSymbolIsPassThroughAndConsumesNoSymbolKey() throws Exception {
+        // The dictionary allocates native memory even without a query tracker, so wrap the body
+        // in assertMemoryLeak: a missing free in releaseDictionary() must surface here too, not
+        // only in the tracker-bound sibling tests.
+        assertMemoryLeak(() -> {
+            final FeedFunction arg = new FeedFunction();
+            final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
+            try {
+                // getSymbol reads the A-slot and getSymbolB the B-slot; both pass their argument
+                // through verbatim without touching the dictionary. Distinct A/B feed values prove
+                // getSymbolB reads getStrB, not getStrA.
+                arg.valueA = "a_via_getSymbol";
+                arg.valueB = "b_via_getSymbolB";
+                Assert.assertEquals("a_via_getSymbol", func.getSymbol(null));
+                Assert.assertEquals("b_via_getSymbolB", func.getSymbolB(null));
+                arg.valueA = null;
+                Assert.assertNull(func.getSymbol(null));
 
-            // getSymbol reads the A-slot and getSymbolB the B-slot; both pass their argument
-            // through verbatim without touching the dictionary. Distinct A/B feed values prove
-            // getSymbolB reads getStrB, not getStrA.
-            arg.valueA = "a_via_getSymbol";
-            arg.valueB = "b_via_getSymbolB";
-            Assert.assertEquals("a_via_getSymbol", func.getSymbol(null));
-            Assert.assertEquals("b_via_getSymbolB", func.getSymbolB(null));
-            arg.valueA = null;
-            Assert.assertNull(func.getSymbol(null));
+                // Those getSymbol calls must have consumed no symbol keys, so the first value
+                // routed through getInt is assigned key 0.
+                arg.valueA = "seen_via_getInt";
+                Assert.assertEquals(0, func.getInt(null));
+                arg.valueA = "second_via_getInt";
+                Assert.assertEquals(1, func.getInt(null));
+                final SymbolTable symbolTableView = func.newSymbolTable();
 
-            // Those getSymbol calls must have consumed no symbol keys, so the first value
-            // routed through getInt is assigned key 0.
-            arg.valueA = "seen_via_getInt";
-            Assert.assertEquals(0, func.getInt(null));
-            arg.valueA = "second_via_getInt";
-            Assert.assertEquals(1, func.getInt(null));
-            final SymbolTable symbolTableView = func.newSymbolTable();
+                // Exercise directory and text-arena growth, then verify that every key still
+                // resolves after several rehashes/reallocations. A separately requested symbol
+                // table view must follow the live dictionary without owning a native copy.
+                for (int i = 2; i < 100; i++) {
+                    arg.valueA = "value_" + i;
+                    Assert.assertEquals(i, func.getInt(null));
+                }
+                TestUtils.assertEquals("seen_via_getInt", func.valueOf(0));
+                TestUtils.assertEquals("second_via_getInt", func.valueBOf(1));
+                TestUtils.assertEquals("seen_via_getInt", symbolTableView.valueOf(0));
+                TestUtils.assertEquals("second_via_getInt", symbolTableView.valueBOf(1));
+                for (int i = 2; i < 100; i++) {
+                    Assert.assertEquals("value_" + i, func.valueOf(i).toString());
+                }
+                arg.valueA = "seen_via_getInt";
+                Assert.assertEquals(0, func.getInt(null));
 
-            // Exercise directory and text-arena growth, then verify that every key still
-            // resolves after several rehashes/reallocations. A separately requested symbol
-            // table view must follow the live dictionary without owning a native copy.
-            for (int i = 2; i < 100; i++) {
-                arg.valueA = "value_" + i;
-                Assert.assertEquals(i, func.getInt(null));
+                // Empty text has a header but no UTF-16 payload. Keep it after multiple rehashes
+                // to pin the cached-hash/length/text offsets for this boundary case.
+                arg.valueA = "";
+                Assert.assertEquals(100, func.getInt(null));
+                Assert.assertEquals("", func.valueOf(100).toString());
+                Assert.assertEquals("", symbolTableView.valueOf(100).toString());
+                Assert.assertEquals(100, func.getInt(null));
+
+                // NULL maps to the null sentinel and resolves back to null.
+                arg.valueA = null;
+                Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));
+                Assert.assertNull(func.valueOf(SymbolTable.VALUE_IS_NULL));
+
+                // A cached factory may outlive the cursor. Closing the cursor must drop the
+                // dictionary, so the next use starts from key 0 even before another init call.
+                func.cursorClosed();
+                arg.valueA = "after_cursor_close";
+                Assert.assertEquals(0, func.getInt(null));
+            } finally {
+                func.close();
             }
-            TestUtils.assertEquals("seen_via_getInt", func.valueOf(0));
-            TestUtils.assertEquals("second_via_getInt", func.valueBOf(1));
-            TestUtils.assertEquals("seen_via_getInt", symbolTableView.valueOf(0));
-            TestUtils.assertEquals("second_via_getInt", symbolTableView.valueBOf(1));
-            for (int i = 2; i < 100; i++) {
-                Assert.assertEquals("value_" + i, func.valueOf(i).toString());
-            }
-            arg.valueA = "seen_via_getInt";
-            Assert.assertEquals(0, func.getInt(null));
-
-            // Empty text has a header but no UTF-16 payload. Keep it after multiple rehashes
-            // to pin the cached-hash/length/text offsets for this boundary case.
-            arg.valueA = "";
-            Assert.assertEquals(100, func.getInt(null));
-            Assert.assertEquals("", func.valueOf(100).toString());
-            Assert.assertEquals("", symbolTableView.valueOf(100).toString());
-            Assert.assertEquals(100, func.getInt(null));
-
-            // NULL maps to the null sentinel and resolves back to null.
-            arg.valueA = null;
-            Assert.assertEquals(SymbolTable.VALUE_IS_NULL, func.getInt(null));
-            Assert.assertNull(func.valueOf(SymbolTable.VALUE_IS_NULL));
-
-            // A cached factory may outlive the cursor. Closing the cursor must drop the
-            // dictionary, so the next use starts from key 0 even before another init call.
-            func.cursorClosed();
-            arg.valueA = "after_cursor_close";
-            Assert.assertEquals(0, func.getInt(null));
-        } finally {
-            func.close();
-        }
+        });
     }
 
     @Test
