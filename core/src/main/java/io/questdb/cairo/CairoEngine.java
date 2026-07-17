@@ -1297,6 +1297,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // classifier re-derives dedup state each cycle from live metadata, because
         // base dedup config is mutable via ALTER ... DEDUP ENABLE/DISABLE.
         final int basePartitionBy;
+        final String baseTimestampName;
         final int baseTimestampType;
         final long viewLowerBoundTimestamp;
         try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
@@ -1310,6 +1311,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         "live view base table must have a designated timestamp");
             }
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
+            baseTimestampName = Chars.toString(baseMetadata.getColumnName(tsIndex));
         }
         // viewLowerBoundTimestamp is the resolved START FROM boundary, and it is the view's
         // whole membership rule: a base row belongs to the view iff its designated timestamp
@@ -1386,6 +1388,7 @@ public class CairoEngine implements Closeable, WriterSource {
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 final PageFrameRecordCursorFactory pfrcf = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+                validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
 
                 // Capture each base-column name the SELECT projects. Resolving
                 // against the base table here also catches the rare case of an LV
@@ -3754,6 +3757,53 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view select must read from the declared base table");
         }
         return pfrcf;
+    }
+
+    /**
+     * Rejects a view whose output designated timestamp is not the base table's designated
+     * timestamp. A SELECT can name its own with a {@code TIMESTAMP(col)} clause on the FROM
+     * ({@code SELECT ts2, ... FROM base TIMESTAMP(ts2)}), and nothing else turns that shape
+     * away: it keeps the plain pass-through projection every shape check above looks for.
+     * <p>
+     * The refresh job compares two timestamps that only such a view can put in different
+     * column spaces. Its O3 detection tests a base commit's minimum timestamp - which
+     * {@code WalTxnDetails} reports in the BASE's designated-timestamp space - against
+     * {@code latestSeenTs}, which the row loop stamps from the OUTPUT row's designated
+     * timestamp ({@code outRecord.getTimestamp(cursorTimestampIndex)}). Across two different
+     * columns the compare is meaningless: a commit that arrives late in the output space
+     * still reads as forward progress, so nothing diverts it to the O3 replay and its rows
+     * append straight into the un-flushed lead.
+     * <p>
+     * That lands the in-memory tier's rows out of ascending timestamp order, which the tier
+     * relies on outright - {@code seamTs} takes the slot's first row as its minimum, and
+     * eviction binary-searches the timestamp column. A descending output timestamp makes
+     * {@code seamTs} report the slot's MAXIMUM, and the reader's seam split then serves every
+     * disk row below it from both tiers. Reject at CREATE: the alternative is a view that
+     * silently corrupts its own reads.
+     * <p>
+     * Comparing names is exact here. An alias or an expression in the projection fronts the
+     * scan with a {@code SelectedRecordCursorFactory} / {@code VirtualRecordCursorFactory},
+     * which {@link #validateLiveViewFactory} already rejects, so every projected column is a
+     * plain base column carrying its base name.
+     */
+    private static void validateLiveViewTimestamp(
+            RecordMetadata metadata,
+            String baseTimestampName,
+            int position
+    ) throws SqlException {
+        final int timestampIndex = metadata.getTimestampIndex();
+        // A view with no designated timestamp at all is a separate shape, and one the
+        // refresh job rejects on its own ("live view requires a designated timestamp").
+        // It cannot reach the ordering hole above: with no output timestamp there is no
+        // second column space to compare against.
+        if (timestampIndex < 0) {
+            return;
+        }
+        final CharSequence timestampName = metadata.getColumnName(timestampIndex);
+        if (!Chars.equalsIgnoreCase(timestampName, baseTimestampName)) {
+            throw SqlException.$(position, "live view select cannot override the designated timestamp; expected '")
+                    .put(baseTimestampName).put("', got '").put(timestampName).put('\'');
+        }
     }
 
     /**

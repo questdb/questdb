@@ -432,6 +432,51 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectOverriddenDesignatedTimestamp() throws Exception {
+        // A SELECT can name its own designated timestamp with a TIMESTAMP(col) clause on the
+        // FROM, and every other shape check passes it through: the projection stays a plain
+        // pass-through scan, so the tree is exactly the Window -> PageFrame shape the generic
+        // rejects look for. The view then puts the refresh job's two timestamps in different
+        // column spaces - O3 detection compares a commit's minimum in the BASE's ts space
+        // against latestSeenTs, stamped from the OUTPUT row's ts - so a commit that is late in
+        // the output space reads as forward progress, escapes diversion, and appends into the
+        // un-flushed lead. With ts2 descending against an ascending base ts the tier's rows
+        // then land in DESCENDING order, which makes seamTs (the slot's first row, taken as its
+        // minimum) report the slot's MAXIMUM and the reader's seam split serve every disk row
+        // below it from both tiers.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, ts2 TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            final String expected = "live view select cannot override the designated timestamp; expected 'ts', got 'ts2'";
+            // row_number() OVER () is the whole exploitable surface: it needs no ORDER BY, so it
+            // stays single-pass under the overridden timestamp. A window that orders by the base
+            // ts needs a sort once ts2 is designated, and the cached-window gate rejects it first
+            // - which is why this hole survived, reachable only through the one window shape that
+            // does not care about ordering.
+            assertLiveViewShapeRejected(
+                    "SELECT ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts2)", expected);
+            // An anonymous OVER (ORDER BY ts2) matches the overridden natural order, so it needs
+            // no sort either and reaches the same reject.
+            assertLiveViewShapeRejected(
+                    "SELECT ts2, x, row_number() OVER (ORDER BY ts2) AS rn FROM base TIMESTAMP(ts2)", expected);
+            // Projecting the base's ts alongside does not help: the OUTPUT designated timestamp
+            // is still ts2, and that is the column the refresh job stamps latestSeenTs from.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts2)", expected);
+
+            // Positive controls - the reject must not widen to a view that merely PROJECTS a
+            // second timestamp column, nor to one that names the base's own designated timestamp
+            // explicitly. Both leave the two spaces identical.
+            execute("CREATE LIVE VIEW lv_plain FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base");
+            execute("DROP LIVE VIEW lv_plain");
+            execute("CREATE LIVE VIEW lv_explicit FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts)");
+            execute("DROP LIVE VIEW lv_explicit");
+        });
+    }
+
+    @Test
     public void testRejectWildcardProjection() throws Exception {
         // A live view freezes its output schema at CREATE but persists the SELECT text verbatim and
         // recompiles it whenever the base metadata drifts. Under a wildcard the recompiled
