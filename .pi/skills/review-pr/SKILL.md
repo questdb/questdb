@@ -81,6 +81,8 @@ parent conversation. Give every review task:
 4. an explicit "review only — do not edit any files" constraint,
 5. the scope policy: pre-existing bugs found in visited code (changed files, callers, cross-context exposures) are in-scope findings — tag them **pre-existing**; never recommend deferring a fix to a follow-up PR, filing a ticket instead of fixing, or splitting this PR.
 
+**Do not pass `turnBudget` or `toolBudget` to any Step 3 or Step 3b subagent run.** Review completeness determines when an agent stops; an artificial turn or tool-call budget can truncate callsite analysis and invalidate the promised review level. A runtime `timeoutMs` is allowed to prevent a genuinely stuck process, but it is not a substitute for a turn or tool budget.
+
 Example shape for a parallel fanout (adapt the task list to the level):
 
 ```typescript
