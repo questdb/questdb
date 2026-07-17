@@ -24,8 +24,6 @@
 
 package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.sql.StatefulAtom;
-
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -35,10 +33,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public interface WorkStealingStrategy {
 
     WorkStealingStrategy of(AtomicInteger startedCounter);
-
-    default WorkStealingStrategy of(AtomicInteger startedCounter, StatefulAtom atom) {
-        return of(startedCounter);
-    }
 
     /**
      * Returns true if the query owner thread should spin instead of

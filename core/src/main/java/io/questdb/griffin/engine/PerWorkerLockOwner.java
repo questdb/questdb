@@ -22,31 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-public interface StatefulAtom extends QuietCloseable, Mutable {
-
-    @Override
-    default void clear() {
-    }
-
-    @Override
-    default void close() {
-    }
+/**
+ * Implemented by the atoms that guard per-worker state with {@link PerWorkerLocks}.
+ * <p>
+ * Nothing in production calls this: it exists so that a slot-leak test can reach the locks through
+ * one typed accessor instead of naming a private field in each atom. A reducer that loses its slot
+ * loses it permanently - the locks have no reset and the atom outlives the query that borrowed it -
+ * so the pool starves once every slot has leaked, which is the bug the tests behind this watch for.
+ */
+public interface PerWorkerLockOwner {
 
     /**
-     * Initializes state required for filtering, such as child atoms, symbol table sources,
-     * bind variable values, circuit breakers, etc.
-     *
-     * @param symbolTableSource symbol table source
-     * @param executionContext  execution context
-     * @throws SqlException when bind variable validation or any other kind of validation fails
+     * Returns the locks guarding this atom's per-worker state, or null when it guards none. An
+     * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter clones no
+     * per-worker filters and builds no locks, and so can neither take a slot nor leak one.
      */
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-    }
+    @TestOnly
+    @Nullable
+    PerWorkerLocks getPerWorkerLocks();
 }

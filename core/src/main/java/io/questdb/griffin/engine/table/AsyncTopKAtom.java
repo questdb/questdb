@@ -39,6 +39,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.EncodedTopKBuffer;
@@ -59,7 +60,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.CountDownLatch;
 
-public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
+public class AsyncTopKAtom implements StatefulAtom, PerWorkerLockOwner, Reopenable, Plannable {
     private final IntHashSet encodedSkipColumnIndexes;
     private final AsyncFilterContext filterCtx;
     private final boolean isEncoded;
@@ -73,7 +74,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final ObjList<LimitedSizeLongTreeChain> perWorkerChains;
     private final ObjList<RecordComparator> perWorkerComparators;
     private final ObjList<SortKeyEncoder> perWorkerEncoders;
-    private PerWorkerLocks perWorkerLocks;
+    private final PerWorkerLocks perWorkerLocks;
     private final ObjList<PageFrameMemoryRecord> perWorkerRecordsB;
     private final ObjList<EncodedTopKBuffer> perWorkerTopK;
     private final ObjList<DirectIntList> rankMaps;
@@ -206,12 +207,6 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         Misc.freeObjListAndKeepObjects(rankMaps);
         Misc.free(ownerChain);
@@ -236,12 +231,6 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         Misc.freeObjListAndKeepObjects(perWorkerEncoders);
         Misc.freeObjListAndKeepObjects(filterCtx.getPerWorkerMemoryPools());
         Misc.freeObjListAndKeepObjects(perWorkerRecordsB);
-    }
-
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
     }
 
     public RecordComparator getComparator(int slotId) {
@@ -299,17 +288,17 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return perWorkerChains;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     public PageFrameMemoryRecord getRecordB(int slotId) {
         if (slotId == -1) {
             return ownerRecordB;
         }
         return perWorkerRecordsB.getQuick(slotId);
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public IntHashSet getSortKeyColumnIndexes() {
@@ -390,12 +379,6 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         return isEncoded;
     }
 
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks.hasTestAcquireLatch();
-    }
-
     /**
      * Attempts to acquire a slot for the given worker thread.
      * On success, a {@link #release(int)} call must follow.
@@ -439,12 +422,6 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                 chain.reopen();
             }
         }
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     @Override

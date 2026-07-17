@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -51,7 +52,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Plannable {
+public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
@@ -61,6 +62,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     // updates are safe, see SelectivityStats.
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<Function> perWorkerFilters;
+    private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
@@ -69,7 +71,6 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
-    private PerWorkerLocks perWorkerLocks;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -99,12 +100,6 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks == null || perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
@@ -116,16 +111,6 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public void close() {
         final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
         CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    /**
-     * Returns -1 when the filter is thread-safe: the code generator then clones no per-worker
-     * filters, the atom builds no locks, and no reducer ever acquires a slot.
-     */
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks != null ? perWorkerLocks.getAcquiredSlotCount() : -1;
     }
 
     public Function getFilter(int filterId) {
@@ -148,17 +133,17 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return memoryTracker;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     public SelectivityStats getSelectivityStats(int slotId) {
         if (slotId == -1 || perWorkerSelectivityStats == null) {
             return ownerSelectivityStats;
         }
         return perWorkerSelectivityStats.getQuick(slotId);
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks != null ? perWorkerLocks.getSlotAcquireCount() : -1;
     }
 
     @Override
@@ -174,12 +159,6 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
                 executionContext.setCloneSymbolTables(current);
             }
         }
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks != null && perWorkerLocks.hasTestAcquireLatch();
     }
 
     /**
@@ -319,14 +298,6 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        if (perWorkerLocks != null) {
-            perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
-        }
-    }
-
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
         if (!isParquetFrame) {
             return false;
@@ -347,5 +318,4 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             sink.val(" [pre-touch]");
         }
     }
-
 }

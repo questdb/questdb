@@ -83,7 +83,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
-    private final WorkStealingStrategy workStealingStrategyBase;
+    private final WorkStealingStrategy workStealingStrategy;
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
@@ -106,7 +106,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
-    private WorkStealingStrategy workStealingStrategy;
 
     public UnorderedPageFrameSequence(
             CairoEngine engine,
@@ -121,8 +120,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.frameAddressCache = new PageFrameAddressCache();
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
-            this.workStealingStrategyBase = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
-            this.workStealingStrategy = workStealingStrategyBase;
+            this.workStealingStrategy = configuration.getFactoryProvider()
+                    .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
@@ -338,6 +337,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return frameCursor;
     }
 
+    /**
+     * Returns the strategy a post-aggregation phase should bind its own counter to. That is the
+     * unwrapped base, never the reduce-phase instance: a test-gated reduce strategy waits on a latch
+     * that only a reducer counts down, so a later phase binding it would park on a gate nothing can
+     * open. The two are the same object for every production query.
+     */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;
     }
@@ -374,7 +379,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
             doneLatch.reset();
             reduceStartedCounter.set(0);
-            workStealingStrategy = workStealingStrategyBase.of(reduceStartedCounter, atom);
+            workStealingStrategy.of(reduceStartedCounter);
             errorMsg.clear();
             errorMessagePosition = 0;
             errno = CairoException.NON_CRITICAL;

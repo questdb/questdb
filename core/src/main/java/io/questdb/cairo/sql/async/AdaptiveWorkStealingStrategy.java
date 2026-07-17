@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.Os;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,13 +47,6 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     public WorkStealingStrategy of(AtomicInteger startedCounter) {
         this.startedCounter = startedCounter;
         return this;
-    }
-
-    @Override
-    public WorkStealingStrategy of(AtomicInteger startedCounter, StatefulAtom atom) {
-        return atom.isTestSlotAcquireWaitEnabled()
-                ? new TestAdaptiveWorkStealingStrategy(noStealingThreshold, spinTimeoutNanos, atom).of(startedCounter)
-                : of(startedCounter);
     }
 
     @Override
@@ -82,31 +74,5 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
             }
         } while (System.nanoTime() < deadline);
         return true;
-    }
-
-    private static class TestAdaptiveWorkStealingStrategy extends AdaptiveWorkStealingStrategy {
-        private final StatefulAtom atom;
-
-        private TestAdaptiveWorkStealingStrategy(
-                int noStealingThreshold,
-                long spinTimeoutNanos,
-                StatefulAtom atom
-        ) {
-            super(noStealingThreshold, spinTimeoutNanos);
-            this.atom = atom;
-        }
-
-        @Override
-        public boolean shouldSteal(int finishedCount) {
-            // This wait is the coordination the latch-gated tests are built on, not a check on one:
-            // it holds the owner off until a worker has taken a slot. An assert would carry it only
-            // under -ea and drop it everywhere else, taking the tests' precondition with it. Only
-            // of() builds this class, and only once a test installs a latch, so production pays
-            // nothing for it.
-            if (!atom.awaitTestSlotAcquire()) {
-                throw new AssertionError("timed out waiting for a worker slot acquisition");
-            }
-            return super.shouldSteal(finishedCount);
-        }
     }
 }

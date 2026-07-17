@@ -37,6 +37,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -75,6 +76,11 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        // Selecting the adaptive strategy is necessary but not sufficient: its owner spins for only
+        // 50us before stealing, which a worker often fails to wake up inside, so the acquire the
+        // leak assertions rest on would still ride on the timing of the box. This gate makes the
+        // owner wait for it instead.
+        factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
         // The join reducers navigate to the master frame while holding a slot, so they leak the
         // same way; over a parquet master that navigation is what breaches the limit.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");

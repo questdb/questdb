@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -72,7 +73,7 @@ import java.util.concurrent.CountDownLatch;
  * 3. Per-worker ASOF join maps for symbol -> rowId mappings (when keyed join)
  * 4. Filter resources (compiled and Java filters)
  */
-public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     protected final long bwdScanAbsoluteThreshold;
     protected final long bwdScanMinGap;
     protected final long bwdScanSwitchFactor;
@@ -103,7 +104,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
-    protected PerWorkerLocks perWorkerLocks;
+    protected final PerWorkerLocks perWorkerLocks;
     protected final ObjList<RecordSink> perWorkerMasterAsOfJoinMapSinks;
     protected final ObjList<RecordSink> perWorkerSlaveAsOfJoinMapSinks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
@@ -286,12 +287,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         // Clear group by functions
         Misc.clearObjList(ownerGroupByFunctions);
@@ -385,12 +380,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
-    }
-
     public Map getAsOfJoinMap(int slotId) {
         if (slotId == -1) {
             return ownerAsOfJoinMap;
@@ -468,6 +457,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return ownerGroupByFunctions;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     public RecordSink getSlaveAsOfJoinMapSink(int slotId) {
         if (slotId == -1) {
             return ownerSlaveAsOfJoinMapSink;
@@ -483,12 +478,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerSlaveTimeFrameHelper;
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks.getSlotAcquireCount();
     }
 
     @Override
@@ -568,12 +557,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     }
 
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks.hasTestAcquireLatch();
-    }
-
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             return -1;
@@ -613,12 +596,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 }
             }
         }
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     public void toTop() {

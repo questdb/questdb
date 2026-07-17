@@ -50,44 +50,42 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * stride the acquire walks: a count that read consecutive ints instead of one per cache-line-padded
  * slot would report 1 for the two slots held below.
  * <p>
+ * The acquire latch is the other half of that oracle, and is pinned here for the same reason: it is
+ * how those leak tests tell a slot that was taken and returned from one that was never taken, since
+ * both leave zero slots held.
+ * <p>
  * Narrow unit test: PerWorkerLocks allocates no native memory, so it needs no assertMemoryLeak.
  */
 public class PerWorkerLocksTest extends AbstractCairoTest {
 
     @Test
-    public void testAcquireCountOnlyGrows() {
-        // The companion oracle: unlike the held-slot count, this tally survives the release, which is
-        // what lets a leak test tell "took a slot and gave it back" apart from "never took one".
-        // The two answers come from different state - the slot's own 0/1 flag for held, a separate
-        // tally for the count - so releasing must move the first without rewinding the second.
-        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4)
-                .withTestAcquireLatch(new CountDownLatch(0));
-        Assert.assertEquals(0, locks.getSlotAcquireCount());
+    public void testAcquireCountsDownTestLatch() {
+        // The companion oracle: unlike the held-slot count, the latch survives the release, which is
+        // what lets a leak test tell "took a slot and gave it back" apart from "never took one" -
+        // both report zero held slots at the end.
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
 
-        final int first = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        Assert.assertEquals(1, locks.getSlotAcquireCount());
-        final int second = locks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        Assert.assertEquals(2, locks.getSlotAcquireCount());
-
-        locks.releaseSlot(first);
-        locks.releaseSlot(second);
-        Assert.assertEquals(0, locks.getAcquiredSlotCount());
-        Assert.assertEquals(2, locks.getSlotAcquireCount());
-
-        // Re-acquiring the same slot keeps counting.
+        // Production shape: no latch installed, so acquire has nothing to count down.
         locks.releaseSlot(locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-        Assert.assertEquals(3, locks.getSlotAcquireCount());
-        Assert.assertEquals(0, locks.getAcquiredSlotCount());
-    }
 
-    @Test
-    public void testAcquireCountStaysDisabledWithoutTestHook() {
-        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 2);
+        final CountDownLatch acquired = new CountDownLatch(1);
+        locks.setTestAcquireLatch(acquired);
+        Assert.assertEquals(1, acquired.getCount());
 
         final int slot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        locks.releaseSlot(slot);
+        Assert.assertEquals(0, acquired.getCount());
 
-        Assert.assertEquals(0, locks.getSlotAcquireCount());
+        locks.releaseSlot(slot);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+        Assert.assertEquals(0, acquired.getCount());
+
+        // Removing the latch has to stop the count down, or one execution's acquire would answer
+        // for the latch the next execution installed.
+        final CountDownLatch stale = new CountDownLatch(1);
+        locks.setTestAcquireLatch(stale);
+        locks.setTestAcquireLatch(null);
+        locks.releaseSlot(locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+        Assert.assertEquals(1, stale.getCount());
     }
 
     @Test
@@ -191,8 +189,11 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         final int threads = 8;
         final int slots = 3;
         final int rounds = 2_000;
-        final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots)
-                .withTestAcquireLatch(new CountDownLatch(0));
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots);
+        // Counts every acquire the run is expected to make, so a lost CAS or a double count shows
+        // up as a latch that never reached zero (or went past it).
+        final CountDownLatch allAcquired = new CountDownLatch(threads * rounds);
+        locks.setTestAcquireLatch(allAcquired);
         final AtomicIntegerArray owners = new AtomicIntegerArray(slots);
         final AtomicInteger exclusionBreaches = new AtomicInteger();
         final CyclicBarrier start = new CyclicBarrier(threads);
@@ -250,10 +251,9 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
                 throw new AssertionError("thread failed", errors.peek());
             }
             Assert.assertEquals("two threads held the same slot", 0, exclusionBreaches.get());
-            // Every acquire was released, and every one of them was counted: a lost CAS or a
-            // double-counted acquire would show up here.
+            // Every acquire was released, and every one of them counted the latch down.
             Assert.assertEquals(0, locks.getAcquiredSlotCount());
-            Assert.assertEquals((long) threads * rounds, locks.getSlotAcquireCount());
+            Assert.assertEquals("acquires went uncounted", 0, allAcquired.getCount());
         } finally {
             for (int i = 0; i < threads; i++) {
                 circuitBreakers[i].cancel();
@@ -275,35 +275,6 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         Assert.assertEquals(1, locks.getAcquiredSlotCount());
         locks.releaseSlot(slot);
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
-    }
-
-    @Test
-    public void testTestHookSelectsInstrumentedLocks() {
-        final PerWorkerLocks normalLocks = new PerWorkerLocks(configuration, 2);
-        Assert.assertEquals(PerWorkerLocks.class, normalLocks.getClass());
-        Assert.assertFalse(normalLocks.hasTestAcquireLatch());
-        for (java.lang.reflect.Field field : PerWorkerLocks.class.getDeclaredFields()) {
-            Assert.assertNotEquals(CountDownLatch.class, field.getType());
-        }
-
-        final int heldSlot = normalLocks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        final CountDownLatch acquired = new CountDownLatch(1);
-        final PerWorkerLocks testLocks = normalLocks.withTestAcquireLatch(acquired);
-        Assert.assertNotEquals(PerWorkerLocks.class, testLocks.getClass());
-        Assert.assertTrue(testLocks.hasTestAcquireLatch());
-        Assert.assertEquals(1, testLocks.getAcquiredSlotCount());
-        testLocks.releaseSlot(heldSlot);
-
-        testLocks.releaseSlot(testLocks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-        Assert.assertEquals(0, acquired.getCount());
-        Assert.assertEquals(1, testLocks.getSlotAcquireCount());
-
-        final PerWorkerLocks restoredLocks = testLocks.withTestAcquireLatch(null);
-        Assert.assertEquals(PerWorkerLocks.class, restoredLocks.getClass());
-        Assert.assertFalse(restoredLocks.hasTestAcquireLatch());
-        Assert.assertEquals(0, restoredLocks.getSlotAcquireCount());
-        restoredLocks.releaseSlot(restoredLocks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-        Assert.assertEquals(0, restoredLocks.getSlotAcquireCount());
     }
 
     @Test

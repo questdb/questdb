@@ -31,12 +31,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerArray;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Used to synchronize access to list-like collections used by worker threads.
@@ -50,6 +50,10 @@ public class PerWorkerLocks {
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
     private final int workerCount;
+    // Test-only: null in production, in which case acquireSlot() reads it once per frame and skips
+    // the count down. Volatile so that a reducer on any thread sees the latch a test installs on the
+    // owner thread, which is what lets an atom keep a final reference to its locks.
+    private volatile CountDownLatch testAcquireLatch;
 
     public PerWorkerLocks(@NotNull CairoConfiguration configuration, int workerCount) {
         // Every parallel operator that builds locks is gated on sharedQueryWorkerCount > 0
@@ -62,12 +66,6 @@ public class PerWorkerLocks {
         );
         this.workerCount = workerCount;
         locks = new AtomicIntegerArray(INTS_PER_SLOT * workerCount);
-    }
-
-    private PerWorkerLocks(PerWorkerLocks locks) {
-        this.locks = locks.locks;
-        this.rnd = locks.rnd;
-        this.workerCount = locks.workerCount;
     }
 
     /**
@@ -83,10 +81,8 @@ public class PerWorkerLocks {
      */
     public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
         // A shared pool has more workers than an atom has slots, so the incoming worker id can be
-        // >= workerCount. Folding it up front hoists the wrap out of the probe: the loop then only
-        // needs a conditional subtraction, because i + workerId stays under 2 * workerCount. That
-        // bound is also what keeps the sum from overflowing to a negative slot index.
-        // Wrapping inside the loop instead is correct for every id a caller can actually pass.
+        // >= workerCount. Folding it up front keeps i + workerId under 2 * workerCount, so the probe
+        // needs only a conditional subtraction, and the sum cannot overflow to a negative slot index.
         workerId = workerId == -1
                 ? rnd.nextInt(workerCount)
                 : workerId >= workerCount ? workerId % workerCount : workerId;
@@ -97,6 +93,7 @@ public class PerWorkerLocks {
                     id -= workerCount;
                 }
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+                    countDownTestAcquireLatch();
                     return id;
                 }
             }
@@ -118,17 +115,13 @@ public class PerWorkerLocks {
                     id -= workerCount;
                 }
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+                    countDownTestAcquireLatch();
                     return id;
                 }
             }
             Os.pause();
         }
         throw CairoException.nonCritical().put("query aborted").setInterruption(true);
-    }
-
-    @TestOnly
-    public boolean awaitTestAcquire() {
-        return true;
     }
 
     /**
@@ -149,22 +142,12 @@ public class PerWorkerLocks {
     }
 
     /**
-     * Returns how many times a slot has been acquired since this instance was created. Unlike
-     * {@link #getAcquiredSlotCount()} this tally never goes down, so it tells a run where every
-     * worker released what it took from a run where no worker took a slot at all - both hold zero
-     * at the end.
-     * <p>
-     * Only {@link #withTestAcquireLatch(CountDownLatch)}'s instance counts; acquireSlot() keeps no
-     * tally, so the tally costs production reducers nothing and this base always reports zero.
+     * Returns the latch a test installed, or null - which is every production query. A test-supplied
+     * work stealing strategy reads it to decide whether to hold the owner thread off.
      */
     @TestOnly
-    public long getSlotAcquireCount() {
-        return 0;
-    }
-
-    @TestOnly
-    public boolean hasTestAcquireLatch() {
-        return false;
+    public @Nullable CountDownLatch getTestAcquireLatch() {
+        return testAcquireLatch;
     }
 
     public void releaseSlot(int slot) {
@@ -173,61 +156,20 @@ public class PerWorkerLocks {
         }
     }
 
+    /**
+     * Installs the latch a worker counts down once it has taken a slot, or removes it when given
+     * null. A leak test needs it because a slot that was taken and returned and a slot that was
+     * never taken both report zero held slots; only the latch tells them apart.
+     */
     @TestOnly
-    public PerWorkerLocks withTestAcquireLatch(CountDownLatch latch) {
-        return latch != null ? new TestPerWorkerLocks(this, latch) : this;
+    public void setTestAcquireLatch(@Nullable CountDownLatch latch) {
+        testAcquireLatch = latch;
     }
 
-    private static class TestPerWorkerLocks extends PerWorkerLocks {
-        private final PerWorkerLocks normalLocks;
-        private final AtomicLong slotAcquireCount = new AtomicLong();
-        private final CountDownLatch testAcquireLatch;
-
-        private TestPerWorkerLocks(PerWorkerLocks locks, CountDownLatch testAcquireLatch) {
-            super(locks);
-            this.normalLocks = locks instanceof TestPerWorkerLocks testLocks ? testLocks.normalLocks : locks;
-            this.testAcquireLatch = testAcquireLatch;
-        }
-
-        @Override
-        public int acquireSlot(int workerId, SqlExecutionCircuitBreaker sqlCircuitBreaker) {
-            final int slot = super.acquireSlot(workerId, sqlCircuitBreaker);
-            slotAcquireCount.incrementAndGet();
-            testAcquireLatch.countDown();
-            return slot;
-        }
-
-        @Override
-        public int acquireSlot(int carrierId, ExecutionCircuitBreaker circuitBreaker) {
-            final int slot = super.acquireSlot(carrierId, circuitBreaker);
-            slotAcquireCount.incrementAndGet();
-            testAcquireLatch.countDown();
-            return slot;
-        }
-
-        @Override
-        public boolean awaitTestAcquire() {
-            try {
-                return testAcquireLatch.await(30, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
-        }
-
-        @Override
-        public long getSlotAcquireCount() {
-            return slotAcquireCount.get();
-        }
-
-        @Override
-        public boolean hasTestAcquireLatch() {
-            return true;
-        }
-
-        @Override
-        public PerWorkerLocks withTestAcquireLatch(CountDownLatch latch) {
-            return latch != null ? new TestPerWorkerLocks(normalLocks, latch) : normalLocks;
+    private void countDownTestAcquireLatch() {
+        final CountDownLatch latch = testAcquireLatch;
+        if (latch != null) {
+            latch.countDown();
         }
     }
 }

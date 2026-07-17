@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -93,6 +94,11 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // acquire. Dropping the threshold to 1 selects the adaptive strategy - the owner steals only
         // after it has spun - which keeps the acquire off the timing of the box.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        // Selecting the adaptive strategy is necessary but not sufficient: its owner spins for only
+        // 50us before stealing, which a worker often fails to wake up inside, so the acquire the
+        // leak assertions rest on would still ride on the timing of the box. This gate makes the
+        // owner wait for it instead.
+        factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
         // The filtering reducers populate the frame while already holding a slot, and only over a
         // parquet master does that populate charge the per-query tracker, so
         // testWindowJoinReleasesWorkerSlotsOnBreach runs those eight over a converted partition too.

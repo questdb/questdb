@@ -41,6 +41,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -73,7 +74,7 @@ import java.util.concurrent.CountDownLatch;
 
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
-public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable {
+public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reopenable, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int INITIAL_LIST_CAPACITY = 16;
     // kept public for tests
@@ -121,7 +122,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     private final ObjList<FlyweightMapValue> perWorkerGroupByValues;
     private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
-    private PerWorkerLocks perWorkerLocks;
+    private final PerWorkerLocks perWorkerLocks;
     private final ObjList<GroupByLongList> perWorkerLongLists;
     private final ObjList<Function> perWorkerMasterFilters;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
@@ -354,12 +355,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         Misc.free(ownerSlaveTimeFrameCursor);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
@@ -449,12 +444,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
     }
 
     public ObjList<Function> getBindVarFunctions() {
@@ -573,6 +562,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return ownerGroupByValue;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     public SelectivityStats getSelectivityStats(int slotId) {
         if (slotId == -1) {
             return ownerSelectivityStats;
@@ -589,12 +584,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     public long getSlaveTsScale() {
         return slaveTsScale;
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public @Nullable TimestampDriver getTimestampDriver() {
@@ -748,12 +737,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return skipAggregation;
     }
 
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks.hasTestAcquireLatch();
-    }
-
     public boolean isVectorized() {
         return vectorized;
     }
@@ -802,12 +785,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     public void setSkipAggregation(boolean skipAggregation) {
         this.skipAggregation = skipAggregation;
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {

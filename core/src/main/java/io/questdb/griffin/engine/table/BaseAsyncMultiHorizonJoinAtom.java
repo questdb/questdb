@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -72,7 +73,7 @@ import java.util.concurrent.CountDownLatch;
  * 4. Per-worker x per-slave RecordSinks (RecordSink instances have mutable state and must not be shared)
  * 5. Filter resources (compiled and Java filters, shared across slaves)
  */
-public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     protected final long bwdScanAbsoluteThreshold;
     protected final long bwdScanMinGap;
     protected final long bwdScanSwitchFactor;
@@ -102,7 +103,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
-    protected PerWorkerLocks perWorkerLocks;
+    protected final PerWorkerLocks perWorkerLocks;
     protected final ObjList<ObjList<RecordSink>> perWorkerMasterAsOfJoinSinks;
     protected final ObjList<ObjList<RecordSink>> perWorkerSlaveAsOfJoinSinks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
@@ -344,12 +345,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         // Clear group by functions
         Misc.clearObjList(ownerGroupByFunctions);
@@ -443,12 +438,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
-    }
-
     public Map getAsOfJoinMap(int slotId, int slaveIndex) {
         if (slotId == -1) {
             return ownerAsOfJoinMaps.getQuick(slaveIndex);
@@ -536,6 +525,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         return ownerGroupByFunctions;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     public RecordSink getSlaveAsOfJoinMapSink(int slotId, int slaveIndex) {
         if (slotId == -1) {
             return ownerSlaveAsOfJoinSinks.getQuick(slaveIndex);
@@ -555,12 +550,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             return ownerSlaveTimeFrameHelpers.getQuick(slaveIndex);
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId * slaveCount + slaveIndex);
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public MultiHorizonJoinSymbolTableSource getSymbolTableSource() {
@@ -656,12 +645,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         }
     }
 
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks.hasTestAcquireLatch();
-    }
-
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             return -1;
@@ -706,12 +689,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 }
             }
         }
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     public void toTop() {

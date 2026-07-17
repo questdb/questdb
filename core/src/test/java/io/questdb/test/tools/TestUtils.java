@@ -66,6 +66,8 @@ import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -902,14 +904,11 @@ public final class TestUtils {
      * @param context what is being asserted, for the failure message
      */
     public static void assertNoSlotLeak(RecordCursorFactory factory, CharSequence context) {
-        final StatefulAtom atom = findAtom(factory, context);
-        final int slots = atom.getAcquiredSlotCount();
-        Assert.assertTrue(
-                atom.getClass().getSimpleName() + " holds no per-worker locks, so this query cannot"
-                        + " exercise the slot-leak path: " + context,
-                slots >= 0
+        Assert.assertEquals(
+                "worker slot leaked: " + context,
+                0,
+                findPerWorkerLocks(factory, context).getAcquiredSlotCount()
         );
-        Assert.assertEquals("worker slot leaked: " + context, 0, slots);
     }
 
     /**
@@ -923,14 +922,13 @@ public final class TestUtils {
             String query
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
-            final StatefulAtom atom = findAtom(factory, query);
+            final PerWorkerLocks locks = findPerWorkerLocks(factory, query);
             for (int i = 0; i < 2; i++) {
-                // The tally lives on the locks the latch installs, so it starts at zero for every
-                // execution: any acquisition below is this execution's. An atom that guards no
-                // per-worker state reports -1 and fails the assertion, which is what stops a plan
-                // that quietly stopped cloning per-worker state from passing here.
+                // A fresh latch per execution, so the acquisition it records is this execution's.
+                // An atom that owns no locks never reaches here, which is what stops a plan that
+                // quietly stopped cloning per-worker state from passing.
                 final CountDownLatch acquired = new CountDownLatch(1);
-                atom.setTestSlotAcquireLatch(acquired);
+                locks.setTestAcquireLatch(acquired);
                 try {
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
                         //noinspection StatementWithEmptyBody
@@ -943,12 +941,18 @@ public final class TestUtils {
                         assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                     }
                     assertNoSlotLeak(factory, query);
-                    Assert.assertTrue(
+                    // The latch is the tally: a worker counts it down as it takes a slot, so a
+                    // latch still standing means no worker ever entered the path under test and the
+                    // zero above would be zero for the wrong reason. It also catches a pool trimmed
+                    // below the work-stealing threshold, where the owner reduces every frame itself
+                    // and no worker ever gets a chance to take a slot.
+                    Assert.assertEquals(
                             "no worker acquired a slot for: " + query,
-                            atom.getSlotAcquireCount() > 0
+                            0,
+                            acquired.getCount()
                     );
                 } finally {
-                    atom.setTestSlotAcquireLatch(null);
+                    locks.setTestAcquireLatch(null);
                 }
             }
         }
@@ -1683,6 +1687,27 @@ public final class TestUtils {
                 atom
         );
         return atom;
+    }
+
+    /**
+     * Returns the per-worker locks of the first atom in the factory tree, failing when the atom
+     * guards no per-worker state. An atom that holds no locks can neither take a slot nor leak one,
+     * so asserting slot balance against it would pass for the wrong reason.
+     */
+    public static PerWorkerLocks findPerWorkerLocks(RecordCursorFactory factory, CharSequence context) {
+        final StatefulAtom atom = findAtom(factory, context);
+        Assert.assertTrue(
+                atom.getClass().getSimpleName() + " owns no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                atom instanceof PerWorkerLockOwner
+        );
+        final PerWorkerLocks locks = ((PerWorkerLockOwner) atom).getPerWorkerLocks();
+        Assert.assertNotNull(
+                atom.getClass().getSimpleName() + " built no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                locks
+        );
+        return locks;
     }
 
     @NotNull

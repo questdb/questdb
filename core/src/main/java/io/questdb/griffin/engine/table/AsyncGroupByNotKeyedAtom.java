@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -60,7 +61,7 @@ import java.io.Closeable;
 import java.util.concurrent.CountDownLatch;
 
 
-public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     // Sentinel for batch-ineligible functions.
     static final int BATCH_NOT_ELIGIBLE = Integer.MIN_VALUE;
     // Sentinel for batch-eligible no-arg functions (e.g. count(*)).
@@ -75,7 +76,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
-    private PerWorkerLocks perWorkerLocks;
+    private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
@@ -169,12 +170,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         ownerFunctionUpdater.updateEmpty(ownerMapValue);
         ownerMapValue.setNew(true);
@@ -234,12 +229,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
-    }
-
     public int[] getBatchColumnIndexes() {
         return batchColumnIndexes;
     }
@@ -278,15 +267,15 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return ownerMapValue;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public ObjList<SimpleMapValue> getPerWorkerMapValues() {
         return perWorkerMapValues;
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public boolean hasNonBatchFunctions() {
@@ -323,12 +312,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
     }
 
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks.hasTestAcquireLatch();
-    }
-
     /**
      * Attempts to acquire a slot for the given worker thread.
      * On success, a {@link #release(int)} call must follow.
@@ -363,12 +346,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 allocator.reopen();
             }
         }
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     @Override

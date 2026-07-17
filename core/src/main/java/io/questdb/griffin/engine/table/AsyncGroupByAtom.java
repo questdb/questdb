@@ -42,6 +42,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -69,7 +70,7 @@ import java.io.Closeable;
 import java.util.concurrent.CountDownLatch;
 
 
-public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     private final int batchSize;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
@@ -83,7 +84,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
-    private PerWorkerLocks perWorkerLocks;
+    private final PerWorkerLocks perWorkerLocks;
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
@@ -241,12 +242,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     @Override
-    @TestOnly
-    public boolean awaitTestSlotAcquire() {
-        return perWorkerLocks.awaitTestAcquire();
-    }
-
-    @Override
     public void clear() {
         shardingCtx.clear();
         Misc.clearObjList(ownerGroupByFunctions);
@@ -313,12 +308,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             }
         }
         return cleanupFailure;
-    }
-
-    @Override
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
     }
 
     public DirectLongList getBatchList(int slotId) {
@@ -408,6 +397,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return ownerLongTopKList;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     // thread-unsafe
     public ObjList<DirectLongLongSortedList> getPerWorkerLongTopKLists() {
         return perWorkerLongTopKLists;
@@ -415,12 +410,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public GroupByShardingContext getShardingContext() {
         return shardingCtx;
-    }
-
-    @Override
-    @TestOnly
-    public long getSlotAcquireCount() {
-        return perWorkerLocks.getSlotAcquireCount();
     }
 
     @Override
@@ -446,12 +435,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public boolean isSharded() {
         return shardingCtx.isSharded();
-    }
-
-    @Override
-    @TestOnly
-    public boolean isTestSlotAcquireWaitEnabled() {
-        return perWorkerLocks.hasTestAcquireLatch();
     }
 
     /**
@@ -499,12 +482,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             groupByFunctions.getQuick(i).resetStats();
         }
-    }
-
-    @Override
-    @TestOnly
-    public void setTestSlotAcquireLatch(CountDownLatch latch) {
-        perWorkerLocks = perWorkerLocks.withTestAcquireLatch(latch);
     }
 
     @Override
