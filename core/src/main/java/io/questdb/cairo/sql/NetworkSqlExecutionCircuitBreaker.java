@@ -321,10 +321,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return false;
     }
 
-    private void testTimeout() {
-        testTimeout(clock.getTicks());
-    }
-
     private void testTimeout(long now) {
         long runtime = now - powerUpTime;
         if (runtime > timeout) {
