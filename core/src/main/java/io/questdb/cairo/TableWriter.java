@@ -354,6 +354,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
     private ObjectStackPool<PostingSealPurgeTask> deferredPostingSealPurgeTaskPool;
     private String designatedTimestampColumnName;
+    // Per-(dimIndex, sourceSymbolKey) memoization of HASH/TRUNCATE ordinal resolution for
+    // composite tables (see resolveDimensionOrdinal(int, int, CharSequence)). Null until the
+    // first composite resolveDimensionOrdinal() call that actually needs it (never allocated for
+    // a plain table, and never populated for an IDENTITY dimension, which bypasses this memo
+    // entirely). Reset at the same commit/rollback boundaries as cellKeyMemo, as a safety net
+    // (see resetDimensionOrdinalMemo()) -- but that coarse reset is not the only cadence this
+    // memo needs: the CALLER owns resetting it per WAL-segment once sourceSymbolKey becomes a
+    // per-segment LOCAL key (see resetDimensionOrdinalMemo()'s javadoc).
+    private LongIntHashMap dimensionOrdinalMemo;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
     // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
@@ -2426,6 +2435,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return designatedTimestampColumnName;
     }
 
+    /**
+     * The number of distinct {@code (dimIndex, sourceSymbolKey)} pairs currently memoized by
+     * {@link #resolveDimensionOrdinal(int, int, CharSequence)} since the last reset (commit,
+     * rollback, or a caller-driven {@link #resetDimensionOrdinalMemo()}). Test-only introspection
+     * of {@link #dimensionOrdinalMemo}, mirroring {@link #getCellKeyMemoSize()}.
+     */
+    @TestOnly
+    public int getDimensionOrdinalMemoSize() {
+        return dimensionOrdinalMemo != null ? dimensionOrdinalMemo.size() : 0;
+    }
+
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -3304,6 +3324,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpColumnStructureVersion();
     }
 
+    /**
+     * Clears {@link #dimensionOrdinalMemo} (see {@link #resolveDimensionOrdinal(int, int,
+     * CharSequence)}). This task's own call sites reset it at the same commit/rollback boundaries
+     * as {@link #cellKeyMemo} (mirroring the private {@code resetCellKeyMemo()}), as a safety net
+     * for the same rollback-truncation reason. <b>That is not the only cadence this memo needs</b>:
+     * once a caller (Plan 4a Task 4) passes a per-WAL-segment LOCAL symbol key as {@code
+     * sourceSymbolKey}, the same local key value can denote a different string in the next
+     * segment, and a single commit/WAL-apply can span many segments -- so that caller MUST also
+     * call this method once per segment boundary, before resolving ordinals for a new segment's
+     * local keys. This method is deliberately public (unlike the private {@code
+     * resetCellKeyMemo()}) precisely so that finer-grained, caller-owned reset is possible; this
+     * task does not itself know when a WAL segment boundary occurs.
+     */
+    public void resetDimensionOrdinalMemo() {
+        if (dimensionOrdinalMemo != null) {
+            dimensionOrdinalMemo.clear();
+        }
+    }
+
     public void resetWalApplyCounters() {
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
@@ -3378,6 +3417,80 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getCompositeDictionaries().cellRegistry().internCell(dimOrdinals, dimCount);
     }
 
+    /**
+     * Resolves a single dimension's dense ordinal for a {@code HASH} or {@code TRUNCATE}
+     * dimension from a provided {@code (sourceSymbolKey, value)} pair, memoized per {@code
+     * (dimIndex, sourceSymbolKey)} so a repeated source symbol key is a plain hash-map lookup
+     * rather than a re-hash ({@code HASH}) or re-intern ({@code TRUNCATE}) of {@code value}. This
+     * is the counterpart to {@link #resolveCellKey(int[])}: that method turns a row's
+     * already-resolved per-dimension ordinals into a cellKey, whereas this method computes ONE
+     * dimension's ordinal in the first place, for the two dimension kinds that genuinely need a
+     * string ({@link CompositeDimensionTransform}).
+     * <p>
+     * {@code IDENTITY} is deliberately NOT this method's concern: for an IDENTITY dimension the
+     * ordinal simply IS {@code sourceSymbolKey} (the source SYMBOL column's own resolved key), so
+     * this method returns it directly -- no memo lookup, no dictionary call, {@code value} not
+     * even consulted. Plan 4a Task 4's real per-row O3 caller is expected to fill an IDENTITY
+     * dimension's ordinal straight from the column buffer without ever calling this method; the
+     * bypass here exists only so a caller invoking this method uniformly across all dimension
+     * kinds still gets the right answer instead of wasting a memo slot.
+     * <p>
+     * For {@code HASH}/{@code TRUNCATE} (and {@code EXPRESSION}, which throws), the transform
+     * itself is never reimplemented here: a memo miss delegates to {@link
+     * #internDimensionValue(int, CharSequence)}, which already dispatches on {@link
+     * PartitionDimension#getKind()} and computes {@code HASH}'s bucket ({@link
+     * CompositeDimensionTransform#hashBucket}) or {@code TRUNCATE}'s dedicated-dict ordinal
+     * ({@link CompositeDimensionTransform#truncatedPrefix} + dict {@code put}); {@code
+     * EXPRESSION} lands on {@code internDimensionValue}'s own {@code UnsupportedOperationException}
+     * (deferred to Plan 4e). This method's only added value is the memoization.
+     * <p>
+     * <b>Memo key and reset.</b> The memo key packs {@code (sourceSymbolKey, dimIndex)} losslessly
+     * into one {@code long} (both are full-range ints; mirrors {@code resolveCellKey}'s own
+     * packed-key precedent). {@link #dimensionOrdinalMemo} is reset at the same commit/rollback
+     * boundaries as {@link #cellKeyMemo} (see {@link #resetDimensionOrdinalMemo()}) purely as a
+     * safety net -- that coarse reset is <b>not</b> sufficient on its own for correctness once a
+     * caller passes a per-WAL-segment LOCAL symbol key as {@code sourceSymbolKey}: the same local
+     * key value can denote a different string in a different segment, and one commit/WAL-apply
+     * can span many segments. <b>The caller (Plan 4a Task 4) owns calling {@link
+     * #resetDimensionOrdinalMemo()} at the correct finer-grained cadence</b> (per segment, before
+     * resolving ordinals for a new segment's local keys) -- this method and its memo have no way
+     * to detect a segment boundary on their own.
+     * <p>
+     * Only ever meaningfully called for a composite table's HASH/TRUNCATE dimension; gating and
+     * allocation mirror {@link #resolveCellKey(int[])}: {@link #dimensionOrdinalMemo} is lazily
+     * allocated on first use, so a plain table -- which never calls this method -- incurs zero
+     * cost from it.
+     *
+     * @param dimIndex        the dimension index (see {@code PartitionSpec.getDimension(int)})
+     * @param sourceSymbolKey the source SYMBOL column's resolved key for this row (global or, for
+     *                        Task 4's O3-time usage, a per-segment local key -- see above); for an
+     *                        IDENTITY dimension this is returned as-is
+     * @param value           the dimension source column's decoded string value for this row;
+     *                        consulted only on a memo miss for HASH/TRUNCATE, never for IDENTITY
+     * @return the dense per-dimension ordinal, ready to feed into {@link #resolveCellKey(int[])}
+     */
+    public int resolveDimensionOrdinal(int dimIndex, int sourceSymbolKey, CharSequence value) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        if (dim.getKind() == PartitionDimension.KIND_IDENTITY) {
+            return sourceSymbolKey;
+        }
+
+        long memoKey = Numbers.encodeLowHighInts(sourceSymbolKey, dimIndex);
+        if (dimensionOrdinalMemo == null) {
+            dimensionOrdinalMemo = new LongIntHashMap();
+        } else {
+            int cached = dimensionOrdinalMemo.get(memoKey);
+            if (cached != LongIntHashMap.NO_ENTRY_VALUE) {
+                return cached;
+            }
+        }
+        // HASH -> hashBucket, TRUNCATE -> dedicated-dict put, EXPRESSION -> throws (Plan 4e) --
+        // internDimensionValue already dispatches correctly; nothing re-derived here.
+        int ordinal = internDimensionValue(dimIndex, value);
+        dimensionOrdinalMemo.put(memoKey, ordinal);
+        return ordinal;
+    }
+
     @Override
     public void rollback() {
         checkDistressed();
@@ -3399,6 +3512,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 resetCellKeyMemo();
+                resetDimensionOrdinalMemo();
                 columnVersionWriter.readUnsafe();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
@@ -5282,12 +5396,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void commitTxWriter() {
         txWriter.commit(denseSymbolMapWriters);
         resetCellKeyMemo();
+        resetDimensionOrdinalMemo();
         publishDeferredPostingSealPurges(txWriter.getTxn(), false);
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges() {
         txWriter.commit(denseSymbolMapWriters);
         resetCellKeyMemo();
+        resetDimensionOrdinalMemo();
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);

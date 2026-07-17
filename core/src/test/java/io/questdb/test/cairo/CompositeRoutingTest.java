@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CompositeDimensionTransform;
+import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.test.AbstractCairoTest;
@@ -185,6 +187,126 @@ public class CompositeRoutingTest extends AbstractCairoTest {
                 Assert.assertEquals("repeated 2-dim tuple must reuse the first cellKey", cellA, cellARepeat);
                 Assert.assertEquals(2, w.getCellKeyMemoSize());
                 Assert.assertEquals(2, w.getCompositeDictionaries().cellRegistry().size());
+            }
+        });
+    }
+
+    /**
+     * Task 2 (Plan 4a): {@link TableWriter#resolveDimensionOrdinal(int, int, CharSequence)} for a
+     * {@code HASH} dimension -- the counterpart to Task 1's {@code resolveCellKey}, this resolves
+     * ONE dimension's ordinal from a provided {@code (sourceSymbolKey, value)} pair (Task 4 will
+     * source both from the WAL-segment local symbol map at O3 time; this test drives the resolver
+     * directly, exactly mirroring how {@link #testResolveCellKeyIdentityMemoizedAndPersists()}
+     * drives {@code resolveCellKey} directly).
+     * <p>
+     * Buckets are found programmatically via {@link CompositeDimensionTransform#hashBucket} itself
+     * rather than hand-picked magic strings, so this test keeps discriminating even if the
+     * underlying hash function ever changes.
+     */
+    @Test
+    public void testResolveDimensionOrdinalHashDistinctAndColliding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table h (ts timestamp, exch symbol, x double) " +
+                    "timestamp(ts) partition by day, hash(exch, 4)");
+
+            try (TableWriter w = getWriter("h")) {
+                // dim0 = hash(exch, 4); exch is column index 1.
+                final int buckets = 4;
+                final String anchor = "SYM0";
+                final int anchorBucket = CompositeDimensionTransform.hashBucket(anchor, buckets);
+                String differentBucketValue = null;
+                String sameBucketValue = null;
+                for (int i = 1; i < 1000 && (differentBucketValue == null || sameBucketValue == null); i++) {
+                    String candidate = "SYM" + i;
+                    int bucket = CompositeDimensionTransform.hashBucket(candidate, buckets);
+                    if (bucket != anchorBucket && differentBucketValue == null) {
+                        differentBucketValue = candidate;
+                    } else if (bucket == anchorBucket && sameBucketValue == null) {
+                        sameBucketValue = candidate;
+                    }
+                }
+                Assert.assertNotNull("expected a SYM<i> with a different hash(.,4) bucket than SYM0 within 1000 tries", differentBucketValue);
+                Assert.assertNotNull("expected a SYM<i> with the same hash(.,4) bucket as SYM0 within 1000 tries", sameBucketValue);
+
+                int keyAnchor = w.getSymbolMapWriter(1).put(anchor);
+                int keyDifferent = w.getSymbolMapWriter(1).put(differentBucketValue);
+                int keySame = w.getSymbolMapWriter(1).put(sameBucketValue);
+
+                int ordinalAnchor = w.resolveDimensionOrdinal(0, keyAnchor, anchor);
+                int ordinalDifferent = w.resolveDimensionOrdinal(0, keyDifferent, differentBucketValue);
+                int ordinalSame = w.resolveDimensionOrdinal(0, keySame, sameBucketValue);
+
+                Assert.assertEquals(anchorBucket, ordinalAnchor);
+                Assert.assertNotEquals("differing hash(.,4) buckets must produce distinct ordinals",
+                        ordinalAnchor, ordinalDifferent);
+                Assert.assertEquals("colliding hash(.,4) buckets must produce the same ordinal",
+                        ordinalAnchor, ordinalSame);
+
+                // Memo proof: repeat keyAnchor but pass a DIFFERENT string (differentBucketValue,
+                // engineered above to hash to a DIFFERENT bucket) -- a real memo hit must ignore
+                // the new string entirely and return the first call's ordinal; if the transform
+                // were actually re-invoked, this would instead return ordinalDifferent's bucket.
+                int ordinalAnchorRepeat = w.resolveDimensionOrdinal(0, keyAnchor, differentBucketValue);
+                Assert.assertEquals("a repeated sourceSymbolKey must return the memoized ordinal " +
+                                "without recomputing the transform on the (different, ignored) string",
+                        ordinalAnchor, ordinalAnchorRepeat);
+
+                // Exactly 3 distinct (dimIndex, sourceSymbolKey) pairs were ever resolved -- the
+                // repeat call must not have added a 4th memo entry.
+                Assert.assertEquals(3, w.getDimensionOrdinalMemoSize());
+            }
+        });
+    }
+
+    /**
+     * Task 2 (Plan 4a): {@link TableWriter#resolveDimensionOrdinal(int, int, CharSequence)} for a
+     * {@code TRUNCATE} dimension. {@code "ABCDEF"}/{@code "ABCXYZ"} share the 3-char prefix
+     * {@code "ABC"} so must resolve to the same ordinal; {@code "XYZ"} must resolve to a distinct
+     * one. The memo proof uses a brand-new never-before-seen prefix ({@code "ZZZ"}) as the
+     * "poisoned" repeat value: if the memo did not short-circuit, this call would freshly intern
+     * "ZZZ" (growing the dedicated dictionary and returning a brand-new ordinal) instead of
+     * returning the first call's memoized ordinal untouched.
+     */
+    @Test
+    public void testResolveDimensionOrdinalTruncateSharedPrefixAndMemo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tc (ts timestamp, sku symbol, x double) " +
+                    "timestamp(ts) partition by day, truncate(sku, 3)");
+
+            try (TableWriter w = getWriter("tc")) {
+                // dim0 = truncate(sku, 3); sku is column index 1.
+                int keyAbcdef = w.getSymbolMapWriter(1).put("ABCDEF");
+                int keyAbcxyz = w.getSymbolMapWriter(1).put("ABCXYZ");
+                int keyXyz = w.getSymbolMapWriter(1).put("XYZ");
+
+                int ordinalAbcdef = w.resolveDimensionOrdinal(0, keyAbcdef, "ABCDEF");
+                int ordinalAbcxyz = w.resolveDimensionOrdinal(0, keyAbcxyz, "ABCXYZ");
+                Assert.assertEquals("ABCDEF/ABCXYZ share the 3-char prefix ABC -> same ordinal",
+                        ordinalAbcdef, ordinalAbcxyz);
+
+                int ordinalXyz = w.resolveDimensionOrdinal(0, keyXyz, "XYZ");
+                Assert.assertNotEquals("XYZ's prefix differs from ABC -> distinct ordinal",
+                        ordinalAbcdef, ordinalXyz);
+
+                MapWriter dedicatedDict = w.getCompositeDictionaries().dedicatedDictFor(0);
+                int dictSizeBeforeRepeat = dedicatedDict.getSymbolCount();
+                Assert.assertEquals("exactly 2 distinct prefixes (ABC, XYZ) interned so far",
+                        2, dictSizeBeforeRepeat);
+                Assert.assertEquals(3, w.getDimensionOrdinalMemoSize());
+
+                // Memo proof: repeat keyAbcdef's sourceSymbolKey with "ZZZ" -- a brand-new,
+                // never-before-seen prefix. A real memo hit ignores it and returns ordinalAbcdef
+                // untouched; a recompute would freshly intern "ZZZ", growing the dict to 3 and
+                // returning a new ordinal.
+                int ordinalAbcdefRepeat = w.resolveDimensionOrdinal(0, keyAbcdef, "ZZZ");
+                Assert.assertEquals("a repeated sourceSymbolKey must return the memoized ordinal, " +
+                                "ignoring a different (here, brand-new) string",
+                        ordinalAbcdef, ordinalAbcdefRepeat);
+                Assert.assertEquals("dedicated dictionary must not grow on a memoized repeat " +
+                                "even though the ignored string (\"ZZZ\") is a brand-new prefix",
+                        dictSizeBeforeRepeat, dedicatedDict.getSymbolCount());
+                Assert.assertEquals("repeat must not add a 4th memo entry",
+                        3, w.getDimensionOrdinalMemoSize());
             }
         });
     }
