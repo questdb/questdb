@@ -169,11 +169,58 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
 
             // 8. ADD COLUMN + DROP COLUMN, then force a column-purge cycle to completion, then re-query.
             execute("alter table c add column q double");
-            execute("alter table c drop column q");
-            engine.releaseInactive(); // release readers pinning the pre-drop column version
-            try (ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine)) {
-                columnPurgeJob.run();
-                columnPurgeJob.run(); // established idiom: 1st reschedules outstanding tasks, 2nd executes them
+            // Hold a reader open ACROSS the DROP COLUMN commit. TableWriter#finishColumnPurge only
+            // defers q's now-orphaned column files to the async purge queue (ColumnPurgeJob /
+            // ColumnPurgeOperator) when checkScoreboardHasReadersBeforeLastCommittedTxn() sees a
+            // reader pinned to an earlier txn; otherwise it deletes the files synchronously in-line
+            // and NOTHING is ever queued. Without this reader, the purge queue stays empty regardless
+            // of retry delay or clock, and the drive-to-completion below would be exercising an empty
+            // job -- mirrors every ColumnPurgeJobTest test's "open reader spanning the mutating DDL"
+            // idiom.
+            try (TableReader ignored = getReader("c")) {
+                execute("alter table c drop column q");
+            }
+            engine.releaseInactive(); // release the pinning reader above so the purge below can delete files
+
+            // Force the purge cycle to be deterministic AND self-verifying instead of assumed:
+            // production's default retry delay (10,000us) raced real wall-clock time between the two
+            // run() calls with no assertion on whether it ever actually fired. Mirror
+            // ColumnPurgeJobTest's idiom -- shrink the retry delay and step a frozen clock across
+            // run() calls -- then PROVE the purge drained via getOutstandingPurgeTasks() rather than
+            // assuming a fixed number of run() calls sufficed.
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+            setCurrentMicros(0);
+            try {
+                try (ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine)) {
+                    columnPurgeJob.run(); // enqueues q's purge task (deferred: nextRunTimestamp == now, not yet due)
+                    Assert.assertTrue(
+                            "DROP COLUMN must have queued an outstanding purge task for column q",
+                            columnPurgeJob.getOutstandingPurgeTasks() > 0);
+                    // Bump the clock past the configured retry-delay CAP (not just the initial delay)
+                    // each iteration: a failed purge attempt reschedules with an exponentially growing
+                    // delay (ColumnPurgeJob#calculateNextTimestamp), so a small fixed bump can fall
+                    // behind and waste guard iterations on "not yet due" no-ops instead of genuine
+                    // retries. Jumping past the cap guarantees every iteration is a real attempt.
+                    long clockStep = configuration.getColumnPurgeRetryDelayLimit() + 1;
+                    int guard = 0;
+                    while (columnPurgeJob.getOutstandingPurgeTasks() > 0 && guard++ < 20) {
+                        // Mirrors ColumnPurgeJobTest#runPurgeJob: release on EVERY iteration, not just
+                        // once before the loop -- a pooled reader can go through further internal
+                        // teardown as time is stepped, so a single upfront sweep is not always enough.
+                        engine.releaseInactive();
+                        setCurrentMicros(currentMicros + clockStep);
+                        columnPurgeJob.run();
+                    }
+                    // Self-verifying proof the purge genuinely completed -- i.e. ColumnPurgeOperator
+                    // actually opened and read the composite table's _txn -- rather than assuming the
+                    // loop above was enough.
+                    Assert.assertEquals(
+                            "column purge must have fully drained (ColumnPurgeOperator never ran otherwise)",
+                            0, columnPurgeJob.getOutstandingPurgeTasks());
+                }
+            } finally {
+                setCurrentMicros(-1);
+                setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             }
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
             // Explicit metadata proof DROP COLUMN completed (not just that ts/exchange/px are undisturbed):
@@ -314,6 +361,15 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
         // c must still be fully writable/queryable post-restore.
         execute("insert into c values ('2020-01-06T00:00:00.000000Z','A',6.0)");
         assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n11\n");
+
+        // Mirrors CheckpointTest#testCheckpointRestoreIndexNonPartitioned's own closing call (and its
+        // class-wide @After safety net "checkpoint release"): checkpointRecover() does NOT itself clear
+        // DatabaseCheckpointAgent's in-progress flag, only checkpointRelease() does. Without this, "in
+        // progress" stays true for the rest of this class's run (this class has no CheckpointTest-style
+        // @After net), and ColumnPurgeOperator#purge0 unconditionally defers/refuses every purge while a
+        // checkpoint looks in progress -- observed to make testMutationsMatchPlainEquivalent's purge
+        // drain hang whenever this test happens to run first.
+        engine.checkpointRelease();
 
         engine.releaseInactive();
         engine.clear();
