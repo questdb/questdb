@@ -108,6 +108,16 @@ import java.util.function.IntFunction;
  */
 public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
+    // The large-table shape behind
+    // testCheckpointRingRestartResumeCostBoundedByCheckpointSpacing. Ten commits
+    // of 200 rows seal one .cp each, so the ring's spacing is exactly the
+    // checkpoint cadence and the resume count reads as a row distance from a
+    // known anchor. 2000 rows keeps the run cheap while leaving an order of
+    // magnitude between a bounded resume (201 rows) and a whole-view rebuild
+    // (2001) - the separation the 4-row ring tests cannot produce.
+    private static final int CHECKPOINT_SPACING_COMMITS = 10;
+    private static final int CHECKPOINT_SPACING_ROWS = 200;
+
     // The canonical data behind every max/min bounded-frame snapshot round-trip: five rows per
     // partition against a three-row frame.
     //
@@ -6459,6 +6469,23 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-11-01T00:00:30.000000Z\t30\t3\n"
         );
         return lostState;
+    }
+
+    /**
+     * Appends {@code commit}'s slice of the spaced base table behind
+     * {@code testCheckpointRingRestartResumeCostBoundedByCheckpointSpacing}: one
+     * WAL commit of {@link #CHECKPOINT_SPACING_ROWS} rows, one second apart,
+     * starting at second {@code commit * CHECKPOINT_SPACING_ROWS + 1}. Two
+     * symbols alternate so the window's PARTITION BY has something to split on.
+     * Row {@code i} lands at ts {@code i} seconds and carries value {@code i},
+     * which is what lets a resume count be read as a row distance from an
+     * anchor's maxTs.
+     */
+    private void insertSpacedBaseRows(int commit) throws SqlException {
+        final int offset = commit * CHECKPOINT_SPACING_ROWS;
+        execute("INSERT INTO base SELECT ((x + " + offset + ") * 1_000_000L)::timestamp, " +
+                "CASE WHEN (x % 2) = 0 THEN 'a' ELSE 'b' END, " +
+                "(x + " + offset + ")::double FROM long_sequence(" + CHECKPOINT_SPACING_ROWS + ")");
     }
 
     private java.nio.file.Path liveViewStatePath() {
@@ -19813,6 +19840,115 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "2026-11-01T00:00:15.000000Z\t15\t2\n" +
                     "2026-11-01T00:00:20.000000Z\t20\t3\n" +
                     "2026-11-01T00:00:30.000000Z\t30\t4\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCheckpointRingRestartResumeCostBoundedByCheckpointSpacing() throws Exception {
+        // The bound that the sibling test above cannot show.
+        // testCheckpointRingRestartResumesFromOlderAnchor pins the counter
+        // *direction* on a 4-row view - resume moves, boundary stays 0 - but on
+        // a 4-row view a bounded resume and a whole-view rebuild differ by a
+        // single row, so nothing there separates "resumed from the nearest
+        // anchor" from "recomputed the whole view and bumped the other counter".
+        //
+        // Here the ring carries a real spacing (200 rows per .cp) under a
+        // 2000-row base and a production-shaped window, so the two outcomes sit
+        // an order of magnitude apart - 201 rows against 2001 - and the count
+        // says which one ran. It also pins WHICH anchor served: the resume count
+        // is the row distance from the anchor, so 201 can only be the
+        // maxTs=1800s entry; the next one down (maxTs=1600s) would read 401 and
+        // the oldest recovered one (maxTs=600s) 1401.
+        //
+        // Deliberately asserts nothing about the recovered ring ahead of the
+        // counter arm. An assertion on the rehydrated entry count would catch a
+        // lost rehydration *before* the resume count is ever read, leaving the
+        // property this test exists for untested. With no such arm, a ring that
+        // fails to come back lands directly on the count: 0 against 201.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, CHECKPOINT_SPACING_ROWS);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 8);
+        // Pin the duration cadence out of reach so the rows cadence is the only
+        // trigger: spacing has to be exact for the bound to mean anything.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 3_600_000_000L);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RING_DURABLE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS
+                    SELECT ts, sym, avg(value) OVER (PARTITION BY sym ORDER BY ts ROWS 300 PRECEDING) AS avg_value
+                    FROM base""");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 0; commit < CHECKPOINT_SPACING_COMMITS; commit++) {
+                    setCurrentMicros((commit + 1) * 200_000L);
+                    insertSpacedBaseRows(commit);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                // Ten commits sealed ten .cp; retention keeps the newest eight,
+                // so the ring spans maxTs 600s..2000s at exactly one entry per
+                // 200 rows. The spacing has to be exact or the resume count
+                // below cannot be read as a row distance.
+                Assert.assertEquals(8, lv.getRetainedCheckpointCount());
+                Assert.assertEquals(CHECKPOINT_SPACING_COMMITS * CHECKPOINT_SPACING_ROWS, lv.getLvRowsTotal());
+                for (int i = 0; i < 8; i++) {
+                    Assert.assertEquals(
+                            "ring entry " + i + " must sit one checkpoint spacing above its predecessor",
+                            (600 + i * CHECKPOINT_SPACING_ROWS) * Micros.SECOND_MICROS,
+                            lv.getRetainedCheckpointMaxTs(i)
+                    );
+                }
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A cross-commit O3 at ts=1900.5s: above the maxTs=1800s entry,
+                // below the maxTs=2000s one it unseals. The restore and the O3
+                // land on the same tick, as they do in the sibling test - here a
+                // rebuild cannot masquerade as a resume, because it would move
+                // the boundary counter and leave the resume one at 0.
+                setCurrentMicros(5_000_000L);
+                execute("INSERT INTO base VALUES (1_900_500_000::timestamp, 'a', 1900.5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertTrue(lv.isCheckpointRestoreSucceeded());
+            // The bound, exactly: one checkpoint spacing of rows above the
+            // anchor, plus the new tail row.
+            Assert.assertEquals(
+                    "the resume must start at the nearest recovered anchor, one spacing below the trigger",
+                    CHECKPOINT_SPACING_ROWS + 1,
+                    lv.getO3ResumeReplayRows()
+            );
+            Assert.assertEquals(
+                    "an in-retention O3 must not rebuild from the view's lower bound",
+                    0,
+                    lv.getO3BoundaryReplayRows()
+            );
+            // Content equals a from-scratch recompute over the applied base: the
+            // bounded replay restored the window state rather than approximating
+            // it. ORDER BY sym, ts is a total order - each sym's timestamps are
+            // unique, and the O3 row at 1900.5s is the only 'a' off a whole second.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(SELECT ts, sym, avg(value) OVER (PARTITION BY sym ORDER BY ts ROWS 300 PRECEDING) AS avg_value FROM base) ORDER BY 2, 1",
+                    "(SELECT ts, sym, avg_value FROM lv) ORDER BY 2, 1",
+                    LOG,
+                    true
+            );
+            assertNoRefreshFaults("lv");
             execute("DROP LIVE VIEW lv");
         });
     }
