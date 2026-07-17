@@ -176,6 +176,66 @@ public class TxSerializerTest {
         testRoundTxnSerialization(createTableSql, false);
     }
 
+    /**
+     * Plan 3b Task 3 fix wave 1 (review finding fix). {@link TxFileStruct}/{@link TxFileStruct.AttachedPartition}
+     * has no cellKey field, and both {@link TxSerializer#toJson} and {@link TxSerializer#serializeJson}
+     * are hardcoded to {@code LONGS_PER_TX_ATTACHED_PARTITION} (4 longs/partition) -- this tool
+     * structurally cannot represent a composite (stride-8) {@code _txn}. Since Task 3 made
+     * {@code TxReader#unsafeLoadBaseOffset} read the stride marker symmetrically, a from-scratch writer
+     * that (like this tool, pre-fix) always wrote marker 0 would silently force a composite table's
+     * region to be misread at stride 4 instead of refusing outright. This proves {@code toJson} now
+     * refuses a composite source _txn instead of silently mis-folding it.
+     */
+    @Test
+    public void testToJsonRefusesCompositeTable() throws SqlException {
+        String createTableSql = "create table cxx (ts timestamp, sym1 symbol, x long) " +
+                "timestamp(ts) partition by day, sym1";
+        engine.execute(createTableSql, sqlExecutionContext);
+
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+
+        TxSerializer serializer = new TxSerializer();
+        String txPath = root.toString() + Files.SEPARATOR + "cxx" + Files.SEPARATOR + "_txn";
+
+        UnsupportedOperationException ex = Assert.assertThrows(
+                UnsupportedOperationException.class,
+                () -> serializer.toJson(txPath)
+        );
+        Assert.assertTrue(
+                "expected the error to name the composite stride marker, got: " + ex.getMessage(),
+                ex.getMessage() != null && ex.getMessage().contains("composite") && ex.getMessage().contains("8")
+        );
+    }
+
+    /**
+     * Companion defense-in-depth check: even with a trivially valid (empty) JSON payload that passes
+     * {@code serializeJson}'s own field-count validation, the method must still refuse to overwrite an
+     * EXISTING composite table's {@code _txn} file -- this is the scenario a hand-crafted/edited JSON
+     * (not sourced from this tool's own {@code toJson}) pointed at the wrong path would hit.
+     */
+    @Test
+    public void testSerializeJsonRefusesToOverwriteExistingCompositeTarget() throws SqlException {
+        String createTableSql = "create table cxx (ts timestamp, sym1 symbol, x long) " +
+                "timestamp(ts) partition by day, sym1";
+        engine.execute(createTableSql, sqlExecutionContext);
+
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+
+        TxSerializer serializer = new TxSerializer();
+        String txPath = root.toString() + Files.SEPARATOR + "cxx" + Files.SEPARATOR + "_txn";
+
+        UnsupportedOperationException ex = Assert.assertThrows(
+                UnsupportedOperationException.class,
+                () -> serializer.serializeJson("{}", txPath)
+        );
+        Assert.assertTrue(
+                "expected the error to name the composite stride marker, got: " + ex.getMessage(),
+                ex.getMessage() != null && ex.getMessage().contains("composite") && ex.getMessage().contains("8")
+        );
+    }
+
     private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

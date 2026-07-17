@@ -101,6 +101,16 @@ public class TxSerializer {
             ));
         }
 
+        // Plan 3b Task 3 fix wave 1: toJson() below refuses to ever produce JSON from a composite
+        // (stride-8) source _txn, so the documented dump-edit-restore round trip can never feed a
+        // composite JSON back into this method. But nothing stops an operator from hand-crafting or
+        // editing a JSON file and pointing it at an EXISTING composite table's _txn path -- this method
+        // would then silently overwrite that table's stride-8 partition region with stride-4 data (the
+        // memset/jumpTo below wipes it unconditionally). Peek the target's existing marker first, via a
+        // short-lived read-only view that is fully closed before the destructive read-write open below,
+        // and refuse the same way toJson() does rather than silently corrupting it.
+        refuseIfExistingCompositeTarget(targetPath);
+
         try (
                 Path path = new Path().of(targetPath);
                 MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
@@ -122,9 +132,15 @@ public class TxSerializer {
             // Plan 3b Task 1: self-describing partition-stride marker -- a GLOBAL property (not part of
             // either A/B section). This CLI tool's TxFileStruct.AttachedPartition has no cellKey field and
             // the partition write loop below is hardcoded to LONGS_PER_TX_ATTACHED_PARTITION (4 longs per
-            // partition), so it can only ever emit plain/stride-4 data. Write the explicit marker (0) so
-            // that is truthful and self-describing rather than relying on the memset zero-fill above.
-            rwTxMem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, 0);
+            // partition), so it can only ever emit plain/stride-4 data.
+            // Plan 3b Task 3 fix wave 1: TxSerializer is STRIDE-4-ONLY and refuses to read a composite
+            // (stride-8) source _txn at all (see the guard in toJson() and refuseIfExistingCompositeTarget()
+            // above) -- no composite JSON can ever reach this method to be written back out. Route the
+            // write through the shared partitionStrideMarker() helper (the same single source of truth
+            // used by TxReader#dumpTo/TableUtils#createTxn/TxWriter#finishABHeader) instead of a bare
+            // literal 0, so this is truthful and self-describing rather than relying on the memset
+            // zero-fill above, and so intent survives a future change to what the marker values mean.
+            rwTxMem.putInt(TX_BASE_OFFSET_PARTITION_STRIDE_32, partitionStrideMarker(LONGS_PER_TX_ATTACHED_PARTITION));
 
             rwTxMem.putLong(baseOffset + TX_OFFSET_TXN_64, tx.TX_OFFSET_TXN);
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
@@ -184,6 +200,23 @@ public class TxSerializer {
                 final long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
                 final int symbolsSize = isA ? roTxMem.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMem.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
                 final int partitionSegmentSize = isA ? roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+
+                // Plan 3b Task 3 fix wave 1: this tool's TxFileStruct/AttachedPartition model has no
+                // cellKey field, and both directions of this class are hardcoded to
+                // LONGS_PER_TX_ATTACHED_PARTITION (4 longs/partition, see the partition-table loop below
+                // and the mirrored write in serializeJson) -- it structurally can only represent a plain
+                // (stride-4) _txn. Read the same GLOBAL, non-A/B, non-versioned stride marker
+                // TxReader#unsafeLoadBaseOffset() reads (see TX_BASE_OFFSET_PARTITION_STRIDE_32's field
+                // doc in TableUtils) and refuse outright on a composite (stride-8) source file, rather
+                // than silently mis-folding its attached-partitions region at the wrong stride (the
+                // pre-existing gap this guard closes: before this check, a composite _txn's partition
+                // region was divided by 4 instead of 8, corrupting the count and every field's offset).
+                final int partitionStrideMarker = roTxMem.getInt(TX_BASE_OFFSET_PARTITION_STRIDE_32);
+                if (partitionStrideMarker == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+                    throw new UnsupportedOperationException(
+                            "TxSerializer does not support composite-partitioned tables (_txn stride marker=" +
+                                    partitionStrideMarker + ")");
+                }
 
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN_64);
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64);
@@ -247,6 +280,36 @@ public class TxSerializer {
             }
         }
         return GSON.toJson(tx);
+    }
+
+    /**
+     * Plan 3b Task 3 fix wave 1: defense-in-depth companion to the {@link #toJson} guard. Peeks
+     * {@code targetPath}'s existing on-disk stride marker (if the file already exists and is big enough
+     * to hold one) via a short-lived, independent read-only view -- fully closed before {@link
+     * #serializeJson} opens its destructive read-write handle on the same path -- and refuses with the
+     * same error {@link #toJson} would give, rather than silently letting {@link #serializeJson}
+     * overwrite an existing composite table's stride-8 partition region with stride-4 data.
+     */
+    private void refuseIfExistingCompositeTarget(String targetPath) {
+        try (Path path = new Path().of(targetPath)) {
+            if (!ff.exists(path.$())) {
+                return;
+            }
+            final long len = ff.length(path.$());
+            if (len < TX_BASE_OFFSET_PARTITION_STRIDE_32 + Integer.BYTES) {
+                // Too small to even hold the marker (e.g. a brand-new/empty file) -- nothing to protect.
+                return;
+            }
+            try (MemoryMR roTxMem = Vm.getCMRInstance(ff, path.$(), len, MemoryTag.MMAP_DEFAULT)) {
+                roTxMem.growToFileSize();
+                final int existingMarker = roTxMem.getInt(TX_BASE_OFFSET_PARTITION_STRIDE_32);
+                if (existingMarker == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+                    throw new UnsupportedOperationException(
+                            "TxSerializer does not support composite-partitioned tables (_txn stride marker=" +
+                                    existingMarker + "); refusing to overwrite existing composite _txn at " + targetPath);
+                }
+            }
+        }
     }
 
     private static void printUsage() {

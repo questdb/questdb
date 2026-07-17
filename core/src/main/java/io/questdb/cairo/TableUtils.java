@@ -218,8 +218,10 @@ public final class TableUtils {
     // above, not part of either per-section TX_BASE_HEADER_SECTION_PADDING block) so a plain table's
     // on-disk bytes are unaffected: 0 (== today's zero padding) means plain/stride-4, 8 means
     // COMPOSITE/stride-8 -- see LONGS_PER_TX_ATTACHED_PARTITION / LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE.
-    // Read by TxReader#unsafeLoadBaseOffset(); written by TxReader#dumpTo(), TableUtils#createTxn() and
-    // TxWriter#finishABHeader().
+    // Read by TxReader#unsafeLoadBaseOffset(); written by TxReader#dumpTo(), TableUtils#createTxn(),
+    // TxWriter#finishABHeader() and, plain/stride-4 only (that CLI tool structurally cannot represent
+    // composite -- it refuses to read one and always writes the plain marker),
+    // io.questdb.cliutil.TxSerializer#serializeJson().
     public static final long TX_BASE_OFFSET_PARTITION_STRIDE_32 = 56;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
