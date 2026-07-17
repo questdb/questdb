@@ -131,6 +131,33 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncludeExcludeClauseWithSubqueryFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foofx (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+            execute("CREATE TABLE bar (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+
+            // INCLUDE (...) consumes its own parentheses and leaves the subquery ')' for the WHERE.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE INCLUDE (TABLES)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // INCLUDE (ALL) behaves like the bare default.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE INCLUDE (ALL)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // A multi-category list exercises the comma path and the local ')' inside a subquery.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE INCLUDE (TABLES, VIEWS)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // EXCLUDE (TABLES) emits no table DDL, so the fx filter matches nothing.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE EXCLUDE (TABLES)) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            // CTE parsing owns the outer ')' while the INCLUDE list owns the local ')'.
+            assertQuery("WITH db AS (SHOW CREATE DATABASE INCLUDE (TABLES)) SELECT count() FROM db WHERE ddl ILIKE '%fx%'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // JOIN parsing owns the outer ')' while the INCLUDE list owns the local ')'.
+            assertQuery("SELECT count() FROM long_sequence(1) CROSS JOIN (SHOW CREATE DATABASE INCLUDE (TABLES)) db")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testIncludeRejectsMalformedClauses() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (BOGUS)", 30, "unexpected category");
@@ -142,6 +169,14 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE garbage", 21, "garbage");
             // a category list must be comma-separated
             assertExceptionNoLeakCheck("SHOW CREATE DATABASE INCLUDE (TABLES VIEWS)", 37, "',' or ')'");
+
+            final String sql = "SELECT * FROM (SHOW CREATE DATABASE INCLUDE (TABLES)";
+            final SqlException exception = Assert.assertThrows(
+                    SqlException.class,
+                    () -> assertExceptionNoLeakCheck(sql)
+            );
+            Assert.assertEquals(52, exception.getPosition());
+            TestUtils.assertEquals("')' expected", exception.getFlyweightMessage());
         });
     }
 
@@ -170,57 +205,6 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             assertQuery("SHOW CREATE DATABASE")
                     .noLeakCheck()
                     .assertsPlan("show_create_database\n");
-        });
-    }
-
-    @Test
-    public void testIncludeExcludeClauseWithSubqueryFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-            execute("create table bar (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-
-            // INCLUDE (...) consumes its own parentheses and still leaves the subquery ')' for the WHERE
-            assertQuery("select count() from ((show create database include (tables)) where ddl ilike '%fx%')")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // INCLUDE (ALL) behaves like the bare default
-            assertQuery("select count() from ((show create database include (all)) where ddl ilike '%fx%')")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // a multi-category list exercises the comma path and the ')' list-closer inside a subquery
-            assertQuery("select count() from ((show create database include (tables, views)) where ddl ilike '%fx%')")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // EXCLUDE (TABLES) emits no table DDL, so the fx filter matches nothing
-            assertQuery("select count() from ((show create database exclude (tables)) where ddl ilike '%fx%')")
-                    .noRandomAccess().expectSize().returns("count\n0\n");
-        });
-    }
-
-    @Test
-    public void testSubqueryFilterForms() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-            execute("create table bar (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-
-            // WHERE nested inside the parentheses (the exact user form), then counted
-            assertQuery("select count() from ((show create database) where ddl ilike '%fx%')")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // WHERE applied by the outer SELECT over the SHOW subquery
-            assertQuery("select count() from (show create database) where ddl ilike '%fx%'")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // the surviving row really is foofx's CREATE TABLE (content check without pinning exact DDL)
-            assertQuery("""
-                    select (ddl ilike '%foofx%' and ddl ilike '%create table%') ok
-                    from (show create database)
-                    where ddl ilike '%fx%'""")
-                    .noRandomAccess().returns("ok\ntrue\n");
-            // ORDER BY + LIMIT wrapping the filtered result
-            assertQuery("""
-                    select count() from (
-                        (show create database)
-                        where ddl ilike '%create table%'
-                        order by ddl
-                        limit 1
-                    )""")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
         });
     }
 
@@ -487,6 +471,39 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             for (int i = 0, n = before.size(); i < n; i++) {
                 Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
             }
+        });
+    }
+
+    @Test
+    public void testSubqueryFilterForms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foofx (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+            execute("CREATE TABLE bar (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
+
+            // The nested WHERE form reproduces the reported query shape.
+            assertQuery("SELECT count() FROM ((SHOW CREATE DATABASE) WHERE ddl ILIKE '%fx%')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // Check the surviving row without pinning the complete DDL text.
+            assertQuery("""
+                    SELECT (ddl ILIKE '%foofx%' AND ddl ILIKE '%create table%') ok
+                    FROM (SHOW CREATE DATABASE)
+                    WHERE ddl ILIKE '%fx%'""")
+                    .noLeakCheck().noRandomAccess().returns("ok\ntrue\n");
+            // ORDER BY and LIMIT wrap the filtered SHOW result.
+            assertQuery("""
+                    SELECT count() FROM (
+                        (SHOW CREATE DATABASE)
+                        WHERE ddl ILIKE '%create table%'
+                        ORDER BY ddl
+                        LIMIT 1
+                    )""")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // CTE parsing owns the closing ')' around SHOW CREATE DATABASE.
+            assertQuery("WITH db AS (SHOW CREATE DATABASE) SELECT count() FROM db WHERE ddl ILIKE '%fx%'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            // JOIN parsing owns the closing ')' around SHOW CREATE DATABASE.
+            assertQuery("SELECT count() FROM long_sequence(1) CROSS JOIN (SHOW CREATE DATABASE) db")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
         });
     }
 
