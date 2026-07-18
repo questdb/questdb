@@ -97,6 +97,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     // Impl-internal redeliveries bypass the wrapper and are not counted. Reset to 0 before
     // every test.
     private static final AtomicInteger engineIncrementalRefreshEnqueues = new AtomicInteger();
+    // While set, the next 5-arg enqueueInvalidate on the engine store throws (a wake enqueue
+    // failure at the engine-wrapper boundary). One-shot. Reset before every test.
+    private static final AtomicBoolean isInvalidateWakeFailureArmed = new AtomicBoolean();
     // While set, the next reenqueueRefreshTask on the engine store models the impl-level
     // put-back failure contract (facet retry flag recorded, then OOM). One-shot.
     private static final AtomicBoolean isPutBackFailureArmed = new AtomicBoolean();
@@ -172,6 +175,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         engineFullRefreshEnqueues.set(0);
         engineIncrementalRefreshEnqueues.set(0);
+        isInvalidateWakeFailureArmed.set(false);
         isPutBackFailureArmed.set(false);
         isReadOnly.set(false);
         isRefreshSuspended.set(false);
@@ -2881,6 +2885,35 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStatsResetSwallowsWakeFailureAndRecoversViaRetryFlags() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            // A deferral parked while another holder was active; the STATS holder's finalize will
+            // attempt the wake and the armed wrapper will refuse it.
+            state.markAsPendingInvalidation("update operation");
+            isInvalidateWakeFailureArmed.set(true);
+
+            // The statement must succeed: the stats reset durably completed before the finalize,
+            // and the finalize's own catch armed the invalidation retry flag before rethrowing.
+            execute("refresh materialized view price_1h stats");
+            Assert.assertFalse("the failed wake must not leave the latch held", state.isLocked());
+
+            // The armed flag redelivers the invalidation on the next tick; the drain mints invalid.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tupdate operation
+                            """);
+        });
+    }
+
+    @Test
     public void testStickyWriterRefusalBothFacetsRotateBoundedAndRecover() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -4048,6 +4081,20 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         public void enqueueIncrementalRefresh(TableToken matViewToken) {
             engineIncrementalRefreshEnqueues.incrementAndGet();
             super.enqueueIncrementalRefresh(matViewToken);
+        }
+
+        @Override
+        public void enqueueInvalidate(
+                TableToken matViewToken,
+                String invalidationReason,
+                @Nullable TableToken invalidationBaseTableToken,
+                long invalidationBaseTxn,
+                boolean isInvalidationForced
+        ) {
+            if (isInvalidateWakeFailureArmed.compareAndSet(true, false)) {
+                throw new OutOfMemoryError("test invalidation wake enqueue failure");
+            }
+            super.enqueueInvalidate(matViewToken, invalidationReason, invalidationBaseTableToken, invalidationBaseTxn, isInvalidationForced);
         }
 
         @Override

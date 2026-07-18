@@ -3602,7 +3602,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         } finally {
                             // This stats reset is a lock-holder like any refresh: its unlock must finalize an
                             // invalidation that deferred during the hold. See MatViewRefreshJob#finalizeAndUnlock.
-                            MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
+                            // The finalize releases the latch before any wake enqueue, and the stats reset itself
+                            // durably succeeded, so a wake enqueue failure must not fail the statement (mirroring
+                            // ALTER TABLE RESUME WAL). The store's retry flags keep the deferred facets
+                            // discoverable by the next refresh-job tick.
+                            try {
+                                MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
+                            } catch (Throwable th) {
+                                LOG.error().$("could not deliver deferred materialized view work after stats reset [view=").$(matViewToken)
+                                        .$(", ex=").$(th)
+                                        .I$();
+                            }
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "materialized view is currently refreshing, retry stats reset later");
