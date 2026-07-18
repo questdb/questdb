@@ -92,6 +92,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     // redeliveries bypass the wrapper entirely, so neither is counted here.
     // Reset to 0 before every test.
     private static final AtomicInteger engineFullRefreshEnqueues = new AtomicInteger();
+    // Counts enqueueIncrementalRefresh calls that reach the engine-installed store wrapper.
+    // Impl-internal redeliveries bypass the wrapper and are not counted. Reset to 0 before
+    // every test.
+    private static final AtomicInteger engineIncrementalRefreshEnqueues = new AtomicInteger();
     // While set, the next reenqueueRefreshTask on the engine store models the impl-level
     // put-back failure contract (facet retry flag recorded, then OOM). One-shot.
     private static final AtomicBoolean isPutBackFailureArmed = new AtomicBoolean();
@@ -150,6 +154,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         // Materialized views require dev mode; without it the engine installs a no-op state store.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         engineFullRefreshEnqueues.set(0);
+        engineIncrementalRefreshEnqueues.set(0);
         isPutBackFailureArmed.set(false);
         isReadOnly.set(false);
         isRefreshSuspended.set(false);
@@ -2533,6 +2538,59 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRetryHeapRedrivesRefreshDespiteOwnerOnlyMarker() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+
+            // Model the state a transient busy failure leaves behind: a backoff deadline armed on
+            // the state plus a RETRY entry fed to the timer job's heap. The retry heap is the only
+            // path that wakes up immediate views, which have no timer of their own.
+            final long retryAfterMicros = currentMicros + Micros.MINUTE_MICROS;
+            state.scheduleRefreshRetry(retryAfterMicros);
+            engine.getMatViewStateStore().notifyRefreshRetry(viewToken, retryAfterMicros);
+
+            // Park an owner-only marker (a deferred REFRESH FULL request; reason facet null).
+            // processRefreshRetries keys on hasPendingInvalidationReason(): an owner-only marker
+            // must not drop the due retry entry, or an immediate view in busy-backoff stays stale
+            // until the next base commit -- the silent-freeze class this PR eliminates.
+            state.markAsPendingFullRefreshForTesting();
+
+            engineIncrementalRefreshEnqueues.set(0);
+            currentMicros += 2 * Micros.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+
+            Assert.assertEquals(
+                    "the due retry entry must re-drive the incremental refresh exactly once",
+                    1,
+                    engineIncrementalRefreshEnqueues.get()
+            );
+            Assert.assertEquals(
+                    "the consumed retry must clear the backoff deadline",
+                    Numbers.LONG_NULL,
+                    state.getRefreshRetryAfterMicros()
+            );
+
+            // The re-driven incremental holder's finalize wakes the parked owner; the same drain
+            // executes it, consuming the owner. The view ends valid.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse("the woken FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testSingleViewIncrementalRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -3526,6 +3584,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         public void enqueueFullRefresh(TableToken matViewToken, @Nullable Object fullRefreshOwner) {
             engineFullRefreshEnqueues.incrementAndGet();
             super.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+        }
+
+        @Override
+        public void enqueueIncrementalRefresh(TableToken matViewToken) {
+            engineIncrementalRefreshEnqueues.incrementAndGet();
+            super.enqueueIncrementalRefresh(matViewToken);
         }
 
         @Override
