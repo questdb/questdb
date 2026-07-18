@@ -131,7 +131,12 @@ import java.util.concurrent.TimeUnit;
  *       the wal-dir count at its true reboot-linear rate ({@code walDirs <= cycle + WAL_DIRS_PER_CYCLE_SLACK}),
  *       which stays green while catching SUPER-linear growth (a cycle leaking multiple wals), and separately
  *       caps the per-wal segment high-water ({@code <= SEG_PER_WAL_CAP}) so a WAL-purge floor that fails to
- *       advance WITHIN a wal's life trips.</li>
+ *       advance WITHIN a wal's life trips. <b>Classified BENIGN</b> by the decisive A/B in {@link
+ *       AdaptiveRebootOrphanReclaimCrashTest}: the retention is the transient window between a reboot and the
+ *       FIRST post-reboot durable epoch (the in-memory {@code durableEpochSeqTxn} floor is 0 until then), a
+ *       REAL fresh-process restart exhibits it IDENTICALLY, and the very next purge reclaims the orphan once
+ *       ingest resumes — so production does NOT accumulate orphans across reboots. The soak sees one/cycle only
+ *       because it forces the purge in that pre-epoch window every cycle (before the next cycle's write).</li>
  *   <li><b>Epoch copies</b>: EXACTLY the two ping-pong files {@code _txn.epoch} + {@code _cv.epoch} are
  *       present — the durable cut OVERWRITES them in place ({@code TableWriter.fsyncMaterializedState}), so a
  *       count that ever exceeds 2 would be a real artifact leak.</li>
@@ -175,7 +180,10 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     // retains exactly ONE fresh single-segment reboot-orphan walN dir (physically purgeable — lockPurge returns
     // SEG_NONE_ID and rmdir succeeds — but broadSweep's cursor-derived nextToApply keeps it; the data is fully
     // applied + correct). The healthy rate is thus 1 wal dir/cycle; the bound catches SUPER-linear growth (a
-    // cycle leaking multiple wals) while staying green at the observed rate.
+    // cycle leaking multiple wals) while staying green at the observed rate. This retention is BENIGN and does
+    // NOT accumulate in production — see AdaptiveRebootOrphanReclaimCrashTest: a REAL fresh-process restart
+    // resets the same in-memory floor to 0 and retains identically, and the next purge reclaims the orphan once
+    // ingest resumes and fires the first post-reboot epoch. The soak just always purges in that pre-epoch window.
     private static final int WAL_DIRS_PER_CYCLE_SLACK = 2; // walDirs <= cycle + this (observed: == cycle)
     private static final int SEG_PER_WAL_CAP = 4;          // intra-wal segment high-water (observed: 1)
     private static final int FD_SLACK = 8;                 // open-OS-fd drift allowed across cycles (steady state ~0)
