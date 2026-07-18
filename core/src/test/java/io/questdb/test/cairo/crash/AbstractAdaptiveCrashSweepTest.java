@@ -234,7 +234,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
      * loss never ran that catch), then the recovery triple —
      * {@code RecoveryCoordinator.recover()} -> {@code notifyWalTxnRepublisher(tt)} -> {@code drainWalQueue()}.
      */
-    private void recoverAfterCrash(TableToken[] tokens) {
+    protected void recoverAfterCrash(TableToken[] tokens) {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         // Empty the WAL-writer pool BEFORE crash(), while the segment files are still their intact
@@ -306,7 +306,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
     }
 
     /** Release readers, writers, WAL writers and inactive sequencers so the next iteration starts fresh. */
-    private void releaseEngineHandles() {
+    protected void releaseEngineHandles() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         // Force-reclaim any writer this (single-threaded) sweep left checked out or locked when a simulated
@@ -331,7 +331,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
      * death has the OS reclaim every fd. Closing the per-cycle delta (after all pooled handles are released)
      * models that, keeping the sweep leak-clean over many cycles without touching the engine's own fds.
      */
-    private void reclaimLingeringNonCacheFds(java.util.Set<Long> baseline) {
+    protected void reclaimLingeringNonCacheFds(java.util.Set<Long> baseline) {
         for (long fd : crashFf.noCacheOpenFdsSnapshot()) {
             if (!baseline.contains(fd)) {
                 crashFf.forceClose(fd); // robust to already-reclaimed fds (see CrashFaultFilesFacade#forceClose)
