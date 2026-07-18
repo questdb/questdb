@@ -294,9 +294,31 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return incrementPartitionSquashCounter(indexRaw / longsPerAttachedPartition);
     }
 
+    /**
+     * Plan 4b Task 1 fix (follow-up): cellKey-aware, mirroring {@link #beginPartitionSizeUpdate()}'s
+     * identical fix (same commit, a few lines above). This used to hardcode cellKey 0 when resolving
+     * which entry to zero -- correct for a plain table (every partition's cellKey is always 0) but wrong
+     * for a composite table whenever the day containing {@code timestamp} has 2+ cells and cellKey 0 is
+     * not the array's actual last entry: it would zero an unrelated, already-correct sibling cell's size
+     * instead of the genuinely-open last partition's (the exact bug {@link #beginPartitionSizeUpdate()}'s
+     * own doc describes). That cell-blindness is why this call was, for a while, gated off entirely for
+     * composite tables at the {@code TableWriter#initLastPartition} call site -- an over-broad fix that
+     * also silently suppressed the safe, common case (a single-cell-per-day composite table, or one where
+     * the array's last entry genuinely IS cellKey 0), regressing the pre-existing "a full TableWriter
+     * reopen always leaves the still-open last partition's persisted size slot at 0" invariant (
+     * {@code transientRowCount}, not this slot, is the writer's source of truth for it going forward) --
+     * see {@code CompositeTxCellTest#testReopenAfterCompositeBlindLoad}. Root cause fixed properly
+     * instead: resolve the target cell from the array's own last entry (whatever cellKey it actually is),
+     * exactly like {@link #beginPartitionSizeUpdate()} does, which makes this safe to call unconditionally
+     * again for plain, dormant-composite, AND real composite tables alike. For a plain table
+     * {@code getPartitionCellKey} always returns 0 (guarded on the plain stride), so this is
+     * byte-identical there.
+     */
     public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
-        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
+        int lastIndex = getPartitionCount() - 1;
+        int cellKey = lastIndex > -1 ? getPartitionCellKey(lastIndex) : 0;
+        updateAttachedPartitionSizeByTimestamp(timestamp, cellKey, 0L, txn - 1);
     }
 
     public void insertPartition(int index, long partitionTimestamp, long size, long nameTxn) {

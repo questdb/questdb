@@ -92,16 +92,32 @@ public class CompositeMetaFormatTest extends AbstractCairoTest {
                 Assert.assertNull(spec.getDimension(0).getExprText());
             }
 
-            // A second structural ALTER (DROP of the non-key column) rewrites _meta again; the block
-            // must still survive, and the dimension's stable writer index (exchange=1) is unaffected.
-            execute("alter table t drop column px");
+            // A second structural ALTER rewrites _meta again; the block must still survive, and the
+            // dimension's stable writer index (exchange=1) is unaffected.
+            //
+            // NOTE: this originally used "drop column px" as the second structural ALTER, to prove the
+            // block survives both an additive AND a subtractive rewrite. Plan 4b's feature-gate sweep
+            // (commit 0fe4ff70db) unconditionally rejects DROP COLUMN on any real (non-dormant) composite
+            // table -- removeColumnFiles purges a dropped column's per-cell files via a cellKey-0-only
+            // path with zero composite awareness, so it was gated rather than left to silently leak them
+            // (see TableWriter#removeColumn's Plan 4b comment, and CompositeUnsupportedOpsTest#
+            // testDropColumnGated / CompositeDictionariesTest#testDropDimensionSourceColumnRejected for
+            // that gate's own coverage). Confirmed empirically: under the old DROP-COLUMN-based version
+            // of this test, the ALTER now applies asynchronously via WAL, hits the gate at apply time, and
+            // SUSPENDS the table instead of throwing synchronously back to the client (the same I1 gap
+            // CompositeDictionariesTest#testWalCompositeDropDimensionSourceSuspendsRatherThanRejectsSynchronously
+            // documents) -- so the DROP silently never applies and the column count stays at 3 instead of
+            // dropping to 2, which is exactly the failure this test started surfacing. A second ADD COLUMN
+            // is used instead: still a genuine structural _meta rewrite (proven by the first block above),
+            // and an ALTER type the DROP COLUMN gate does not touch.
+            execute("alter table t add column py double");
             drainWalQueue();
             engine.releaseInactive();
 
             try (TableMetadata m = engine.getTableMetadata(tableToken)) {
-                Assert.assertEquals(2, m.getColumnCount()); // ts, exchange
+                Assert.assertEquals(4, m.getColumnCount()); // ts, exchange, px, py
                 PartitionSpec spec = m.getPartitionSpec();
-                Assert.assertTrue("composite spec must survive DROP COLUMN", spec.isComposite());
+                Assert.assertTrue("composite spec must survive a second structural ALTER", spec.isComposite());
                 Assert.assertEquals(1, spec.getDimensionCount());
                 Assert.assertEquals(1, spec.getDimension(0).getColumnIndex());
                 Assert.assertEquals("exchange", spec.getDimension(0).getAlias());

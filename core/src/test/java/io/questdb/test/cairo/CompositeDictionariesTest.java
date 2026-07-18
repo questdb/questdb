@@ -207,33 +207,35 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
     }
 
     /**
-     * Task 8 (Plan 2): a composite dimension pins its source SYMBOL column by stable WRITER index
-     * ({@link io.questdb.cairo.PartitionDimension#getColumnIndex()}). Dropping that column would leave
-     * the dimension dangling, so {@code removeColumn} must reject it -- the DROP-side mirror of
+     * Task 8 (Plan 2): originally, a composite dimension pinned its source SYMBOL column by stable
+     * WRITER index ({@link io.questdb.cairo.PartitionDimension#getColumnIndex()}); dropping that column
+     * would leave the dimension dangling, so this test proved {@code removeColumn} rejected ONLY the
+     * dimension-source columns ({@code symbol}, {@code exchange}) while a mixed drop sequence still let
+     * ordinary columns ({@code foo}, {@code price}) through -- the DROP-side mirror of
      * {@link #testAddSymbolColumnRejectedOnComposite()}.
      * <p>
-     * This drops a lower-index non-dimension column ({@code foo}) first before attempting the
-     * dimension-source drops, to exercise the guard across a mixed drop sequence rather than in
-     * isolation. <b>Verified empirically (negative control) that this ordering does NOT, in the
-     * current codebase, make dense position diverge from writer index within a live
-     * {@code TableWriter}</b>: {@code TableWriterMetadata.removeColumn} only tombstones a column in
-     * place ({@code markDeleted()}), it never renumbers survivors, and {@code addColumn} always
-     * assigns a fresh slot via {@code metadata.getColumnCount()} -- so a column's dense position and
-     * its {@code getWriterIndex()} are the same value for the life of a writer instance regardless of
-     * how many other columns are dropped first. Temporarily swapping the guard's writer-index lookup
-     * for the plain dense {@code index} still passed this exact test (confirmed by re-running it under
-     * that swap). The dense/writer divergence {@link io.questdb.cairo.PartitionDimension}'s javadoc
-     * warns about is real, but it is a reader/metadata-cache-side phenomenon
-     * ({@code TableReaderMetadata} compacts tombstoned columns out of its dense list on reload via
-     * {@code buildColumnListFromMetadataFile}, while {@code writerIndex} is preserved) -- not something
-     * reachable from {@code TableWriter.removeColumn} today. The guard still resolves via
-     * {@code getWriterIndex()} rather than the raw dense index: that is the documented, self-explaining
-     * contract for comparing against {@code PartitionDimension.getColumnIndex()}, matches the existing
-     * {@code tombstoneCoveredColumnInOtherIndexes} call one line below, and remains correct by
-     * construction rather than by this incidental writer-side invariant. This test therefore stands as
-     * a solid behavioral regression test (reject dimension sources, allow everything else, across a
-     * mixed-order drop sequence) rather than as a proven discriminator of a reachable dense-vs-writer
-     * bug.
+     * <b>Superseded by Plan 4b's feature-gate sweep (see {@code TableWriter#removeColumn}'s own updated
+     * comment, and commit {@code 0fe4ff70db}).</b> {@code removeColumnFiles}'s purge ({@code
+     * PurgingOperator}/{@code ColumnPurgeOperator}) resolves a dropped column's per-cell physical files
+     * via cellKey-0-only/bare-path lookups with zero composite awareness anywhere -- confirmed reachable:
+     * DROP COLUMN silently leaked a routed cell's files. DROP COLUMN is therefore now rejected
+     * UNCONDITIONALLY for any real (non-dormant) composite table (any {@code dimensionCount > 0} table
+     * that is not a pre-existing, never-routed legacy one -- see {@code isDormantWithPreexistingData()}),
+     * BEFORE the narrower dimension/cluster-column-reference guard below it is ever reached. That makes
+     * the original "dimension-source columns only" distinction this test drew unreachable for a live
+     * composite table: EVERY column drop is rejected now, {@code foo}/{@code price} included, not just
+     * {@code symbol}/{@code exchange}. Confirmed this is the intended, correct behaviour (not a bug):
+     * the gate is deliberate, evidenced by an empirical negative control in its own commit message, and
+     * consistent with every other cell-blind "does not yet support X" gate added across Plan 4a/4b.
+     * <p>
+     * Updated to assert the blanket gate fires uniformly, dimension source or not, keeping the same
+     * mixed-order drop sequence as before -- still a useful regression test that the gate applies without
+     * exception, at the {@code TableWriter} API level this class otherwise exercises. The narrower
+     * dimension/cluster-source-specific guard this test used to isolate remains independently reachable
+     * and covered by {@link #testDropClusterOrderByColumnRejected()} (a zero-dimension, cluster-only
+     * composite table, which the blanket gate's {@code dimensionCount > 0} check does not fire on); the
+     * blanket gate itself is also covered end-to-end via SQL by {@code
+     * CompositeUnsupportedOpsTest#testDropColumnGated}.
      */
     @Test
     public void testDropDimensionSourceColumnRejected() throws Exception {
@@ -241,15 +243,19 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, foo double, exchange symbol, symbol symbol, price double) " +
                     "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
             try (TableWriter w = getWriter("t")) {
-                // Drop a lower-index non-dimension column first to exercise a mixed drop sequence (see
-                // class Javadoc above for why this does not, in fact, diverge dense from writer index).
-                w.removeColumn("foo");                                // foo = double, writer idx 1, non-dim -> allowed
-                try { w.removeColumn("symbol"); Assert.fail("dropping truncate-dim source must be rejected"); }
-                catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
-                try { w.removeColumn("exchange"); Assert.fail("dropping identity-dim source must be rejected"); }
-                catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
-                w.removeColumn("price");                              // non-dimension double -> allowed
-                Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("price") < 0);
+                // Every column drop is now rejected by the blanket Plan 4b gate, dimension source or
+                // not -- unlike the pre-Plan-4b behaviour this test originally documented, where foo/price
+                // (non-dimension columns) were allowed through (see class Javadoc above).
+                for (String column : new String[]{"foo", "symbol", "exchange", "price"}) {
+                    try {
+                        w.removeColumn(column);
+                        Assert.fail("DROP COLUMN " + column + " must be rejected on a real composite table");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DROP COLUMN");
+                    }
+                }
+                Assert.assertTrue("foo must still be present -- its drop was rejected", w.getMetadata().getColumnIndexQuiet("foo") >= 0);
+                Assert.assertTrue("price must still be present -- its drop was rejected", w.getMetadata().getColumnIndexQuiet("price") >= 0);
             }
         });
     }

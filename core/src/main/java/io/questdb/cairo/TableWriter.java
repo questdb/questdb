@@ -8430,30 +8430,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             performRecovery();
         }
         if (!isLastPartitionParquet()) {
-            // Plan 4b Task 1 fix: continues Task 6's own gate sweep on this EXACT bootstrap chain --
-            // repairDataGaps' own comment two calls above already identifies "a fresh TableWriter
-            // bootstrap (initLastPartition <- configureAppendPosition, called from the constructor and
-            // from rollback())... released and reopened a writer instance mid a multi-cell-day sequence"
-            // as untested/risky and gates ITS OWN body for composite, but this sibling call in the same
-            // method was missed. TxWriter#initLastPartition(ts) unconditionally, cell-blindly (hardcodes
-            // cellKey 0 -- see its own doc) zeroes "whatever entry is at cellKey 0 for the day
-            // containing ts". That is meaningless AND actively harmful for a real composite table:
-            // composite dispatch never uses the writer's single active-tail transientRowCount/{@code
-            // this.columns} at all (see this class's own docs; finishO3Commit's matching composite gate
-            // just below skips the analogous openPartition/setAppendPosition pair for exactly this
-            // reason), so there is no "the writer's active tail partition" concept to initialize here --
-            // and the cell-blind zero silently destroys a REAL, already-correct, unrelated sibling
-            // cell's own independently-persisted row count. Reproduced directly (Plan 4b Task 1 report):
-            // a multi-cell day, released and reopened mid-sequence, permanently loses one cell's
-            // visibility to every later full scan -- the exact "released and reopened... mid a
-            // multi-cell-day sequence" shape repairDataGaps' own comment names as never having been
-            // exercised. Composite dispatch resolves and persists each cell's own size fresh on every
-            // commit (dispatchCompositeCellRange/o3ConsumePartitionUpdateSink), so skipping this call
-            // outright for composite is a proven no-op for the writer's own subsequent correctness.
-            final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
-            if (!composite) {
-                txWriter.initLastPartition(ts);
-            }
+            // Plan 4b Task 1 fix (follow-up, post-broad-test-run review): this call used to be
+            // unconditionally gated off for any real composite table (dimCount > 0 &&
+            // !isDormantWithPreexistingData()) on the reasoning that TxWriter#initLastPartition(ts)
+            // hardcoded cellKey 0, so it would zero "whatever entry is at cellKey 0 for the day
+            // containing ts" -- wrong, and actively harmful, whenever that day has 2+ cells and cellKey 0
+            // is not the array's actual last entry (it would silently destroy a REAL, already-correct,
+            // unrelated sibling cell's own independently-persisted row count; repairDataGaps' own comment
+            // two calls above names the same "released and reopened a writer instance mid a
+            // multi-cell-day sequence" shape). That gate was over-broad: it also suppressed the call for
+            // the SAFE, common case (a single-cell-per-day composite table, or one where the array's last
+            // entry genuinely IS cellKey 0), silently regressing a previously-guaranteed invariant --
+            // CompositeTxCellTest#testReopenAfterCompositeBlindLoad locks in that a full TableWriter
+            // reopen must always leave the still-open last partition's persisted size slot at 0
+            // (transientRowCount, not this slot, is the writer's source of truth for it going forward;
+            // see that test's own docs) -- for plain and composite tables alike. Root cause fixed
+            // properly instead: TxWriter#initLastPartition(ts) itself is now cellKey-aware, mirroring the
+            // identical fix already applied to its sibling TxWriter#beginPartitionSizeUpdate in the same
+            // Plan 4b Task 1 commit -- it resolves the target cell from the array's own last entry
+            // (whatever cellKey it actually is), not a cellKey-blind assumption of 0 -- so it is safe to
+            // call unconditionally again, for plain, dormant-composite, AND real composite tables.
+            txWriter.initLastPartition(ts);
         }
     }
 
