@@ -24,14 +24,16 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
+import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * Boundary-path regression tests for a monotonic-wrapper timestamp predicate whose bound comes from
  * a scalar subquery, i.e. {@code dateadd('h', 1, ts) <op> (SELECT ...)}. Such a bound flows through
- * {@link io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction}, which reads the
- * cursor once at scan open and feeds the value to {@link io.questdb.griffin.model.TimestampMonotonicInverter}.
+ * {@link ScalarSubQueryTimestampFunction}, which reads the cursor once at scan open and feeds
+ * the value to {@link TimestampMonotonicInverter}.
  *
  * <p>The pre-existing NULL / precision suites (CoveringSubqueryBoundReproTest,
  * MonotonicTimestampPruningTest) exercise either a direct raw-cursor bound ({@code ts <op> (SELECT ...)})
@@ -153,12 +155,12 @@ public class MonotonicSubqueryBoundBoundaryTest extends AbstractCairoTest {
         });
     }
 
-    // A runtime-constant scalar-subquery bound (bind variable or now()) is stable within a query, so
-    // it prunes safely and returns the correct rows even though the inverter reads it once and the
-    // retained residual filter reads it again (the C2-revert behavior). Note the documented known
-    // limitation: a genuinely NON-deterministic scalar SUBQUERY bound - e.g. (SELECT rnd_timestamp())
-    // - can evaluate to two different values across those two reads and drop rows; that limitation is
-    // intentionally NOT asserted as correct here.
+    // A runtime-constant scalar-subquery bound (bind variable, now(), now_ns()) re-reads the same
+    // execution-scoped snapshot on both cursor opens - once for the pruning inverter and once for
+    // the retained residual filter - so it is stable within the execution and must PRUNE: the plan
+    // has to show an interval scan with the inverted bound, not a full frame scan. The result
+    // assertions additionally prove the pruned interval keeps exactly the matching rows. now() and
+    // now_ns() are pinned via the test clock so both the interval and the result are deterministic.
     @Test
     public void testMonotonicSubqueryRuntimeConstantBoundPrunesSafely() throws Exception {
         assertMemoryLeak(() -> {
@@ -169,21 +171,74 @@ public class MonotonicSubqueryBoundBoundaryTest extends AbstractCairoTest {
                     "('2024-01-01T02:00:00.000000Z', 3), " +
                     "('2024-01-01T03:00:00.000000Z', 4)");
 
-            // bind variable bound (runtime constant): 2024-01-01T02:00:00Z
+            // bind variable bound (runtime constant): 2024-01-01T02:00:00Z inverts to ts >= 01:00
             bindVariableService.clear();
             bindVariableService.setTimestamp(0, 1_704_074_400_000_000L);
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT $1::timestamp)")
                     .timestamp("ts")
+                    .withPlanContaining(
+                            "Interval forward scan on: t",
+                            "intervals: [(\"2024-01-01T01:00:00.000000Z\"")
                     .returns("ts\tv\n" +
                             "2024-01-01T01:00:00.000000Z\t2\n" +
                             "2024-01-01T02:00:00.000000Z\t3\n" +
                             "2024-01-01T03:00:00.000000Z\t4\n");
 
-            // now() bound (runtime constant): all rows are far in the past, so the predicate holds for
-            // none of them. Deterministic empty result proves now() prunes safely and stably.
-            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT now())")
+            final long savedMicros = currentMicros;
+            try {
+                // pin the clock: now() = 2024-01-01T03:00:00Z, inverts to ts >= 02:00
+                setCurrentMicros(1_704_078_000_000_000L);
+                assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT now())")
+                        .timestamp("ts")
+                        .withPlanContaining(
+                                "Interval forward scan on: t",
+                                "intervals: [(\"2024-01-01T02:00:00.000000Z\"")
+                        .returns("ts\tv\n" +
+                                "2024-01-01T02:00:00.000000Z\t3\n" +
+                                "2024-01-01T03:00:00.000000Z\t4\n");
+
+                // same instant in nanos: the TIMESTAMP_NS bound converts into the micro output
+                // domain before the inversion, then prunes identically
+                assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT now_ns())")
+                        .timestamp("ts")
+                        .withPlanContaining(
+                                "Interval forward scan on: t",
+                                "intervals: [(\"2024-01-01T02:00:00.000000Z\"")
+                        .returns("ts\tv\n" +
+                                "2024-01-01T02:00:00.000000Z\t3\n" +
+                                "2024-01-01T03:00:00.000000Z\t4\n");
+            } finally {
+                setCurrentMicros(savedMicros);
+            }
+        });
+    }
+
+    // A genuinely traversal-unstable scalar-subquery bound - rnd_timestamp() re-samples on every
+    // cursor open - must NOT prune: the two compiled copies of the sub-query could disagree and
+    // pruning would drop rows the residual filter keeps. The plan has to retain the full frame
+    // scan with the predicate as a residual filter and no interval scan may appear. The random
+    // range lies strictly below every row, so the predicate is always true and the result is
+    // deterministic (all rows) even though the bound value is random.
+    @Test
+    public void testMonotonicSubqueryUnstableBoundStaysResidualOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1), " +
+                    "('2024-01-01T01:00:00.000000Z', 2), " +
+                    "('2024-01-01T02:00:00.000000Z', 3), " +
+                    "('2024-01-01T03:00:00.000000Z', 4)");
+
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT rnd_timestamp('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-02T00:00:00.000000Z'::timestamp, 0))")
                     .timestamp("ts")
-                    .returns("ts\tv\n");
+                    .withPlanContaining("Frame forward scan on: t")
+                    .withPlanNotContaining("Interval forward scan")
+                    .returns("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n" +
+                            "2024-01-01T01:00:00.000000Z\t2\n" +
+                            "2024-01-01T02:00:00.000000Z\t3\n" +
+                            "2024-01-01T03:00:00.000000Z\t4\n");
         });
     }
 }

@@ -322,6 +322,25 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if this factory is guaranteed to produce the same result for every cursor
+     * open within a single query execution (same {@code SqlExecutionContext}). This is a weaker
+     * property than {@code !isNonDeterministic()}: a factory projecting {@code now()} or a bind
+     * variable is non-deterministic across executions, yet stable within one, because those
+     * functions re-initialize to the same execution-scoped snapshot on every open.
+     * <p>
+     * Fail-safe like {@link #isNonDeterministic()}: the default claims stability only for
+     * provably deterministic factories, so unknown shapes never enable stability-dependent
+     * optimizations (for example scalar-subquery timestamp pruning in {@code WhereClauseParser}).
+     * Overriding factories must prove that every value source they evaluate is itself stable
+     * within the execution.
+     *
+     * @return true if every cursor open within one execution yields the same result
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
+    /**
      * Returns true if this factory may read a Parquet-format partition storing a column whose
      * type was later changed by {@code ALTER COLUMN TYPE} (decoded in its source type and
      * converted lazily, so raw-address readers would misread it). Delegates to the base

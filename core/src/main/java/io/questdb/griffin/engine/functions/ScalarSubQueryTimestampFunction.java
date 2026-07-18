@@ -82,6 +82,13 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
         return true;
     }
 
+    // Runtime-constant does NOT imply stable here: init() re-opens the wrapped cursor, so
+    // stability holds only when the sub-query factory proves it (fail-safe default: unstable).
+    @Override
+    public boolean isStableWithinExecution() {
+        return factory.isStableWithinExecution();
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(cursorFunction);

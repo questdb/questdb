@@ -1472,18 +1472,19 @@ public final class WhereClauseParser implements Mutable {
             }
 
             // A scalar SUBQUERY bound (e.g. >= (SELECT ...)) is compiled twice: once for this
-            // pruning inverter and once for the retained residual filter. If the sub-query is not
-            // PROVABLY deterministic, its two cursor opens can yield different values and drop rows,
-            // so skip pruning and let the residual filter be the single source of truth.
-            // RecordCursorFactory.isNonDeterministic() is fail-safe: a factory reports false only
-            // when it can prove stability across opens (see its javadoc), so unknown sub-query
-            // shapes never prune. Runtime-CONSTANT bounds (bind variables, now()) are stable within
-            // a query and are not ScalarSubQueryTimestampFunction, so they still prune; provably
-            // deterministic sub-query bounds (e.g. max(ts) over a plain scan) report
-            // isNonDeterministic()==false and still prune. The finally below frees loBound/hiBound/
-            // head (ownership has not yet transferred to the inverter).
-            if ((loBound instanceof ScalarSubQueryTimestampFunction && loBound.isNonDeterministic())
-                    || (hiBound instanceof ScalarSubQueryTimestampFunction && hiBound.isNonDeterministic())) {
+            // pruning inverter and once for the retained residual filter. If the sub-query's two
+            // cursor opens are not PROVABLY going to yield the same value within this execution,
+            // pruning could drop rows the residual filter would keep, so skip pruning and let the
+            // residual filter be the single source of truth.
+            // Function.isStableWithinExecution() is the purpose-built property and is fail-safe:
+            // unknown sub-query shapes report unstable and never prune. Provably deterministic
+            // sub-query bounds (e.g. max(ts) over a plain scan) prune, and so do execution-scoped
+            // runtime constants - (SELECT now()), (SELECT $1::timestamp) - because both opens
+            // re-read the same frozen SqlExecutionContext snapshot. Traversal-unstable sources
+            // such as (SELECT rnd_timestamp(...)) remain residual-only. The finally below frees
+            // loBound/hiBound/head (ownership has not yet transferred to the inverter).
+            if ((loBound instanceof ScalarSubQueryTimestampFunction && !loBound.isStableWithinExecution())
+                    || (hiBound instanceof ScalarSubQueryTimestampFunction && !hiBound.isStableWithinExecution())) {
                 return false;
             }
 
@@ -1507,10 +1508,11 @@ public final class WhereClauseParser implements Mutable {
             head = loBound = hiBound = null; // ownership transferred to the inverter
             model.intersectMonotonicTimestamp(inverter);
             // a runtime bound may not be invertible when the scan opens, so it only prunes
-            // and the predicate stays a residual filter. Non-deterministic scalar SUBQUERY bounds
-            // are handled above (pruning skipped, residual only); runtime-constant bounds (bind
-            // variables, now()) are stable and prune safely, and non-deterministic direct FUNCTION
-            // bounds (systimestamp/sysdate) are rejected by resolveScalarBound before reaching here.
+            // and the predicate stays a residual filter. Unstable scalar SUBQUERY bounds (e.g.
+            // rnd_*) are handled above (pruning skipped, residual only); execution-stable bounds
+            // (bind variables, now(), deterministic sub-queries) prune safely, and non-deterministic
+            // direct FUNCTION bounds (systimestamp/sysdate) are rejected by resolveScalarBound
+            // before reaching here.
             return false;
         } catch (SqlException | CairoException e) {
             return false;
