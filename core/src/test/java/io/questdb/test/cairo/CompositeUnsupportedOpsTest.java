@@ -624,6 +624,89 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    // ------------------------------------------------------------------------------------------
+    // NEGATIVE CONTROL: a composite table that has NEVER routed a single row (no INSERT ever --
+    // "dormant" in the DDL-safety sense, NOT to be confused with the narrower, legacy-data-specific
+    // isDormantWithPreexistingData()) must NOT be gated by any of the ops above. None of those gates'
+    // stated hazards (cell-blind purge/rename/rebuild of PHYSICAL PER-CELL FILES) can exist yet: no
+    // row has ever been routed, so no per-cell directory has ever been created. This is the
+    // regression lock for the bug found via ShowCreateTableTest's 3 pre-existing failures
+    // (testShowCreateCompositeAfterDropLowerIndexDimensionColumn and 2 siblings -- see
+    // .superpowers/sdd/plan4-comprehensive-redtest-report.md) and fixed by
+    // TableWriter#isRoutedComposite() (see its own doc for the full reasoning).
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    public void testGatesDoNotFireOnNeverRoutedEmptyCompositeTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol index, note varchar, price double, qty int) " +
+                    "timestamp(ts) partition by day, exch wal");
+            // Not a single row has ever been inserted: registry is empty AND maxTimestamp is
+            // MIN_VALUE, i.e. dimCount>0 but genuinely never-routed -- the "state A" case
+            // isRoutedComposite() must treat as safe (unlike the old !isDormantWithPreexistingData()
+            // gate, which requires PREEXISTING DATA to read dormant and so stayed armed here).
+
+            execute("alter table c set ttl 1 day");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Disable TTL again before proceeding: enforceTtl() is ALSO invoked automatically from
+            // every commit's housekeep() (TableWriter#commitWalInsertTransactions), not just
+            // synchronously after SET TTL. Left armed, it would correctly (and expectedly) re-fire
+            // once the table's first real row below transitions it from never-routed to routed --
+            // that later gating is CORRECT (matches CompositeUnsupportedOpsTest#testSetTtlGated), not
+            // a bug, but it would defeat this test's specific point, which is proving the NEVER-ROUTED
+            // state itself is never gated. ttl==0 short-circuits enforceTtl() before it ever reaches
+            // isRoutedComposite(), so this only re-proves SET TTL itself (both arming and disarming)
+            // is ungated here, and keeps the rest of this test isolated from that separate concern.
+            execute("alter table c set ttl 0 hours");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // exch already has an index (declared at CREATE time, matching testDropIndexGated's own
+            // established workaround) -- drop it, then add it back, round-tripping the same column
+            // used as the composite dimension source (matching testAddIndexGated's own precedent that
+            // indexing the dimension column itself is unrestricted).
+            execute("alter table c alter column exch drop index");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c alter column exch add index");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // STRING, not SYMBOL: converting a column TO symbol type hits a separate, legitimate,
+            // always-on guard (TableWriter#changeColumnType, "ALTER COLUMN TYPE SYMBOL is not yet
+            // supported on composite-partitioned tables") -- an orthogonal symbol-interner-slot-ordering
+            // hazard, unconditional on dimensionCount>0 alone (not gated by routed-state at all, so it
+            // fires even here) and correctly out of this fix's scope. STRING exercises the OTHER,
+            // isRoutedComposite()-gated "ALTER COLUMN TYPE is not yet cell-aware for ANY target type"
+            // guard just above it in the same method, without tripping the unrelated one.
+            execute("alter table c alter column note type string");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c rename column qty to qty2");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c drop column price");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // The table must still be genuinely usable afterward: insert real data through the
+            // now-altered column set and confirm it routes normally -- proves none of the above
+            // silently corrupted metadata, the partition spec, or the (still-empty) cell registry.
+            execute("insert into c (ts, exch, note, qty2) values ('2020-01-01T00:00:00.000000Z','A','n',7)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            engine.releaseInactive();
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("select ts, exch, note, qty2 from c").noLeakCheck().timestamp("ts").expectSize().returns(
+                    "ts\texch\tnote\tqty2\n2020-01-01T00:00:00.000000Z\tA\tn\t7\n");
+        });
+    }
+
     /**
      * Builds a routed composite table {@code tableName} ({@code partition by day, exch}): day1 gets
      * BOTH {@code exch='A'} and {@code exch='B'} (two real cells sharing one day), day2 gets a third

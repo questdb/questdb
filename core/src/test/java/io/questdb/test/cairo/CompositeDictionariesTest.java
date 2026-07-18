@@ -214,28 +214,41 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
      * ordinary columns ({@code foo}, {@code price}) through -- the DROP-side mirror of
      * {@link #testAddSymbolColumnRejectedOnComposite()}.
      * <p>
-     * <b>Superseded by Plan 4b's feature-gate sweep (see {@code TableWriter#removeColumn}'s own updated
-     * comment, and commit {@code 0fe4ff70db}).</b> {@code removeColumnFiles}'s purge ({@code
-     * PurgingOperator}/{@code ColumnPurgeOperator}) resolves a dropped column's per-cell physical files
-     * via cellKey-0-only/bare-path lookups with zero composite awareness anywhere -- confirmed reachable:
-     * DROP COLUMN silently leaked a routed cell's files. DROP COLUMN is therefore now rejected
-     * UNCONDITIONALLY for any real (non-dormant) composite table (any {@code dimensionCount > 0} table
-     * that is not a pre-existing, never-routed legacy one -- see {@code isDormantWithPreexistingData()}),
-     * BEFORE the narrower dimension/cluster-column-reference guard below it is ever reached. That makes
-     * the original "dimension-source columns only" distinction this test drew unreachable for a live
-     * composite table: EVERY column drop is rejected now, {@code foo}/{@code price} included, not just
-     * {@code symbol}/{@code exchange}. Confirmed this is the intended, correct behaviour (not a bug):
-     * the gate is deliberate, evidenced by an empirical negative control in its own commit message, and
-     * consistent with every other cell-blind "does not yet support X" gate added across Plan 4a/4b.
+     * <b>Plan 4b's feature-gate sweep</b> (see {@code TableWriter#removeColumn}'s own comment, commit
+     * {@code 0fe4ff70db}) added a BLANKET DROP COLUMN gate ahead of the narrower dimension/cluster guard
+     * below, because {@code removeColumnFiles}'s purge ({@code PurgingOperator}/{@code
+     * ColumnPurgeOperator}) resolves a dropped column's per-cell physical files via cellKey-0-only/
+     * bare-path lookups with zero composite awareness -- confirmed reachable: DROP COLUMN silently leaked
+     * a ROUTED cell's files. A prior revision of this test (see git history) updated it to expect that
+     * blanket gate to fire for every column, {@code foo}/{@code price} included, reasoning that the gate
+     * fired for ANY {@code dimensionCount > 0} table that wasn't a pre-existing, never-routed legacy one
+     * ({@code isDormantWithPreexistingData()}).
      * <p>
-     * Updated to assert the blanket gate fires uniformly, dimension source or not, keeping the same
-     * mixed-order drop sequence as before -- still a useful regression test that the gate applies without
-     * exception, at the {@code TableWriter} API level this class otherwise exercises. The narrower
-     * dimension/cluster-source-specific guard this test used to isolate remains independently reachable
-     * and covered by {@link #testDropClusterOrderByColumnRejected()} (a zero-dimension, cluster-only
-     * composite table, which the blanket gate's {@code dimensionCount > 0} check does not fire on); the
-     * blanket gate itself is also covered end-to-end via SQL by {@code
-     * CompositeUnsupportedOpsTest#testDropColumnGated}.
+     * <b>That reasoning was itself wrong, and is the root cause of a real GATE-TOO-BROAD regression fixed
+     * by {@code TableWriter#isRoutedComposite()}</b> (see its own doc, and
+     * {@code .superpowers/sdd/plan4-comprehensive-redtest-report.md}): {@code isDormantWithPreexistingData()}
+     * requires PREEXISTING DATA to read {@code true} ({@code maxTimestamp != MIN_VALUE}), so it reads
+     * {@code false} for THIS test's table {@code t} -- created here but never once written to before
+     * {@code removeColumn} is called -- and the old blanket gate fired anyway, even though a table that
+     * has never routed a single row has no per-cell physical files for the cell-blind purge path to
+     * mishandle in the first place. Independently proven live and reachable via SQL by three
+     * previously-failing {@code ShowCreateTableTest} tests
+     * ({@code testShowCreateCompositeAfterDropLowerIndexDimensionColumn} and two siblings), all of which
+     * created a composite table, dropped a column with zero rows ever inserted, and got the blanket
+     * gate's throw -&gt; WAL suspension -&gt; silently-a-no-op-drop instead of the expected success.
+     * {@code isRoutedComposite()} (registry-based: "has this table ever actually routed a row") fixes
+     * this while leaving the gate's behavior on a genuinely ROUTED table completely unchanged -- see
+     * {@code CompositeUnsupportedOpsTest#testDropColumnGated} for that (still-gated) case.
+     * <p>
+     * This test is therefore restored, with a clear regression-history comment, to its ORIGINAL Task
+     * 8/Plan 2 intent: on this never-routed table, {@code foo}/{@code price} (non-dimension-source) drop
+     * successfully; {@code symbol}/{@code exchange} (dimension sources) are still rejected, but now via
+     * the narrower, always-on "referenced by a composite partition dimension" guard (a permanent
+     * partition-spec-integrity rule, not a cell-blindness concern, so correctly unconditional on routed
+     * state). The blanket gate's behavior on a genuinely ROUTED composite table remains covered by
+     * {@link #testDropClusterOrderByColumnRejected()}'s cluster-only-composite variant and by
+     * {@code CompositeUnsupportedOpsTest#testDropColumnGated}/{@code
+     * testGatesDoNotFireOnNeverRoutedEmptyCompositeTable} at the SQL layer.
      */
     @Test
     public void testDropDimensionSourceColumnRejected() throws Exception {
@@ -243,19 +256,32 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, foo double, exchange symbol, symbol symbol, price double) " +
                     "timestamp(ts) partition by day, exchange, truncate(symbol, 3) wal");
             try (TableWriter w = getWriter("t")) {
-                // Every column drop is now rejected by the blanket Plan 4b gate, dimension source or
-                // not -- unlike the pre-Plan-4b behaviour this test originally documented, where foo/price
-                // (non-dimension columns) were allowed through (see class Javadoc above).
-                for (String column : new String[]{"foo", "symbol", "exchange", "price"}) {
-                    try {
-                        w.removeColumn(column);
-                        Assert.fail("DROP COLUMN " + column + " must be rejected on a real composite table");
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DROP COLUMN");
-                    }
+                // Never-routed (zero rows ever inserted anywhere in this test): isRoutedComposite() is
+                // false, so the blanket Plan 4b gate correctly does not fire here. Only the narrower,
+                // dimension/cluster-source-specific guard remains reachable -- unconditional regardless
+                // of routed state, since a dangling dimension/cluster reference is a permanent
+                // partition-spec-integrity hazard, not a cell-blindness one.
+                w.removeColumn("foo");
+                Assert.assertTrue("foo must have been dropped (not a dimension source)", w.getMetadata().getColumnIndexQuiet("foo") < 0);
+
+                try {
+                    w.removeColumn("symbol");
+                    Assert.fail("DROP COLUMN symbol must be rejected: it is a composite partition dimension source");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "referenced by a composite partition dimension");
                 }
-                Assert.assertTrue("foo must still be present -- its drop was rejected", w.getMetadata().getColumnIndexQuiet("foo") >= 0);
-                Assert.assertTrue("price must still be present -- its drop was rejected", w.getMetadata().getColumnIndexQuiet("price") >= 0);
+                try {
+                    w.removeColumn("exchange");
+                    Assert.fail("DROP COLUMN exchange must be rejected: it is a composite partition dimension source");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "referenced by a composite partition dimension");
+                }
+
+                w.removeColumn("price");
+                Assert.assertTrue("price must have been dropped (not a dimension source)", w.getMetadata().getColumnIndexQuiet("price") < 0);
+
+                Assert.assertTrue("symbol must still be present -- its drop was rejected", w.getMetadata().getColumnIndexQuiet("symbol") >= 0);
+                Assert.assertTrue("exchange must still be present -- its drop was rejected", w.getMetadata().getColumnIndexQuiet("exchange") >= 0);
             }
         });
     }

@@ -897,7 +897,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // directory was never created. Gated unconditionally for any real (non-dormant) composite
         // table, with a clear message instead of either failure mode. Plain and dormant-composite
         // tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support ADD INDEX [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
@@ -1056,7 +1059,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // comment for why this bypasses the AttachDetachStatus convention). Gated unconditionally for
         // any real (non-dormant) composite table. Plain and dormant-composite tables are completely
         // unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support ATTACH PARTITION [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -1318,7 +1324,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Reachable even for a non-symbol target type, so this must be its own, broader check. Gated
         // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
         // tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support ALTER COLUMN TYPE [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
@@ -1770,7 +1779,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // hypothetically-successful conversion would brick future ingestion into that day. Gated
         // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
         // tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support CONVERT PARTITION TO PARQUET [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -1913,7 +1925,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // setPathForNativePartition overloads, mirroring convertPartitionNativeToParquet's own gate
         // (see its comment for the fuller mechanism). Gated unconditionally for any real
         // (non-dormant) composite table. Plain and dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support CONVERT PARTITION TO NATIVE [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -2052,7 +2067,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // caller via AttachDetachStatus#getException, but with a generic, less specific message.
         // Gated unconditionally for any real (non-dormant) composite table. Plain and
         // dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support DETACH PARTITION [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -2269,7 +2287,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // routed, indexed NATIVE data. Gated unconditionally for any real (non-dormant) composite
         // table, with a clear message rather than the raw "cannot hardLink" failure. Plain and
         // dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support DROP INDEX [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
@@ -2428,7 +2449,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // cell sharing the same timestamp. Gated unconditionally for any real (non-dormant) composite
         // table -- cell-aware FORCE DROP PARTITION is deferred to a later sub-plan. Plain and
         // dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support FORCE DROP PARTITION [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -3282,7 +3306,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // integrity rule, not a cell-blindness issue -- and becomes unreachable-first here, mirroring
         // changeColumnType's identical precedent elsewhere in this file). Plain and dormant-composite
         // tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table (proven by
+        // ShowCreateTableTest's testShowCreateCompositeAfterDropLowerIndexDimensionColumn and 2
+        // siblings) -- see isRoutedComposite()'s own doc for why that predicate is wrong for a
+        // DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support DROP COLUMN [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
@@ -3403,7 +3432,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // delete sibling cells' data that was never meant to be touched. Gated unconditionally for any
         // real (non-dormant) composite table -- cell-aware DROP PARTITION is deferred to a later
         // sub-plan (4b+). Plain and dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support DROP PARTITION [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -3475,7 +3507,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // wrong-answer, not merely an availability loss. Rejected unconditionally, before any of this
         // runs, for any real (non-dormant) composite table. Plain and dormant-composite tables are
         // completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support RENAME COLUMN [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
@@ -7512,7 +7547,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // touches no partition directory), and leaving it in place means eviction starts working
         // immediately, with no need to re-run SET TTL, once a future task makes it cell-aware. Plain
         // and dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- confirmed
+        // reachable by tracing AlterOperation#applyTtl, which calls setMetaTtl() then enforceTtl()
+        // synchronously, so a bare `ALTER TABLE ... SET TTL` against a freshly-created composite table
+        // (zero rows ever inserted) hit this gate immediately. See isRoutedComposite()'s own doc.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support TTL-based partition eviction [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -10610,6 +10650,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean isDormantWithPreexistingData() {
         return txWriter.getMaxTimestamp() != Long.MIN_VALUE && getCompositeDictionaries().cellRegistry().size() == 0;
+    }
+
+    /**
+     * Composite red-test convergence fix (see {@code .superpowers/sdd/plan4-comprehensive-redtest-report.md}).
+     * {@code true} only for a composite table that has actually routed at least one row into a real
+     * per-cell physical partition (the cell registry has at least one entry). This -- NOT {@code
+     * dimCount > 0 && !isDormantWithPreexistingData()} -- is the correct predicate for every "does not
+     * yet support X" DDL/feature-refusal gate in this class (DROP/RENAME COLUMN, ADD/DROP INDEX,
+     * ATTACH/DETACH/DROP/FORCE-DROP/SQUASH PARTITION, CONVERT PARTITION TO/FROM PARQUET, ALTER COLUMN
+     * TYPE, SET TTL eviction, POSTING index reseal/seal, symbol-capacity autoscale, split-fragment
+     * squash): every one of those gates exists solely to protect PHYSICAL PER-CELL FILES that cell-blind
+     * code would mishandle -- and such files cannot exist until routing has happened at least once.
+     * <p>
+     * Deliberately NOT the same test as {@code dimCount > 0 && !isDormantWithPreexistingData()}, which
+     * remains the correct (unchanged) predicate for write-routing/commit-bookkeeping decisions such as
+     * {@link #processO3Block}'s own composite/plain dispatch and its tightly-coupled per-commit
+     * bookkeeping siblings: THAT predicate is (by design) {@code true} even for a genuinely brand-new,
+     * never-inserted composite table (maxTimestamp == MIN_VALUE, registry empty), because such a
+     * table's FIRST write must still be routed through composite dispatch to establish the initial cell
+     * layout. Reusing that write-routing predicate for a DDL-safety gate is over-broad: it incorrectly
+     * rejects harmless operations (DROP COLUMN, SET TTL, ...) on a composite table that has never
+     * received a single row and therefore has no per-cell physical files anything could corrupt or
+     * leak -- empirically confirmed via {@code ShowCreateTableTest}'s
+     * {@code testShowCreateCompositeAfterDropLowerIndexDimensionColumn} and two sibling tests (all
+     * created a composite table, dropped a column with zero rows ever inserted, and got the blanket
+     * gate's throw -&gt; WAL suspension -&gt; silently-a-no-op-drop instead of the expected success) and
+     * via direct call-chain tracing for SET TTL ({@code AlterOperation#applyTtl} calls {@code
+     * setMetaTtl} then {@code enforceTtl()} synchronously, so the old gate fired on the very first
+     * {@code SET TTL} against a freshly-created, still-empty composite table).
+     * <p>
+     * Behaviorally identical to the old predicate for every OTHER state: a routed table (registry > 0)
+     * still gates (both predicates true); a dormant-with-preexisting-data table (legacy pre-routing
+     * data, registry == 0) still does not gate (both predicates false). Only the genuinely-empty state
+     * (registry == 0, maxTimestamp == MIN_VALUE) differs, and only there was the old predicate wrong.
+     */
+    private boolean isRoutedComposite() {
+        return metadata.getPartitionSpec().getDimensionCount() > 0 && getCompositeDictionaries().cellRegistry().size() > 0;
     }
 
     /**
@@ -14620,7 +14697,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // loudly instead. Plain and dormant-composite tables are completely unaffected (the
         // hasCoveringPostingIndex()/dormant-CONVERT preconditions above and below mean this is reached
         // rarely, only for a table that actually combines composite + covering POSTING + PARQUET).
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support a covering POSTING index reseal on a PARQUET partition [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -15055,7 +15135,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // (a composite table simply keeps its original symbol capacity, i.e. more hash collisions at
         // high cardinality, if skipped) -- throwing would suspend an otherwise-healthy, high-cardinality
         // composite table's ordinary commits. Plain and dormant-composite tables are unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             LOG.info().$("composite table, skipping symbol capacity autoscale (cell-blind reopen, cell-aware autoscale deferred) [table=").$(tableToken).I$();
             return;
         }
@@ -15140,7 +15223,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // rowid chain), not merely an un-consolidated file count, so this is rejected loudly rather than
         // skipped, mirroring resealParquetCoveringForPartition's own severity call just below. Plain and
         // dormant-composite tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support a POSTING index seal on this partition [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -15580,7 +15666,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // helpers that call this method directly without their own composite gate. Gated
         // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
         // tables are completely unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             throw CairoException.critical(0)
                     .put("composite partitioning does not yet support SQUASH PARTITIONS [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -15708,7 +15797,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // the already-documented harmless orphan-directory leak. So, mirroring O3PartitionPurgeJob's own
         // established composite skip (not throw) for this same "automatic background job" class of gate:
         // skip cell-aware-ly rather than corrupt. Plain and dormant-composite tables are unaffected.
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
             LOG.info().$("composite table, skipping split-fragment squash (cell-blind merge, cell-aware squash deferred) [table=").$(tableToken).I$();
             return;
         }
