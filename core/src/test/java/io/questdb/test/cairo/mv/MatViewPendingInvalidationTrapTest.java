@@ -42,6 +42,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -594,6 +595,88 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .returns("""
                             count
                             0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFinalizeBothFacetsInvalidationWakeFailureArmsBothRetryFlags() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            final MatViewStateStore failingStore = new FailOnceStateStore(
+                    engine.getMatViewStateStore(),
+                    FailOnceStateStore.FAIL_INVALIDATE,
+                    "test invalidation wake enqueue failure"
+            );
+
+            // A synthetic holder defers both facets, then finalizes through a store whose
+            // INVALIDATE wake throws first. The throw propagates before the FULL wake is ever
+            // attempted, so the catch must arm BOTH per-facet retry flags: without the second arm,
+            // the owner's redelivery would ride on the invalidation retry finding the view still
+            // valid -- a view invalidated through another route in between would strand the owner.
+            Assert.assertTrue(state.tryLock());
+            try {
+                state.markAsPendingInvalidation("both facets witness");
+                state.markAsPendingFullRefreshForTesting();
+                try {
+                    MatViewRefreshJob.finalizeAndUnlock(engine, failingStore, viewToken, state, false);
+                    Assert.fail("the invalidation wake enqueue failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test invalidation wake enqueue failure");
+                }
+                Assert.assertFalse("finalize must unlock before attempting the wakes", state.isLocked());
+            } finally {
+                if (state.isLocked()) {
+                    state.unlock();
+                }
+            }
+
+            // Drive the retry scan directly on the impl and inspect what one scan redelivers:
+            // both facets must come back together, pinning that the FULL flag was armed
+            // independently of the invalidation retry.
+            final MatViewStateStoreImpl impl =
+                    (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
+            impl.reenqueueFailedPendingTasks();
+            final ObjList<MatViewRefreshTask> drained = new ObjList<>();
+            MatViewRefreshTask task = new MatViewRefreshTask();
+            while (impl.tryDequeueRefreshTask(task)) {
+                drained.add(task);
+                task = new MatViewRefreshTask();
+            }
+            boolean hasInvalidateTask = false;
+            boolean hasFullTaskWithOwner = false;
+            for (int i = 0, n = drained.size(); i < n; i++) {
+                final MatViewRefreshTask t = drained.getQuick(i);
+                if (t.operation == MatViewRefreshTask.INVALIDATE) {
+                    hasInvalidateTask = true;
+                } else if (t.operation == MatViewRefreshTask.FULL_REFRESH && t.fullRefreshOwner != null) {
+                    hasFullTaskWithOwner = true;
+                }
+            }
+            Assert.assertTrue("one scan must redeliver the armed invalidation facet", hasInvalidateTask);
+            Assert.assertTrue("one scan must redeliver the armed FULL facet with its owner", hasFullTaskWithOwner);
+
+            // Put the redelivered tasks back and let the drain recover end-to-end: the
+            // invalidation mints invalid, the redelivered FULL performs invalid-view recovery.
+            for (int i = 0, n = drained.size(); i < n; i++) {
+                impl.reenqueueRefreshTask(drained.getQuick(i));
+            }
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse("recovery must consume both facets", state.isPendingInvalidation());
+            Assert.assertFalse("recovery must end valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
                             """);
         });
     }
