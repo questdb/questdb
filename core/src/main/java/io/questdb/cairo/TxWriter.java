@@ -78,7 +78,26 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // To resolve transientRowCount after out of order partition update
             // let's store it in attached partitions list
             // before out of order partition update happens
-            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
+            //
+            // Plan 4b Task 1 fix: cellKey-aware. This used to call the plain updatePartitionSizeByTimestamp
+            // overload, which hardcodes cellKey 0 -- correct for a plain table (every partition's cellKey
+            // is always 0) but wrong for composite: it resolves "the day containing maxTimestamp,
+            // cellKey 0", which is NOT necessarily the array's actual last entry whenever that day has
+            // 2+ cells and cellKey 0 is not the highest-cellKey one sharing it (e.g. maxTimestamp's row
+            // is in cellKey 1, but cellKey 0 also has a row somewhere earlier that same day). Reproduced
+            // directly (Plan 4b Task 1 report): this wrote transientRowCount -- which belongs to the
+            // array's true last entry -- into a DIFFERENT, unrelated cell's own independently-tracked
+            // size slot, silently corrupting it; the next full scan of that cell then read a phantom row
+            // with zeroed/garbage column data, which went on to silently overflow a native sort buffer by
+            // one entry (glibc "malloc(): invalid size (unsorted)" once that corruption was later
+            // detected by an unrelated allocation). Resolve the target cell directly from the array's own
+            // last entry (whatever cellKey it actually is) instead of re-deriving one via a cellKey-blind
+            // timestamp lookup that always assumes 0. For a plain table getPartitionCellKey always
+            // returns 0 (guarded on the plain stride), so this is byte-identical there.
+            int lastIndex = getPartitionCount() - 1;
+            int cellKey = lastIndex > -1 ? getPartitionCellKey(lastIndex) : 0;
+            recordStructureVersion++;
+            updateAttachedPartitionSizeByTimestamp(maxTimestamp, cellKey, transientRowCount, txn - 1);
         }
     }
 

@@ -586,6 +586,102 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     }
 
     /**
+     * Plan 4b Task 1: distinguishes the {@code canAppendOnly} sub-shape of the guarded "extend an
+     * already-populated cell" case from the genuine-merge sub-shape below. Commit 2 lands a single row
+     * on day2's already-populated cellA, IN ORDER (strictly after cellA's one existing row) -- the
+     * {@code O3PartitionJob#processPartition}'s {@code srcDataMax >= 1} branch would take the
+     * {@code canAppendOnly}/{@code OPEN_MID_PARTITION_FOR_APPEND} path (append after existing data, no
+     * merge, no directory rewrite) if it ran. Plan 4b Task 1's investigation root-caused and fixed two
+     * independent bugs that made exactly this shape corrupt the native heap (see
+     * {@code TableWriter#o3ConsumePartitionUpdateSink}'s and {@code TxWriter#beginPartitionSizeUpdate}'s
+     * own updated docs) -- this specific sub-shape (pure append, no directory rewrite) is now provably
+     * safe end to end (verified directly with the guard temporarily removed: no crash, correct data,
+     * byte-for-byte match with the plain twin, across repeated fresh-JVM runs -- see the task's own
+     * report). It still throws here because the guard fires uniformly on {@code srcDataMax > 0} before
+     * dispatch can know whether the shape will end up append-only or a genuine merge -- see the
+     * out-of-order test below for why the guard cannot yet be narrowed to "only genuine merges."
+     */
+    @Test
+    public void testSecondCommitExtendingExistingCellInOrderAppendThrowsInsteadOfSilentlyMisrouting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Commit 2: ONE row, in-order (18:00 > cellA's existing 00:00), on day2's already-populated
+            // cellA -- would be a pure append after existing data (canAppendOnly), no merge, if the
+            // guard did not block it first.
+            execute("insert into c values ('2020-01-02T18:00:00.000000Z','A',3.0)");
+            execute("insert into p values ('2020-01-02T18:00:00.000000Z','A',3.0)");
+            drainWalQueue();
+
+            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+        });
+    }
+
+    /**
+     * Plan 4b Task 1: the genuine-merge sub-shape. Day2's cellA gets TWO rows in commit 1 (00:00,
+     * 12:00); commit 2 lands a single row at 06:00 -- strictly BETWEEN cellA's two existing rows --
+     * which would force {@code O3PartitionJob#processPartition}'s {@code srcDataMax >= 1} branch to
+     * take a genuine {@code O3_BLOCK_MERGE} (not {@code canAppendOnly}), i.e.
+     * {@code OPEN_MID_PARTITION_FOR_MERGE} -- a directory-version rewrite, queuing the old cellA
+     * directory version for removal. This is still guarded (unlike the pure-append sub-shape above):
+     * Plan 4b Task 1's investigation found and fixed the two bugs that were the guard's own documented
+     * proximate cause (both also cover this sub-shape -- verified directly, no crash, correct merged
+     * row content, with the guard temporarily removed), but surfaced a THIRD, independent, and more
+     * severe bug specifically in the post-merge directory-purge step: {@code
+     * TableWriter#processPartitionRemoveCandidates0} resolves the physical path of the OLD (now
+     * superseded) directory version via the cell-BLIND 5-arg {@code setPathForNativePartition} overload
+     * (no {@code cellSegment}), which for a composite table can resolve to the bare, multi-cell DAY
+     * directory instead of the one cell's own subdirectory -- risking deleting sibling cells' still-live
+     * data, not just corrupting bookkeeping. That bug is broader than this task's own scope (the same
+     * cell-blind {@code partitionRemoveCandidates} queue also feeds TTL eviction, TRUNCATE, writer-open/
+     * rollback cleanup, and automatic split-squash housekeeping -- none of those are guarded today
+     * either) and needs its own dedicated fix, not a rushed one here. Per the project's safety rule, the
+     * guard therefore stays for this sub-shape too, loudly, rather than risk shipping a merge path that
+     * can delete a sibling cell's directory. See the task's own report for the full root-cause chain and
+     * evidence.
+     */
+    @Test
+    public void testSecondCommitExtendingExistingCellOutOfOrderMergeThrowsInsteadOfSilentlyMisrouting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','A',2.2), " +
+                    "('2020-01-02T18:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Commit 2: ONE row at 06:00 -- strictly between cellA's existing 00:00 and 12:00 rows on
+            // day2 -- would be a genuine out-of-order merge into the existing cell (directory rewrite),
+            // not a pure append, if the guard did not block it first.
+            execute("insert into c values ('2020-01-02T06:00:00.000000Z','A',2.1)");
+            execute("insert into p values ('2020-01-02T06:00:00.000000Z','A',2.1)");
+            drainWalQueue();
+
+            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+        });
+    }
+
+    /**
      * Direct, targeted proof of the {@code TxReader#getNextPartitionTimestamp} split/cell-conflation
      * fix, isolated from {@code finishO3Commit}'s separate fix (which stopped calling that method with
      * an exact existing-day floor entirely, for a different reason -- see this task's report): commit 1

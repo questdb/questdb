@@ -8305,7 +8305,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             performRecovery();
         }
         if (!isLastPartitionParquet()) {
-            txWriter.initLastPartition(ts);
+            // Plan 4b Task 1 fix: continues Task 6's own gate sweep on this EXACT bootstrap chain --
+            // repairDataGaps' own comment two calls above already identifies "a fresh TableWriter
+            // bootstrap (initLastPartition <- configureAppendPosition, called from the constructor and
+            // from rollback())... released and reopened a writer instance mid a multi-cell-day sequence"
+            // as untested/risky and gates ITS OWN body for composite, but this sibling call in the same
+            // method was missed. TxWriter#initLastPartition(ts) unconditionally, cell-blindly (hardcodes
+            // cellKey 0 -- see its own doc) zeroes "whatever entry is at cellKey 0 for the day
+            // containing ts". That is meaningless AND actively harmful for a real composite table:
+            // composite dispatch never uses the writer's single active-tail transientRowCount/{@code
+            // this.columns} at all (see this class's own docs; finishO3Commit's matching composite gate
+            // just below skips the analogous openPartition/setAppendPosition pair for exactly this
+            // reason), so there is no "the writer's active tail partition" concept to initialize here --
+            // and the cell-blind zero silently destroys a REAL, already-correct, unrelated sibling
+            // cell's own independently-persisted row count. Reproduced directly (Plan 4b Task 1 report):
+            // a multi-cell day, released and reopened mid-sequence, permanently loses one cell's
+            // visibility to every later full scan -- the exact "released and reopened... mid a
+            // multi-cell-day sequence" shape repairDataGaps' own comment names as never having been
+            // exercised. Composite dispatch resolves and persists each cell's own size fresh on every
+            // commit (dispatchCompositeCellRange/o3ConsumePartitionUpdateSink), so skipping this call
+            // outright for composite is a proven no-op for the writer's own subsequent correctness.
+            final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+            if (!composite) {
+                txWriter.initLastPartition(ts);
+            }
         }
     }
 
@@ -9357,6 +9380,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             txWriter.bumpPartitionTableVersion();
         } else {
+            // Plan 4b Task 1 fix: commitTransientRowCount/trackedTailPartitionTimestamp/trackedTailCellKey
+            // (see this method's big comment above the main loop) track "the (ts, cellKey) pair the LAST
+            // block THIS COMMIT touched" as a proxy for "the array's actual last entry". That proxy is
+            // exact for a plain table (dispatch is always non-decreasing in ts, so the last block touched
+            // is always at-or-after the pre-commit tail) but NOT for composite: a commit can dispatch
+            // blocks for an EARLIER (non-tail) cell only -- e.g. this commit extends an already-populated
+            // day2/cellA while day2/cellB (a later cellKey sharing the same day, untouched this commit)
+            // remains the array's true last entry -- leaving trackedTail* pointing at the wrong pair.
+            // Root-caused directly (Plan 4b Task 1 report): this desync corrupts txWriter.transientRowCount
+            // with a value belonging to the WRONG partition. TxReader#unsafeLoadPartitions then stamps
+            // that wrong value onto the array's own physically-LAST slot on every subsequent _txn reload
+            // (correct behaviour BY DESIGN there -- array-last IS always the transientRowCount owner for
+            // a plain table) -- for composite this silently overwrites the true tail's own correct,
+            // untouched size with the wrong one, producing a phantom extra row (zeroed/garbage column
+            // data) the next time that partition is scanned. That phantom row in turn silently overflows
+            // EncodedSortLightRecordCursor's native sort buffer by exactly one entry (its estimatedSize>0
+            // fast path trusts the row count as an exact bound and skips its own per-row bounds check),
+            // corrupting the native heap in a way that only crashes later, unpredictably, in unrelated
+            // code (reproduced as glibc "malloc(): invalid size (unsorted)").
+            //
+            // Fix: reconcile once, here, against ground truth. If the pair we ended up tracking is not
+            // ACTUALLY the array's current last entry, fold it back into fixedRowCount (it is a fixed,
+            // non-tail partition after all) and pull the true tail's own independently persisted size
+            // instead -- this is exactly the mid-loop "different pair" transition arithmetic above,
+            // applied once more with the true tail as an implicit trailing no-op block (old size == new
+            // size == its own current size, since this commit never touched it). Gated on `composite`:
+            // a plain table can never hit the mismatch (see above), so this is a proven no-op there --
+            // byte-identical to the pre-existing behaviour.
+            if (composite && txWriter.getPartitionCount() > 0) {
+                int trueLastIndex = txWriter.getPartitionCount() - 1;
+                if (txWriter.getPartitionTimestampByIndex(trueLastIndex) != trackedTailPartitionTimestamp
+                        || txWriter.getPartitionCellKey(trueLastIndex) != trackedTailCellKey) {
+                    long trueLastSize = txWriter.getPartitionSizeByRawIndex(trueLastIndex * txWriter.getLongsPerAttachedPartition());
+                    txWriter.fixedRowCount += commitTransientRowCount;
+                    txWriter.fixedRowCount -= trueLastSize;
+                    commitTransientRowCount = trueLastSize;
+                }
+            }
             txWriter.transientRowCount = commitTransientRowCount;
         }
     }
