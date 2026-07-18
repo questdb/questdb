@@ -143,14 +143,17 @@
 
 **Interfaces:** Consumes Tasks 1-5. Verifies the `_cell` registry + dim dicts advance and commit crash-safely via the normal `txWriter.commit(denseSymbolMapWriters)` path, and that a reopened writer/reader sees the routed cells.
 
-- [ ] **Step 1: End-to-end + crash-safety tests** —
-  - **Append + O3 mix:** insert several days × several exchanges in order, then an OUT-OF-ORDER insert into an earlier day's existing cell (drives the `o3CommitPartitionAsync` merge branch per cell); assert composite == plain twin on full scan, count, `LATEST ON ts PARTITION BY exch`, and per-exch filters, and that physical cell dirs are correct.
-  - **Crash-safety:** intern cells via ingestion, close the writer WITHOUT a final commit on an isolated interned tuple (mirror `CompositeDictPersistenceTest`), reopen; assert the registry count reflects only committed cells (uncommitted routing discarded).
-  - **Reopen routing:** write cells, `engine.releaseInactive()`, reopen writer, insert more rows into an existing cell; assert they append to the right cell.
+Scope note: Task 5's review established the current live-routing capability — a commit routes correctly when every cell it touches is BRAND NEW (new day, new cell on an existing day, out-of-order into a brand-new earlier day); EXTENDING an already-populated cell throws a loud `srcDataMax>0` guard (the per-cell O3 merge is a documented carry-forward). Task 6 is the consolidated end-to-end + crash-safety capstone for THAT capability — it must NOT assert the guarded case succeeds.
 
-- [ ] **Step 2: Run** — PASS (or a revealed gap → minimal fix → RED/GREEN).
+- [ ] **Step 1: End-to-end + crash-safety tests** (`CompositeRoutingEndToEndTest`, or extend `CompositeEndToEndTest`) —
+  - **Multi-day, multi-exchange new-cell routing:** across several commits, insert several days × several exchanges where each commit adds only new (day,exch) cells (in-order AND an out-of-order commit targeting a brand-new earlier day); assert composite == plain twin on full ordered scan, `count()`, `LATEST ON ts PARTITION BY exch`, per-exch filters, and `table_partitions()` cell listing; assert the physical `<date>/<cell>` dirs are correct.
+  - **Guarded extend is loud, not silent:** a commit that adds rows to an ALREADY-populated cell throws the clear `srcDataMax>0` "not yet supported" `CairoException` (table suspends) — assert the message and that the plain twin / prior committed cells are unaffected (no silent misroute). This documents the current boundary as a positive assertion.
+  - **Crash-safety:** intern/route cells via ingestion, close the writer WITHOUT a final commit on an isolated interned tuple (mirror `CompositeDictPersistenceTest`), reopen; assert the registry count + committed cells reflect only committed routing (uncommitted discarded).
+  - **Reopen routing:** write cells, `engine.releaseInactive()`, reopen, insert rows into a NEW cell/day; assert they route to the correct (new) cell and the reopened reader sees all prior cells.
 
-- [ ] **Step 3: Commit** — `test(cairo): composite routing end-to-end (append+O3+crash-safety) == plain twin`
+- [ ] **Step 2: Run** — PASS (or a revealed gap → minimal fix → RED/GREEN). Full regression: `TableWriterTest`, `CompositeEndToEndTest`, `CompositePartitionDdlTest`, `O3PartitionPurgeTest`, `O3SquashPartitionTest` green.
+
+- [ ] **Step 3: Commit** — `test(cairo): composite live-routing end-to-end + crash-safety (new-cell multi-commit == plain twin; extend throws)`
 
 ---
 
