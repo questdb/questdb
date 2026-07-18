@@ -122,6 +122,20 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #removeColumnTop(long, int)}, used by
+     * {@code TableWriter#updateO3ColumnTops}'s partition-split branch so a split of one cell can never
+     * zero out a DIFFERENT cell's column top sharing the same timestamp. {@code cellKey == 0} is
+     * byte-identical to the 2-arg overload.
+     */
+    public void removeColumnTop(long partitionTimestamp, int cellKey, int columnIndex) {
+        int recordIndex = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
+        if (recordIndex >= 0) {
+            cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, 0);
+            hasChanges = true;
+        }
+    }
+
     public void removePartition(long partitionTimestamp) {
         removePartition(partitionTimestamp, 0);
     }
@@ -376,6 +390,44 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 // Store non-zero column tops only, zero is default
                 // for columns added on the table creation
                 upsert(partitionTimestamp, columnIndex, -1L, colTop);
+            }
+        }
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): {@code cellKey}-aware counterpart of {@link
+     * #upsertColumnTop(long, int, long)}. Root cause of the Critical: {@code
+     * TableWriter#updateO3ColumnTops} -- the post-O3-commit consumer that turns each dispatched cell's
+     * own {@code colTopSinkAddr} scratch value into a durable column-version record -- called the
+     * cellKey-BLIND 3-arg overload, whose {@code getRecordIndex(partitionTimestamp, columnIndex)}
+     * resolves cellKey 0 implicitly. For a composite table, that silently upserted (or, on the
+     * find-existing-record branch, directly IN-PLACE OVERWROTE) whichever cell's record happens to be
+     * packed at cellKey 0 -- clobbering a DIFFERENT, untouched sibling cell's legitimate column top with
+     * the cell actually being appended/merged this commit's own value, whenever the extended/merged cell
+     * itself was NOT cellKey 0. Reproduced directly: extending a non-zero-cellKey cell after {@code ADD
+     * COLUMN} corrupted a cellKey-0 sibling's column-version record, making its {@code <col>.d} file
+     * unreadable on the next query. {@code cellKey == 0} is byte-identical to the 3-arg overload.
+     */
+    public void upsertColumnTop(long partitionTimestamp, int cellKey, int columnIndex, long colTop) {
+        int recordIndex = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
+        if (recordIndex > -1L) {
+            cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);
+            hasChanges = true;
+        } else {
+            // This is a 0 column top record we need to store it
+            // to mark that the column is written in O3 even before the partition the column was originally added
+            int defaultRecordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+            if (defaultRecordIndex >= 0) {
+                long columnNameTxn = cachedColumnVersionList.getQuick(defaultRecordIndex + COLUMN_NAME_TXN_OFFSET);
+                long defaultPartitionTimestamp = cachedColumnVersionList.getQuick(defaultRecordIndex + TIMESTAMP_ADDED_PARTITION_OFFSET);
+                // Do not add 0 column top if the default partition
+                if (defaultPartitionTimestamp > partitionTimestamp || colTop > 0) {
+                    upsert(partitionTimestamp, cellKey, columnIndex, columnNameTxn, colTop);
+                }
+            } else if (colTop > 0) {
+                // Store non-zero column tops only, zero is default
+                // for columns added on the table creation
+                upsert(partitionTimestamp, cellKey, columnIndex, -1L, colTop);
             }
         }
     }

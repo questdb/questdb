@@ -825,7 +825,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
 
         // create column files
-        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            // Composite: no single "current partition" -- potentially several sibling CELLS share
+            // txWriter.getLastPartitionTimestamp(). See writeCompositeAddColumnColumnVersions's own docs.
+            writeCompositeAddColumnColumnVersions(columnIndex, columnNameTxn);
+        } else if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
                 openNewColumnFiles(columnName, columnType, indexType, indexValueBlockCapacity);
             } catch (CairoException e) {
@@ -2542,12 +2546,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
     }
 
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #getColumnNameTxn(long, int)}, used by
+     * the composite O3 dispatch ({@code O3PartitionJob#publishOpenColumnTasks}) so a merge/append into
+     * one cell never reads a DIFFERENT cell's column-version record sharing the same partition timestamp.
+     * {@code cellKey == 0} is byte-identical to the 2-arg overload.
+     */
+    public long getColumnNameTxn(long partitionTimestamp, int cellKey, int columnIndex) {
+        return columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
+    }
+
     public long getColumnStructureVersion() {
         return txWriter.getColumnStructureVersion();
     }
 
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+        return colTop > -1L ? colTop : defaultValue;
+    }
+
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #getColumnTop(long, int, long)}, used
+     * by the composite O3 merge path ({@code O3OpenColumnJob#appendMidPartition}/{@code
+     * #mergeMidPartition}) so a cell's own pre-existing column top is never aliased to a DIFFERENT cell's
+     * record sharing the same partition timestamp. {@code cellKey == 0} is byte-identical to the 3-arg
+     * overload.
+     */
+    public long getColumnTop(long partitionTimestamp, int cellKey, int columnIndex, long defaultValue) {
+        long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
     }
 
@@ -8949,7 +8975,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnCounter, maxTimestamp, sortedTimestampsAddr, srcOooLo, srcOooHi, srcOooMax,
                 oooTimestampMin, partitionTimestamp, srcDataMax, last, srcNameTxn, o3Basket,
                 newPartitionSize, oldPartitionSize, partitionUpdateSinkAddr, dedupColSinkAddr, isParquet,
-                o3TimestampLo, o3TimestampHi, o3Columns, null
+                o3TimestampLo, o3TimestampHi, o3Columns, null, 0
         );
     }
 
@@ -8982,7 +9008,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampLo,
             long o3TimestampHi,
             ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
-            @Nullable CharSequence cellSegment
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -9013,7 +9040,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     isParquet,
                     o3TimestampLo,
                     o3TimestampHi,
-                    cellSegment
+                    cellSegment,
+                    cellKey
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -9043,7 +9071,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     isParquet,
                     o3TimestampLo,
                     o3TimestampHi,
-                    cellSegment
+                    cellSegment,
+                    cellKey
             );
         }
     }
@@ -9872,6 +9901,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): writes an explicit per-cell {@code (ts, cellKey,
+     * columnIndex)} column-version record for EVERY cell already attached at {@code
+     * txWriter.getLastPartitionTimestamp()} when {@code ALTER TABLE ADD COLUMN} runs on a composite
+     * table -- mirroring, per cell, exactly what {@link #openNewColumnFiles} does for a plain table's
+     * single "current" partition: an explicit {@code top = <that cell's own row count>} record, so the
+     * new column reads back as fully absent (no physical file ever opened) for all of that cell's
+     * pre-existing rows.
+     * <p>
+     * Unlike {@link #openNewColumnFiles}, this is METADATA ONLY -- no physical column file is created
+     * for any cell here. That is safe and correct: every cell's explicit top exactly equals its own
+     * current row count, so {@code TableReader#reloadColumnAt}'s cell-aware lookup always computes
+     * {@code columnRowCount == 0} for it and never attempts to open a file. The first physical file for
+     * this column, for any given cell, is created lazily by whichever future O3 write/merge first
+     * appends real data into that cell for this column -- the same machinery that already creates column
+     * files for any other brand-new column value in an O3 write (see {@code O3OpenColumnJob}'s
+     * {@code appendMidPartition}/{@code mergeMidPartition}, now also made cell-aware by this same task).
+     * <p>
+     * Without this, a composite table's ADD COLUMN wrote only ONE {@code (ts, columnIndex)} record (the
+     * {@code columnVersionWriter.upsertDefaultTxnName} call in {@link #addColumn}, packed at cellKey 0)
+     * plus, when reachable, a SECOND cell-blind, arbitrarily-targeted one from {@link
+     * #openNewColumnFiles} itself -- so every OTHER sibling cell sharing that timestamp fell through to
+     * the (deliberately cellKey-agnostic, table-wide) DEFAULT-partition fallback ({@link
+     * ColumnVersionReader#getColumnTopPartitionTimestamp}), which cannot distinguish "this cell already
+     * had rows before the column existed" (needs its OWN explicit record, exactly like a plain table's
+     * single current partition) from "this cell is brand new, created fresh after the column already
+     * existed" (correctly top-0 via the fallback) -- both share the SAME partition timestamp. That
+     * confusion is what let a sibling cell's read believe it had a real column file it never got
+     * (reproduced directly: {@code CairoException} "could not open, file does not exist" for the
+     * sibling's {@code <col>.d} file).
+     * <p>
+     * Deliberately scoped to ONLY the cells at {@code ts == lastPartitionTimestamp}: any OTHER (earlier)
+     * day's cells are unambiguously "before the column existed" by timestamp alone (no same-timestamp
+     * sibling-cell collision possible there), so the existing DEFAULT-partition fallback already handles
+     * them correctly, exactly as it does for a plain table's older partitions.
+     */
+    private void writeCompositeAddColumnColumnVersions(int columnIndex, long columnNameTxn) {
+        final long ts = txWriter.getLastPartitionTimestamp();
+        int idx = txWriter.findAttachedPartitionIndexByLoTimestamp(ts);
+        if (idx < 0) {
+            // No cell attached yet at this timestamp (e.g. a composite table with no committed rows) --
+            // nothing to backfill; every future cell is created fresh, after this column already
+            // exists, and gets top 0 via the ordinary default-fallback path.
+            return;
+        }
+        final int n = txWriter.getPartitionCount();
+        for (; idx < n && txWriter.getPartitionTimestampByIndex(idx) == ts; idx++) {
+            final int cellKey = txWriter.getPartitionCellKey(idx);
+            final long cellRowCount = txWriter.getPartitionSize(idx);
+            columnVersionWriter.upsert(ts, cellKey, columnIndex, columnNameTxn, cellRowCount);
+        }
     }
 
     private void openNewColumnFiles(CharSequence name, int columnType, byte indexType, int indexValueBlockCapacity) {
@@ -11313,7 +11395,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampLo,
                 o3TimestampHi,
                 oooColumnsForCell,
-                cellSegment
+                cellSegment,
+                cellKey
         );
         return 1;
     }
@@ -16089,6 +16172,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
             // When partition is split, data partition timestamp and partition timestamp diverge
             final long dataPartitionTimestamp = Unsafe.getLong(blockAddress + 6 * Long.BYTES);
+            // Plan 4b Task 2 (opus review Critical, root cause): resolve which cell THIS block was
+            // dispatched for, exactly like o3ConsumePartitionUpdateSink's own identical resolution (see
+            // o3PartitionUpdateSinkCellKeys' own docs) -- absent (a plain table, or cellKey 0 which is
+            // never bothered to be recorded) means 0, byte-identical to the pre-fix bare resolver this
+            // replaces. Without this, every cell's own colTop below was upserted via the cellKey-BLIND
+            // overload, which resolves cellKey 0 implicitly and so silently clobbered whichever OTHER
+            // cell's record happens to be packed there whenever this block's own cell was not cellKey 0
+            // -- the confirmed root cause of the sibling-cell corruption this task fixes.
+            final int cellKey0 = o3PartitionUpdateSinkCellKeys != null
+                    ? o3PartitionUpdateSinkCellKeys.get(blockAddress)
+                    : LongIntHashMap.NO_ENTRY_VALUE;
+            final int cellKey = cellKey0 == LongIntHashMap.NO_ENTRY_VALUE ? 0 : cellKey0;
 
             if (o3SplitPartitionSize > 0) {
                 // This is partition split. Copy all the column name txns from the donor partition.
@@ -16104,10 +16199,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (colTop > -1L) {
                         // Upsert even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.
-                        columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                        columnVersionWriter.upsertColumnTop(partitionTimestamp, cellKey, column, colTop);
                     } else if (o3SplitPartitionSize > 0) {
                         // Remove column tops for the new partition part.
-                        columnVersionWriter.removeColumnTop(partitionTimestamp, column);
+                        columnVersionWriter.removeColumnTop(partitionTimestamp, cellKey, column);
                     }
                 }
             }

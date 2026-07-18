@@ -146,6 +146,23 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
     }
 
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #getColumnNameTxn(long, int)}, using
+     * the cell-aware {@link #getRecordIndex(long, int, int)} lookup instead of the cellKey-0-only 2-arg
+     * one. The DEFAULT-partition fallback ({@link #getDefaultColumnNameTxn(int)}) is deliberately NOT
+     * made cellKey-aware here -- it answers a genuinely table-wide, cellKey-independent question ("what
+     * txn did ALTER TABLE ADD COLUMN assign this column"), not a per-cell one; see {@link
+     * TableWriter#addColumn} for the write-side half of this fix, which ensures every cell already
+     * populated at ADD COLUMN time gets its OWN explicit {@code (ts, cellKey, col)} record so this
+     * fallback is only ever consulted for a cell that genuinely never had pre-existing data at that
+     * timestamp. For a plain table (or dormant composite, {@code cellKey == 0}) this is byte-identical to
+     * the 2-arg overload.
+     */
+    public long getColumnNameTxn(long partitionTimestamp, int cellKey, int columnIndex) {
+        int versionRecordIndex = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
+        return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : getDefaultColumnNameTxn(columnIndex);
+    }
+
     public long getColumnNameTxnByIndex(int versionRecordIndex) {
         return versionRecordIndex > -1 ? cachedColumnVersionList.getQuick(versionRecordIndex + COLUMN_NAME_TXN_OFFSET) : -1L;
     }
@@ -160,6 +177,19 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
         // Check if there is explicit record for this partitionTimestamp / columnIndex combination
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        return getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, columnIndex, -1L);
+    }
+
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #getColumnTop(long, int)} -- see that
+     * method's own docs. Used by the composite O3 merge path ({@code O3OpenColumnJob#appendMidPartition}/
+     * {@code #mergeMidPartition}, via {@link TableWriter#getColumnTop(long, int, int, long)}) so a cell's
+     * own pre-existing column top is never aliased to a DIFFERENT cell's record sharing the same
+     * timestamp. For a plain table (or dormant composite, {@code cellKey == 0}) byte-identical to the
+     * 2-arg overload.
+     */
+    public long getColumnTop(long partitionTimestamp, int cellKey, int columnIndex) {
+        int recordIndex = getRecordIndex(partitionTimestamp, cellKey, columnIndex);
         return getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, columnIndex, -1L);
     }
 

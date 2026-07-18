@@ -684,6 +684,329 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     }
 
     /**
+     * Plan 4b Task 2 (opus review Critical): {@code ALTER TABLE ... ADD COLUMN} followed by extending an
+     * already-populated cell, IN ORDER. Day1 gets two cells in commit 1 -- cellA (exch='A', 1 row, first
+     * seen so cellKey 0) and cellB (exch='B', 3 rows, cellKey 1) -- then {@code q} is added, then commit 2
+     * appends ONE more row to cellA, strictly after its existing row (in-order, {@code canAppendOnly}).
+     * Before this task's fix, {@code ALTER TABLE ADD COLUMN} wrote a single, cell-BLIND column-version
+     * record for {@code q} (see {@code TableWriter#addColumn}/{@code #openNewColumnFiles}, both keyed
+     * {@code (ts, columnIndex)} with no cellKey) -- so the untouched sibling cellB silently believed it
+     * had a real {@code q.d} file it never got. This test's own read (the plain {@code assertSqlCursors}
+     * full-table scan) is the direct proof: before the fix, it throws {@code CairoException} "could not
+     * open, file does not exist" for cellB's {@code q.d} file; after the fix, cellB's {@code q} reads back
+     * as {@code null} for all 3 of its (pre-ALTER) rows, and cellA's {@code q} is {@code null} for its
+     * original row and the real inserted value for the extended row -- byte-for-byte matching a plain
+     * twin.
+     */
+    @Test
+    public void testAddColumnThenExtendExistingCellInOrderAppendMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T06:00:00.000000Z','B',1.5), " +
+                    "('2020-01-01T12:00:00.000000Z','B',1.6), ('2020-01-01T18:00:00.000000Z','B',1.7)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c add column q double");
+            execute("alter table p add column q double");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            // Commit 2: ONE row, in-order (01:00 > cellA's existing 00:00), on day1's already-populated
+            // cellA, with a real value for the newly added column q -- a pure append after existing data
+            // (canAppendOnly), no merge, no directory rewrite.
+            execute("insert into c (ts, exch, px, q) values ('2020-01-01T01:00:00.000000Z','A',3.0,9.9)");
+            execute("insert into p (ts, exch, px, q) values ('2020-01-01T01:00:00.000000Z','A',3.0,9.9)");
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            assertSqlCursors("select ts, exch, px, q from p order by ts, exch", "select ts, exch, px, q from c order by ts, exch");
+        });
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): the genuine-merge sub-shape of the same combination --
+     * {@code ADD COLUMN} then a commit that lands strictly BETWEEN cellA's two existing rows, forcing a
+     * real {@code O3_BLOCK_MERGE} (directory-version rewrite) instead of a pure append. Same root cause,
+     * exercised through {@code O3PartitionJob#publishOpenColumnTasks}'s {@code getColumnNameTxn} call and
+     * {@code O3OpenColumnJob#mergeMidPartition}'s {@code getColumnTop} call (both cell-blind before this
+     * fix) rather than the append-only path's {@code appendMidPartition}. Includes a direct, narrower
+     * proof naming cellB's exact rows and {@code null} {@code q} values -- the precise shape the opus
+     * review's own repro (".../exch=B/q.d.1" missing) reported -- not just the aggregate cursor match.
+     */
+    @Test
+    public void testAddColumnThenExtendExistingCellOutOfOrderMergeMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','A',1.1), " +
+                    "('2020-01-01T06:30:00.000000Z','B',1.5), ('2020-01-01T18:00:00.000000Z','B',1.6), " +
+                    "('2020-01-01T20:00:00.000000Z','B',1.7)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c add column q double");
+            execute("alter table p add column q double");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            // Commit 2: ONE row at 06:00 on cellA -- strictly between cellA's existing 00:00 and 12:00
+            // rows -- forcing a genuine out-of-order merge (directory-version rewrite) into the cell, with
+            // a real q value.
+            execute("insert into c (ts, exch, px, q) values ('2020-01-01T06:00:00.000000Z','A',2.1,9.9)");
+            execute("insert into p (ts, exch, px, q) values ('2020-01-01T06:00:00.000000Z','A',2.1,9.9)");
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            assertSqlCursors("select ts, exch, px, q from p order by ts, exch", "select ts, exch, px, q from c order by ts, exch");
+
+            // Direct proof: sibling cellB's q column reads back as null for all 3 of its (pre-ALTER)
+            // rows, without erroring -- the exact crash the opus review reproduced ("could not open, file
+            // does not exist: .../exch=B/q.d.1").
+            assertQuery("select ts, exch, px, q from c where exch = 'B' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\texch\tpx\tq\n" +
+                                    "2020-01-01T06:30:00.000000Z\tB\t1.5\tnull\n" +
+                                    "2020-01-01T18:00:00.000000Z\tB\t1.6\tnull\n" +
+                                    "2020-01-01T20:00:00.000000Z\tB\t1.7\tnull\n");
+
+            // And cellA itself: original row null, the new merged row carries the real value.
+            assertQuery("select ts, exch, px, q from c where exch = 'A' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\texch\tpx\tq\n" +
+                                    "2020-01-01T00:00:00.000000Z\tA\t1.0\tnull\n" +
+                                    "2020-01-01T06:00:00.000000Z\tA\t2.1\t9.9\n" +
+                                    "2020-01-01T12:00:00.000000Z\tA\t1.1\tnull\n");
+        });
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): same combination as the two tests above, but with the
+     * EXTENDED cell deliberately NOT cellKey 0 -- 'B' is the first-seen exchange value this time (so
+     * cellB gets cellKey 0 and cellA gets cellKey 1), and commit 2 extends cellA (cellKey 1). The two
+     * tests above always extended cellA while cellA happened to BE cellKey 0 (first-seen), which cannot
+     * exercise a cell-blind read inside the O3 merge machinery itself ({@code
+     * O3PartitionJob#publishOpenColumnTasks}'s {@code getColumnNameTxn} call and {@code
+     * O3OpenColumnJob#appendMidPartition}/{@code #mergeMidPartition}'s {@code getColumnTop} calls) --
+     * a cell-blind (implicit cellKey 0) lookup there would, by coincidence, still land on the extended
+     * cell's OWN record. This test removes that coincidence: the cell being extended is the NON-zero
+     * cellKey, so a cell-blind read in the merge path would instead alias cellB's (cellKey 0) column-
+     * version record -- proving the merge-side fix independently of the write-side/TableReader fix the
+     * two tests above already cover. In-order append sub-shape (mirrors {@link
+     * #testAddColumnThenExtendExistingCellInOrderAppendMatchesPlainTwin()}).
+     */
+    @Test
+    public void testAddColumnThenExtendNonZeroCellKeyCellInOrderAppendMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // 'B' first-seen (cellKey 0), 'A' second (cellKey 1) -- the reverse of the tests above.
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','B',1.0), ('2020-01-01T06:00:00.000000Z','B',1.5), " +
+                    "('2020-01-01T12:00:00.000000Z','B',1.6), ('2020-01-01T18:00:00.000000Z','A',1.7)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c add column q double");
+            execute("alter table p add column q double");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            // Commit 2: ONE row, in-order (19:00 > cellA's existing 18:00), on day1's already-populated
+            // cellA (the non-zero cellKey), with a real value for the newly added column q.
+            execute("insert into c (ts, exch, px, q) values ('2020-01-01T19:00:00.000000Z','A',3.0,9.9)");
+            execute("insert into p (ts, exch, px, q) values ('2020-01-01T19:00:00.000000Z','A',3.0,9.9)");
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            assertSqlCursors("select ts, exch, px, q from p order by ts, exch", "select ts, exch, px, q from c order by ts, exch");
+        });
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): the genuine out-of-order-merge counterpart of {@link
+     * #testAddColumnThenExtendNonZeroCellKeyCellInOrderAppendMatchesPlainTwin()} -- same non-zero-cellKey
+     * extended cell, but the second commit lands strictly BETWEEN cellA's two existing rows, forcing a
+     * real {@code O3_BLOCK_MERGE} through {@code O3OpenColumnJob#mergeMidPartition}'s {@code
+     * getColumnTop} call.
+     */
+    @Test
+    public void testAddColumnThenExtendNonZeroCellKeyCellOutOfOrderMergeMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // 'B' first-seen (cellKey 0), 'A' second (cellKey 1) -- the reverse of the earlier tests.
+            final String rows1 = " values " +
+                    "('2020-01-01T06:30:00.000000Z','B',1.5), ('2020-01-01T18:00:00.000000Z','B',1.6), " +
+                    "('2020-01-01T20:00:00.000000Z','B',1.7), " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','A',1.1)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c add column q double");
+            execute("alter table p add column q double");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            // Commit 2: ONE row at 06:00 on cellA (non-zero cellKey) -- strictly between cellA's existing
+            // 00:00 and 12:00 rows -- forcing a genuine out-of-order merge, with a real q value.
+            execute("insert into c (ts, exch, px, q) values ('2020-01-01T06:00:00.000000Z','A',2.1,9.9)");
+            execute("insert into p (ts, exch, px, q) values ('2020-01-01T06:00:00.000000Z','A',2.1,9.9)");
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            assertSqlCursors("select ts, exch, px, q from p order by ts, exch", "select ts, exch, px, q from c order by ts, exch");
+
+            // Direct proof: cellA's own rows -- original two null, the new merged row carries the real
+            // value -- read back correctly even though cellA is NOT cellKey 0.
+            assertQuery("select ts, exch, px, q from c where exch = 'A' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\texch\tpx\tq\n" +
+                                    "2020-01-01T00:00:00.000000Z\tA\t1.0\tnull\n" +
+                                    "2020-01-01T06:00:00.000000Z\tA\t2.1\t9.9\n" +
+                                    "2020-01-01T12:00:00.000000Z\tA\t1.1\tnull\n");
+        });
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): a THIRD commit, extending the OTHER cell -- checks for a
+     * narrower, deeper variant of the same class of bug that the four tests above (all two-commit: ADD
+     * COLUMN then ONE extend) cannot reach. After commit 2 extends cellA (giving cellA and cellB
+     * DIFFERENT {@code q} column-version state for the first time -- cellA has been merged/appended into,
+     * cellB has not), commit 3 extends cellB. If ANY remaining cell-blind column-version read existed in
+     * the O3 merge machinery itself (as opposed to the write-side/{@code updateO3ColumnTops} bug this
+     * task's fix already closes), this is the shape that would surface it: cellB's own merge would read
+     * cellA's now-DIFFERENT record instead of its own. cellA is cellKey 0 here specifically so that a
+     * cell-blind read resolves to a record that is genuinely WRONG for cellB (not accidentally correct
+     * the way the two-commit, single-extend tests above could not rule out).
+     */
+    @Test
+    public void testAddColumnThenAlternatingExtendAcrossThreeCommitsMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // 'A' first-seen (cellKey 0), 'B' second (cellKey 1).
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','A',1.1), " +
+                    "('2020-01-01T06:30:00.000000Z','B',1.5), ('2020-01-01T18:00:00.000000Z','B',1.6), " +
+                    "('2020-01-01T20:00:00.000000Z','B',1.7)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            execute("alter table c add column q double");
+            execute("alter table p add column q double");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            // Commit 2: genuine out-of-order merge into cellA (cellKey 0) -- gives cellA its OWN, now
+            // DIFFERENT q column-version record (merged nameTxn) versus cellB's still-original one.
+            execute("insert into c (ts, exch, px, q) values ('2020-01-01T06:00:00.000000Z','A',2.1,9.9)");
+            execute("insert into p (ts, exch, px, q) values ('2020-01-01T06:00:00.000000Z','A',2.1,9.9)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            // Commit 3: genuine out-of-order merge into cellB (cellKey 1, the sibling NOT touched by
+            // commit 2) -- strictly between cellB's existing 06:30 and 18:00 rows.
+            execute("insert into c (ts, exch, px, q) values ('2020-01-01T12:30:00.000000Z','B',5.1,4.4)");
+            execute("insert into p (ts, exch, px, q) values ('2020-01-01T12:30:00.000000Z','B',5.1,4.4)");
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n7\n");
+            assertSqlCursors("select ts, exch, px, q from p order by ts, exch", "select ts, exch, px, q from c order by ts, exch");
+
+            // Direct proof of both cells' full, independent q history.
+            assertQuery("select ts, exch, px, q from c where exch = 'A' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\texch\tpx\tq\n" +
+                                    "2020-01-01T00:00:00.000000Z\tA\t1.0\tnull\n" +
+                                    "2020-01-01T06:00:00.000000Z\tA\t2.1\t9.9\n" +
+                                    "2020-01-01T12:00:00.000000Z\tA\t1.1\tnull\n");
+            assertQuery("select ts, exch, px, q from c where exch = 'B' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\texch\tpx\tq\n" +
+                                    "2020-01-01T06:30:00.000000Z\tB\t1.5\tnull\n" +
+                                    "2020-01-01T12:30:00.000000Z\tB\t5.1\t4.4\n" +
+                                    "2020-01-01T18:00:00.000000Z\tB\t1.6\tnull\n" +
+                                    "2020-01-01T20:00:00.000000Z\tB\t1.7\tnull\n");
+        });
+    }
+
+    /**
+     * Plan 4b Task 2: edge case for the write-side fix's own early-return -- {@code ALTER TABLE ADD
+     * COLUMN} on a composite table that has NO committed rows yet (so {@code
+     * TableWriter#writeCompositeAddColumnColumnVersions}'s {@code findAttachedPartitionIndexByLoTimestamp}
+     * finds nothing to backfill and returns immediately). Every cell created AFTER this point is brand
+     * new, so it must get the new column via the ordinary default-fallback path (top 0, fully present)
+     * with no explicit per-cell record needed -- proving the early-return itself is correct, not just a
+     * silent no-op that happens to not crash.
+     */
+    @Test
+    public void testAddColumnOnEmptyCompositeTableThenInsertMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            execute("alter table c add column q double");
+            execute("alter table p add column q double");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0,9.1), ('2020-01-01T06:00:00.000000Z','B',1.5,9.2), " +
+                    "('2020-01-01T12:00:00.000000Z','B',1.6,9.3)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            assertSqlCursors("select ts, exch, px, q from p order by ts, exch", "select ts, exch, px, q from c order by ts, exch");
+        });
+    }
+
+    /**
      * Plan 4b Task 1b: rollback-cleanup cell safety. {@code TableWriter#removePartitionDirsNotAttached}
      * (the writer-open/rollback orphan-directory sweep) used to compare a day directory's on-disk
      * {@code .nameTxn} suffix (always absent/{@code -1} for a real composite table -- a day container is

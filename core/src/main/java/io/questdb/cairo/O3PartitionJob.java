@@ -810,7 +810,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             boolean isParquet,
             long o3TimestampLo,
             long o3TimestampHi,
-            @Nullable CharSequence cellSegment
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
@@ -959,7 +960,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3Basket,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    cellSegment
+                    cellSegment,
+                    cellKey
             );
         } else {
             long srcTimestampAddr = 0;
@@ -1651,7 +1653,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3Basket,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    cellSegment
+                    cellSegment,
+                    cellKey
             );
         }
     }
@@ -1690,6 +1693,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long o3TimestampLo = task.getO3TimestampLo();
         final long o3TimestampHi = task.getO3TimestampHi();
         final CharSequence cellSegment = task.getCellSegment();
+        final int cellKey = task.getCellKey();
 
         subSeq.done(cursor);
 
@@ -1719,7 +1723,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 isParquet,
                 o3TimestampLo,
                 o3TimestampHi,
-                cellSegment
+                cellSegment,
+                cellKey
         );
     }
 
@@ -3053,7 +3058,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn,
-            @Nullable CharSequence cellSegment
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         while (cursor == -2) {
             Os.pause();
@@ -3108,7 +3114,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partitionUpdateSinkAddr,
                     columnIndex,
                     columnNameTxn,
-                    cellSegment
+                    cellSegment,
+                    cellKey
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -3157,7 +3164,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partitionUpdateSinkAddr,
                     columnIndex,
                     columnNameTxn,
-                    cellSegment
+                    cellSegment,
+                    cellKey
             );
         }
     }
@@ -3209,7 +3217,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn,
-            @Nullable CharSequence cellSegment
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -3258,7 +3267,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partitionUpdateSinkAddr,
                 columnIndex,
                 columnNameTxn,
-                cellSegment
+                cellSegment,
+                cellKey
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -3302,7 +3312,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
-            @Nullable CharSequence cellSegment
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -3568,7 +3579,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 try {
                     final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
+                    // Plan 4b Task 2 (opus review Critical, root cause): cell-aware -- the cell-blind
+                    // 2-arg overload resolved cellKey 0 implicitly, so extending/merging a non-zero-
+                    // cellKey cell after ADD COLUMN read a DIFFERENT sibling cell's columnNameTxn (or the
+                    // day-level default) instead of this cell's own. cellKey == 0 is byte-identical.
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, cellKey, i);
                     if (cursor > -1) {
                         publishOpenColumnTaskHarmonized(
                                 cursor,
@@ -3617,7 +3632,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 partitionUpdateSinkAddr,
                                 i,
                                 columnNameTxn,
-                                cellSegment
+                                cellSegment,
+                                cellKey
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -3667,7 +3683,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 partitionUpdateSinkAddr,
                                 i,
                                 columnNameTxn,
-                                cellSegment
+                                cellSegment,
+                                cellKey
                         );
                     }
                 } catch (Throwable e) {

@@ -2145,7 +2145,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             final byte partitionFormat = (byte) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_FORMAT);
             final long partitionTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
             int writerIndex = metadata.getWriterIndex(columnIndex);
-            final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+            // Plan 4b Task 2: cell-aware lookup -- a plain 2-arg (cellKey-0-only) lookup here would
+            // silently alias a DIFFERENT cell's column-version record whenever this partition's own
+            // cellKey is non-zero and shares its timestamp with a sibling cell (see getPartitionCellKey's
+            // own docs; byte-identical to before for a plain/dormant table, whose cellKey is always 0).
+            final int cellKey = getPartitionCellKey(partitionIndex);
+            final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
             final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0;
             long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1;
             if (columnTxn == -1) {

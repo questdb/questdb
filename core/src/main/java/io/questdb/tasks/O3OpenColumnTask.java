@@ -36,6 +36,7 @@ public class O3OpenColumnTask {
     private long activeFixFd;
     private long activeVarFd;
     private CharSequence cellSegment;
+    private int cellKey;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -86,6 +87,15 @@ public class O3OpenColumnTask {
      */
     public CharSequence getCellSegment() {
         return cellSegment;
+    }
+
+    /**
+     * Plan 4b Task 2: see {@link O3PartitionTask#getCellKey()}'s own docs -- same contract, threaded
+     * alongside {@link #getCellSegment()} down to {@code O3OpenColumnJob#appendMidPartition}/{@code
+     * #mergeMidPartition}'s column-version lookups.
+     */
+    public int getCellKey() {
+        return cellKey;
     }
 
     public long getActiveFixFd() {
@@ -314,9 +324,11 @@ public class O3OpenColumnTask {
             long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn,
-            CharSequence cellSegment
+            CharSequence cellSegment,
+            int cellKey
     ) {
         this.cellSegment = cellSegment;
+        this.cellKey = cellKey;
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;
         this.columnCounter = columnCounter;
