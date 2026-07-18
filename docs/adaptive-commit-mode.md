@@ -310,34 +310,80 @@ recovery ≈ fixed_boot + (post-epoch WAL tail ÷ catch-up rate)
 - **Catch-up** (re-applying the WAL tail past the epoch) is ~linear in the size of
   that tail.
 
-You bound the tail — and therefore worst-case recovery time — with the epoch
-cadence. (All recovery figures are directional; controlled HW is needed for
-absolutes.)
+You bound the tail — and therefore worst-case recovery time — with whichever of
+the two epoch triggers fires first: the **interval** (wall-clock cadence) or the
+**row cap** (un-epoched applied-row backlog). At typical ingest rates the row cap
+binds first and does the actual bounding; the interval is a backstop for quiet
+tables (see below). (All recovery figures are directional; controlled HW is needed
+for absolutes.)
 
-### Tuning the two knobs
+### Tuning the three knobs
 
 **`cairo.adaptive.commit.group.window.us` (`W`) — RPO ↔ throughput** (see §3).
 Start at 1–10 ms for throughput; `0` for zero-loss. Increase only up to the
 saturation knee; beyond it you buy RPO exposure for no throughput gain.
 
-**`cairo.adaptive.epoch.interval.ms` — recovery-time ↔ apply-overhead.**
+**`cairo.adaptive.epoch.interval.ms` — recovery-time ↔ apply-overhead, time-based.**
 
 ```properties
-cairo.adaptive.epoch.interval.ms=1000     # default: at most one epoch per second per table
+cairo.adaptive.epoch.interval.ms=60000     # default: at most one epoch per 60 seconds per table
 ```
 
-- **Larger interval** → fewer epoch flushes (less apply overhead) but a longer
-  post-epoch tail → **longer** worst-case recovery.
-- **Smaller interval** → faster recovery, more apply overhead.
+- **Larger interval** → fewer time-triggered epoch flushes, but a longer tail on a
+  table that is too quiet to ever hit the row cap below.
+- **Smaller interval** → faster worst-case recovery for quiet tables, more apply
+  overhead.
 - **`0`** → take an epoch on **every** apply batch (fastest recovery, highest
   overhead — the worst case for apply cost).
-- **Negative** → **epochs disabled**: recovery falls back to full WAL replay from
-  the base. Operator opt-out / test isolation only.
+- **Negative** → **epochs disabled entirely**, including the row cap below:
+  recovery falls back to full WAL replay from the base. Operator opt-out / test
+  isolation only.
 
-The default `1000` ms amortizes the per-epoch cost (directionally ~2 ms, paid at
-most once per second per table → well under 1% of apply throughput) while bounding
-the replay tail to ~1 second of ingest. Derive the interval from your recovery SLO:
-`worst-case recovery ≈ fixed_boot + (ingest_rate × interval) ÷ catch-up_rate`.
+**`cairo.adaptive.epoch.max.rows` — recovery-time ↔ apply-overhead, row-based.**
+
+```properties
+cairo.adaptive.epoch.max.rows=5000000     # default: force an epoch once this many
+                                           # rows have been applied since the last one
+```
+
+- Independent of elapsed time, an epoch also fires as soon as the **un-epoched
+  applied-row backlog** for a table (rows applied since its last durable epoch)
+  reaches `max.rows`. On an actively-ingesting table this is what actually bounds
+  the replay tail — the interval alone, at its 60 s default, would otherwise let
+  the tail (and the pinned/retained WAL) grow with the ingest rate.
+- **Larger cap** → fewer row-triggered epoch flushes under sustained high-rate
+  ingest, but a larger tail when the cap is what binds.
+- **Smaller cap** → faster worst-case recovery under high-rate ingest, more apply
+  overhead.
+- **`<= 0`** → **the row cap is disabled**; only the interval bounds the tail (the
+  original, interval-only behavior).
+
+**Why the interval could move from `1000` ms to `60000` ms.** The two triggers are
+not independent settings so much as two bounds on the same replay tail, and only
+the tighter one matters at any given moment:
+
+- **Active ingest** → the table accumulates `max.rows` un-epoched rows well before
+  60 s elapses, so the **row cap binds**. At the default 5,000,000 rows this keeps
+  the post-epoch tail — and hence the recovery replay and the WAL retained for it —
+  to directionally ~1–2 seconds of ingest at typical high write rates, regardless
+  of how the interval is set.
+- **Idle / low-rate ingest** → the table never reaches `max.rows` within 60 s, so
+  the **interval binds** as a backstop: an epoch still fires every 60 s, so a quiet
+  table's tail never grows unbounded either.
+
+Because the row cap now does the safety-bounding under load, the interval no
+longer has to be short to keep worst-case recovery bounded — it only has to bound
+the idle case — which is why the shipped default moved from `1000` ms to `60000`
+ms: fewer time-triggered epoch flushes (less apply overhead) with no loss of
+bounding, since the row cap covers the case the shorter interval used to guard.
+
+Both triggers amortize the same per-epoch cost (directionally ~2 ms, paid whenever
+either one fires) to comfortably under 1% of apply throughput at typical ingest
+rates. Derive your actual worst case from your recovery SLO:
+`worst-case recovery ≈ fixed_boot + (rows_since_last_epoch ÷ catch-up_rate)`, where
+`rows_since_last_epoch` is bounded by `max.rows` under load, or by
+`ingest_rate × interval` when the table is idle enough that the row cap never
+fires.
 
 **Recovery kill-switch.**
 
@@ -349,10 +395,14 @@ Leave this `true`. Setting it `false` makes the boot-time epoch roll-forward a
 no-op — an operator kill-switch / negative-control hook, not a normal setting.
 
 Confirmed in source: `cairo.adaptive.epoch.interval.ms` (`PropertyKey.java:53`;
-`0` = every batch, negative = disabled, per `:50-52`), default `1000`
-(`PropServerConfiguration.java:1567`); `cairo.adaptive.recovery.roll.forward.enabled`
-(`PropertyKey.java:56`), default `true`
-(`PropServerConfiguration.java:1571`), consumed at `RecoveryCoordinator.java:89`.
+`0` = every batch, negative = disabled, per `:50-52`), default `60000`
+(`PropServerConfiguration.java:1570`); `cairo.adaptive.epoch.max.rows`
+(`PropertyKey.java:57`; `<= 0` disables the cap, per `:54-56`), default
+`5_000_000` (`PropServerConfiguration.java:1571`); the two triggers combined, OR'd
+together (`ApplyWal2TableJob.maybeAdvanceDurableEpoch`,
+`ApplyWal2TableJob.java:703-709`); `cairo.adaptive.recovery.roll.forward.enabled`
+(`PropertyKey.java:60`), default `true` (`PropServerConfiguration.java:1575`),
+consumed at `RecoveryCoordinator.java:89`.
 Tuning framing from `docs/superpowers/specs/2026-07-17-adaptive-sp-c-perf-validation-design.md` §7.
 
 ---
@@ -439,7 +489,8 @@ Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 |---|---|---|
 | `cairo.commit.mode` | `nosync` | Global commit mode. `nosync` \| `sync` \| `async` \| `adaptive`. |
 | `cairo.adaptive.commit.group.window.us` | `0` | Group-commit / RPO window (us). `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
-| `cairo.adaptive.epoch.interval.ms` | `1000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled. |
+| `cairo.adaptive.epoch.interval.ms` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
+| `cairo.adaptive.epoch.max.rows` | `5_000_000` | Forces an epoch once this many rows are applied to a table since its last one, independent of the interval. Bounds WAL retention + recovery replay under active ingest. `<= 0` disables the cap (interval-only). |
 | `cairo.adaptive.recovery.roll.forward.enabled` | `true` | Run the durable-epoch recovery roll-forward at boot. `false` = no-op kill-switch. |
 
 Per-table override (wins over the global): `WITH commit_mode='…'` at `CREATE TABLE`,

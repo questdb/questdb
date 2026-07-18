@@ -667,12 +667,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Fire a durable epoch (Plan 3B) for {@code tableToken} iff commit mode is ADAPTIVE and the
-     * configured per-table cadence has elapsed. Called from the apply loop right after a batch
-     * commits while the writer is still held. Best-effort: a (non-Error) failure here is logged and
-     * the epoch is skipped — the batch's rows are already durably committed in the WAL, so a missed
-     * epoch only means more WAL to roll forward on recovery, never data loss. Errors (OOM, writer
-     * distress) propagate to the apply loop's existing failure handling.
+     * Fire a durable epoch (Plan 3B) for {@code tableToken} iff commit mode is ADAPTIVE and either
+     * the configured per-table cadence interval has elapsed or the un-epoched applied-row backlog has
+     * reached the configured row cap, whichever comes first. Called from the apply loop right after a
+     * batch commits while the writer is still held. Best-effort: a (non-Error) failure here is logged
+     * and the epoch is skipped — the batch's rows are already durably committed in the WAL, so a
+     * missed epoch only means more WAL to roll forward on recovery, never data loss. Errors (OOM,
+     * writer distress) propagate to the apply loop's existing failure handling.
+     *
+     * @param rowsApplied rows applied in this batch; fed to the per-table un-epoched-row backlog
+     *                    counter before the interval/row-cap gate is evaluated.
      */
     private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer, long rowsApplied) {
         // Per-table EFFECTIVE mode (Deferred 1): the epoch lifecycle is driven by THIS table's mode, so a
