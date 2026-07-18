@@ -3775,8 +3775,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * to its string via {@link #symbolValueOf(int, int)}; {@code HASH}'s ordinal already IS the
      * bucket number in {@code [0, N)}, rendered as a plain integer (a bucket cannot be un-hashed
      * back to a value, and doesn't need to be); {@code TRUNCATE}'s ordinal reverse-looks-up the
-     * interned prefix in its dedicated dictionary. {@code EXPRESSION} is not reachable here
-     * (deferred to Plan 4e).
+     * interned prefix in its dedicated dictionary. {@code EXPRESSION} rendering (a dedicated-dict
+     * reverse lookup, byte-identical to {@code TRUNCATE}) is deferred to Plan 4e Task 3 -- but
+     * IS reachable here today (Plan 4e Task 1 found this empirically: a brand new composite table's
+     * first WAL commit renders an artificial placeholder cell's segment name before any real row is
+     * ever dispatched, see {@code processWalCommitFinishApply}), so it throws a clean
+     * {@link CairoException} rather than silently mis-rendering or crashing uncontrolled.
      * <p>
      * Every reverse-looked-up value is written through {@link TableUtils#putPathSafe(CharSink, CharSequence)},
      * which percent-escapes path-unsafe characters: unlike a table/column identifier, a SYMBOL value
@@ -3793,8 +3797,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param sink    destination for the rendered segment (no leading/trailing separator; e.g.
      *                writes exactly {@code "exch=BTC"}, not {@code "/exch=BTC"})
      * @param cellKey the dense cellKey to render, as returned by {@link #resolveCellKey(int[])}
-     * @throws UnsupportedOperationException if called on a non-composite table, or if any dimension
-     *                                        is {@code KIND_EXPRESSION}
+     * @throws UnsupportedOperationException if called on a non-composite table
+     * @throws CairoException                if any dimension is {@code KIND_EXPRESSION} -- not yet
+     *                                        evaluated/renderable (composite-partitioning Plan 4e
+     *                                        Task 1; real rendering, a dedicated-dict reverse lookup
+     *                                        byte-identical to {@code KIND_TRUNCATE}, is Task 3).
+     *                                        Reachable even before any row is dispatched: a brand new
+     *                                        composite table's first WAL commit unconditionally tears
+     *                                        down an artificial 0-length "lag" placeholder partition
+     *                                        (see {@code processWalCommitFinishApply}) before real row
+     *                                        data is ever processed, and that teardown renders the
+     *                                        placeholder's own cell segment name through here.
      */
     public void renderCellSegment(CharSink<?> sink, int cellKey) {
         PartitionSpec spec = metadata.getPartitionSpec();
@@ -3821,6 +3834,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void renderDimensionSegment(CharSink<?> sink, PartitionSpec spec, int dimIndex, int ordinal, byte namingMode) {
         PartitionDimension dim = spec.getDimension(dimIndex);
+        if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+            // Same landmine shape as resolveRowCellKey's clean-throw (composite-partitioning Plan 4e
+            // Task 1): getColumnIndex() == -1 for KIND_EXPRESSION, so the unconditional MODE_HIVE
+            // column-name prefix two lines below (metadata.getColumnName(-1)) is an uncontrolled
+            // ArrayIndexOutOfBoundsException -- and unlike resolveRowCellKey, this method is reached
+            // even for a commit that never dispatches a single row: a brand new composite table's
+            // first WAL commit unconditionally tears down an artificial 0-length "lag" placeholder
+            // partition (see processWalCommitFinishApply) before real row data is ever processed, and
+            // that teardown renders the placeholder's own cell segment name through here. Guarded
+            // unconditionally (not just for MODE_HIVE) so MODE_PLAIN gets the same clean error instead
+            // of reaching the switch's default case below with a different, internal-sounding message.
+            // Real EXPRESSION rendering (a dedicated-dict reverse lookup, byte-identical to
+            // KIND_TRUNCATE below) is Plan 4e Task 3.
+            throw CairoException.nonCritical()
+                    .put("composite partitioning does not yet support EXPRESSION dimension evaluation at ingest [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
         if (namingMode == PartitionSpec.MODE_HIVE) {
             sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
         }
@@ -11481,6 +11511,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int dimCount = spec.getDimensionCount();
         for (int d = 0; d < dimCount; d++) {
             PartitionDimension dim = spec.getDimension(d);
+            if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                // KIND_EXPRESSION has no source column (getColumnIndex() == -1 by construction --
+                // see PartitionTransform/CreateTableOperationBuilderImpl#resolveExpressionDimension).
+                // Per-row evaluation of the stored exprText via a compiled Function is composite-
+                // partitioning Plan 4e Task 2 (not yet landed); left unguarded, the unconditional
+                // getColumnIndex()/o3Columns read two lines below computes
+                // getPrimaryColumnIndex(-1) == -2 and indexes o3Columns with it, an uncontrolled
+                // ArrayIndexOutOfBoundsException: -2. Throw a clean, diagnosable error instead --
+                // this table is SQL-creatable (grammar + DDL-time safe gate landed in Task 1) but not
+                // yet writable.
+                throw CairoException.nonCritical()
+                        .put("composite partitioning does not yet support EXPRESSION dimension evaluation at ingest [table=")
+                        .put(tableToken.getTableName()).put(']');
+            }
             int colIndex = dim.getColumnIndex();
             MemoryCR col = o3Columns.getQuick(getPrimaryColumnIndex(colIndex));
             int globalSymbolKey = col.getInt(absoluteRow << COMPOSITE_DIMENSION_SOURCE_COLUMN_SHL);

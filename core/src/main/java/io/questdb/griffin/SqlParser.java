@@ -1735,8 +1735,14 @@ public class SqlParser {
             }
             builder.setPartitionByExpr(partitionByExpr);
 
-            // Composite partitioning dimension list: PARTITION BY <time-unit> [, <dimension>]*
+            // Composite partitioning dimension list: PARTITION BY <time-unit> [, <dimension> [AS <alias>]]*
             // Dimensions are collected as raw expressions only; resolution to PartitionSpec happens later.
+            // An optional `AS <alias>` after a dimension expression (composite-partitioning Plan 4e
+            // Task 1) marks an arbitrary-expression dimension (KIND_EXPRESSION, e.g.
+            // `(upper(region)) AS r`) -- resolvePartitionSpec decides the dimension's kind from
+            // whether an alias was captured, not from the expression's shape, so this loop stays
+            // shape-agnostic: it never needs to know identity/hash/truncate from any other call.
+            // Without AS, parsing is byte-for-byte unchanged from before this feature.
             while (tok != null && Chars.equals(tok, ',')) {
                 final int dimPos = lexer.getPosition();
                 final ExpressionNode dimExpr = expr(lexer, (IQueryModel) null, sqlParserCallback);
@@ -1746,8 +1752,15 @@ public class SqlParser {
                     // with nothing following it: malformed input that must be rejected, not skipped.
                     throw SqlException.$(dimPos, "partition dimension expected");
                 }
-                builder.addPartitionDimensionExpr(dimExpr);
+
+                CharSequence dimAlias = null;
                 tok = optTok(lexer);
+                if (tok != null && isAsKeyword(tok)) {
+                    dimAlias = expectLiteral(lexer).token;
+                    tok = optTok(lexer);
+                }
+
+                builder.addPartitionDimensionExpr(dimExpr, dimAlias);
             }
 
             // Optional data clustering within each partition: ORDER BY <col> [, <col>]*

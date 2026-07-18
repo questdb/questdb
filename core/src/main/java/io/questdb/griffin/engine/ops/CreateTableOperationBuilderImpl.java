@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDimension;
 import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -42,12 +43,14 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -55,6 +58,34 @@ import java.util.function.Function;
 
 public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
     private static final IntList castGroups = new IntList();
+    // Composite-partitioning Plan 4e Task 1 DDL-time safe-subset gate for `(expr) AS alias`
+    // dimensions: a conservative name-based deny-list of QuestDB's known nondeterministic/
+    // wall-clock built-ins (every io.questdb.griffin.engine.functions.rnd.* factory overrides
+    // Function#isNonDeterministic() to return true and is registered under a "rnd_" name --
+    // confirmed by grep across that whole package, no exceptions found -- so a prefix check
+    // covers the entire family without enumerating ~30 names and stays correct as new rnd_*
+    // functions are added; the handful of exact names below were confirmed the same way against
+    // io.questdb.griffin.engine.functions.date.*). This is a raw-ExpressionNode name/shape walk,
+    // NOT a real function-registry resolution (that needs a compiled Function tree via
+    // FunctionParser, which Task 2's writer-open compile bridge -- mirroring
+    // MatViewRefreshSqlExecutionContext -- is the first place in this feature with the
+    // machinery for); an unrecognized function name is therefore accepted here and left to a
+    // clear runtime error once Task 2 lands real evaluation, exactly as the safe subset scope
+    // in the Plan 4e Task 1 brief allows.
+    private static final LowerCaseCharSequenceHashSet NON_DETERMINISTIC_FUNCTION_NAMES = new LowerCaseCharSequenceHashSet();
+    private static final String RND_FUNCTION_PREFIX = "rnd_";
+
+    static {
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("now");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("now_ns");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("sysdate");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("systimestamp");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("today");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("yesterday");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("tomorrow");
+        NON_DETERMINISTIC_FUNCTION_NAMES.add("timestamp_sequence");
+    }
+
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -68,6 +99,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private byte namingMode = PartitionSpec.MODE_HIVE;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
+    // Parallel to partitionDimensionExprs (same index, same size always): null unless the
+    // dimension was written as `(expr) AS alias`, in which case this holds the alias token and
+    // resolvePartitionSpec builds a KIND_EXPRESSION dimension instead of resolving the node via
+    // PartitionTransform (identity/hash/truncate).
+    private final ObjList<CharSequence> partitionDimensionAliases = new ObjList<>();
     private final ObjList<ExpressionNode> partitionDimensionExprs = new ObjList<>();
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;
@@ -98,8 +134,16 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnNames.add(columnName);
     }
 
-    public void addPartitionDimensionExpr(ExpressionNode expr) {
+    /**
+     * Records one composite PARTITION BY dimension expression, plus its optional {@code AS alias}
+     * (null when the dimension was written without one -- a bare column literal or an
+     * identity/hash/truncate transform call, resolved via {@link PartitionTransform} at
+     * {@link #resolvePartitionSpec()} time; non-null marks it an arbitrary-expression dimension,
+     * resolved via {@link #resolveExpressionDimension}).
+     */
+    public void addPartitionDimensionExpr(ExpressionNode expr, @Nullable CharSequence alias) {
         partitionDimensionExprs.add(expr);
+        partitionDimensionAliases.add(alias);
     }
 
     @Override
@@ -278,10 +322,20 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
         for (int i = 0; i < dimCount; i++) {
             ExpressionNode node = partitionDimensionExprs.getQuick(i);
-            if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.FUNCTION) {
+            CharSequence alias = partitionDimensionAliases.getQuick(i);
+            if (alias != null) {
+                // `(expr) AS alias` (composite-partitioning Plan 4e Task 1): an arbitrary-expression
+                // dimension, never a PartitionTransform shape -- the parser only captures an alias
+                // for this shape (see SqlParser's dimension comma-loop), so an alias here is
+                // unambiguous regardless of node.type (a bare LITERAL/FUNCTION with an alias, e.g.
+                // `region AS r`, is a legal -- if unusual -- expression dimension too: it evaluates
+                // to the same value an IDENTITY dimension on `region` would, just without
+                // IDENTITY's "symbol key IS the ordinal" fast path).
+                spec.addDimension(resolveExpressionDimension(node, alias));
+            } else if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.FUNCTION) {
                 spec.addDimension(PartitionTransform.resolve(node, symbolColumnResolver));
             } else {
-                // e.g. an operator expression such as (s = 'BTC'); AS-alias support is a later phase.
+                // e.g. an operator expression such as (s = 'BTC') with no AS alias.
                 throw SqlException.$(node.position, "partition expression must be aliased with AS");
             }
         }
@@ -296,6 +350,119 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
 
         return spec;
+    }
+
+    /**
+     * DDL-time safe-subset walk for a composite {@code (expr) AS alias} dimension (composite-
+     * partitioning Plan 4e Task 1): recursively rejects any {@code FUNCTION} call whose name is a
+     * known nondeterministic/wall-clock built-in ({@link #NON_DETERMINISTIC_FUNCTION_NAMES}, or the
+     * {@code rnd_} family via {@link #RND_FUNCTION_PREFIX}), and rejects a {@code QUERY} (subquery)
+     * or {@code BIND_VARIABLE} node outright -- neither is resolvable once at table-open the way
+     * Task 2's compiled-Function bridge needs. Recurses through {@code lhs}/{@code rhs}/{@code args}
+     * uniformly (per {@link ExpressionNode}'s own field-usage contract, exactly one of "rhs only",
+     * "lhs and rhs", or "args" is populated for any given node depending on {@code paramCount}, so
+     * walking all three unconditionally, null/size-guarded, visits every child exactly once
+     * regardless of shape) -- this covers operators, CASE, CAST, BETWEEN, etc. without needing a
+     * per-shape switch, since none of those shapes are themselves rejected, only the function names
+     * (and query/bind-variable node types) nested inside them.
+     * <p>
+     * This is a conservative name-based check over the raw parsed {@link ExpressionNode}, not a real
+     * function-registry resolution against {@code isNonDeterministic()} on a compiled {@code
+     * Function} (see the field javadoc on {@link #NON_DETERMINISTIC_FUNCTION_NAMES} for why that's
+     * out of scope here): an unrecognized function name is accepted, deferring to a runtime error
+     * once real per-row evaluation lands.
+     */
+    private static void assertDeterministic(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        switch (node.type) {
+            case ExpressionNode.QUERY:
+                throw SqlException.$(node.position, "partition dimension expression must not contain a subquery");
+            case ExpressionNode.BIND_VARIABLE:
+                throw SqlException.$(node.position, "partition dimension expression must not contain a bind variable");
+            case ExpressionNode.FUNCTION:
+                if (isNonDeterministicFunctionName(node.token)) {
+                    throw SqlException.$(node.position, "partition dimension expression must be deterministic, '")
+                            .put(node.token).put("()' is not allowed");
+                }
+                break;
+            default:
+                break;
+        }
+        assertDeterministic(node.lhs);
+        assertDeterministic(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            assertDeterministic(node.args.getQuick(i));
+        }
+    }
+
+    /**
+     * DDL-time string-coercibility gate for a composite {@code (expr) AS alias} dimension
+     * (composite-partitioning Plan 4e Task 1): rejects only the shapes this narrow, non-compiling
+     * check can know for certain are wrong -- a bare column reference whose DECLARED type (already
+     * known here, see {@link #resolvePartitionSpec}'s own javadoc) isn't string-family, or a bare
+     * non-string constant (numeric/boolean/null literal). Anything else -- a function call, a cast,
+     * an operator expression -- is accepted: its result type isn't known without actually resolving
+     * it against the function registry (needs a compiled {@code Function}, i.e. Task 2's bridge; see
+     * {@link #NON_DETERMINISTIC_FUNCTION_NAMES}'s javadoc for the same constraint), so a genuinely
+     * non-string-typed expression of that shape is deferred to a clear runtime error once Task 2
+     * lands real per-row evaluation, exactly as the Plan 4e Task 1 brief allows. In particular this
+     * means a cast is never actually type-checked here -- ITS PRESENCE alone (any function/operator
+     * wrapping a bare column/constant) is what exempts the expression from this gate, per the
+     * brief's "reject non-string-typed WITHOUT an explicit cast" framing.
+     */
+    private void assertStringCoercible(ExpressionNode node) throws SqlException {
+        if (node.type == ExpressionNode.LITERAL) {
+            CreateTableColumnModel m = getColumnModel(node.token);
+            if (m != null && !isStringCoercibleType(m.getColumnType())) {
+                throw SqlException.$(node.position, "partition dimension expression must be string-coercible, column '")
+                        .put(node.token).put("' is ").put(ColumnType.nameOf(m.getColumnType()))
+                        .put(" -- cast it explicitly");
+            }
+        } else if (node.type == ExpressionNode.CONSTANT && !isStringConstantToken(node.token)) {
+            throw SqlException.$(node.position, "partition dimension expression must be string-coercible, constant '")
+                    .put(node.token).put("' is not a string literal");
+        }
+    }
+
+    private static boolean isNonDeterministicFunctionName(CharSequence name) {
+        return Chars.startsWithIgnoreCase(name, RND_FUNCTION_PREFIX) || NON_DETERMINISTIC_FUNCTION_NAMES.contains(name);
+    }
+
+    private static boolean isStringCoercibleType(int columnType) {
+        return ColumnType.isSymbolOrStringOrVarchar(columnType) || ColumnType.isChar(columnType);
+    }
+
+    private static boolean isStringConstantToken(CharSequence token) {
+        if (token == null || token.length() == 0) {
+            return false;
+        }
+        char c = token.charAt(0);
+        return c == '\'' || c == '"';
+    }
+
+    /**
+     * Builds a {@link PartitionDimension#KIND_EXPRESSION} dimension from a composite {@code (expr)
+     * AS alias} PARTITION BY clause (composite-partitioning Plan 4e Task 1), after running the
+     * DDL-time safe-subset gate ({@link #assertDeterministic}) and string-coercibility gate
+     * ({@link #assertStringCoercible}). {@code exprText} is the canonical re-rendered text of
+     * {@code node} (via {@link ExpressionNode#toSink}, e.g. {@code upper(region)} for {@code
+     * (upper(region)) AS r} -- the outer grouping parens the user wrote, if any, are never part of
+     * the parsed node itself, see {@code ExpressionParser}; {@link PartitionDimension#toSink} adds
+     * its own wrapping parens back on render, so this round-trips through SHOW CREATE TABLE without
+     * doubling them), not the raw source substring -- matching how {@code exprText} is already
+     * documented/exercised by {@code CompositeMetaFormatTest#testWriteMetadataCompositeBlockRoundTrip}.
+     * {@code columnIndex} is {@code -1} and {@code param} is {@code 0}, mirroring every other
+     * KIND_EXPRESSION construction site (the hand-built one in that same test, and the {@code _meta}
+     * reader in {@code TableUtils}).
+     */
+    private PartitionDimension resolveExpressionDimension(ExpressionNode node, CharSequence alias) throws SqlException {
+        assertDeterministic(node);
+        assertStringCoercible(node);
+        StringSink exprTextSink = new StringSink();
+        node.toSink(exprTextSink);
+        return new PartitionDimension(PartitionDimension.KIND_EXPRESSION, -1, 0, Chars.toString(alias), exprTextSink.toString());
     }
 
     @Override
@@ -314,6 +481,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         o3MaxLag = -1;
         partitionByExpr = null;
         partitionDimensionExprs.clear();
+        partitionDimensionAliases.clear();
         clusterExprs.clear();
         namingMode = PartitionSpec.MODE_HIVE;
         ttlToSinkOverride = null;
@@ -360,6 +528,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
+    }
+
+    /**
+     * @return the {@code AS alias} captured for dimension {@code index}, or {@code null} if it was
+     * written without one (see {@link #addPartitionDimensionExpr}).
+     */
+    public @Nullable CharSequence getPartitionDimensionAlias(int index) {
+        return partitionDimensionAliases.getQuick(index);
     }
 
     public ExpressionNode getPartitionDimensionExpr(int index) {
