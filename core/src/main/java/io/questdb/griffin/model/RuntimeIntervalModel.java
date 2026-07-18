@@ -205,12 +205,20 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         int cursorFunctionIndex = 0;
         int dynamicIndex = 0;
         boolean firstFuncApplied = false;
+        // Start index of a pending run of batched UNION leaves, or -1 when no run is open.
+        int unionRunStart = -1;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
             dynamicIndex++;
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
             boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
+            if (unionRunStart >= 0 && operation != IntervalOperation.UNION) {
+                // A non-union operation is about to read the accumulated result: fold the pending
+                // union run into it first, in one pass.
+                mergePendingUnionRun(outIntervals, unionRunStart);
+                unionRunStart = -1;
+            }
             int divider = outIntervals.size();
 
             // Get day filter mask (stored in high byte of periodCount)
@@ -396,23 +404,33 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 }
             }
 
-            // Do not apply operation (intersection, subtraction).
-            // If this is the first element and no pre-calculated static intervals exist.
-            if (firstFuncApplied || divider > 0) {
+            if (operation == IntervalOperation.UNION) {
+                // Union leaves (OR-ed disjuncts, bracket expansion) are batched: each leaf appends
+                // its intervals verbatim in SQL evaluation order (preserving deterministic errors
+                // and side effects) and the whole run is merged once when it ends. D disjuncts
+                // then cost one O(D log D) sort-and-coalesce instead of D incremental merges
+                // against a growing accumulator costing O(D^2).
+                if (unionRunStart < 0) {
+                    unionRunStart = divider;
+                }
+            } else if (firstFuncApplied || divider > 0) {
+                // Do not apply operation (intersection, subtraction).
+                // If this is the first element and no pre-calculated static intervals exist.
                 switch (operation) {
                     case IntervalOperation.INTERSECT, IntervalOperation.INTERSECT_BETWEEN,
                          IntervalOperation.INTERSECT_INTERVALS, IntervalOperation.SUBTRACT_INTERVALS ->
                             IntervalUtils.intersectInPlace(outIntervals, divider);
                     case IntervalOperation.SUBTRACT, IntervalOperation.SUBTRACT_BETWEEN ->
                             IntervalUtils.subtract(outIntervals, divider);
-                    case IntervalOperation.UNION ->
-                        // Union with previous intervals (used for bracket expansion)
-                            IntervalUtils.unionInPlace(outIntervals, divider);
                     default ->
                             throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
             firstFuncApplied = true;
+        }
+
+        if (unionRunStart >= 0) {
+            mergePendingUnionRun(outIntervals, unionRunStart);
         }
     }
 
@@ -471,6 +489,23 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             );
         } else {
             return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
+        }
+    }
+
+    /**
+     * Folds a batched run of union leaves into the accumulated intervals. The run's leaves sit
+     * unmerged at {@code [runStart, size)} in SQL evaluation order; they are sorted, coalesced
+     * and merged with the preceding result {@code [0, runStart)} in one pass. Both stages use
+     * the same coalescing rule, so the outcome is identical to merging each leaf incrementally.
+     */
+    private static void mergePendingUnionRun(LongList outIntervals, int runStart) {
+        if (outIntervals.size() == runStart) {
+            // every union leaf in the run evaluated to the empty set
+            return;
+        }
+        IntervalUtils.sortAndUnionInPlace(outIntervals, runStart);
+        if (runStart > 0) {
+            IntervalUtils.unionInPlace(outIntervals, runStart);
         }
     }
 

@@ -282,6 +282,120 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnionLeafRunAllNullLeavesFollowingIntersectFirstApplied() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            // every union leaf is NULL: the run contributes nothing and the intersect leaf
+            // must become the first applied interval, exactly as with per-leaf merging
+            for (int i = 0; i < 3; i++) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            }
+            IntervalUtils.encodeInterval(
+                    1_500L,
+                    0,
+                    (short) 0,
+                    IntervalDynamicIndicator.IS_HI_DYNAMIC,
+                    IntervalOperation.INTERSECT,
+                    intervals
+            );
+            dynamicFunctions.add(TimestampConstant.newInstance(6_000L, ColumnType.TIMESTAMP));
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                assertIntervals(model.calculateIntervals(sqlExecutionContext), 1_500L, 6_000L);
+            }
+        });
+    }
+
+    @Test
+    public void testUnionLeafRunFoldsBeforeFollowingIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            for (long value : new long[]{8_000L, 2_000L, 5_000L, 2_000L}) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.newInstance(value, ColumnType.TIMESTAMP));
+            }
+            // the trailing intersect leaf must see the union run already folded into one
+            // sorted, coalesced accumulator
+            IntervalUtils.encodeInterval(
+                    1_500L,
+                    0,
+                    (short) 0,
+                    IntervalDynamicIndicator.IS_HI_DYNAMIC,
+                    IntervalOperation.INTERSECT,
+                    intervals
+            );
+            dynamicFunctions.add(TimestampConstant.newInstance(6_000L, ColumnType.TIMESTAMP));
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                assertIntervals(
+                        model.calculateIntervals(sqlExecutionContext),
+                        2_000L, 2_000L, 5_000L, 5_000L
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testUnionLeafRunsMergeOnceAndMatchIncrementalSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            // shuffled OR-ed point leaves with duplicates, adjacent values and a NULL: the NULL
+            // is the empty-set identity, duplicates collapse, and adjacent points stay separate
+            // intervals - exactly what per-leaf incremental unionInPlace used to produce
+            final long[] values = {5_000L, 1_000L, 5_000L, 3_000L, 1_001L, 9_000L};
+            final LongList intervals = new LongList();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            for (long value : values) {
+                encodeUnionPointLeaf(intervals);
+                dynamicFunctions.add(TimestampConstant.newInstance(value, ColumnType.TIMESTAMP));
+            }
+            encodeUnionPointLeaf(intervals);
+            dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    intervals,
+                    dynamicFunctions
+            )) {
+                assertIntervals(
+                        model.calculateIntervals(sqlExecutionContext),
+                        1_000L, 1_000L, 1_001L, 1_001L, 3_000L, 3_000L, 5_000L, 5_000L, 9_000L, 9_000L
+                );
+            }
+        });
+    }
+
+    private static void assertIntervals(LongList actual, long... expectedLoHiPairs) {
+        Assert.assertEquals("interval count", expectedLoHiPairs.length, actual.size());
+        for (int i = 0; i < expectedLoHiPairs.length; i++) {
+            Assert.assertEquals("value at index " + i, expectedLoHiPairs[i], actual.getQuick(i));
+        }
+    }
+
+    private static void encodeUnionPointLeaf(LongList intervals) {
+        // mirrors RuntimeIntervalModelBuilder.unionRuntimeTimestamp encoding of an OR-ed
+        // scalar timestamp disjunct
+        IntervalUtils.encodeInterval(
+                0,
+                0,
+                (short) 0,
+                IntervalDynamicIndicator.IS_LO_HI_DYNAMIC,
+                IntervalOperation.UNION,
+                intervals
+        );
+    }
+
     private static void assertDynamicModel(int timestampType, long lo, long hi) throws SqlException {
         final LongList intervals = new LongList();
         IntervalUtils.encodeInterval(

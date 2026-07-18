@@ -1285,11 +1285,24 @@ public final class IntervalUtils {
      * Treat a as 2 lists,
      * a: first from 0 to divider
      * b: from divider to the end of list
+     * <p>
+     * When either region is empty, or B begins strictly after A ends, the concatenation is
+     * already the final result and the call returns in O(1). Callers that append intervals in
+     * ascending order and re-union after every append therefore pay linear total cost instead
+     * of one full re-merge per append. Interleaved regions pay one linear merge pass.
      *
      * @param intervals 2 lists of intervals concatenated in 1
      */
     public static void unionInPlace(LongList intervals, int dividerIndex) {
-        final int sizeB = dividerIndex + (intervals.size() - dividerIndex);
+        final int sizeB = intervals.size();
+        // Fast paths. An empty region leaves the other region as the result verbatim. A B region
+        // that begins strictly after A ends cannot coalesce with anything (each region is already
+        // sorted and merged internally), so the concatenation is the final result as-is. Both
+        // cases return byte-identical output to the merge loop below.
+        if (dividerIndex == 0 || sizeB == dividerIndex
+                || intervals.getQuick(dividerIndex) > intervals.getQuick(dividerIndex - 1)) {
+            return;
+        }
         int aLower = 0;
 
         int intervalB = dividerIndex;
@@ -1363,6 +1376,44 @@ public final class IntervalUtils {
             intervals.setQuick(writePoint++, nextHi);
         }
 
+        intervals.setPos(writePoint);
+    }
+
+    /**
+     * Sorts the intervals at {@code [startIndex, size)} chronologically and unions them with
+     * each other in place, leaving {@code [0, startIndex)} untouched. Coalescing follows the
+     * same rule as {@link #unionInPlace(LongList, int)} - intervals merge only when they overlap
+     * or touch ({@code lo <= prevHi}) - so unioning a batch through this method produces exactly
+     * the same list as feeding the batch one interval at a time through
+     * {@link #unionInPlace(LongList, int)}, at O(D log D) cost instead of O(D^2) for D
+     * intervals. The batch may arrive in any order.
+     *
+     * @param intervals  list holding an already-merged prefix followed by an unordered batch
+     * @param startIndex first index of the batch; must be even
+     */
+    public static void sortAndUnionInPlace(LongList intervals, int startIndex) {
+        final int size = intervals.size();
+        if (size - startIndex <= 2) {
+            // empty batch or a single interval is already a merged union
+            return;
+        }
+        LongGroupSort.quickSort(2, intervals, startIndex >> 1, size >> 1);
+        int writePoint = startIndex + 2;
+        for (int readPoint = startIndex + 2; readPoint < size; readPoint += 2) {
+            final long lo = intervals.getQuick(readPoint);
+            final long hi = intervals.getQuick(readPoint + 1);
+            final long prevHi = intervals.getQuick(writePoint - 1);
+            if (lo <= prevHi) {
+                // overlaps or touches the previously written interval - extend it
+                if (hi > prevHi) {
+                    intervals.setQuick(writePoint - 1, hi);
+                }
+            } else {
+                intervals.setQuick(writePoint, lo);
+                intervals.setQuick(writePoint + 1, hi);
+                writePoint += 2;
+            }
+        }
         intervals.setPos(writePoint);
     }
 
@@ -4683,8 +4734,10 @@ public final class IntervalUtils {
             long hi = out.getQuick(readIdx + 1);
             long prevHi = out.getQuick(writeIdx - 1);
 
-            if (lo <= prevHi + 1) {
-                // Overlapping or adjacent to previous interval - extend it
+            if (lo <= prevHi || lo == prevHi + 1) {
+                // Overlapping or adjacent to previous interval - extend it. The two-clause check
+                // avoids prevHi + 1 wrapping around when prevHi == Long.MAX_VALUE: the adjacency
+                // clause is only evaluated when lo > prevHi, which is unreachable at that maximum.
                 out.setQuick(writeIdx - 1, Math.max(hi, prevHi));
             } else {
                 // Non-overlapping - write new interval
