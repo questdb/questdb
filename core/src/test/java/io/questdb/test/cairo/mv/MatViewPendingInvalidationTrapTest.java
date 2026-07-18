@@ -59,6 +59,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Pins the pending-invalidation handoff on a plain primary (no role switch). An apply-time
@@ -231,13 +232,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             // Baseline: the view refreshed and is valid.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
 
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
@@ -275,13 +270,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // stays valid on disk.
             drainMatViewQueue(engine);
             drainWalQueue();
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -298,9 +287,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     @Test
     public void testDeclinedInvalidationDoesNotCascadeToChainedView() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, amount int, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL");
+            createBasePriceTable();
             // A MANUAL DEFERRED parent never refreshes incrementally, so lastRefreshBaseTxn stays -1 and an
             // apply-time base-table invalidation (delivered force=false) declines to invalidate it.
             execute("create materialized view price_1h refresh manual deferred as (" +
@@ -692,13 +679,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse("recovery must consume both facets", state.isPendingInvalidation());
             Assert.assertFalse("recovery must end valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -770,13 +751,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("recovery must consume both facets", state.isPendingInvalidation());
             Assert.assertFalse("recovery must end valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -1044,13 +1019,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     state.isPendingInvalidation()
             );
             Assert.assertFalse("the repaired view must stay valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -1076,49 +1045,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
     @Test
     public void testFullRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
-        assertMemoryLeak(() -> {
-            final MatViewFixture fixture = createAutoPriceViewFixture();
-
-            // Baseline: the view refreshed and is valid.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
-
-            final TableToken viewToken = fixture.viewToken();
-            final MatViewState state = fixture.state();
-
-            // A base-cascade INVALIDATE deferring during the full-refresh pump: the seam fires once after
-            // resetInvalidState while fullRefresh holds the view lock. The marker must survive the pump and
-            // the post-release handoff must wake it.
-            final AtomicBoolean hasFired = new AtomicBoolean();
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                job.setOnHoldingLockForTesting(() -> {
-                    if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation("truncate operation");
-                    }
-                });
-
-                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
-                drainMatViewQueue(job);
-                drainWalQueue();
-            }
-
-            Assert.assertTrue("the seam must have fired during a full refresh", hasFired.get());
-
-            // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
-            // carrying the deferral's reason.
-            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\ttruncate operation
-                            """);
-        });
+        assertHolderFinalizesDeferredInvalidation(
+                "truncate operation",
+                token -> engine.getMatViewStateStore().enqueueFullRefresh(token)
+        );
     }
 
     @Test
@@ -1266,13 +1196,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertFalse("the latch must not have needed a test-side rescue", latchRescued.get());
             Assert.assertFalse("the re-queued full refresh must clear its reschedule sentinel", state.isPendingInvalidation());
             Assert.assertNull(state.getPendingInvalidationReason());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -1378,13 +1302,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // rebuilds the view and consumes only its own ownership flag.
             Assert.assertFalse("the latch must not have needed a test-side rescue", latchRescued.get());
             Assert.assertFalse(state.isPendingInvalidation());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -1502,13 +1420,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("recovery must consume the marker", state.isPendingInvalidation());
             Assert.assertFalse("recovery must end valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -1599,13 +1511,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     engineFullRefreshEnqueues.get()
             );
             Assert.assertFalse("the redelivered FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -1656,9 +1562,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 terminalJob.setOnFullRefreshTerminalFailureForTesting(() -> {
                     if (hasFired.compareAndSet(false, true)) {
                         try {
-                            execute("create table base_price (" +
-                                    "sym varchar, price double, amount int, ts timestamp" +
-                                    ") timestamp(ts) partition by DAY WAL");
+                            createBasePriceTable();
                             execute("INSERT INTO base_price (sym, price, ts) VALUES " +
                                     "('eurusd', 1.1, '2024-09-10T13:01')");
                         } catch (Exception e) {
@@ -1919,9 +1823,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     @Test
     public void testMultipleDependentViewsEachFinalizeDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, amount int, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL");
+            createBasePriceTable();
             execute("create materialized view price_1h as (" +
                     "select sym, last(price) as price, ts from base_price sample by 1h" +
                     ") partition by DAY");
@@ -2002,13 +1904,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("the redelivered full refresh must consume its marker", state.isPendingInvalidation());
             Assert.assertNull(state.getPendingInvalidationReason());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -2302,52 +2198,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
     @Test
     public void testRangeRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
-        assertMemoryLeak(() -> {
-            final MatViewFixture fixture = createAutoPriceViewFixture();
-
-            // Baseline: the view refreshed and is valid.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
-
-            final TableToken viewToken = fixture.viewToken();
-            final MatViewState state = fixture.state();
-
-            // Simulate a concurrent INVALIDATE deferring mid-range-refresh: the seam fires once while
-            // rangeRefresh holds the view lock and marks the view pending (the marker half of a losing
-            // invalidateView's defer). The range-refresh completion must finalize the deferred invalidation.
-            final AtomicBoolean hasFired = new AtomicBoolean();
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                job.setOnHoldingLockForTesting(() -> {
-                    if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation("update operation");
-                    }
-                });
-
-                // Enqueue a range refresh covering all base table data. The seam fires inside
-                // rangeRefresh (while holding the lock) and marks the view pending; the refresh
-                // then completes and the finally block must finalize the deferred invalidation.
-                engine.getMatViewStateStore().enqueueRangeRefresh(viewToken, 1L, Long.MAX_VALUE - 1);
-                drainMatViewQueue(job);
-                drainWalQueue();
-            }
-
-            Assert.assertTrue("the seam must have fired during a range refresh", hasFired.get());
-
-            // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
-            // carrying the deferral's reason.
-            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
-                            """);
-        });
+        assertHolderFinalizesDeferredInvalidation(
+                "update operation",
+                token -> engine.getMatViewStateStore().enqueueRangeRefresh(token, 1L, Long.MAX_VALUE - 1)
+        );
     }
 
     @Test
@@ -2377,13 +2231,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertFalse("the deferral alone must not mint", state.isInvalid());
 
             // The deferral is in-memory only: the view is still valid on disk.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -2393,13 +2241,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             // Baseline: the view refreshed and is valid.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
 
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
@@ -2445,13 +2287,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // INVALIDATE would mint here and flip the view to invalid.
             drainMatViewQueue(engine);
             drainWalQueue();
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
 
             // Leave the view clean for teardown.
             state.markAsValid();
@@ -2515,13 +2351,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             // Baseline: the view refreshed and is valid.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
 
             final MatViewState state = fixture.state();
             final long refreshSeqBefore = state.getRefreshSeq();
@@ -2764,50 +2594,16 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainMatViewQueue(engine);
             drainWalQueue();
             Assert.assertFalse("the woken FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
     @Test
     public void testSingleViewIncrementalRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
-        assertMemoryLeak(() -> {
-            final MatViewFixture fixture = createAutoPriceViewFixture();
-
-            final TableToken viewToken = fixture.viewToken();
-            final MatViewState state = fixture.state();
-
-            // A base insert routes through the base-keyed refreshDependentViewsIncremental loop. A VIEW-keyed
-            // enqueueIncrementalRefresh instead drives the single-view refreshIncremental holder, whose own
-            // finally must finalize a deferral too. The seam fires in the shared refreshIncremental0.
-            final AtomicBoolean hasFired = new AtomicBoolean();
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                job.setOnHoldingLockForTesting(() -> {
-                    if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation("update operation");
-                    }
-                });
-
-                engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
-                drainMatViewQueue(job);
-                drainWalQueue();
-            }
-
-            Assert.assertTrue("the seam must have fired during a single-view incremental refresh", hasFired.get());
-
-            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
-                            """);
-        });
+        assertHolderFinalizesDeferredInvalidation(
+                "update operation",
+                token -> engine.getMatViewStateStore().enqueueIncrementalRefresh(token)
+        );
     }
 
     @Test
@@ -2841,13 +2637,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse("a stale handoff owner must be a no-op (no pump)", hasPumped.get());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -2960,13 +2750,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("the recovery must consume both facets", state.isPendingInvalidation());
             Assert.assertFalse("the final full refresh must leave the view valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -3018,13 +2802,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("the redelivered full refresh must consume the pending owner", state.isPendingInvalidation());
             Assert.assertFalse("the recovered full refresh must leave the view valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -3154,13 +2932,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     state.isPendingInvalidation()
             );
             Assert.assertFalse(state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -3219,34 +2991,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // the woken retry then suppresses its own refused marker. The FULL facet wakes on both passes
             // (each woken task would defer against the refusal without re-enqueueing); the counting store
             // does not delegate them, so no full refresh runs against the armed refusal.
-            final AtomicInteger fullWakeCount = new AtomicInteger();
-            final AtomicInteger invalidationWakeCount = new AtomicInteger();
-            final MatViewStateStore countingStore = new ForwardingMatViewStateStore(engine.getMatViewStateStore()) {
-                @Override
-                public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
-                    fullWakeCount.incrementAndGet();
-                }
-
-                @Override
-                public void enqueueInvalidate(
-                        TableToken matViewToken,
-                        String invalidationReason,
-                        TableToken invalidationBaseTableToken,
-                        long invalidationBaseTxn,
-                        boolean isInvalidationForced
-                ) {
-                    if (invalidationWakeCount.incrementAndGet() > 10) {
-                        throw new IllegalStateException("self-feeding invalidation loop detected");
-                    }
-                    super.enqueueInvalidate(
-                            matViewToken,
-                            invalidationReason,
-                            invalidationBaseTableToken,
-                            invalidationBaseTxn,
-                            isInvalidationForced
-                    );
-                }
-            };
+            final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, false, 10, 0);
 
             walRefusalToken.set(viewToken);
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
@@ -3261,9 +3006,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainMatViewQueue(job);
 
                 Assert.assertEquals("the owner publication must wake the invalidation exactly once",
-                        1, invalidationWakeCount.get());
+                        1, countingStore.invalidateEnqueues.get());
                 Assert.assertEquals("both passes must wake the never-suppressed full-refresh facet",
-                        2, fullWakeCount.get());
+                        2, countingStore.fullRefreshEnqueues.get());
                 Assert.assertTrue("the refused invalidation must be deferred (pending)", state.isPendingInvalidation());
                 Assert.assertEquals("the retained marker must keep the refused reason",
                         "sticky refusal witness", state.getPendingInvalidationReason());
@@ -3350,13 +3095,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainMatViewQueue(engine);
             drainWalQueue();
             Assert.assertFalse("the redelivered FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -3471,13 +3210,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse("recovery must consume both facets", state.isPendingInvalidation());
             Assert.assertFalse("recovery must end valid", state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -3570,13 +3303,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertFalse("RESUME WAL must redeliver and consume the parked owner", state.isPendingInvalidation());
             Assert.assertFalse(state.isInvalid());
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
+            assertPriceViewValid();
         });
     }
 
@@ -3651,50 +3378,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
     @Test
     public void testUpdateRefreshIntervalsHoldingLockFinalizesDeferredInvalidation() throws Exception {
-        assertMemoryLeak(() -> {
-            final MatViewFixture fixture = createAutoPriceViewFixture();
-
-            // Baseline: the view refreshed and is valid.
-            assertQuery("select view_name, base_table_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status
-                            price_1h\tbase_price\tvalid
-                            """);
-
-            final TableToken viewToken = fixture.viewToken();
-            final MatViewState state = fixture.state();
-
-            // Simulate a concurrent INVALIDATE deferring while an interval-update task holds the view lock:
-            // the seam fires once (updateRefreshIntervals holds the lock) and marks the view pending (the
-            // marker half of a losing invalidateView's defer). The interval-update completion must finalize
-            // the deferred invalidation.
-            final AtomicBoolean hasFired = new AtomicBoolean();
-            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                job.setOnHoldingLockForTesting(() -> {
-                    if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation("update operation");
-                    }
-                });
-
-                engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(viewToken);
-                drainMatViewQueue(job);
-                drainWalQueue();
-            }
-
-            Assert.assertTrue("the seam must have fired during an interval-update task", hasFired.get());
-
-            // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
-            // carrying the deferral's reason.
-            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
-                            """);
-        });
+        assertHolderFinalizesDeferredInvalidation(
+                "update operation",
+                token -> engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(token)
+        );
     }
 
     @Test
@@ -3810,6 +3497,47 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         });
     }
 
+    private void assertHolderFinalizesDeferredInvalidation(
+            String invalidationReason,
+            Consumer<TableToken> enqueueTrigger
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+
+            // Baseline: the view refreshed and is valid.
+            assertPriceViewValid();
+
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // A concurrent INVALIDATE deferring while the triggered holder owns the view latch:
+            // the seam fires once during the hold. The marker must survive the hold and the
+            // post-release handoff must wake it.
+            final AtomicBoolean hasFired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> {
+                    if (hasFired.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation(invalidationReason);
+                    }
+                });
+
+                enqueueTrigger.accept(viewToken);
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+
+            Assert.assertTrue("the seam must have fired during the hold", hasFired.get());
+
+            // The deferred invalidation must be finalized: the view ends invalid (not
+            // valid-with-stale), carrying the deferral's reason.
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_name\tbase_table_name\tview_status\tinvalidation_reason\n"
+                            + "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n");
+        });
+    }
+
     private void assertPendingReasonAndFullFacets(TableToken viewToken, MatViewState state, String expectedReason) {
         final MatViewStateStore stateStore = engine.getMatViewStateStore();
         final MatViewRefreshTask firstTask = new MatViewRefreshTask();
@@ -3833,6 +3561,16 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 unexpectedTask.clear();
             }
         }
+    }
+
+    private void assertPriceViewValid() throws Exception {
+        assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("""
+                        view_name\tbase_table_name\tview_status
+                        price_1h\tbase_price\tvalid
+                        """);
     }
 
     private boolean baseWalDirExists(TableToken baseToken) {
