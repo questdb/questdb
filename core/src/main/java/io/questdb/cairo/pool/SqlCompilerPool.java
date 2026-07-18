@@ -211,6 +211,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public ExpressionNode parseStandaloneExpression(CharSequence expression, IQueryModel model) throws SqlException {
+            return delegate.parseStandaloneExpression(expression, model);
+        }
+
+        @Override
         public QueryBuilder query() {
             return delegate.query();
         }

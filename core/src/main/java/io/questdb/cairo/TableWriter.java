@@ -11744,19 +11744,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * #compileExpressionDimensionFunction(SqlCompiler, FunctionParser, PartitionDimension)}:
      * <ol>
      *     <li>Re-parse {@code exprText} back into an {@link ExpressionNode} via {@link
-     *     SqlCompiler#testParseExpression(CharSequence, IQueryModel)} -- a PURE syntax parse (no
+     *     SqlCompiler#parseStandaloneExpression(CharSequence, IQueryModel)} -- a PURE syntax parse (no
      *     query optimizer, no table/column resolution: confirmed directly against its implementation,
      *     {@code clear(); lexer.of(expression); return parser.expr(lexer, model, this);}) -- safe to
      *     call with a {@code null} {@link IQueryModel} for this feature's safe-subset expression
      *     shapes (no CASE/lambda/decl construct needs a real model here; the same {@code null}-model
      *     idiom is already established across this codebase's own expression-parsing tests, e.g.
-     *     {@code ConstantReassociationTest}). It is annotated {@code @TestOnly}, but is the only
-     *     production-reachable entry point for turning bare expression TEXT back into an {@link
-     *     ExpressionNode} without ALSO forcing a full {@code SELECT ... FROM <table>} compile-and-
-     *     optimize -- which would re-resolve columns through a SEPARATE {@code RecordMetadata}
-     *     (typically a {@code TableReader}'s), risking a column-index space that does not actually
-     *     match {@link #metadata}'s: a silent-wrong-cell hazard this design avoids entirely by
-     *     resolving directly against {@link #metadata} itself in the next step, never a reader's.</li>
+     *     {@code ConstantReassociationTest}). Promoted onto {@link SqlCompiler} as a first-class,
+     *     non-{@code @TestOnly} method specifically so this write path does not have to call the
+     *     {@code @TestOnly}-annotated {@code testParseExpression} sibling (composite-partitioning Plan
+     *     4e Task 4 -- {@code testParseExpression} now simply delegates to this method, so every
+     *     existing test caller is unaffected); it is the only production-reachable entry point for
+     *     turning bare expression TEXT back into an {@link ExpressionNode} without ALSO forcing a full
+     *     {@code SELECT ... FROM <table>} compile-and-optimize -- which would re-resolve columns
+     *     through a SEPARATE {@code RecordMetadata} (typically a {@code TableReader}'s), risking a
+     *     column-index space that does not actually match {@link #metadata}'s: a silent-wrong-cell
+     *     hazard this design avoids entirely by resolving directly against {@link #metadata} itself in
+     *     the next step, never a reader's.</li>
      *     <li>Reject (a defense-in-depth check, NOT a duplicate of the DDL-time gate) any reference
      *     to a column type this dimension's {@link CompositeExpressionRecord} adapter cannot yet
      *     expose (see {@link #assertExpressionSourceColumnsSupported(ExpressionNode)}).</li>
@@ -11831,7 +11835,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             FunctionParser functionParser,
             PartitionDimension dim
     ) throws SqlException {
-        ExpressionNode node = compiler.testParseExpression(dim.getExprText(), (IQueryModel) null);
+        ExpressionNode node = compiler.parseStandaloneExpression(dim.getExprText(), (IQueryModel) null);
         assertExpressionSourceColumnsSupported(node);
         Function function = functionParser.parseFunction(node, metadata, compositeExpressionSqlExecutionContext);
         boolean ok = false;

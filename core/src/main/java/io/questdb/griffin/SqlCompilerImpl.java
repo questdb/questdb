@@ -591,12 +591,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         codeGenerator.setFullFatJoins(value);
     }
 
-    @TestOnly
     @Override
-    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
+    public ExpressionNode parseStandaloneExpression(CharSequence expression, IQueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
         return parser.expr(lexer, model, this);
+    }
+
+    @TestOnly
+    @Override
+    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
+        return parseStandaloneExpression(expression, model);
     }
 
     // test only
