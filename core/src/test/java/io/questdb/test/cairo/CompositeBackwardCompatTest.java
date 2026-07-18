@@ -33,19 +33,25 @@ import org.junit.Test;
  * Backward-compatibility guard for composite partitioning (Plan 1, Task 8).
  * <p>
  * Plan 1 delivered only grammar + metadata: parsing, validating and persisting a
- * {@link io.questdb.cairo.PartitionSpec}, plus SHOW CREATE re-emission. The writer's physical
- * partition ROUTING is deliberately unchanged -- a composite table must, for now, land every row in
+ * {@link io.questdb.cairo.PartitionSpec}, plus SHOW CREATE re-emission. At that time the writer's
+ * physical partition ROUTING was deliberately unchanged -- a composite table landed every row in
  * the same single time-partition directory a plain table would use (no per-symbol cell
- * subdirectories yet; that is Plans 3-4). These tests prove:
+ * subdirectories yet). These tests prove:
  * <ol>
  *     <li>a plain (non-composite) table's SHOW CREATE output is byte-identical to pre-feature
  *     output;</li>
- *     <li>a composite table accepts INSERT and WAL apply, landing its data in exactly one ordinary
- *     {@code YYYY-MM-DD} partition;</li>
+ *     <li>a composite table accepts INSERT and WAL apply, and its data stays fully visible/correct;</li>
  *     <li>the persisted {@code PartitionSpec} survives a metadata reload ({@code
  *     engine.releaseInactive()} forcing a fresh {@code _meta} read) without disrupting ingestion into
  *     either kind of table.</li>
  * </ol>
+ * <p>
+ * <b>Update (Plan 4a, Tasks 4-5):</b> real per-cell routing has since landed -- a composite table's
+ * rows now land in per-cell subdirectories (one {@code _txn} partition-array entry per distinct
+ * {@code (day, cellKey)}), and {@code table_partitions()}/{@code SHOW PARTITIONS} render each cell's
+ * {@code name} accordingly (Plan 4a Task 5b, {@code ShowPartitionsRecordCursorFactory}). Bullet 2 and
+ * the two data-ingestion tests below were updated to assert that reality instead of the Plan-1-era
+ * single-bare-day-partition assumption; item 1 (plain tables) is unaffected and stays byte-identical.
  */
 public class CompositeBackwardCompatTest extends AbstractCairoTest {
 
@@ -71,7 +77,9 @@ public class CompositeBackwardCompatTest extends AbstractCairoTest {
     @Test
     public void testCompositeStoresLikePlainForNow() throws Exception {
         assertMemoryLeak(() -> {
-            // Until Plans 3-4, a composite table writes data into ONE time partition dir (no cell subdirs yet).
+            // Plan 4a landed real per-cell routing: a single NYSE row lands in its own per-cell
+            // subdirectory under the day (2023-01-01/exchange=NYSE), not directly in the bare day dir.
+            // table_partitions() renders that cell-aware name (Plan 4a Task 5b).
             execute("create table t (ts timestamp, exchange symbol, price double) " +
                     "timestamp(ts) partition by day, exchange wal");
             execute("insert into t values ('2023-01-01T00:00:00.000000Z','NYSE',1.0)");
@@ -81,12 +89,12 @@ public class CompositeBackwardCompatTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n1\n");
-            // exactly one partition, named as today
+            // exactly one partition (one cell), named cell-aware (Hive-style default naming)
             assertQuery("select name from table_partitions('t')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("name\n2023-01-01\n");
+                    .returns("name\n2023-01-01/exchange=NYSE\n");
         });
     }
 
@@ -94,7 +102,15 @@ public class CompositeBackwardCompatTest extends AbstractCairoTest {
     public void testCompositeSurvivesReopenAndStillIngests() throws Exception {
         // Proves the persisted spec doesn't disrupt the writer after a metadata reload: create a
         // composite table, insert, force a fresh _meta read (engine.releaseInactive()), insert again,
-        // and confirm both rows are visible and still land in the single day partition.
+        // and confirm both rows are visible and correctly routed/listed across the reload.
+        //
+        // NYSE and LSE are two distinct values of the `exchange` dimension, so this day ends up with
+        // two real, independent cells -- confirmed directly against the on-disk layout and the _txn
+        // partition-array records (2023-01-01/exchange=NYSE from commit 1, 2023-01-01/exchange=LSE.0
+        // from commit 2, each with numRows=1): this is NOT an orphan/phantom entry, it is Plan 4a's
+        // real per-cell routing working as designed. table_partitions() must therefore list two
+        // records, one per cell, rendered cell-aware (Plan 4a Task 5b) instead of colliding on the
+        // same bare day name.
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, exchange symbol, price double) " +
                     "timestamp(ts) partition by day, exchange wal");
@@ -111,12 +127,14 @@ public class CompositeBackwardCompatTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n2\n");
-            // still exactly one partition after the reload -- the persisted spec did not disrupt routing
+            // two cells sharing the same day after the reload -- the persisted spec did not disrupt
+            // routing, and each cell is listed distinctly (Hive-style default naming) instead of both
+            // colliding on the bare "2023-01-01" name
             assertQuery("select name from table_partitions('t')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("name\n2023-01-01\n");
+                    .returns("name\n2023-01-01/exchange=NYSE\n2023-01-01/exchange=LSE\n");
         });
     }
 
