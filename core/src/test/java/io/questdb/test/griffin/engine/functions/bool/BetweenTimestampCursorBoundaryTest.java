@@ -30,7 +30,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,7 +49,8 @@ import org.junit.Test;
  * empty, the NOT BETWEEN negation of every empty-endpoint case, reversed endpoints under NOT
  * BETWEEN, a NULL endpoint under mixed precision, and the shared-sub-query LONG_NULL case. It also
  * pins the interval-shape (an empty endpoint collapses the designated scan to {@code intervals: []})
- * and the execution contract (the cursor bound is read exactly once and closed exactly once).
+ * and the execution contract (the cursor bound is read exactly once and closed exactly once, with
+ * the owner's cached bounds shared to per-worker filter clones instead of per-clone re-reads).
  *
  * <p>Semantics under test, verified against production, mirror {@code between(NNN)}: a NULL or empty
  * endpoint makes BETWEEN false for every row (empty result), so NOT BETWEEN is true for every row
@@ -298,6 +301,26 @@ public class BetweenTimestampCursorBoundaryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonThreadSafeArgSharesState() throws Exception {
+        // a non-thread-safe left operand (the ::varchar::timestamp round-trip) forces the async
+        // filter to compile a per-worker clone of the between() predicate even at the default
+        // sharedQueryWorkerCount = 1; opening the cursor donates the owner's cached bounds to the
+        // clone (offerStateTo), which the plan surfaces as [state-shared]. Without this marker the
+        // clone protocol never ran and the one-evaluation contract above would be vacuous.
+        assertMemoryLeak(() -> {
+            createBaseTables();
+            assertQuery("SELECT x FROM t WHERE ts2::varchar::timestamp BETWEEN (SELECT lo FROM b) AND (SELECT hi FROM b)")
+                    .withPlanContaining("[state-shared]")
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testReversedEndpointsNotBetween() throws Exception {
         // reversed runtime endpoints (lo > hi) normalize via min/max before the comparison, so NOT
         // BETWEEN excludes the normalized [01:00, 03:00] range and keeps only the rows outside it.
@@ -354,6 +377,64 @@ public class BetweenTimestampCursorBoundaryTest extends AbstractCairoTest {
             assertQuery("SELECT x FROM t WHERE ts BETWEEN (SELECT lo FROM b_null) AND (SELECT lo FROM b_null)")
                     .withPlanContaining("Interval forward scan on: t", "intervals: []")
                     .returns("x\n");
+        });
+    }
+
+    @Test
+    public void testWorkerStateSharedReadsBoundsOncePerExecution() throws Exception {
+        // The parallel async-filter path clones a non-thread-safe between() predicate per worker
+        // and donates the owner's cached bound epochs to every clone (offerStateTo/stateInherited),
+        // so the two bound sub-queries execute exactly once per query - not once per worker clone.
+        // test_timestamp_counter() increments once per row a bound sub-query cursor reads: one
+        // execution reading both bounds counts 2; a broken protocol would count 2 + 2 * cloneCount.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (_, compiler, ctx) -> {
+                    execute(compiler, "create table src (lo timestamp, hi timestamp)", ctx);
+                    execute(compiler, "insert into src values (2500000000, 7499000000)", ctx);
+                    execute(
+                            compiler,
+                            "create table big_t as (" +
+                                    "  select timestamp_sequence(0, 1000000) ts," +
+                                    "         timestamp_sequence(0, 1000000) ts2" +
+                                    "  from long_sequence(10000)" +
+                                    ") timestamp(ts) partition by day",
+                            ctx
+                    );
+
+                    // ts2 (non-designated) keeps the interval intrinsic out; the
+                    // ::varchar::timestamp round-trip makes the arg non-thread-safe,
+                    // forcing per-worker clones of the between() function
+                    TestTimestampCounterFactory.COUNTER.set(0);
+                    try (RecordCursorFactory factory = compiler.compile(
+                            "select count() c from big_t where ts2::varchar::timestamp between " +
+                                    "(select test_timestamp_counter(lo) from src) and " +
+                                    "(select test_timestamp_counter(hi) from src)",
+                            ctx
+                    ).getRecordCursorFactory()) {
+                        // [2500s, 7499s] -> 5000 rows across 10 page frames; correct
+                        // classification proves every clone observed the owner's epochs
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            TestUtils.assertCursor("c\n5000\n", cursor, factory.getMetadata(), true, sink);
+                        }
+                        Assert.assertEquals(
+                                "both bounds must be read exactly once per execution, not per worker clone",
+                                2,
+                                TestTimestampCounterFactory.COUNTER.get()
+                        );
+
+                        // re-executing the same compiled factory refreshes the cached bounds
+                        execute(compiler, "update src set lo = 9000000000, hi = 9999000000", ctx);
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            TestUtils.assertCursor("c\n1000\n", cursor, factory.getMetadata(), true, sink);
+                        }
+                        Assert.assertEquals(4, TestTimestampCounterFactory.COUNTER.get());
+                    }
+                }, configuration, LOG);
+            }
         });
     }
 
