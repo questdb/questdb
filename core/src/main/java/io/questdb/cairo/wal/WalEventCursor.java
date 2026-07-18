@@ -179,6 +179,33 @@ public class WalEventCursor {
         type = WalTxnType.NONE;
     }
 
+    /**
+     * Positions the cursor so the next {@link #hasNext()} reads the record at
+     * {@code resumeOffset}, which must be a value previously returned by
+     * {@link #resumeOffset()} for this segment's event file. Extends the mapping to
+     * cover that offset first, because a fresh {@code WalEventReader.of(path, -1)}
+     * maps only the header. Used by {@link WalReader} to fold only newly-appended
+     * events into the symbol maps across same-segment rebinds, since WAL event files
+     * are append-only (new records overwrite the trailing end-of-events marker).
+     */
+    void resumeFrom(long resumeOffset) {
+        eventMem.extend(resumeOffset + Integer.BYTES);
+        memSize = eventMem.size();
+        nextOffset = resumeOffset;
+        txn = END_OF_EVENTS;
+        type = WalTxnType.NONE;
+    }
+
+    /**
+     * The offset the next {@link #hasNext()} would read from. After a walk stops at
+     * the trailing end-of-events marker this is the marker's position - exactly where
+     * the next appended record lands - so it is a valid resume point for a later
+     * {@link #resumeFrom(long)}.
+     */
+    long resumeOffset() {
+        return nextOffset;
+    }
+
     private void checkMemSize(long requiredBytes) {
         if (memSize < offset + requiredBytes) {
             throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)

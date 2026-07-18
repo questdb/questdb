@@ -541,6 +541,65 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResumeLiveViewDeniedOnNoWriteAccess() throws Exception {
+        // Compile ALTER LIVE VIEW ... RESUME WAL through a read-only security context
+        // and assert authorizeResumeWal() denies it. The view must stay suspended.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as " +
+                    "select ts, x, row_number() over () as rn from base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            // Suspend through the privileged context so RESUME has something to clear.
+            execute("alter live view lv suspend wal");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try {
+                engine.execute("alter live view lv resume wal", roContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denied RESUME must leave the view suspended.
+            Assert.assertTrue("denied RESUME WAL must leave the view suspended",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            execute("alter live view lv resume wal");
+            execute("drop live view lv");
+            execute("drop table base");
+        });
+    }
+
+    @Test
+    public void testSuspendLiveViewDeniedOnNoWriteAccess() throws Exception {
+        // Compile ALTER LIVE VIEW ... SUSPEND WAL through a read-only security context
+        // and assert authorizeSuspendWal() denies it. The view must stay un-suspended.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s start from now as " +
+                    "select ts, x, row_number() over () as rn from base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try {
+                engine.execute("alter live view lv suspend wal", roContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denied SUSPEND must not have changed the view's state.
+            Assert.assertFalse("denied SUSPEND WAL must not suspend the view",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+            Assert.assertFalse(engine.isWalApplySuspended(lvToken));
+
+            execute("drop live view lv");
+            execute("drop table base");
+        });
+    }
+
+    @Test
     public void testDropTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             engine.execute("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);

@@ -1410,6 +1410,30 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * DROP side of the checkpoint/drop handshake, the counterpart to
+     * {@link #startCheckpoint(long)}. Marks the view dropped and then waits out any
+     * in-progress {@code DatabaseCheckpointAgent} freeze, both under the instance
+     * monitor so the two interlock:
+     * <ul>
+     *     <li>if this runs first, a later {@link #startCheckpoint(long)} observes
+     *     {@code dropped} under the same monitor and refuses the freeze (returns
+     *     {@code false}), so the agent skips the view;</li>
+     *     <li>if a freeze is already published, this parks in {@link #waitForUnfrozen()}
+     *     until the agent's {@link #endCheckpoint()} clears it.</li>
+     * </ul>
+     * Once it returns, no checkpoint file copy for this view can be in flight, so the
+     * caller may safely tear the view's files down. This settles only the checkpoint
+     * race; the caller must still {@link #fenceRefresh()} afterwards to quiesce the
+     * refresh worker.
+     */
+    public void markDroppedAndAwaitCheckpoint() {
+        synchronized (this) {
+            dropped = true;
+            waitForUnfrozen();
+        }
+    }
+
+    /**
      * Prepares the view for a recompile after the base table's metadata version
      * drifted from the cached compiled factory (a schema change that does not
      * touch referenced columns - those invalidate the view instead). Frees the
@@ -1938,13 +1962,31 @@ public class LiveViewInstance implements QuietCloseable {
      * (a) no refresh turn is still mutating {@code _lv.s} when the caller
      * proceeds with its copy, and (b) the worker's next call to
      * {@link #tryLockForRefresh()} observes {@code freezeInProgress=true}.
+     * <p>
+     * Agent side of the checkpoint/drop handshake: returns {@code false} without
+     * freezing when a concurrent DROP has already marked the view dropped (see
+     * {@link #markDroppedAndAwaitCheckpoint()}). The caller must then skip the view.
+     *
+     * @return {@code true} if the freeze was published (pair with
+     * {@link #endCheckpoint()}); {@code false} if the view is being dropped and the
+     * caller must skip it (no {@code endCheckpoint()} is owed).
      */
-    public void startCheckpoint(long frozenAppliedWatermark) {
+    public boolean startCheckpoint(long frozenAppliedWatermark) {
         // Synchronize on the instance monitor while publishing the flag so any
         // invalidator inside synchronized(instance) on another thread either
         // (a) commits its rewrite before the agent's file copy begins, or
         // (b) observes freezeInProgress=true and parks via waitForUnfrozen().
         synchronized (this) {
+            if (dropped) {
+                // Checkpoint/drop handshake, agent side. A concurrent DROP LIVE VIEW has
+                // already marked this instance dropped (under this same monitor, in
+                // markDroppedAndAwaitCheckpoint) and is about to tear its files down.
+                // Refuse the freeze so the agent skips the view instead of copying a
+                // directory that is about to vanish - do NOT set freezeInProgress, or
+                // the DROP would park forever waiting for an endCheckpoint the agent will
+                // never issue for a view it skipped.
+                return false;
+            }
             freezeFrozenAppliedWatermark = frozenAppliedWatermark;
             freezeInProgress = true;
         }
@@ -1952,6 +1994,7 @@ public class LiveViewInstance implements QuietCloseable {
             Os.pause();
         }
         refreshLatch.set(false);
+        return true;
     }
 
     public String takePendingInvalidationReason() {

@@ -205,6 +205,58 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestoreRejectsShortCheckpointMissingFunctionBlock() throws Exception {
+        // A CRC-valid-but-SHORT head checkpoint - a truncated tail, or a format drift
+        // that adds a snapshot-capable function this .cp never emitted - leaves a window
+        // function un-restored. The file-level CRC does not catch it (the block walk just
+        // ends early). restoreFromHead must reject such a checkpoint as structural
+        // corruption and head-miss-replay from a known-good boundary; otherwise it would
+        // resume incremental refresh from an EMPTY accumulator baseline, and the running
+        // sum would restart from 0 instead of continuing batch 1's total - a durable
+        // divergence. The writer hook forges the short .cp by omitting the function block.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+
+            // Batch 1: refresh + flush so a head .cp is written - but forge it SHORT
+            // (no FUNCTION_SNAPSHOT block) via the writer hook.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.setCheckpointTrailingFunctionSnapshotBlocksToOmit(1);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-01T00:00:02.000000Z', 'a', 2.0)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+            }
+            drainWalQueue();
+
+            // Restart onto the on-disk directory: drop the in-memory instance and reload.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Batch 2 after the restart. The restore runs on the first refresh; it must
+            // reject the short head .cp and rebuild, so the running sum continues from
+            // batch 1's total (a: 1+2+4 = 7) rather than restarting from 0 (a: 4).
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:03.000000Z', 'a', 4.0)");
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            assertViewMatchesRecompute(viewSql);
+            assertQuery("SELECT ts, sym, x, running FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tsym\tx\trunning\n" +
+                            "2026-01-01T00:00:01.000000Z\ta\t1.0\t1.0\n" +
+                            "2026-01-01T00:00:02.000000Z\ta\t2.0\t3.0\n" +
+                            "2026-01-01T00:00:03.000000Z\ta\t4.0\t7.0\n");
+        });
+    }
+
+    @Test
     public void testRestoreBringsBackCheckpointRingManifestOverLiveAheadOne() throws Exception {
         // Section 8 argues the _ring manifest rides the snapshot "automatically" -
         // copyLiveViewCheckpointDir copies every non-.tmp file in _checkpoints/ and

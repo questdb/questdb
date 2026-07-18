@@ -93,6 +93,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.Lock;
 
@@ -168,6 +169,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // path. Lazily allocated on the first LV with a head .cp to restore;
     // reused for subsequent LVs by re-opening on a different file.
     private LiveViewCheckpointReader checkpointReader;
+    // Test-only: number of trailing FUNCTION_SNAPSHOT blocks the head- and seed-
+    // checkpoint writers omit, forging a CRC-valid-but-short checkpoint so a test can
+    // drive restoreFromHead's missing-block validation (and, when only the last of
+    // several is omitted, the partial-restore re-clear on the seed re-sweep). 0 in
+    // production.
+    @TestOnly
+    private volatile int checkpointTrailingFunctionSnapshotBlocksToOmit;
     // Per-worker reusable checkpoint writer. Lazily allocated on the first
     // cycle that triggers a head write; reused across cycles via of() / commit().
     // Memory pages stay mmapped between writes so a frequently-checkpointed LV
@@ -264,10 +272,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // time, the accumulators lead the last durable commit -> handleRefreshFailure
     // rebuilds so the retry does not double-advance them.
     private boolean windowStateDirty;
+    // Number of refresh workers in the pool. The idle fallback scan is sharded by
+    // live-view table id across [0, workerCount), so each view is scanned by exactly
+    // one worker per sweep - O(views) across the pool instead of O(workers x views).
+    private final int workerCount;
     private final int workerId;
 
     public LiveViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
+        this(workerId, 1, engine, sharedQueryWorkerCount);
+    }
+
+    public LiveViewRefreshJob(int workerId, int workerCount, CairoEngine engine, int sharedQueryWorkerCount) {
         this.workerId = workerId;
+        this.workerCount = workerCount;
         this.engine = engine;
         this.executionContext = new LiveViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
         this.walEventReader = new WalEventReader(engine.getConfiguration());
@@ -301,12 +318,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         stagingBuffer = Misc.free(stagingBuffer);
     }
 
+    /**
+     * Whether this worker owns the given live view in the idle-scan registry shard.
+     * Views are sharded across the pool by table id so each is scanned by exactly one
+     * worker per sweep. A single-worker pool ({@code workerCount <= 1}) owns every
+     * view, keeping single-threaded and test behavior unchanged. Table ids are stable
+     * per view, so a view's owner does not drift between sweeps or across workers.
+     */
+    public boolean ownsViewShard(int tableId) {
+        return workerCount <= 1 || Math.floorMod(tableId, workerCount) == workerId;
+    }
+
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
         // workerId is the fixed per-worker identity captured at assign(int, job)
         // time. The continuation framework may remount this job on a peer carrier,
         // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
+    }
+
+    /**
+     * Test-only: makes the head- and seed-checkpoint writers omit the last
+     * {@code count} FUNCTION_SNAPSHOT blocks on subsequent writes, forging a
+     * CRC-valid-but-short checkpoint so a test can drive {@link #restoreFromHead}'s
+     * missing-block validation. Omitting fewer than all blocks leaves earlier
+     * functions restored, exercising the seed re-sweep's partial-restore re-clear.
+     * Production never calls this.
+     */
+    @TestOnly
+    public void setCheckpointTrailingFunctionSnapshotBlocksToOmit(int count) {
+        this.checkpointTrailingFunctionSnapshotBlocksToOmit = count;
     }
 
     // Read-only-replica lead-reconstruction seam. The primary refresh loop maintains an un-flushed
@@ -1474,10 +1515,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 if (populateTier) {
                                     stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
                                     if (internSymbols) {
+                                        // windowMapAuthoritative = !isLeadReconstruction(): the primary
+                                        // resets the window map on every flush, so a live window entry is
+                                        // authoritative and intern can skip the committed keyOf. A replica's
+                                        // externally-flushed lead must stay committed-first.
+                                        final boolean windowMapAuthoritative = !isLeadReconstruction();
                                         for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                                             final int c = stagingSymbolColumnIndexes.getQuick(si);
                                             stagingBuffer.putInt(appendedRows, c,
-                                                    symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c)));
+                                                    symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative));
                                         }
                                     }
                                     if (stagingMinTs == Numbers.LONG_NULL) {
@@ -1841,10 +1887,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // copyRowFromRecord stored with eager-interned,
                                 // LV-table-consistent ids so the lead resolves from
                                 // RAM and post-flush agrees with disk.
+                                // windowMapAuthoritative = !isLeadReconstruction(): only the primary's
+                                // reset-on-flush window map lets intern skip the committed keyOf; a
+                                // replica's externally-flushed lead must stay committed-first.
+                                final boolean windowMapAuthoritative = !isLeadReconstruction();
                                 for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                                     final int c = stagingSymbolColumnIndexes.getQuick(si);
                                     stagingBuffer.putInt(appendedRows, c,
-                                            symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c)));
+                                            symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative));
                                 }
                             }
                             if (stagingMinTs == Numbers.LONG_NULL) {
@@ -3639,6 +3689,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // ahead of the restored disk: re-sweep from offset 0 with empty
                 // state. The on-disk prefix (if any) is a deterministic match,
                 // kept via skip-write below.
+                //
+                // Re-clear the window state unconditionally: a restoreFromHead that
+                // threw partway (e.g. a short .scp missing a trailing FUNCTION_SNAPSHOT
+                // block) has already written the anchor + some functions into the live
+                // window before failing, and getIncrementalCursor keeps accumulator
+                // state across the re-sweep, so feeding that half-restored state into a
+                // from-0 sweep would double-count. The ahead-rejection branch above
+                // already re-clears; this covers the throw path. Cheap and idempotent
+                // for the fresh / no-.scp cases (nothing was restored).
+                clearWindowState(windowFactory, anchorWindow);
                 instance.setSeedDataOffset(0);
                 instance.setLvRowsTotal(0);
                 instance.setHeadSeedCpKey(Numbers.LONG_NULL);
@@ -4203,9 +4263,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
+            // Test-only: omit the last N function-snapshot blocks to forge a
+            // CRC-valid-but-short checkpoint. 0 in production, so the limit is
+            // MAX_VALUE and every snapshot-capable function is written.
+            int fnBlockWriteLimit = Integer.MAX_VALUE;
+            final int fnBlocksToOmit = checkpointTrailingFunctionSnapshotBlocksToOmit;
+            if (fnBlocksToOmit > 0) {
+                int capable = 0;
+                for (int i = 0, m = functions.size(); i < m; i++) {
+                    if (functions.getQuick(i).supportsSnapshot()) {
+                        capable++;
+                    }
+                }
+                fnBlockWriteLimit = Math.max(0, capable - fnBlocksToOmit);
+            }
+            int fnBlocksWritten = 0;
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final WindowFunction f = functions.getQuick(i);
-                if (!f.supportsSnapshot()) {
+                if (!f.supportsSnapshot() || fnBlocksWritten >= fnBlockWriteLimit) {
                     continue;
                 }
                 final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
@@ -4218,6 +4293,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // explicit LONG length prefix here.
                 LiveViewFunctionSnapshot.write(fnSink, f);
                 checkpointWriter.endBlock();
+                fnBlocksWritten++;
             }
 
             // Capture before commit(): commit() truncates the mmap and resets
@@ -4441,6 +4517,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Walk forward and dispatch by type.
             cursor.hasNext();
             cursor.next();
+            boolean anchorRestored = false;
             while (cursor.hasNext()) {
                 final LiveViewCheckpointReader.ReadableBlock block = cursor.next();
                 switch (block.type()) {
@@ -4457,6 +4534,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     .put("checkpoint anchor block but LV has no anchored window");
                         }
                         anchorWindow.restore(block.memory(), block.payloadStart(), block.size());
+                        anchorRestored = true;
                         break;
                     case LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT:
                         restoreFunctionBlock(block, functions);
@@ -4470,6 +4548,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // (block types are content-defined, new types do not
                         // require a file-version bump), readers skip silently.
                         break;
+                }
+            }
+            // Missing-block validation. The file-level CRC guards against bit-rot
+            // but NOT against a CRC-valid-but-short checkpoint: a truncated tail,
+            // or a format drift that adds a snapshot-capable function this .cp's
+            // writer never emitted, simply ends the block walk early. Without this
+            // check restoreFromHead would return success with a function (or the
+            // anchor) left in default state, and the post-restore incremental
+            // refresh would resume after the manifest txn from that wrong baseline,
+            // durably diverging. restoreFunctionBlock already throws on the extra-
+            // block direction; catch the missing-block direction here. Errno 0 =>
+            // handleCorruptHeadCheckpoint unlinks the .cp / .scp and head-miss- or
+            // seed-replays from a known-good boundary.
+            if (isSeed && out.resumeDataOffset == Numbers.LONG_NULL) {
+                throw CairoException.critical(0)
+                        .put("live view seed checkpoint missing its SEED_CURSOR block");
+            }
+            if (anchorWindow != null && !anchorRestored) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint missing its WINDOW_ANCHOR block");
+            }
+            for (int i = restoreFunctionCursor, n = functions.size(); i < n; i++) {
+                final WindowFunction unmatched = functions.getQuick(i);
+                if (unmatched.supportsSnapshot()) {
+                    throw CairoException.critical(0)
+                            .put("fewer live view function snapshot blocks than snapshot-capable functions [firstMissingPosition=")
+                            .put(i)
+                            .put(", factory=")
+                            .put(snapshotFactoryName(unmatched))
+                            .put(']');
                 }
             }
             return true;
@@ -6142,9 +6250,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
+            // Test-only: omit the last N function-snapshot blocks to forge a
+            // CRC-valid-but-short .scp. 0 in production, so the limit is MAX_VALUE and
+            // every snapshot-capable function is written.
+            int fnBlockWriteLimit = Integer.MAX_VALUE;
+            final int fnBlocksToOmit = checkpointTrailingFunctionSnapshotBlocksToOmit;
+            if (fnBlocksToOmit > 0) {
+                int capable = 0;
+                for (int i = 0, m = functions.size(); i < m; i++) {
+                    if (functions.getQuick(i).supportsSnapshot()) {
+                        capable++;
+                    }
+                }
+                fnBlockWriteLimit = Math.max(0, capable - fnBlocksToOmit);
+            }
+            int fnBlocksWritten = 0;
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final WindowFunction f = functions.getQuick(i);
-                if (!f.supportsSnapshot()) {
+                if (!f.supportsSnapshot() || fnBlocksWritten >= fnBlockWriteLimit) {
                     continue;
                 }
                 final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
@@ -6153,6 +6276,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 fnSink.putInt(f.snapshotFormatVersion());
                 LiveViewFunctionSnapshot.write(fnSink, f);
                 checkpointWriter.endBlock();
+                fnBlocksWritten++;
             }
 
             checkpointWriter.commit(firstScp ? Numbers.LONG_NULL : priorKey);
@@ -6242,6 +6366,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean didWork = false;
         for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
+            // Registry sharding: each worker only scans the views it owns (by table id),
+            // so the idle fallback scan costs O(views) across the pool rather than
+            // O(workers x views) with every worker re-scanning every view each tick. The
+            // notification-driven path is unaffected (any worker handles any base-table
+            // task); this only splits the periodic catch-up scan. A single-worker pool
+            // owns everything, so behavior there is unchanged.
+            if (!ownsViewShard(instance.getLiveViewToken().getTableId())) {
+                continue;
+            }
             // A definition-less stub (torn / too-new _lv or _lv.s, registered by
             // buildViewGraphs so DROP LIVE VIEW can still remove it) lives in the
             // registry that getViews iterates, so it reaches this scan even though it

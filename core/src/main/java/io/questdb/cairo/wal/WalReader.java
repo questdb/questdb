@@ -49,6 +49,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -68,6 +69,18 @@ public class WalReader implements Closeable {
     private int rootLen;
     private long rowCount;
     private int segmentId = -1;
+    // Monotonic count of DATA event records folded into the symbol maps across all
+    // of() calls on this reader. A full rebuild folds every record in the segment;
+    // an incremental fold folds only newly-appended records. Tests read it to prove
+    // the per-commit cost dropped from O(events) to O(new events); production ignores it.
+    private long symbolMapFoldedRecords;
+    // Event-file offset up to which the symbol maps are already folded, valid only
+    // for the immediately-preceding same-segment bind. -1 forces a full rebuild.
+    // Lets a same-segment rebind (the live-view drain re-opens one segment per base
+    // commit) fold ONLY newly-appended events instead of rescanning the whole event
+    // history each time - turning the per-commit symbol-map cost from O(events) into
+    // O(new events).
+    private long symbolMapsResumeOffset = -1;
     private String tableName;
     private WalEventCursor walEventCursor;
     private String walName;
@@ -172,6 +185,17 @@ public class WalReader implements Closeable {
     }
 
     /**
+     * Test-only: monotonic count of DATA event records folded into the symbol maps
+     * across every {@link #of} call on this reader. A full rebuild folds all records
+     * in the segment; an incremental same-segment fold folds only newly-appended
+     * records, so the total grows linearly instead of quadratically.
+     */
+    @TestOnly
+    public long getSymbolMapFoldedRecords() {
+        return symbolMapFoldedRecords;
+    }
+
+    /**
      * Binds {@code view} to the bytes stored for {@code key} in column {@code col}.
      * The underlying bytes are stable for the current segment (the column's
      * {@link DirectSymbolMap} is populated once per {@link #of} call and is read-only
@@ -238,8 +262,29 @@ public class WalReader implements Closeable {
         int pathLen = path.size();
         walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
         path.trimTo(pathLen);
-        openSymbolMaps(walEventCursor, configuration);
+        // Fold the segment's symbol diffs into the per-column maps. A same-segment
+        // rebind (same segment, only rowCount grew, same column count) folds ONLY the
+        // events appended since the last bind - resuming from the saved offset instead
+        // of clearing and rescanning the whole event history every base commit. The
+        // saved offset is invalidated first so any mid-fold error, or a segment/column
+        // change, degrades to a full rebuild on the next bind. openSymbolMaps returns
+        // the offset the walk stopped at (the trailing marker), which is where the next
+        // appended record will land - the resume point for the following bind.
+        final boolean incrementalSymbols = sameTableWalSegment
+                && prevColumnCount == columnCount
+                && symbolMapsResumeOffset >= 0;
+        final long symbolResumeFrom = symbolMapsResumeOffset;
+        symbolMapsResumeOffset = -1;
+        if (incrementalSymbols) {
+            walEventCursor.resumeFrom(symbolResumeFrom);
+            symbolMapsResumeOffset = openSymbolMaps(walEventCursor, configuration, false);
+        } else {
+            symbolMapsResumeOffset = openSymbolMaps(walEventCursor, configuration, true);
+        }
         path.slash().put(segmentId);
+        // The symbol-map fold above leaves the event cursor at the trailing marker; its
+        // resume point is already captured in symbolMapsResumeOffset. Rewind it so
+        // getWalEventCursor() hands callers a cursor positioned at the first record.
         walEventCursor.reset();
 
         if (!sameTableWalSegment || prevColumnCount != columnCount) {
@@ -339,16 +384,30 @@ public class WalReader implements Closeable {
         }
     }
 
-    private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
-        // Preserve off-heap buffers but drop entries carried over from a prior segment.
-        for (int i = 0, n = symbolMaps.size(); i < n; i++) {
-            DirectSymbolMap m = symbolMaps.getQuick(i);
-            if (m != null) {
-                m.clear();
+    /**
+     * Folds the segment's DATA-transaction symbol diffs into the per-column maps and
+     * returns the event-file offset the walk stopped at (the resume point for the next
+     * same-segment bind). When {@code clear} is true the maps are reset first (a full
+     * rebuild from the header for a new segment / column-count change); when false the
+     * caller has already positioned {@code eventCursor} at the saved resume offset and
+     * only newly-appended events are folded. Folding is append-only and idempotent
+     * within a segment (local symbol keys are never remapped), and the clean-dictionary
+     * band is loaded once via the {@code size() == 0} guard below, so an incremental
+     * fold produces the same clean-band resolution as a full rebuild.
+     */
+    private long openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration, boolean clear) {
+        if (clear) {
+            // Preserve off-heap buffers but drop entries carried over from a prior segment.
+            for (int i = 0, n = symbolMaps.size(); i < n; i++) {
+                DirectSymbolMap m = symbolMaps.getQuick(i);
+                if (m != null) {
+                    m.clear();
+                }
             }
         }
         while (eventCursor.hasNext()) {
             if (WalTxnType.isDataType(eventCursor.getType())) {
+                symbolMapFoldedRecords++;
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {
@@ -386,6 +445,9 @@ public class WalReader implements Closeable {
                 }
             }
         }
+        // Where the walk stopped: the trailing end-of-events marker (the next appended
+        // record overwrites it), so it is the resume point for the next same-segment bind.
+        return eventCursor.resumeOffset();
     }
 
     static int getPrimaryColumnIndex(int index) {

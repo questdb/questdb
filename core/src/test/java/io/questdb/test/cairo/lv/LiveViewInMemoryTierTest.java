@@ -45,7 +45,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
@@ -317,9 +316,14 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         // in-place append: the writer takes the sentinel on the published slot,
         // appends, then releases via releaseWriteWithoutPublish WITHOUT swapping. A
         // background reader entering acquireRead must block in the spin until that
-        // release, then pin the published slot. (The old version of this test held the
-        // sentinel on the NON-published slot, so acquireRead pinned the published slot
-        // immediately and never exercised the spin.)
+        // release, then pin the published slot.
+        //
+        // Determinism: acquireReadSentinelSpinHook fires from INSIDE acquireRead at the
+        // exact rc < 0 observation point, so the test proves the spin branch was
+        // actually reached - not merely that the reader thread started - and does so
+        // without a Thread.sleep/poll. A prior version counted the reader in BEFORE
+        // acquireRead and polled with sleeps, so a reader descheduled until after the
+        // sentinel release could let the test pass without ever exercising the spin.
         assertMemoryLeak(() -> {
             IntList types = singleLongCol();
             try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
@@ -332,16 +336,27 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 LiveViewInMemoryBuffer write = tier.tryAcquireWrite(published);
                 Assert.assertNotNull("writer must acquire the idle published slot", write);
 
-                final CountDownLatch readerEntered = new CountDownLatch(1);
+                // Fires the instant the reader observes rc < 0 and spins - the exact
+                // branch under test. countDown is idempotent, so re-firing on every spin
+                // iteration is harmless.
+                final CountDownLatch sentinelObserved = new CountDownLatch(1);
+                tier.setAcquireReadSentinelSpinHook(sentinelObserved::countDown);
+
                 final AtomicInteger pinnedResult = new AtomicInteger(Integer.MIN_VALUE);
                 final AtomicLong observedValue = new AtomicLong(Long.MIN_VALUE);
+                final AtomicLong observedRowCount = new AtomicLong(Long.MIN_VALUE);
+                final AtomicLong observedAppendedValue = new AtomicLong(Long.MIN_VALUE);
                 final AtomicReference<Throwable> error = new AtomicReference<>();
                 Thread reader = new Thread(() -> {
                     try {
-                        readerEntered.countDown();
                         // Spins here while the sentinel is held on the published slot.
                         int pin = tier.acquireRead();
-                        observedValue.set(tier.getSlot(pin).getLong(0, 0));
+                        // Pin happens-after the writer's releaseWriteWithoutPublish (CAS
+                        // release/acquire), so the row appended under the sentinel is visible.
+                        LiveViewInMemoryBuffer slot = tier.getSlot(pin);
+                        observedValue.set(slot.getLong(0, 0));
+                        observedRowCount.set(slot.rowCount());
+                        observedAppendedValue.set(slot.getLong(1, 0));
                         pinnedResult.set(pin);
                         tier.releaseRead(pin);
                     } catch (Throwable th) {
@@ -350,19 +365,20 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 }, "lv-tier-sentinel-reader");
                 reader.start();
 
-                // While the sentinel is held, acquireRead cannot return - it sees rc < 0
-                // and spins. Confirm the reader stays blocked (no pin yet); the only way
-                // pinnedResult could be set here is a bug that lets a read observe a slot
-                // mid-write.
-                Assert.assertTrue(readerEntered.await(10, TimeUnit.SECONDS));
-                for (int i = 0; i < 10 && reader.isAlive(); i++) {
-                    Assert.assertEquals(
-                            "reader must spin while the writer sentinel is held",
-                            Integer.MIN_VALUE,
-                            pinnedResult.get()
-                    );
-                    Os.sleep(5);
-                }
+                // Deterministic proof the reader reached the rc < 0 spin branch. If the
+                // spin branch were broken (e.g. the reader pinned the slot mid-write or
+                // returned -1 instead of spinning), the hook would never fire and this
+                // await would time out - so the test is not vacuous.
+                Assert.assertTrue("reader must reach the writer-sentinel spin branch",
+                        sentinelObserved.await(10, TimeUnit.SECONDS));
+                // It is spinning, not returned: the sentinel is still held, so the reader
+                // cannot have pinned a slot (a pin here would be a mid-write read).
+                Assert.assertEquals(
+                        "reader must still be spinning while the writer sentinel is held",
+                        Integer.MIN_VALUE,
+                        pinnedResult.get()
+                );
+                Assert.assertTrue("reader thread must still be alive (spinning)", reader.isAlive());
 
                 // Append a row under the sentinel, then release without swapping. The
                 // reader's spin now completes and pins the (same) published slot.
@@ -377,6 +393,10 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("reader must pin the published slot", published, pinnedResult.get());
                 Assert.assertEquals("reader must observe the published slot's rows", 11L, observedValue.get());
+                // The reader pinned after the sentinel release, so the row appended under
+                // the sentinel is visible - proving the release/acquire happens-before.
+                Assert.assertEquals("reader must see the under-sentinel append", 2L, observedRowCount.get());
+                Assert.assertEquals("reader must see the appended row's value", 22L, observedAppendedValue.get());
             }
         });
     }

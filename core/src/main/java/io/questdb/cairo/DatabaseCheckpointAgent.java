@@ -489,10 +489,33 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // waitForUnfrozen() and hang). Keep the first frozen
                                         // reference across retries; startCheckpoint is idempotent.
                                         if (freezeLvInstance == null) {
-                                            freezeLvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
-                                            if (freezeLvInstance != null) {
-                                                freezeLvInstance.startCheckpoint(freezeLvInstance.getStateReader().getAppliedWatermark());
+                                            final LiveViewInstance lvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+                                            if (lvInstance != null) {
+                                                if (lvInstance.startCheckpoint(lvInstance.getStateReader().getAppliedWatermark())) {
+                                                    freezeLvInstance = lvInstance;
+                                                } else {
+                                                    // Checkpoint/drop handshake, agent side: a concurrent
+                                                    // DROP LIVE VIEW has marked this instance dropped and is
+                                                    // waiting to tear its files down. Skip the view rather
+                                                    // than copy a directory that is about to vanish, mirroring
+                                                    // the mat-view concurrently-dropped arm above. Leave
+                                                    // freezeLvInstance null so the finally owes no endCheckpoint.
+                                                    LOG.info().$("skipping, live view is concurrently dropped [view=").$(tableToken).I$();
+                                                    break;
+                                                }
                                             }
+                                        }
+
+                                        // No freeze fences this view (getViewInstance returned null: a
+                                        // concurrent DROP LIVE VIEW already unregistered it). If its table
+                                        // teardown is under way, skip before touching any file - DROP may be
+                                        // deleting _lv / _lv.s right now, and an ff.copy racing that delete
+                                        // hard-throws and aborts the whole checkpoint. Narrows the pre-existing
+                                        // null-instance window; the standard reader path below applies the same
+                                        // isTableDropped guard around the reader open.
+                                        if (freezeLvInstance == null && engine.isTableDropped(tableToken)) {
+                                            LOG.info().$("skipping, live view is concurrently dropped [view=").$(tableToken).I$();
+                                            break;
                                         }
 
                                         // The LV-specific copy follows. Standard TableReader path

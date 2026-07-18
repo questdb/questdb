@@ -1837,6 +1837,16 @@ public class CairoEngine implements Closeable, WriterSource {
         // first so the signal is durable before any in-memory state or on-disk
         // file mutates.
         final TableToken token = tableNameRegistry.getTableToken(name);
+        if (token != null && !token.isLiveView()) {
+            // dropLiveView only authorizes and only unwinds live-view state when the
+            // token isLiveView(). A non-LV token would skip authorizeLiveViewDrop and
+            // fall straight through to the generic, authorization-free teardown below,
+            // deleting an ordinary table/view/mat view. Reject it here, before any
+            // sentinel, registry or filesystem mutation, so this method can never
+            // destroy a non-live-view object. SQL callers already guard the kind, but
+            // the public engine API must be self-protecting.
+            throw CairoException.nonCritical().put("live view name expected [name=").put(name).put(']');
+        }
         if (token != null && token.isLiveView()) {
             // Defense-in-depth authorize mirroring createLiveView: the compiler path
             // already authorizes, but a future direct caller cannot bypass the ACL.
@@ -1854,11 +1864,22 @@ public class CairoEngine implements Closeable, WriterSource {
         // is looking at an already-quiesced refresh worker.
         LiveViewInstance instance = liveViewRegistry.getViewInstance(name);
         if (instance != null) {
-            // Mark dropped, then fence the refresh worker (spin-acquire+release the
-            // latch) before the table teardown below, so no in-flight refresh turn
-            // races the drop (LV-WAL commit / _lv.s rewrite -> transient errors,
-            // orphans) and the worker's next isDropped() recheck sees the drop.
-            instance.markAsDropped();
+            // Settle the checkpoint/drop handshake, then fence the refresh worker, both
+            // before the table teardown below.
+            //
+            // markDroppedAndAwaitCheckpoint marks the view dropped and waits out any
+            // in-progress DatabaseCheckpointAgent freeze under the instance monitor. It
+            // interlocks with startCheckpoint(): a freeze already in flight makes this park
+            // until endCheckpoint, so the snapshot copy of _lv / _lv.s / _meta / partition
+            // data can never race the file teardown; a freeze that has not started yet
+            // instead observes dropped and skips this view. Without it, fenceRefresh() only
+            // quiesces the refresh worker and the drop would delete files mid-copy.
+            //
+            // fenceRefresh (spin-acquire+release the latch) then waits out any in-flight
+            // refresh turn so the drop does not race it (LV-WAL commit / _lv.s rewrite ->
+            // transient errors, orphans) and the worker's next isDropped() recheck sees the
+            // drop.
+            instance.markDroppedAndAwaitCheckpoint();
             instance.fenceRefresh();
         }
         // Now unregister: the instance is quiesced (or was never present), so a checkpoint that

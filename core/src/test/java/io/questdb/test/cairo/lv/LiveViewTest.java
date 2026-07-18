@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -34,6 +35,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -80,6 +82,18 @@ public class LiveViewTest extends AbstractLiveViewTest {
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
+    }
+
+    private void assertAlterLiveViewRejected(String sql, String expectedMessageFragment) {
+        try {
+            execute(sql);
+            Assert.fail("expected SqlException for " + sql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "[sql=" + sql + "] expected message containing '" + expectedMessageFragment + "', got: " + e.getMessage(),
+                    e.getMessage().contains(expectedMessageFragment)
+            );
+        }
     }
 
     private void assertMutationRejected(String sql, String expectedMessageFragment) throws Exception {
@@ -559,6 +573,231 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAlterLiveViewResumeWalFromTxn() throws Exception {
+        // RESUME WAL FROM TRANSACTION|TXN <n>: the live-view grammar branch that
+        // forwards an explicit resume-from seqTxn to the shared alterTableResume path.
+        // Both keyword spellings parse, and a valid in-range txn clears the suspension.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            // Resume from the already-applied txn: always in range (<= next available)
+            // and a no-op forward skip, so it exercises the FROM parse without rewinding.
+            final long appliedTxn = engine.getTableSequencerAPI().getTxnTracker(lvToken).getWriterTxn();
+
+            execute("ALTER LIVE VIEW lv SUSPEND WAL");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+            execute("ALTER LIVE VIEW lv RESUME WAL FROM TXN " + appliedTxn);
+            Assert.assertFalse("RESUME WAL FROM TXN must clear the suspension",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            execute("ALTER LIVE VIEW lv SUSPEND WAL");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+            execute("ALTER LIVE VIEW lv RESUME WAL FROM TRANSACTION " + appliedTxn);
+            Assert.assertFalse("RESUME WAL FROM TRANSACTION must clear the suspension",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testAlterLiveViewSuspendResumeWal() throws Exception {
+        // ALTER LIVE VIEW <name> SUSPEND WAL / RESUME WAL - the operator-initiated
+        // WAL-control verbs. SUSPEND must flip the LV's sequencer to suspended AND
+        // register the hard-suspend (so the apply job skips it); RESUME must clear both.
+        // testSuspendedLiveViewCanBeResumed covers RESUME after a fault-induced suspend;
+        // this covers the SUSPEND verb itself and its wal_tables() visibility.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+            Assert.assertFalse(engine.isWalApplySuspended(lvToken));
+
+            execute("ALTER LIVE VIEW lv SUSPEND WAL");
+            Assert.assertTrue("SUSPEND WAL must suspend the live view",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+            Assert.assertTrue("SUSPEND WAL must register the hard-suspend",
+                    engine.isWalApplySuspended(lvToken));
+            assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("name\tsuspended\nlv\ttrue\n");
+
+            execute("ALTER LIVE VIEW lv RESUME WAL");
+            Assert.assertFalse("RESUME WAL must clear the suspension",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+            Assert.assertFalse("RESUME WAL must clear the hard-suspend",
+                    engine.isWalApplySuspended(lvToken));
+            assertQuery("SELECT name, suspended FROM wal_tables() WHERE name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("name\tsuspended\nlv\tfalse\n");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testAlterLiveViewSuspendWalWithErrorTagAndMessage() throws Exception {
+        // SUSPEND WAL WITH <tag>, <message> records an operator-supplied error tag and
+        // message on the LV's sequencer, surfaced through wal_tables(). Covers the WITH
+        // clause parse (tag resolved by name, plus message) and its round-trip.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            execute("ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'manual halt'");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(lvToken));
+            assertQuery("SELECT suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 'lv'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("suspended\terrorTag\terrorMessage\ntrue\tDISK FULL\tmanual halt\n");
+
+            execute("ALTER LIVE VIEW lv RESUME WAL");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testAlterLiveViewWalControlRejectsBadGrammar() throws Exception {
+        // Parse-error branches of the live-view WAL-control grammar. Each must reject
+        // before any state change, so the view stays un-suspended throughout.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv FREEZE WAL", "'resume' or 'suspend' expected");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME", "'wal' expected");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME WAL bogus", "'from' expected");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME WAL FROM", "'transaction' or 'txn' expected");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv RESUME WAL FROM TXN abc", "invalid value");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv SUSPEND WAL WITH 'NOT A TAG', 'msg'", "invalid value");
+            assertAlterLiveViewRejected("ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL'", "',' expected");
+
+            Assert.assertFalse("no rejected WAL-control statement may change suspension state",
+                    engine.getTableSequencerAPI().isSuspended(lvToken));
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testIdleScanShardsRegistryAcrossWorkers() throws Exception {
+        // The idle fallback scan (scanForLaggingViews) is sharded by live-view table id
+        // so the pool does O(views) work per sweep instead of O(workers x views) - every
+        // worker re-scanning every view. The sharding must (a) assign every view to
+        // EXACTLY one worker (no view can drop out of the periodic catch-up scan), and
+        // (b) leave a single-worker pool owning everything (single-threaded/test behavior
+        // unchanged).
+        assertMemoryLeak(() -> {
+            final int workerCount = 4;
+            final LiveViewRefreshJob[] jobs = new LiveViewRefreshJob[workerCount];
+            for (int w = 0; w < workerCount; w++) {
+                jobs[w] = new LiveViewRefreshJob(w, workerCount, engine, 1);
+            }
+            try {
+                for (int tableId = 1; tableId <= 200; tableId++) {
+                    int owners = 0;
+                    for (int w = 0; w < workerCount; w++) {
+                        if (jobs[w].ownsViewShard(tableId)) {
+                            owners++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "table id " + tableId + " must be owned by exactly one worker",
+                            1,
+                            owners
+                    );
+                }
+            } finally {
+                for (LiveViewRefreshJob job : jobs) {
+                    job.close();
+                }
+            }
+            // A single-worker pool owns every view - no sharding, unchanged behavior.
+            try (LiveViewRefreshJob solo = new LiveViewRefreshJob(0, 1, engine, 1)) {
+                for (int tableId = 1; tableId <= 200; tableId++) {
+                    Assert.assertTrue("single-worker pool owns every view", solo.ownsViewShard(tableId));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultiWorkerPoolConvergesAllViews() throws Exception {
+        // End-to-end multi-worker smoke test: a 3-worker pool (each job built with the
+        // workerCount=3 constructor) must converge EVERY view. This exercises the
+        // workerCount>1 runtime path - the new constructor and the sharded
+        // scanForLaggingViews loop executing under multiple workers - and confirms the
+        // sharding change breaks neither convergence nor the single-base fan-out.
+        //
+        // NOTE: coverage here flows mostly through the UNSHARDED notification path
+        // (refreshViewsForBaseTable fans a base commit to every view on that base), so
+        // this test does NOT by itself isolate the sharded idle scan. The sharding
+        // invariant (every view owned by exactly one worker; workerCount==1 owns all) is
+        // pinned deterministically by testIdleScanShardsRegistryAcrossWorkers.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final int viewCount = 6;
+            for (int v = 0; v < viewCount; v++) {
+                execute("CREATE LIVE VIEW lv" + v + " FLUSH EVERY 1s START FROM BEGINNING AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            }
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+
+            final int workerCount = 3;
+            final LiveViewRefreshJob[] jobs = new LiveViewRefreshJob[workerCount];
+            for (int w = 0; w < workerCount; w++) {
+                jobs[w] = new LiveViewRefreshJob(w, workerCount, engine, 1);
+            }
+            try {
+                for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES; pass++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    boolean progressed = false;
+                    for (LiveViewRefreshJob job : jobs) {
+                        progressed |= drainJob(job);
+                    }
+                    drainWalQueue();
+                    if (!progressed) {
+                        break;
+                    }
+                }
+            } finally {
+                for (LiveViewRefreshJob job : jobs) {
+                    job.close();
+                }
+            }
+            drainWalQueue();
+
+            for (int v = 0; v < viewCount; v++) {
+                assertQuery("SELECT count() FROM lv" + v).noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n2\n");
+            }
+            for (int v = 0; v < viewCount; v++) {
+                execute("DROP LIVE VIEW lv" + v);
+            }
+        });
+    }
+
+    @Test
     public void testTablesReportsLiveView() throws Exception {
         // Locks the tables() discriminator asymmetry (documented in TablesFunctionFactory):
         // a live view is discoverable ONLY via table_type='L'. The matView BOOLEAN is
@@ -694,6 +933,36 @@ public class LiveViewTest extends AbstractLiveViewTest {
                         e.getMessage().contains("live view name expected [name=t]")
                 );
             }
+            execute("DROP TABLE t");
+        });
+    }
+
+    @Test
+    public void testRejectDirectEngineDropLiveViewOnPlainTable() throws Exception {
+        // The public CairoEngine.dropLiveView API is reachable directly, bypassing the
+        // SQL compiler's kind guard (executeDropLiveView). It must refuse a non-live-view
+        // token BEFORE any authorization, sentinel, registry or filesystem mutation -
+        // otherwise a caller (even with a drop-denying SecurityContext) reaches the
+        // generic, authorization-free teardown and deletes an ordinary table. The
+        // denying context here never even gets consulted: the kind check fires first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            final TableToken tokenBefore = engine.getTableTokenIfExists("t");
+            Assert.assertNotNull(tokenBefore);
+            try {
+                engine.dropLiveView("t", ReadOnlySecurityContext.INSTANCE);
+                Assert.fail("expected dropLiveView to reject a plain table name");
+            } catch (CairoException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live view name expected [name=t]")
+                );
+            }
+            // The ordinary table must still be registered and droppable through the
+            // normal path - proof that dropLiveView tore nothing down.
+            final TableToken tokenAfter = engine.getTableTokenIfExists("t");
+            Assert.assertNotNull("dropLiveView must not delete the ordinary table", tokenAfter);
+            Assert.assertEquals(tokenBefore, tokenAfter);
             execute("DROP TABLE t");
         });
     }

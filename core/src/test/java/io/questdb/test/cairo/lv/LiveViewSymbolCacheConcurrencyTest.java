@@ -483,4 +483,133 @@ public class LiveViewSymbolCacheConcurrencyTest {
             );
         }
     }
+
+    @Test
+    public void testInternWindowFirstMatchesCommittedFirstIds() {
+        // Equivalence: for the same sequence of interns (new + repeated symbols), the
+        // primary window-first order (windowMapAuthoritative=true) and the committed-first
+        // order (false) assign IDENTICAL ids. The optimization changes cost, never ids.
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        final String[] seq = {"a", "b", "a", "c", "b", "a", "d", "c"};
+        final int[] idsTrue = new int[seq.length];
+        final int[] idsFalse = new int[seq.length];
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            final CountingReader reader = new CountingReader();
+            for (int i = 0; i < seq.length; i++) {
+                idsTrue[i] = cache.intern(COL, seq[i], reader, true);
+            }
+        }
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            final CountingReader reader = new CountingReader();
+            for (int i = 0; i < seq.length; i++) {
+                idsFalse[i] = cache.intern(COL, seq[i], reader, false);
+            }
+        }
+        Assert.assertArrayEquals(
+                "window-first (primary) and committed-first must assign identical ids",
+                idsFalse,
+                idsTrue
+        );
+    }
+
+    @Test
+    public void testInternWindowFirstSkipsCommittedProbeForRepeatedNewSymbol() {
+        // M5: a symbol new to the un-flushed lead recurs across many rows. With
+        // windowMapAuthoritative=true (the primary, whose window map is reset on flush),
+        // intern resolves the 2nd+ occurrence from the window map WITHOUT a committed
+        // keyOf (a mmapped symbol-index probe that always misses for a not-yet-committed
+        // value). The committed-first order (false) probes committed on every occurrence.
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            final CountingReader reader = new CountingReader();
+            // First occurrence: not in window -> committed keyOf (miss) -> intern id 0.
+            Assert.assertEquals(0, cache.intern(COL, "new", reader, true));
+            Assert.assertEquals(1, reader.keyOfCalls);
+            // Repeated occurrences: window fast-path hit, no committed keyOf.
+            Assert.assertEquals(0, cache.intern(COL, "new", reader, true));
+            Assert.assertEquals(0, cache.intern(COL, "new", reader, true));
+            Assert.assertEquals(
+                    "primary window-first must not re-probe committed for a repeated new symbol",
+                    1,
+                    reader.keyOfCalls
+            );
+        }
+        // Control: committed-first probes committed on every occurrence.
+        try (LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes)) {
+            final CountingReader reader = new CountingReader();
+            Assert.assertEquals(0, cache.intern(COL, "new", reader, false));
+            Assert.assertEquals(0, cache.intern(COL, "new", reader, false));
+            Assert.assertEquals(0, cache.intern(COL, "new", reader, false));
+            Assert.assertEquals("committed-first probes committed on every occurrence", 3, reader.keyOfCalls);
+        }
+    }
+
+    // A committed reader that finds nothing (every value is new to the lead) and counts
+    // keyOf calls, so a test can observe how often intern probes committed storage.
+    private static final class CountingReader implements SymbolMapReader {
+        int keyOfCalls;
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCapacity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return 0;
+        }
+
+        @Override
+        public MemoryR getSymbolOffsetsColumn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public MemoryR getSymbolValuesColumn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isCached() {
+            return false;
+        }
+
+        @Override
+        public boolean isDeleted() {
+            return false;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            keyOfCalls++;
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public StaticSymbolTable newSymbolTableView() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateSymbolCount(int count) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            throw new UnsupportedOperationException();
+        }
+    }
 }

@@ -386,6 +386,113 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointRefusesDroppedLiveView() throws Exception {
+        // C2, lookup-before-drop half of the checkpoint/drop handshake: if a concurrent
+        // DROP LIVE VIEW has already marked the instance dropped, a checkpoint freeze
+        // started afterwards must be REFUSED, so DatabaseCheckpointAgent skips the view
+        // rather than freeze (and copy) a directory whose file teardown is imminent. A
+        // refused freeze must leave freezeInProgress clear.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            execute("DROP TABLE IF EXISTS base");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // A DROP marked the instance dropped first; the agent looks it up and only now
+            // calls startCheckpoint. It must observe the drop and refuse the freeze.
+            instance.markAsDropped();
+            instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+            Assert.assertFalse(
+                    "startCheckpoint on a dropped instance must not set freezeInProgress",
+                    instance.isFreezeInProgress()
+            );
+
+            // Finish the drop cleanly (no freeze to wait out) and drop the base.
+            engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+            Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testDropLiveViewWaitsForCheckpointFreeze() throws Exception {
+        // C2, freeze-before-drop half of the checkpoint/drop handshake: with a
+        // DatabaseCheckpointAgent freeze in progress (startCheckpoint published), a
+        // concurrent DROP LIVE VIEW must PARK in markDroppedAndAwaitCheckpoint ->
+        // waitForUnfrozen and only tear the view's files down after endCheckpoint clears
+        // the freeze. A broken handshake lets the drop delete _lv / _lv.s / _meta while
+        // the agent is mid-copy, aborting the whole checkpoint or corrupting the snapshot.
+        final AtomicBoolean dropReturned = new AtomicBoolean(false);
+        final CountDownLatch dropStarted = new CountDownLatch(1);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            execute("DROP TABLE IF EXISTS base");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // Publish a checkpoint freeze on the main thread exactly as the agent does:
+            // startCheckpoint sets freezeInProgress and fences the refresh latch.
+            instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+            Assert.assertTrue(instance.isFreezeInProgress());
+
+            final Thread dropper = new Thread(() -> {
+                try {
+                    dropStarted.countDown();
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+                    dropReturned.set(true);
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-dropper");
+
+            try {
+                dropper.start();
+                dropStarted.await();
+                // The dropper must park in the checkpoint handshake, not race the teardown.
+                // waitForUnfrozen parks on the instance monitor; the frame stays on its stack.
+                awaitThreadInMethod(dropper, "waitForUnfrozen", 60_000);
+                Assert.assertFalse(
+                        "dropLiveView must block while a checkpoint freeze is in progress",
+                        dropReturned.get()
+                );
+                Assert.assertTrue("dropper thread must still be parked in the handshake", dropper.isAlive());
+                // Nothing torn down while frozen: the view is still fully present.
+                Assert.assertTrue(engine.getLiveViewRegistry().hasView("lv"));
+                Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+            } finally {
+                // Always clear the freeze so the parked dropper can unwind, even on failure.
+                instance.endCheckpoint();
+            }
+
+            dropper.join(60_000);
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("thread failed", errors.peek());
+            }
+            Assert.assertTrue("dropLiveView must complete once the freeze clears", dropReturned.get());
+            Assert.assertFalse("dropper thread must have finished", dropper.isAlive());
+
+            // Clean teardown after the freeze released: the view is gone, the base survived.
+            Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+            Assert.assertNull("LV name must no longer resolve after the drop", engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testDropLiveViewFencesRefreshWorker() throws Exception {
         // Fence proof: dropLiveView's fenceRefresh() must block until an in-flight
         // refresh turn releases the latch. A worker holds the refresh latch; the

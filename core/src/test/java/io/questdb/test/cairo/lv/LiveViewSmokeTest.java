@@ -2162,6 +2162,70 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSeedResumeRejectsShortCheckpointMissingFunctionBlock() throws Exception {
+        // M1 (seed path): a CRC-valid-but-short .scp that is missing its LAST
+        // FUNCTION_SNAPSHOT block (a truncated writer, or a format drift that adds a
+        // snapshot-capable function) still restores the EARLIER function(s) before it
+        // reaches the missing block and throws. The from-0 re-sweep must re-clear that
+        // half-restored accumulator - otherwise the restored running sum is carried
+        // into the re-sweep and double-counts the below-floor rows. The writer hook
+        // forges the short .scp by omitting one of the two function blocks.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 'b', 4), " +
+                    "('2026-04-01T00:00:05.000000Z', 'a', 2), " +
+                    "('2026-04-02T00:00:00.000000Z', 'a', 3), " +
+                    "('2026-04-02T00:00:02.000000Z', 'b', 5)");
+            drainWalQueue();
+            // Two snapshot-capable row_number counters. rn_all accumulates globally, so
+            // if the .scp restores it (function block present) but omits rn_sym's block,
+            // the un-cleared re-sweep carries rn_all's partial counter and double-counts.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                    "SELECT ts, sym, x, " +
+                    "row_number() OVER () AS rn_all, " +
+                    "row_number() OVER w AS rn_sym " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Partial sweep writes a short .scp: one function block, not the other.
+                job.setCheckpointTrailingFunctionSnapshotBlocksToOmit(1);
+                job.run();
+                drainWalQueue();
+                Assert.assertEquals(
+                        "partial sweep must still be SEEDING",
+                        LiveViewState.SEED_STATE_SEEDING,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
+                );
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                // Let the resume write valid checkpoints again; the short .scp on disk
+                // is what the resume must reject and re-sweep past with clean state.
+                job.setCheckpointTrailingFunctionSnapshotBlocksToOmit(0);
+                driveSeedToCompletion(job, "lv");
+            }
+
+            Assert.assertEquals(
+                    LiveViewState.SEED_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getSeedState()
+            );
+            assertQuery("SELECT ts, sym, x, rn_all, rn_sym FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tsym\tx\trn_all\trn_sym\n" +
+                            "2026-04-01T00:00:00.000000Z\ta\t1\t1\t1\n" +
+                            "2026-04-01T00:00:01.000000Z\tb\t4\t2\t1\n" +
+                            "2026-04-01T00:00:05.000000Z\ta\t2\t3\t2\n" +
+                            "2026-04-02T00:00:00.000000Z\ta\t3\t4\t1\n" +
+                            "2026-04-02T00:00:02.000000Z\tb\t5\t5\t1\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSeedCompletionRetiresCheckpointFiles() throws Exception {
         // On completion the rolling .scp is unlinked and a steady head .cp is
         // materialised, so the ACTIVE phase has a restart/O3 anchor.

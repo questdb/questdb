@@ -1119,7 +1119,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Returns transaction number, which is always > -1. Negative values are used as status code.
+     * Drives the apply loop for {@code tableToken} to best effort. Does NOT report
+     * whether (or how far) it applied: it silently returns without applying when the
+     * table backs off under memory pressure ({@code !isReadyToProcess()}) or the writer
+     * is busy ({@code EntryUnavailableException}), and on any other error it suspends the
+     * table via {@code handleWalApplyFailure} and returns. Callers that must know whether
+     * their committed transaction actually landed read the table's applied seqTxn from
+     * {@code engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn()} before and
+     * after the call and compare (see {@code LiveViewRefreshJob.flushLead}); a committed
+     * block that did not apply stays durable in the table's own WAL and is re-driven later
+     * (runtime: {@code retryPendingLiveViewApply}; restart: {@code reconcileAppliedFloorAfterRestart}).
      * <p>
      * Public so that {@code LiveViewRefreshJob} can drive the same apply machinery
      * inline after writing a {@code LIVE_VIEW_DATA} block. The notification-driven

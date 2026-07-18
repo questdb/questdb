@@ -768,8 +768,9 @@ public class ServerMain implements Closeable {
 
     protected void setupLiveViewJobs(WorkerPool lvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
         for (int i = 0, workerCount = lvWorkerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, engine, sharedQueryWorkerCount);
+            // create job per worker; workerCount lets each job shard the idle registry
+            // scan by live-view table id so the pool does O(views), not O(workers x views).
+            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, workerCount, engine, sharedQueryWorkerCount);
             lvWorkerPool.assign(i, liveViewRefreshJob);
             lvWorkerPool.freeOnExit(liveViewRefreshJob);
         }

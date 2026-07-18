@@ -179,20 +179,51 @@ public class LiveViewSymbolCache implements QuietCloseable {
     }
 
     /**
+     * Committed-first {@link #intern(int, CharSequence, SymbolMapReader, boolean)}:
+     * the safe default that never assumes the window map is authoritative. Used
+     * where the caller cannot prove it is the sole, reset-on-flush writer (e.g. a
+     * read-only replica's externally-flushed lead).
+     */
+    public int intern(int col, CharSequence value, SymbolMapReader committedReader) {
+        return intern(col, value, committedReader, false);
+    }
+
+    /**
      * Returns the LV-table-consistent symbol id for {@code value} in column
      * {@code col}, interning a value new to the lead. {@code committedReader} is
      * the LV table's committed symbol map for the column (used to resolve an
      * already-committed value to its committed id). Writer-side only.
+     * <p>
+     * When {@code windowMapAuthoritative} is true, the un-flushed window map is
+     * probed FIRST and a live entry (id at/above the committed count) is returned
+     * without a {@code committedReader.keyOf} - a mmapped symbol-index probe that
+     * always misses for a not-yet-committed value. This is safe only when this cache
+     * is the sole writer AND the window map is reset on every flush (the primary's
+     * {@link #onFlush()} / {@link #onO3()}): then a live window entry is always a
+     * not-yet-committed provisional, so committed-first and window-first agree. A
+     * read-only replica must pass {@code false}: its flush is external and never
+     * resets the window map, so a re-sequencing external commit can leave a stale
+     * entry above the committed count whose value has since been committed at a
+     * different id - only the committed-first probe resolves it correctly.
      */
-    public int intern(int col, CharSequence value, SymbolMapReader committedReader) {
+    public int intern(int col, CharSequence value, SymbolMapReader committedReader, boolean windowMapAuthoritative) {
         if (value == null) {
             return SymbolTable.VALUE_IS_NULL;
+        }
+        final CharSequenceIntHashMap windowMap = windowNewToId.getQuick(col);
+        if (windowMapAuthoritative) {
+            // Primary fast path: a live window entry is authoritative here, so skip the
+            // committed keyOf. A stale entry (id below the committed count) cannot occur
+            // on the primary; a window miss falls through to the committed-first body.
+            final int fastKi = windowMap.keyIndex(value);
+            if (fastKi < 0 && windowMap.valueAt(fastKi) >= committedReader.getSymbolCount()) {
+                return windowMap.valueAt(fastKi);
+            }
         }
         final int committedKey = committedReader.keyOf(value);
         if (committedKey != SymbolTable.VALUE_NOT_FOUND) {
             return committedKey;
         }
-        final CharSequenceIntHashMap windowMap = windowNewToId.getQuick(col);
         int ki = windowMap.keyIndex(value);
         if (ki < 0) {
             final int cachedId = windowMap.valueAt(ki);

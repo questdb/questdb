@@ -80,6 +80,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
@@ -3468,6 +3469,67 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalReaderIncrementalSymbolMapsMatchFullRebuild() throws Exception {
+        // A same-segment rebind (the live-view drain re-opens one segment per base
+        // commit) must fold ONLY newly-appended events into the symbol maps instead of
+        // clearing and rescanning the whole event history each time. This asserts two
+        // things: (1) the incrementally-maintained maps resolve every symbol key
+        // identically to a from-scratch full rebuild (correctness), and (2) the
+        // incremental reader folds each DATA record exactly once across N rebinds while
+        // the naive per-bind full rebuild re-folds 1+2+...+N records (the quadratic the
+        // fix removes).
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken = createTable(
+                    new TableModel(configuration, tableName, PartitionBy.YEAR)
+                            .col("s1", ColumnType.SYMBOL)
+                            .col("s2", ColumnType.SYMBOL)
+                            .timestamp("ts")
+                            .wal()
+            );
+
+            final int commits = 8;
+            try (
+                    WalWriter walWriter = engine.getWalWriter(tableToken);
+                    WalReader incReader = new WalReader(engine.getConfiguration())
+            ) {
+                final String walName = walWriter.getWalName();
+                long fullFoldTotal = 0;
+                long rowCount = 0;
+                for (int c = 0; c < commits; c++) {
+                    // Each commit reuses a shared symbol, adds a fresh symbol, and leaves
+                    // s2 null until commit 3 (a first-seen-mid-segment symbol column).
+                    TableWriter.Row row = walWriter.newRow(c);
+                    row.putSym(0, "shared");
+                    row.putSym(1, c >= 3 ? "vshared" : null);
+                    row.append();
+                    row = walWriter.newRow(c);
+                    row.putSym(0, "s1_" + c);
+                    row.putSym(1, c >= 3 ? ("v" + c) : null);
+                    row.append();
+                    walWriter.commit();
+                    rowCount += 2;
+
+                    // Incremental rebind on the same reader instance (same segment 0,
+                    // growing rowCount) - after the first bind this folds only new events.
+                    incReader.of(tableToken, walName, 0, rowCount);
+                    // Full-rebuild oracle: a fresh reader always clears + full-walks.
+                    try (WalReader fullReader = new WalReader(engine.getConfiguration())) {
+                        fullReader.of(tableToken, walName, 0, rowCount);
+                        fullFoldTotal += fullReader.getSymbolMapFoldedRecords();
+                        assertSameSymbolResolution(incReader, fullReader, 0);
+                        assertSameSymbolResolution(incReader, fullReader, 1);
+                    }
+                }
+                // Incremental: each of the `commits` DATA records folded exactly once.
+                Assert.assertEquals(commits, incReader.getSymbolMapFoldedRecords());
+                // Naive per-bind full rebuild: re-folds every present record each time.
+                Assert.assertEquals((long) commits * (commits + 1) / 2, fullFoldTotal);
+            }
+        });
+    }
+
+    @Test
     public void testRemovingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -6512,6 +6574,22 @@ public class WalWriterTest extends AbstractCairoTest {
                     "Binary sequences not equals at offset " + i
                             + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
                     expectedByte, actualByte
+            );
+        }
+    }
+
+    private static void assertSameSymbolResolution(WalReader a, WalReader b, int col) {
+        final int countB = b.getSymbolCount(col);
+        Assert.assertEquals("symbol count col=" + col, countB, a.getSymbolCount(col));
+        final DirectString va = new DirectString();
+        final DirectString vb = new DirectString();
+        for (int key = 0; key < countB; key++) {
+            final CharSequence sa = a.getSymbolValue(col, key, va);
+            final CharSequence sb = b.getSymbolValue(col, key, vb);
+            Assert.assertEquals(
+                    "value col=" + col + " key=" + key,
+                    sb == null ? null : Chars.toString(sb),
+                    sa == null ? null : Chars.toString(sa)
             );
         }
     }

@@ -94,6 +94,13 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     // is pinning a slot. The 31-bit counter is more than enough for any
     // realistic reader concurrency.
     private final AtomicInteger state = new AtomicInteger(0);
+    // Test-only hook fired each time {@link #acquireRead()} observes the writer
+    // sentinel (rc < 0) on the published slot and is about to spin. Production
+    // code never sets this; it lets a concurrency test prove the negative-sentinel
+    // spin branch was actually reached (and, by the reader staying blocked, that a
+    // read cannot pin a slot mid-write) without a timing-based poll.
+    @TestOnly
+    private volatile Runnable acquireReadSentinelSpinHook;
     // Test-only failure injection for {@link #publishSwap}. Production code
     // never sets this. When non-null, the next publishSwap call throws the
     // stored exception instead of flipping publishedIdx and releasing the
@@ -150,6 +157,10 @@ public class LiveViewInMemoryTier implements QuietCloseable {
                 // Writer in flight on this slot. Yield and re-read; publishedIdx
                 // may have moved (slow-path swap completing) or stay on the same
                 // slot while a fast-path in-place append finishes.
+                final Runnable hook = acquireReadSentinelSpinHook;
+                if (hook != null) {
+                    hook.run();
+                }
                 Os.pause();
                 continue;
             }
@@ -337,6 +348,18 @@ public class LiveViewInMemoryTier implements QuietCloseable {
                             + ", observed=" + observed + "]"
             );
         }
+    }
+
+    /**
+     * Test-only hook: registers a callback that {@link #acquireRead()} runs each
+     * time it observes the writer sentinel (rc &lt; 0) on the published slot and is
+     * about to spin. A concurrency test uses it to prove the negative-sentinel spin
+     * branch was actually reached, deterministically and without a timing poll.
+     * Production code never sets this.
+     */
+    @TestOnly
+    public void setAcquireReadSentinelSpinHook(Runnable hook) {
+        this.acquireReadSentinelSpinHook = hook;
     }
 
     /**
