@@ -1458,12 +1458,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * hands the compare a bare Imm, which load_registers/imm2reg materialize with a
      * movabs at the KEY's width - a raw -2^31, not LONG_NULL. An IN list with 9 or more
      * constants (the JIT declines above 10) therefore matched any row whose long-width
-     * key happened to equal -2^31 and missed the genuinely-null ones. The key is a
-     * column read, never an Imm, so at I4 the only conversion left is the null-aware
-     * one on the key itself. That conversion is scalar-only - avx2.h#convert has no
-     * i32-to-i64 case at all - but an I8 NULL immediate can only appear next to an I8
-     * element, whose own pairing emits SX_I64 and forces scalar mode, so the vectorized
-     * backend never sees a mixed-width compare.
+     * key happened to equal -2^31 and missed the genuinely-null ones. Symmetrically, the
+     * NULL IMMEDIATE must match the narrow key: serializeConstant emits it at the kept
+     * width (I4 INT_NULL) for a narrow key, not the observer's LONG_NULL at I8.
+     * avx2.h#convert has no i32-to-i64 case, and in wide-lane mode the coexisting wide
+     * element's SX_I64 no longer forces scalar (see maybeEmitI64Widening), so an I8 NULL
+     * immediate would let the four-lane backend compare i32-vs-i64 and match INT_NULL rows
+     * only in some lane positions.
      * <p>
      * The caller applies this only to a width-sensitive key (see
      * {@link #isWidthSensitiveInKey}), so the pairing width follows from the element alone.
@@ -2242,7 +2243,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            serializeNull(offset, position, typeCode, predicateContext.columnType);
+            // Honor the per-element kept width. A narrow-int IN key keeps its NULL pairing at I4
+            // (see inKeyElementWidth), so the NULL immediate must be INT_NULL at I4, not the
+            // observer's wider LONG_NULL at I8: in wide-lane mode the coexisting wide element's
+            // SX_I64 no longer forces scalar (see maybeEmitI64Widening), so an I8 NULL immediate
+            // would reach the four-lane backend and compare i32-vs-i64 (avx2.h#convert has no such
+            // case), matching INT_NULL rows only in some lane positions.
+            serializeNull(offset, position, isNarrowKept ? I4_TYPE : typeCode, predicateContext.columnType);
             return;
         }
 

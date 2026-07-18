@@ -818,38 +818,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         return !(a.isConstFoldLongValid && b.isConstFoldLongValid);
     }
 
-    /**
-     * Classifies a non-integer constant token as widening an INT operation, mirroring the type
-     * precedence in {@link io.questdb.griffin.FunctionParser}: a DECIMAL literal (an {@code m}/{@code M}
-     * suffix) widens, as does a DOUBLE or FLOAT literal. A non-numeric token (string, geohash, type
-     * keyword, ...) does not widen.
-     * <p>
-     * The only caller has already run {@link Numbers#parseInt} and {@link Numbers#parseLong} over the
-     * token and seen both fail, so an integer literal (INT or LONG) never reaches here - it does not
-     * widen, and integer pairs are excluded from reassociation. Re-parsing it to
-     * re-derive that would cost another failed parse per constant.
-     */
-    private static boolean isWideningConstantToken(CharSequence token) {
-        final int len = token.length();
-        // A DECIMAL literal ends with 'm'/'M' (see FunctionParser); parseDouble and parseFloat both
-        // reject it, so it must be recognized first.
-        if (len > 1 && (token.charAt(len - 1) | 32) == 'm') {
-            return true;
-        }
-        try {
-            Numbers.parseDouble(token);
-            return true;
-        } catch (NumericException notDouble) {
-            // not a double literal; fall through
-        }
-        try {
-            Numbers.parseFloat(token);
-            return true;
-        } catch (NumericException notFloat) {
-            return false;
-        }
-    }
-
     private static void toSink(CharSink<?> sink, ExpressionNode e) {
         if (e == null) {
             sink.putAscii("null");
@@ -875,9 +843,11 @@ public class ExpressionNode implements Mutable, Sinkable {
      *   (wrapping mod 2^64, as LongFunction getLong()) for an INT / LONG integer subtree;
      *   invalid for a floating-point / DECIMAL / non-numeric leaf or an unmodeled
      *   operator.</li>
-     *   <li>{@code isConstFoldWidening} - whether the subtree widens an INT operation
-     *   (a floating-point or DECIMAL leaf anywhere, since +, -, *, / promote to the wider
-     *   type when either operand is wider).</li>
+     *   <li>{@code isConstFoldWidening} - set for any non-integer numeric-looking leaf that is not
+     *   reassociation-safe: a floating-point or DECIMAL leaf (which widens an INT operation, since
+     *   +, -, *, / promote to the wider type when either operand is wider) as well as a LONG256
+     *   (0x...) hex leaf (whose '+' is non-associative under the NULL_LONG256 sentinel). A widening
+     *   leaf anywhere in the subtree marks the whole subtree.</li>
      * </ul>
      */
     private void cacheConstantFold() {
@@ -912,9 +882,14 @@ public class ExpressionNode implements Mutable, Sinkable {
             } catch (NumericException notLongLiteral) {
                 isConstFoldLongValid = false;
             }
-            // Neither integer parse took the token, so only a floating-point or DECIMAL literal
-            // is left to classify.
-            isConstFoldWidening = isWideningConstantToken(token);
+            // Neither integer parse took the token, so what remains is a non-integer numeric-looking
+            // constant: a floating-point or DECIMAL literal, or a LONG256 (0x...) hex literal. None is
+            // reassociation-safe - float/decimal folds can change through rounding or scale, and
+            // LONG256 '+' is non-associative under NULL_LONG256 sentinel propagation (a hex pair
+            // summing mod 2^256 to the sentinel would fold to a NULL operand) - so mark the leaf
+            // non-reassociable. isReassociationSafe gates purely on this flag and isConstFoldLongValid,
+            // so treating every such leaf as widening keeps the guard closed without a second parse.
+            isConstFoldWidening = true;
             return;
         }
         // Binary OPERATION constant pair: combine the children's caches at O(1). Both

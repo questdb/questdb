@@ -186,7 +186,9 @@ public class DirectLongHashSetTest {
                 while ((Hash.hashLong64(collisionA) & mask) != (Hash.hashLong64(collisionB) & mask)) {
                     collisionB++;
                 }
-                Assert.assertEquals(Hash.hashLong64(collisionA) & mask, Hash.hashLong64(collisionB) & mask);
+                // Two DISTINCT keys that land in the same bucket, so copyTo must walk the probe
+                // chain (asserting the loop's exit condition again would be vacuous).
+                Assert.assertNotEquals(collisionA, collisionB);
                 set.add(0);
                 set.add(-7);
                 set.add(9);

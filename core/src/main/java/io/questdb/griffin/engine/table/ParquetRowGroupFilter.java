@@ -62,11 +62,13 @@ public final class ParquetRowGroupFilter {
     // cannot; at or above it a 64-bit column no longer round-trips through the double width the
     // row-level filter compares at.
     private static final double MAX_EXACT_INTEGRAL_DOUBLE = 9007199254740992d;
-    // How far tryPutFloatFromDouble may walk a FLOAT bound outward before it gives up and declines
-    // the pushdown. Two steps cover every bound whose magnitude puts the float spacing above the
-    // comparison tolerance; below that (|bound| under roughly 1e-10) every neighbouring float is
-    // tolerance-equal to the bound and no reachable bound is safe, so declining is the answer.
-    private static final int MAX_FLOAT_BOUND_STEPS = 4;
+    // How far tryPutFloatFromDouble / tryPutDoubleFromDouble / putDoubleEq may walk a widened bound
+    // outward before they give up and decline the pushdown. A couple of steps cover every bound whose
+    // magnitude puts the value spacing above the comparison tolerance; below that (a FLOAT bound
+    // under roughly 1e-10, or a DOUBLE bound within a tolerance of zero, where "d - tolerance"
+    // cancels) every neighbouring value is tolerance-equal to the bound and no reachable bound is
+    // safe, so declining is the answer.
+    private static final int MAX_BOUND_STEPS = 4;
     private static final AtomicInteger rowGroupsSkipped = new AtomicInteger();
 
     /**
@@ -586,6 +588,21 @@ public final class ParquetRowGroupFilter {
         return (columnIndex & 0xFFFFFFFFL) | ((long) (count & 0x00FFFFFF) << 32) | ((long) (op & 0xFF) << 56);
     }
 
+    // The double a row group would have to hold for the native predicate to prune it wrongly: the
+    // first one on the side the predicate drops. Mirrors firstPrunedFloat for the DOUBLE stats slot
+    // (which needs no narrowing, only the tolerance corrections).
+    private static double firstPrunedDouble(double bound, int opType) {
+        switch (opType) {
+            case PushdownFilterExtractor.OP_LT:
+            case PushdownFilterExtractor.OP_GT:
+                return bound;
+            case PushdownFilterExtractor.OP_LE:
+                return Math.nextUp(bound);
+            default: // OP_GE
+                return Math.nextDown(bound);
+        }
+    }
+
     // The float a row group would have to hold for the native predicate to prune it wrongly: the
     // first one on the side the predicate drops. LT prunes on "min >= bound" and GT on
     // "max <= bound", so the bound itself is the first dropped row; LE prunes on "min > bound" and
@@ -650,10 +667,11 @@ public final class ParquetRowGroupFilter {
                 || (!Numbers.equals(Math.nextUp(d), d) && !Numbers.equals(Math.nextDown(d), d));
     }
 
-    // Whether ANY row-level filter keeps this FLOAT row, at the width and with the tolerance it
-    // compares at: the column widens to double, and the two are called equal when they lie within
-    // DOUBLE_TOLERANCE (LtDoubleVVFunctionFactory is "!equals(l, r) && l < r", its negation
-    // "equals(l, r) || l > r", and so on for the rest).
+    // Whether ANY row-level filter keeps a row holding value l, at the width and with the tolerance
+    // it compares at: a FLOAT column widens to double (the caller passes the widened float), a DOUBLE
+    // column already is one, and the two are called equal when they lie within DOUBLE_TOLERANCE
+    // (LtDoubleVVFunctionFactory is "!equals(l, r) && l < r", its negation "equals(l, r) || l > r",
+    // and so on for the rest).
     // <p>
     // The engine has TWO of these filters and their tolerance test differs at the boundary:
     // Numbers.equals() is inclusive (|l - d| <= tolerance) while the compiled filter's
@@ -663,9 +681,8 @@ public final class ParquetRowGroupFilter {
     // unconditional drop that no later filter can undo, so certify against BOTH rather than depend
     // on which one runs: count the row as kept when EITHER keeps it. The strict test decides the ops
     // that exclude equality, the inclusive one the ops that include it. It costs nothing - the bound
-    // this yields is identical for every constant outside the tolerance band of a float.
-    private static boolean isRowKept(float c, double d, int opType) {
-        final double l = c;
+    // this yields is identical for every constant clear of the tolerance band of the bound.
+    private static boolean isRowKept(double l, double d, int opType) {
         final boolean isEq = Numbers.equals(l, d);
         final boolean isEqStrict = isEq && Math.abs(l - d) < Numbers.DOUBLE_TOLERANCE;
         switch (opType) {
@@ -696,6 +713,13 @@ public final class ParquetRowGroupFilter {
      * which is the unsound part), so a group whose [min, max] spans the band but holds no matching
      * row now survives pruning; the row-level filter then returns no rows for it.
      * <p>
+     * The band's ends must be certified, not just computed. When {@code |d|} is within a tolerance of
+     * zero, {@code d - tolerance} cancels and lands a single subnormal ulp off zero - far inside the
+     * band the filter keeps (which, near zero, still calls a tiny value on the far side of zero equal
+     * to {@code d}). Pruning on that bound would drop such a group. Step each end outward until the
+     * first double it would prune away is one the row filter no longer calls equal to {@code d}, or
+     * decline when no reachable end is safe. Away from zero the raw ends certify at once.
+     * <p>
      * An IN list has no single band and declines instead. The rewrite also does not apply to the
      * NULL (NaN) bound, which certifies as exact and keeps pushing as an equality: a band around NaN
      * is empty, and NULL rows do not reach the min/max stats at all.
@@ -718,8 +742,25 @@ public final class ParquetRowGroupFilter {
             return -1;
         }
         final double d = valueFunctions.getQuick(0).getDouble(null);
-        filterValues.putDouble(Math.nextDown(d - Numbers.DOUBLE_TOLERANCE));
-        filterValues.putDouble(Math.nextUp(d + Numbers.DOUBLE_TOLERANCE));
+        // The native BETWEEN prunes a group when max < lo or min > hi, so the first double each end
+        // would drop is the one just past it (nextDown(lo) / nextUp(hi)). Certify against the
+        // inclusive row filter (the widest of the two, so a superset of what the strict one keeps).
+        double lo = Math.nextDown(d - Numbers.DOUBLE_TOLERANCE);
+        for (int i = 0; Numbers.equals(Math.nextDown(lo), d); i++) {
+            if (i == MAX_BOUND_STEPS) {
+                return -1;
+            }
+            lo = Math.nextDown(lo);
+        }
+        double hi = Math.nextUp(d + Numbers.DOUBLE_TOLERANCE);
+        for (int i = 0; Numbers.equals(Math.nextUp(hi), d); i++) {
+            if (i == MAX_BOUND_STEPS) {
+                return -1;
+            }
+            hi = Math.nextUp(hi);
+        }
+        filterValues.putDouble(lo);
+        filterValues.putDouble(hi);
         return 2;
     }
 
@@ -751,20 +792,40 @@ public final class ParquetRowGroupFilter {
     }
 
     // Appends a DOUBLE bound into a DOUBLE stats slot, or reports that it cannot be pushed down.
-    // The bound absorbs the comparison tolerance (see toleranceBound); an op with no safe bound
-    // declines rather than prune wrongly. Equality does not come through here - putDoubleEq handles
-    // it, and it is the only op that can rewrite the whole condition.
+    // The strict ops (LT/GT) push the bare bound: the tolerance makes the row filter stricter than
+    // the pruner there, so the exact bound already prunes only groups the filter clears. The
+    // inclusive ops (LE/GE) absorb the tolerance (see toleranceBound) and then CERTIFY the widened
+    // bound against the row filter, exactly as tryPutFloatFromDouble does: near |d| ~ DOUBLE_TOLERANCE
+    // the "d - tolerance" / "d + tolerance" subtraction cancels and the raw bound lands a subnormal
+    // ulp off zero, far inside the band the filter keeps, so pushing it would false-prune. Step the
+    // bound outward until the first double the pruner would drop is one the filter drops too, or
+    // decline. Away from zero it certifies at once. Equality does not come through here - putDoubleEq
+    // handles it, and it is the only op that can rewrite the whole condition.
     private static boolean tryPutDoubleFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        final boolean isStepUp;  // the direction that makes the bound SAFER, not tighter
         switch (opType) {
             case PushdownFilterExtractor.OP_LT:
-            case PushdownFilterExtractor.OP_LE:
             case PushdownFilterExtractor.OP_GT:
-            case PushdownFilterExtractor.OP_GE:
-                filterValues.putDouble(toleranceBound(d, opType));
+                filterValues.putDouble(d);
                 return true;
+            case PushdownFilterExtractor.OP_LE:
+                isStepUp = true;
+                break;
+            case PushdownFilterExtractor.OP_GE:
+                isStepUp = false;
+                break;
             default:
                 return false;
         }
+        double bound = toleranceBound(d, opType);
+        for (int i = 0; i <= MAX_BOUND_STEPS; i++) {
+            if (!isRowKept(firstPrunedDouble(bound, opType), d, opType)) {
+                filterValues.putDouble(bound);
+                return true;
+            }
+            bound = isStepUp ? Math.nextUp(bound) : Math.nextDown(bound);
+        }
+        return false;
     }
 
     // Appends a bound into a FLOAT stats slot, or reports that it cannot be pushed down. The stats
@@ -794,7 +855,7 @@ public final class ParquetRowGroupFilter {
     // the first row the pruner would DROP is a row the filter drops too. That is the whole safety
     // property, checked directly - a bound is pushed only once isRowKept has certified it - and it
     // takes one step or two for every bound a query realistically carries. Give up after
-    // MAX_FLOAT_BOUND_STEPS (only the near-zero band needs more, where every float is
+    // MAX_BOUND_STEPS (only the near-zero band needs more, where every float is
     // tolerance-equal to the bound) and decline the pushdown; a superset scan is always safe.
     //
     // EQ (and the IN list sharing its op code) has no direction to round in - it pushes the nearest
@@ -855,7 +916,7 @@ public final class ParquetRowGroupFilter {
         } else if ((double) bound > pivot) {
             bound = Math.nextDown(bound);
         }
-        for (int i = 0; i <= MAX_FLOAT_BOUND_STEPS; i++) {
+        for (int i = 0; i <= MAX_BOUND_STEPS; i++) {
             if (!isRowKept(firstPrunedFloat(bound, opType), d, opType)) {
                 filterValues.putFloat(bound);
                 return true;

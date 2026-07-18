@@ -619,6 +619,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         arithOptions = serialize("anint * 2 IN (1, 5_000_000_000)", false, false, false);
         assertIR("(i64 5000000000L)(i64 2L)(i32 anint)(sx_i64)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
         assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.WIDE_LANE);
+
+        // A NULL element beside an OBSERVED wide (LONG) COLUMN element must still keep its own pairing
+        // at I4: the null immediate is INT_NULL at I4 (matching the narrow column key read at getInt),
+        // not the observer's LONG_NULL at I8. The along pairing widens the key (sx_i64) and selects
+        // four-lane AVX2, where an I8 null immediate would compare i32-vs-i64 (avx2.h#convert has no
+        // such case) and match INT_NULL rows only in some lane positions. A wide CONSTANT element
+        // leaves the observer at I4 and so hides this; a wide COLUMN element is observed as I8.
+        options = serialize("anint IN (along, null)", false, false, false);
+        assertIR("(i32 -2147483648L)(i32 anint)(=)(i64 along)(i32 anint)(sx_i64)(=)(||)(ret)");
+        assertOptionsHint("anint IN (along, null)", options, OptionsHint.WIDE_LANE);
     }
 
     @Test

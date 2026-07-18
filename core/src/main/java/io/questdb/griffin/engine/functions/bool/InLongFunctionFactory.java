@@ -41,20 +41,11 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
 public class InLongFunctionFactory implements FunctionFactory {
-
-    public static long tryParseLong(CharSequence seq, int position) throws SqlException {
-        try {
-            return Numbers.parseLong(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw SqlException.position(position).put("invalid LONG value [").put(seq).put(']');
-        }
-    }
 
     @Override
     public String getSignature() {
@@ -329,12 +320,15 @@ public class InLongFunctionFactory implements FunctionFactory {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.NULL:
+                // A non-numeric string element reads as LONG_NULL, matching the runtime path
+                // (InLongVarFunction / InLongRuntimeConstFunction use parseLongQuiet): an all-constant
+                // list and a list carrying a dynamic sibling must agree on the same element.
                 CharSequence tsValue = func.getStrA(null);
-                val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
+                val = (tsValue != null) ? Numbers.parseLongQuiet(tsValue) : Numbers.LONG_NULL;
                 break;
             case ColumnType.VARCHAR:
                 Utf8Sequence seq = func.getVarcharA(null);
-                val = (seq != null) ? tryParseLong(seq.asAsciiCharSequence(), argPositions.getQuick(i)) : Numbers.LONG_NULL;
+                val = (seq != null) ? Numbers.parseLongQuiet(seq.asAsciiCharSequence()) : Numbers.LONG_NULL;
                 break;
             default:
                 throw SqlException.inconvertibleTypes(

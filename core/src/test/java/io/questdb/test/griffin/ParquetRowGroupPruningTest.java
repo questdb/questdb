@@ -28,9 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -4697,6 +4700,63 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertNativeMatchesPartialParquet("c6 > 1.0", "c6\n2.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleColumnNearToleranceMagnitudePushdownNotFalsePruned() throws Exception {
+        // Near |bound| == DOUBLE_TOLERANCE the tolerance widening cancels: "1e-10 - DOUBLE_TOLERANCE"
+        // is exactly 0.0 and nextDown(0.0) is a single subnormal ulp, nowhere near the tolerance edge.
+        // The inclusive row filter still keeps a tiny value on the far side of zero -- |(-1e-30) -
+        // 1e-10| rounds to exactly DOUBLE_TOLERANCE, which Numbers.equals calls equal -- so pushing
+        // that bound prunes the group and loses the row (the DOUBLE arm never had the FLOAT arm's
+        // certify-or-decline guard). Pruning runs before ANY row filter, so the fix must decline the
+        // pushdown; the surviving rows pin the data-integrity contract and getRowGroupsSkipped() pins
+        // the pruning signal directly.
+        //
+        // These kept rows sit exactly on the strict/inclusive filter boundary (in real arithmetic no
+        // negative value is within DOUBLE_TOLERANCE of a positive 1e-10 bound; only the rounding of
+        // Numbers.equals keeps them), so the assertQuery(...).returns(...) battery -- which runs a
+        // JIT/strict-filter pass that drops boundary rows -- is not a stable oracle here. Disable JIT
+        // and drive the query through printSql so the inclusive Java filter is the one that runs.
+        setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
+        assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
+
+            // GE: pre-fix pushes nextDown(0.0) and prunes the -1e-30 group; the fix declines the pushdown.
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n-1.0E-30\n5.0\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // EQ collapses the same way: the BETWEEN lo = nextDown(1e-10 - DOUBLE_TOLERANCE) = nextDown(0.0).
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 = 1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n-1.0E-30\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // LE mirrors GE: "c6 <= -1e-10" keeps 1e-30; pre-fix prunes on "min > nextUp(0.0)".
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "1e-30", "-5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 <= -1e-10 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n1.0E-30\n-5.0\n", sink);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            // A bound a clear tolerance away from zero still prunes a group that lies wholly outside it.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("DOUBLE", "-1e-30", "5.0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            sink.clear();
+            printSql("SELECT c6 FROM tp WHERE c6 >= 1.0 ORDER BY ts", sink);
+            TestUtils.assertEquals("c6\n5.0\n", sink);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }

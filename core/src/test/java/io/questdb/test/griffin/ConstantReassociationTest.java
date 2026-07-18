@@ -55,9 +55,10 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
     @Test
     public void testDeepConstantChainFoldsAndGuardsViaCachedFold() throws Exception {
-        // A long left-associative chain drives the O(n) cached-fold path: each level reads the
+        // A long left-associative chain drives the O(n) cached-fold guard path: each level reads the
         // accumulating constant subtree's cached triple in O(1) rather than re-walking it, so the
-        // whole chain reassociates in O(n) instead of O(n^2). Integer chains stay in source order because an intermediate may wrap onto a NULL sentinel.
+        // whole chain is checked in O(n) instead of O(n^2). The chain itself stays in source order
+        // (the guard leaves it a no-op) because an integer intermediate may wrap onto a NULL sentinel.
         assertReassociationNoOp("d + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8");
 
         // Integer chains stay unchanged even when only a deep intermediate reaches INT_NULL; the
@@ -208,6 +209,30 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
         // OR — Mirror A: C2 OR (col OR C1) (commutative)
         assertReassociation("true or (a or false)", "a or (true or false)");
+    }
+
+    @Test
+    public void testLong256HexPairIsNotReassociated() throws Exception {
+        // A LONG256 (0x...) hex constant pair must not be regrouped. Hex literals fail all four
+        // numeric parses (int/long/double/float), so before the guard they landed with
+        // isConstFoldWidening=false and isConstFoldLongValid=false, and isReassociationSafe returned
+        // true. Hoisting them under the column as col256 op (C1 op C2) folds the inner pair with
+        // Long256Impl.add, which propagates NULL_LONG256 only when an OPERAND is the sentinel: a pair
+        // summing (mod 2^256) to the sentinel becomes a NULL operand -> every row NULL, while the
+        // left-associative (and fully-constant literal) form keeps the real value. LONG256 '+' is
+        // registered associative, so only this guard stops the rewrite.
+
+        // Pattern A: (col op C1) op C2
+        assertReassociationNoOp("h256 + 0x0f + 0x01");
+        assertReassociationNoOp("h256 + 0x1234567890abcdef + 0x00fedcba09876543");
+        // Pattern B: (C1 op col) op C2 (commutative)
+        assertReassociationNoOp("(0x0f + h256) + 0x01");
+        // Mirror A: C2 op (col op C1)
+        assertReassociationNoOp("0x01 + (h256 + 0x0f)");
+        // Mirror B: C2 op (C1 op col)
+        assertReassociationNoOp("0x01 + (0x0f + h256)");
+        // A three-constant chain, like the deep-fold guard cases.
+        assertReassociationNoOp("h256 + 0x0f + 0x01 + 0x02");
     }
 
     @Test

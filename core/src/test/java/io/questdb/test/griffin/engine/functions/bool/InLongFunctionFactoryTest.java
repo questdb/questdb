@@ -404,6 +404,36 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonNumericStringConstElementReadsAsNull() throws Exception {
+        // Harmonize the all-constant IN path with the runtime path: a non-numeric string element
+        // reads as LONG_NULL (via parseLongQuiet) instead of throwing, so "k IN ('abc', 5)" agrees
+        // with a list carrying a dynamic sibling ("k IN (s, 5)", which already read 'abc' as
+        // LONG_NULL). Before the fix the all-constant form threw "invalid LONG value [abc]". The
+        // LONG_NULL element then matches a NULL key row on BOTH paths (row x=3), alongside k=5.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x id, case when x = 3 then null else x end k, 'abc' s from long_sequence(10))");
+            // All-constant path: 'abc' -> LONG_NULL matches the NULL key row (id=3); 5 matches k=5
+            // (id=5). Project the non-null id so the match is asserted without depending on how the
+            // NULL key renders. No throw; before the fix this threw "invalid LONG value [abc]".
+            assertQuery("select id from t where k in ('abc', 5)")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            3
+                            5
+                            """);
+            // The same element via a dynamic (column) sibling routes to the runtime path and agrees.
+            assertQuery("select id from t where k in (s, 5)")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            3
+                            5
+                            """);
+        });
+    }
+
+    @Test
     public void testSingleConst() throws Exception {
         assertQuery("select * from x where x in (1)")
                 .ddl("create table x as (" +

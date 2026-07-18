@@ -1868,6 +1868,54 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorNullElementBesideLongColumnKeepsNarrowKey() throws Exception {
+        // C2 regression: a narrow-INT COLUMN key IN a list carrying a NULL element AND an OBSERVED
+        // wide (LONG) COLUMN element. The type observer sees the LONG column and returns I8, so
+        // serializeNull emitted the null as LONG_NULL at I8 while the null pairing keeps the key at
+        // I4. In wide-lane mode the LONG element's SX_I64 no longer forces scalar, so the four-lane
+        // backend compared the i32 key against the i64 LONG_NULL immediate (avx2.h#convert has no
+        // i32->i64 case), matching INT_NULL rows only in some lane positions and diverging from the
+        // Java InLong path (which matches INT_NULL rows via the null element). The null is now emitted
+        // at the key's kept width (INT_NULL at I4). Existing coverage used a wide CONSTANT element,
+        // which leaves the observer at I4 and hides the bug. The table has >= 64 rows so the
+        // vectorized loop runs past the scalar tail (a 1-row table would hide the divergence).
+        assertMemoryLeak(() -> {
+            execute("create table t as (select" +
+                    " x id," +
+                    " cast(case when x % 3 = 0 then null else x end as int) i32," +   // 21 of 64 are INT_NULL
+                    " cast(case when x % 3 = 0 then null else x end as short) i16," +  // SHORT: null casts to 0, never null
+                    " cast(case when x % 3 = 0 then null else x end as byte) i8," +    // BYTE: null casts to 0, never null
+                    " cast(10_000_000_000 as long) nl," +                             // out of INT range: matches no widened key
+                    " timestamp_sequence(0, 1_000_000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // RED on HEAD: JIT wide-lane drops (position-dependently) the INT_NULL rows the null
+            // element matches; Java matches all of them (on HEAD the INT key returned 10 of 21).
+            assertJitMatchesJava("select id from t where i32 in (nl, null)", true);      // wide COLUMN element + null
+            assertJitMatchesJava("select id from t where i32 in (null, nl)", true);      // element order swapped
+            assertJitMatchesJava("select id from t where i32 in (7, nl, null)", true);   // plus a plain element
+
+            // The Java (JIT-disabled) oracle: the null element matches exactly the INT_NULL rows
+            // (x % 3 == 0 -> 21 of 64); nl matches none.
+            Assert.assertEquals(21, runQuery("select id from t where i32 in (nl, null)"));
+
+            // SHORT/BYTE keys are also width-sensitive (see isWidthSensitiveInKey) and take the I4
+            // override, so the fix routes their null pairing through INT_NULL at I4 too. Those types
+            // are never null (a null cast lands on 0), so the null element matches nothing - the i16/i8
+            // key value never equals INT_NULL - and JIT agrees with Java at 0 rows.
+            assertJitMatchesJava("select id from t where i16 in (nl, null)", true);
+            assertJitMatchesJava("select id from t where i8 in (nl, null)", true);
+            Assert.assertEquals(0, runQuery("select id from t where i16 in (nl, null)"));
+            Assert.assertEquals(0, runQuery("select id from t where i8 in (nl, null)"));
+
+            // Control that agreed before the fix: a wide CONSTANT element leaves the observer at I4,
+            // so the null already emitted INT_NULL and matched.
+            assertJitMatchesJava("select id from t where i32 in (5_000_000_000, null)", true);
+            Assert.assertEquals(21, runQuery("select id from t where i32 in (5_000_000_000, null)"));
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowWidenConstOperandKeyPerElement() throws Exception {
         // C1 regression: an IN key that is a narrow-int column arithmetic with a CONSTANT operand
         // - (a * 3), (a + const), (n - const) - whose product/sum overflows INT, in a multi-value
