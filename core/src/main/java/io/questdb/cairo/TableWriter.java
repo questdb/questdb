@@ -4692,6 +4692,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
+        // Composite-partitioning guard (Plan 4a Task 4 fix wave 1): this fast path copies WAL rows
+        // straight onto the writer's single shared "last partition" column-file handles
+        // (this.columns, see applyLagToLastPartition/cthAppendWalColumnToLastPartition) keyed only by
+        // day -- it has no notion of cellKey at all. For a composite table those handles are never
+        // repointed at a real per-cell segment (processO3BlockComposite dispatch is always async and
+        // never touches this.columns), so any row that took this path would land bytes-on-disk in the
+        // orphan bare day directory instead of its own <day>/<cell> segment. Disabling this path
+        // entirely for composite tables forces every commit through the cell-aware processO3Block
+        // routing instead (see the needFullCommit composite guard in processWalCommit).
+        if (metadata.getPartitionSpec().getDimensionCount() > 0) {
+            return false;
+        }
         return !isCommitDedupMode()
                 && lagRowCount > 0
                 && lagOrdered
@@ -9996,6 +10008,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * reproducing pre-Task-4 behavior. A genuinely brand-new table (no pre-existing data) still
      * routes through {@link #processO3BlockComposite} normally and interns real cells from its very
      * first row.
+     * <p>
+     * <b>Fix wave 1 (loud second-commit guard).</b> A composite table's FIRST real per-cell-routing
+     * commit is proven correct end-to-end (physical cell directories, row counts, {@code
+     * table_partitions()}, all verified by this task's own acceptance test). The surrounding WAL-LAG /
+     * active-partition / last-partition-accounting machinery this task did not rewrite is, however,
+     * entirely day-granularity and cellKey-blind: {@code o3ConsumePartitionUpdateSink}'s {@code
+     * partitionTimestamp == lastPartitionTimestamp} special case, and (found empirically while building
+     * this guard -- a real, reproducible {@code AssertionError} table-suspension, not just a bookkeeping
+     * nit) {@code finishO3Commit}'s post-commit {@code openPartition} re-derive, which goes through
+     * {@code TxWriter#getNextPartitionTimestamp}. That method's "does the next attached-partition array
+     * entry share this timestamp's calendar day" check exists to detect a partition SPLIT's sibling
+     * sub-partition -- it cannot tell a split sibling apart from an ordinary sibling CELL on the same
+     * day, so once any day has 2+ cells, it silently returns the wrong (too-early) partition boundary.
+     * A second commit can therefore silently misroute/mis-account or crash the writer outright,
+     * depending on timing. Making any of this genuinely cellKey-aware is per-cell frontier tracking --
+     * explicitly out of scope for Task 4 (see {@link #processO3BlockComposite}'s own docs) and deferred
+     * to a follow-up task. Until that lands, a composite table that has already completed one real
+     * (non-dormant) per-cell-routing commit -- signalled by a non-empty {@code _cell} registry, exactly
+     * the inverse of {@link #isDormantWithPreexistingData()}'s own signal -- must fail loudly on any
+     * further commit rather than silently corrupt or non-deterministically crash.
      */
     private void processO3Block(
             final long o3LagRowCount,
@@ -10014,6 +10046,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0
                 && !isDormantWithPreexistingData();
         if (composite) {
+            guardCompositeSecondCommitNotYetSupported();
             processO3BlockComposite(
                     o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
                     o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
@@ -10023,6 +10056,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
                     o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
             );
+        }
+    }
+
+    /**
+     * Fix wave 1 (Plan 4a Task 4 follow-up, loud second-commit guard): throws if this composite table
+     * has already completed one real per-cell-routing commit, signalled by a non-empty {@code _cell}
+     * registry (the exact inverse of {@link #isDormantWithPreexistingData()}'s own signal -- a table
+     * that is still dormant, or genuinely plain, always has an empty registry here and this is a
+     * no-op). See {@link #processO3Block}'s own docs for why a second such commit is not yet safe.
+     * <p>
+     * Called from two places: as early as possible in {@link #processWalCommit} (before the
+     * pre-existing {@code assert maxTimestamp == Long.MIN_VALUE || ...} a second commit's now-stale
+     * {@code partitionTimestampHi} can otherwise trip, turning this into an uncontrolled {@code
+     * AssertionError} table suspension instead of a clear message), and again in {@link
+     * #processO3Block} itself so the non-WAL direct O3 commit path ({@code o3Commit}, which never goes
+     * through {@code processWalCommit}) is covered too.
+     */
+    private void guardCompositeSecondCommitNotYetSupported() {
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && getCompositeDictionaries().cellRegistry().size() > 0) {
+            throw CairoException.nonCritical()
+                    .put("composite partitioning does not yet support a second or later commit into a ")
+                    .put("table that has already routed real data per-cell (per-cell frontiers land in a ")
+                    .put("follow-up task) [table=").put(tableToken.getTableName()).put(']');
         }
     }
 
@@ -10628,7 +10684,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final long rangeLen = srcOooHi - srcOooLo + 1;
                     if (rangeLen <= 0) {
-                        // Defensive only -- a non-replace commit's ranges are never empty.
+                        // Defensive only -- currently unreachable: composite dispatch rejects REPLACE
+                        // commits outright (see the isCommitReplaceMode() throw at the top of this
+                        // method), so a non-replace commit's ranges are never actually empty. Guarded
+                        // anyway (opus review, Plan 4a Task 4 fix wave 1 Minor ii): srcOoo = srcOooHi + 1
+                        // above does NOT advance past srcOooLo when rangeLen <= 0 (srcOooHi < srcOooLo),
+                        // which would spin the enclosing while(srcOoo < srcOooMax) loop forever if this
+                        // branch ever becomes reachable. Force forward progress defensively.
+                        srcOoo = Math.max(srcOoo, srcOooLo + 1);
                         partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
                         pressureControl.updateInflightPartitions(--inflightPartitions);
                         continue;
@@ -11099,6 +11162,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableWriterPressureControl pressureControl,
             long wallClockMicros
     ) {
+        // Fix wave 1 (Plan 4a Task 4 follow-up): as early as possible, before the bootstrap/assert
+        // logic below that a composite table's second commit can otherwise trip (see
+        // guardCompositeSecondCommitNotYetSupported's own docs).
+        guardCompositeSecondCommitNotYetSupported();
+
         int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
         int walRootPathLen = walPath.size();
@@ -11164,7 +11232,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
                         // when the time between commits is too long we need to commit regardless of the row count or volume filled
                         // this is to bring the latency of data visibility inline with user expectations
-                        || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
+                        || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency())
+                        // Composite-partitioning guard (Plan 4a Task 4 fix wave 1): never let a
+                        // composite table's commit be absorbed into WAL LAG -- see
+                        // applyFromWalLagToLastPartitionPossible's own docs for why that copy is
+                        // cell-blind and unsafe. Forcing a full commit here (combined with
+                        // applyFromWalLagToLastPartitionPossible always returning false for composite,
+                        // which keeps canFastCommitNew false too) guarantees every composite commit
+                        // routes through processO3Block's cell-aware dispatch instead.
+                        || metadata.getPartitionSpec().getDimensionCount() > 0;
 
                 boolean canFastCommit = !noLag && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;

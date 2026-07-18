@@ -390,6 +390,106 @@ public class CompositeRoutingTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Fix wave 1 (loud second-commit guard, following the opus review of Task 4): a composite table's
+     * FIRST real per-cell-routing commit is proven correct by {@link
+     * #testMultiCellCommitRoutesToFourCellDirectoriesAndMatchesPlainTwin()} above. This test proves a
+     * SECOND, small, in-order commit landing on the table's CURRENT last day (already home to two
+     * cells from commit 1) does NOT silently misroute/mis-account -- it must throw a clear, loud
+     * error and suspend the WAL table rather than let {@code count()}/per-exchange totals silently
+     * drift from a plain twin. See {@code processO3Block}'s own docs (guardCompositeSecondCommitNotYetSupported)
+     * for the two independent cell-blind mechanisms a second commit would otherwise hit: {@code
+     * o3ConsumePartitionUpdateSink}'s day-granularity {@code lastPartitionTimestamp} special case, and
+     * (found empirically while building this guard) {@code finishO3Commit}'s {@code openPartition}
+     * re-derive via {@code TxWriter#getNextPartitionTimestamp}, which cannot distinguish a genuine
+     * partition SPLIT sibling from an ordinary sibling CELL sharing the same day, and silently computes
+     * the wrong partition boundary once any day has 2+ cells -- reproduced directly (before this fix
+     * existed) as an uncontrolled {@code AssertionError} table suspension, not just a bookkeeping nit.
+     */
+    @Test
+    public void testSecondCommitSameLastDayThrowsInsteadOfSilentlyMisrouting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // Commit 1: multi-day, multi-cell -- spans a partition boundary, defeating the WAL-LAG
+            // fast path and forcing real per-cell routing (mirrors the acceptance test's own shape).
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Commit 2: ONE small, in-order row landing on day2 (the CURRENT last day), which ALREADY
+            // has two cells (A, B) from commit 1 -- the exact "second commit landing on the table's
+            // current last day" shape the review flagged, and the shape that (pre-fix) either crashed
+            // the writer with a raw AssertionError or silently mis-accounted rows depending on timing.
+            execute("insert into c values ('2020-01-02T18:00:00.000000Z','A',3.0)");
+            execute("insert into p values ('2020-01-02T18:00:00.000000Z','A',3.0)");
+            drainWalQueue();
+
+            // The composite table must be suspended with the clear, actionable message -- NOT silently
+            // wrong, NOT a raw AssertionError.
+            assertWalTableSuspendedWithMessage("c", "composite partitioning does not yet support");
+
+            // The plain twin must be completely unaffected: fully committed, all 5 rows, not suspended.
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+        });
+    }
+
+    /**
+     * Same guard, but the second commit's row lands on a BRAND NEW day (never touched by commit 1 at
+     * all), proving the guard is not narrowly scoped to "same day as an existing cell" -- ANY second
+     * real per-cell-routing commit on a composite table is not yet supported, per {@code
+     * processO3Block}'s docs (a composite table's {@code partitionTimestampHi}/{@code
+     * lastPartitionTimestamp} bookkeeping is already left inconsistent by the FIRST commit's own
+     * {@code finishO3Commit} call, before this second commit's specific shape is even considered).
+     */
+    @Test
+    public void testSecondCommitNewDayThrowsInsteadOfSilentlyMisrouting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Commit 2: a single row on day3 -- a day neither cell has ever touched before.
+            execute("insert into c values ('2020-01-03T00:00:00.000000Z','A',3.0)");
+            execute("insert into p values ('2020-01-03T00:00:00.000000Z','A',3.0)");
+            drainWalQueue();
+
+            assertWalTableSuspendedWithMessage("c", "composite partitioning does not yet support");
+            assertWalTableNotSuspended("p");
+        });
+    }
+
+    private void assertWalTableNotSuspended(String tableName) {
+        Assert.assertFalse(
+                tableName + " must not be suspended",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+    }
+
+    private void assertWalTableSuspendedWithMessage(String tableName, String expectedMessageSubstring) throws Exception {
+        Assert.assertTrue(
+                tableName + " must be suspended after the not-yet-supported second commit",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+        assertQuery("select suspended, errorMessage like '%" + expectedMessageSubstring + "%' clearMessage " +
+                "from wal_tables() where name = '" + tableName + "'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("suspended\tclearMessage\ntrue\ttrue\n");
+    }
+
     private static Set<String> setOf(String... values) {
         Set<String> set = new HashSet<>();
         for (String v : values) {
