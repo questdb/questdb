@@ -63,14 +63,18 @@ import org.junit.Test;
  * value ({@code 'A'}) so {@code c}'s on-disk shape stays exactly one physical partition per day (matching
  * this class's original hardcoded partition/row counts) while still being genuinely, actually routed
  * (registry non-empty), rather than trying to preserve a "dormant" state I1 makes unreachable going
- * forward. Findings C2+C3 separately mean {@code TableSnapshotRestore} now REFUSES to restore a
- * genuinely-routed composite table (assertion 10 below is restructured accordingly -- see that test's own
- * javadoc); a brand-new day whose only cell isn't cellKey 0 is separately covered by finding C1's own
+ * forward. Findings C2+C3 previously meant {@code TableSnapshotRestore} refused to restore a
+ * genuinely-routed composite table; Plan 4d fixed both (rebuilding the dedicated dimension dictionaries
+ * and the {@code _cell} registry, and making the day-dir orphan cleanup cell-aware) and removed that
+ * refusal -- assertion 10 below now proves the round-trip instead (see that test's own javadoc), with a
+ * dedicated companion proving the one residual sub-case Plan 4d intentionally left refused (an indexed
+ * real column); a brand-new day whose only cell isn't cellKey 0 is separately covered by finding C1's own
  * dedicated regression test in {@code CompositeRoutingTest}, not here.
  * <p>
  * Split into {@code @Test} methods by concern so a failure localizes without re-running the whole class:
  * queries (1-3), catalogue/introspection (4-6), mutating DDL (7-8), O3 + partition purge (9), and
- * checkpoint/snapshot restore (10, now two tests: refused-for-live and allowed-for-dormant).
+ * checkpoint/snapshot restore (10, three tests since Plan 4d: a genuinely-routed round-trip, its
+ * residual-gate companion for an indexed column, and allowed-for-dormant).
  */
 public class CompositeEndToEndTest extends AbstractCairoTest {
     private static O3PartitionPurgeJob purgeJob;
@@ -303,60 +307,102 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
     }
 
     /**
-     * Brief assertion 10, whole-branch review (Plan 4a) findings C2+C3: a CHECKPOINT CREATE + restore
-     * attempt against a genuinely-routed composite table must be REFUSED, loudly, instead of silently
-     * corrupting or losing data. Mirrors {@code CheckpointTest#testCheckpointRestoreIndexNonPartitioned}'s
-     * in-process create-then-recover idiom (change the configured snapshot instance id between create and
-     * recover so {@code engine.checkpointRecover()} treats this as restoring onto a different install,
-     * instead of no-op'ing because it looks like the same instance that made the checkpoint).
+     * Brief assertion 10, Plan 4d (fixing whole-branch review (Plan 4a) findings C2+C3): a CHECKPOINT
+     * CREATE + restore of a genuinely-routed composite table -- multiple cells, spanning multiple days,
+     * one cell extended by a second commit, so both the interners and the per-cell column-versions are
+     * non-trivial -- must round-trip byte-identically instead of being refused. Mirrors {@code
+     * CheckpointTest#testCheckpointRestoreIndexNonPartitioned}'s in-process create-then-recover idiom
+     * (change the configured snapshot instance id between create and recover so {@code
+     * engine.checkpointRecover()} treats this as restoring onto a different install, instead of no-op'ing
+     * because it looks like the same instance that made the checkpoint) and this class's own established
+     * "capture textual query output before, compare it after" technique (avoids hand-deriving the exact
+     * multi-dimension cell-name/timestamp strings {@code table_partitions()} renders).
      * <p>
-     * <b>Why this test changed:</b> the ORIGINAL version of this test (pre-I1) built {@code c} without
-     * WAL, so every row landed at cellKey 0 via the direct append path -- genuinely dormant, registry
-     * always empty -- and {@code TableSnapshotRestore} restored it byte-identically to plain, which was
-     * safe precisely because there was nothing cell-aware to get wrong. Finding I1 makes that non-WAL
-     * shape uncreatable going forward (see {@code CreateTableOperationBuilderImpl
-     * #resolvePartitionSpec}), and a WAL composite table's first commit always routes for real (registry
-     * non-empty) -- so there is no longer any ordinary way to reach the old "dormant, safe-to-restore"
-     * state for a table with committed data. Findings C2 ({@code removePartitionDirsNotAttached} can
-     * delete a live day when the table root holds bare day-dir CONTAINERS rather than real leaf
-     * partitions) and C3/T-I3 ({@code rebuildSymbolFilesForColumns} never rebuilds the dedicated
-     * dimension dictionaries or the {@code _cell} registry) are exactly why this is now refused rather
-     * than silently attempted. {@link #testCheckpointRestoreAllowsNeverCommittedCompositeTable()} below
-     * proves the companion half of the gate -- a composite table that has genuinely never routed a cell
-     * is NOT refused. A plain table's checkpoint/restore is completely untouched by this gate (dimCount
-     * == 0) and already exhaustively covered by {@code io.questdb.test.griffin.CheckpointTest}.
+     * Two dimensions are used -- {@code exch} (IDENTITY, reuses its own column's ordinary symbol dict,
+     * already rebuilt correctly pre-Plan-4d) and {@code truncate(sym, 3)} (TRUNCATE, a genuinely DEDICATED
+     * on-disk dictionary, {@code CompositeInternerLayout#dedicatedCount() == 1} for this spec) -- so this
+     * round-trip exercises BOTH C3 sub-cases: a real dedicated dictionary AND the {@code _cell} registry,
+     * not just the registry alone.
      * <p>
-     * <b>Deliberately NOT wrapped in {@code assertMemoryLeak}:</b> investigated empirically (negative
-     * control) rather than assumed, by the ORIGINAL version of this test. {@code
-     * engine.checkpointRecover()} leaves a small, constant (1336-byte, i.e. one fixed-size allocation)
-     * {@code NATIVE_TABLE_READER} tag difference behind when driven from an ordinary {@code
-     * AbstractCairoTest} subclass -- reproduced with a 100% vanilla, non-composite, unindexed,
-     * un-partitioned-or-partitioned table built via plain {@code CREATE TABLE}/{@code INSERT} AND via
-     * {@code CREATE TABLE AS SELECT}, and even with a byte-for-byte copy of {@code
-     * CheckpointTest#testRecoverCheckpointLargePartitionCount}'s own body pasted verbatim into a
-     * throwaway class in this package. It reproduces regardless of composite-ness, partitioning, symbol
-     * columns/indexes, CTAS vs. separate insert, or this class's O3PartitionPurgeJob field (each ruled
-     * out individually) -- i.e. it is a pre-existing property of running checkpoint recovery outside
-     * {@code io.questdb.test.griffin.CheckpointTest}'s own specialized fixture, not anything introduced
-     * by Plan 3b/4a or specific to a composite table. {@code engine.clear()} at the top substitutes for
-     * what {@code assertMemoryLeak} would have done on entry.
+     * <b>Why this test changed:</b> this test previously proved {@code TableSnapshotRestore} REFUSED to
+     * restore a genuinely-routed composite table (findings C2: {@code removePartitionDirsNotAttached}
+     * could delete a live day when the table root holds bare day-dir CONTAINERS rather than real leaf
+     * partitions; and C3/T-I3: {@code rebuildSymbolFilesForColumns} never rebuilt the dedicated dimension
+     * dictionaries or the {@code _cell} registry). Plan 4d fixed both -- {@code
+     * TableSnapshotRestore#rebuildCompositeInternerFiles} now rebuilds every dedicated dictionary and the
+     * registry from their (untouched, checkpoint-copied) {@code .c} files, and {@code
+     * removePartitionDirsNotAttached} now asks "is this day live at all" (any cellKey) for a routed
+     * composite table instead of a cellKey-0-only nameTxn match -- so the refusal is gone and this now
+     * proves the positive case instead. {@link #testCheckpointRestoreRefusesRoutedCompositeTableWithIndex()}
+     * proves the ONE residual sub-case Plan 4d intentionally left refused (an indexed real column,
+     * {@code rebuildBitmapIndexes}' own bare-path construction not yet fixed).
+     * {@link #testCheckpointRestoreAllowsNeverCommittedCompositeTable()} below proves the companion case
+     * this gate never touched -- a composite table that has genuinely never routed a cell. A plain
+     * table's checkpoint/restore is completely untouched by any of this (dimCount == 0) and already
+     * exhaustively covered by {@code io.questdb.test.griffin.CheckpointTest}.
+     * <p>
+     * <b>Deliberately NOT wrapped in {@code assertMemoryLeak}:</b> see this class's original checkpoint
+     * test's own javadoc (preserved on {@link #testCheckpointRestoreRefusesRoutedCompositeTableWithIndex()}
+     * below) for the empirically-investigated reason -- a small, constant, composite-unrelated allocation-
+     * tag artifact of driving checkpoint recovery outside {@code io.questdb.test.griffin.CheckpointTest}'s
+     * own fixture. {@code engine.clear()} at the top substitutes for what {@code assertMemoryLeak} would
+     * have done on entry.
      */
     @Test
-    public void testCheckpointRestoreRefusesRoutedCompositeTable() throws Exception {
+    public void testCheckpointRestoreRoutedCompositeTableRoundTrips() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
         final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
 
         engine.clear();
         setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-        // Only c (composite) in this checkpoint: DatabaseCheckpointAgent#recover aborts its WHOLE
-        // per-table iteration on the first table that throws, so a twin p alongside c here would never
-        // even get a chance to restore, muddying what this test is isolating.
-        execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange wal");
-        execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-02T00:00:00.000000Z','A',2.0)");
+        execute("create table c (ts timestamp, exch symbol, sym symbol, px double) timestamp(ts) " +
+                "partition by day, exch, truncate(sym, 3) wal");
+
+        // Commit 1: two brand-new days, two brand-new cells each, deliberately INTERLEAVED (A, B, A, B)
+        // so the O3 sorted-by-timestamp range for each day genuinely spans both cells -- exch=A/sym~BTC
+        // and exch=B/sym~ETH (mirrors CompositeRoutingTest's own multi-cell shape).
+        execute("insert into c values " +
+                "('2020-01-01T00:00:00.000000Z','A','BTCUSDT',1.0), ('2020-01-01T12:00:00.000000Z','B','ETHUSDT',1.5), " +
+                "('2020-01-02T00:00:00.000000Z','A','BTCUSDT',2.0), ('2020-01-02T12:00:00.000000Z','B','ETHUSDT',2.5)");
+        // Commit 2: an in-order row extending the already-populated day2/A cell (non-trivial column
+        // version), plus a brand-new day3/C cell.
+        execute("insert into c values " +
+                "('2020-01-02T18:00:00.000000Z','A','BTCUSDT',2.75), ('2020-01-03T00:00:00.000000Z','C','SOLUSDT',3.0)");
         drainWalQueue();
+        Assert.assertFalse("c must not be suspended after routing setup",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+
+        // Anchor: the dense dimension key each value resolves to BEFORE the checkpoint -- the precise,
+        // white-box proof (mirrors CompositeDictPersistenceTest's own established technique) that the
+        // SAME key comes back post-restore, i.e. the dedicated truncate(sym,3) dictionary and the
+        // identity(exch) column dict were rebuilt from their preserved .c files rather than left torn.
+        final int exchADimKeyBefore;
+        final int symTruncBtcKeyBefore;
+        try (TableReader r = getReader("c")) {
+            exchADimKeyBefore = r.keyOfDimensionValue(0, "A");
+            symTruncBtcKeyBefore = r.keyOfDimensionValue(1, "BTCUSDT"); // truncate(sym,3) -> "BTC"
+        }
+
+        // Capture every query surface the acceptance criteria name, BEFORE the checkpoint.
+        sink.clear();
+        printSql("select ts, exch, sym, px from c order by ts, exch");
+        final String scanBefore = sink.toString();
+        sink.clear();
+        printSql("select exch, count() from c group by exch order by exch");
+        final String countsBefore = sink.toString();
+        sink.clear();
+        printSql("select ts, exch, sym, px from c latest on ts partition by exch order by exch");
+        final String latestBefore = sink.toString();
+        sink.clear();
+        printSql("select name from table_partitions('c') order by name");
+        final String partitionsBefore = sink.toString();
 
         execute("checkpoint create");
+
+        // Insert MORE data after the checkpoint -- must NOT survive restore.
+        execute("insert into c values ('2020-01-04T00:00:00.000000Z','D','XRPUSDT',4.0)");
+        drainWalQueue();
 
         // Release all readers/writers but keep the checkpoint dir around (simulates a restart), then
         // force checkpointRecover() to actually attempt a restore (not no-op) by making the configured
@@ -364,12 +410,59 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
         engine.clear();
         setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
         try {
+            // RED (pre-Plan-4d): threw "composite partitioning does not yet support checkpoint/snapshot
+            // restore" here. GREEN (Plan 4d): restores cleanly.
             engine.checkpointRecover();
-            Assert.fail("expected checkpoint restore of a routed composite table to be refused");
-        } catch (CairoException e) {
-            TestUtils.assertContains(
-                    e.getFlyweightMessage(),
-                    "composite partitioning does not yet support checkpoint/snapshot restore");
+
+            // Byte-identical round-trip against every surface captured pre-checkpoint -- also proves the
+            // post-checkpoint 2020-01-04 insert did NOT survive (none of these strings include it).
+            sink.clear();
+            printSql("select ts, exch, sym, px from c order by ts, exch");
+            TestUtils.assertEquals("full ordered scan", scanBefore, sink.toString());
+            sink.clear();
+            printSql("select exch, count() from c group by exch order by exch");
+            TestUtils.assertEquals("per-exch counts", countsBefore, sink.toString());
+            sink.clear();
+            printSql("select ts, exch, sym, px from c latest on ts partition by exch order by exch");
+            TestUtils.assertEquals("LATEST ON", latestBefore, sink.toString());
+            sink.clear();
+            printSql("select name from table_partitions('c') order by name");
+            TestUtils.assertEquals("table_partitions() cell listing", partitionsBefore, sink.toString());
+
+            // Interners intact: the same dimension values resolve to the same dense keys post-restore.
+            try (TableReader r = getReader("c")) {
+                Assert.assertEquals("exch='A' must reuse its pre-checkpoint dimension key",
+                        exchADimKeyBefore, r.keyOfDimensionValue(0, "A"));
+                Assert.assertEquals("truncate(sym,3)='BTC' must reuse its pre-checkpoint dedicated-dict key",
+                        symTruncBtcKeyBefore, r.keyOfDimensionValue(1, "BTCUSDT"));
+                // A different raw value sharing the same 3-char truncated prefix must resolve to the SAME key.
+                Assert.assertEquals("a fresh value truncating to the same prefix must resolve to the SAME key",
+                        symTruncBtcKeyBefore, r.keyOfDimensionValue(1, "BTCZZZZZ"));
+            }
+
+            // A post-restore insert must route correctly: a repeated (exch, sym-prefix) combo on a
+            // BRAND-NEW day reuses cellKeys (table_partitions() grows by exactly 2 -- one new leaf
+            // partition per cell landing on the new day, not more/fewer), and a brand-new exch value
+            // gets the next, distinct key rather than colliding with 'A'.
+            execute("insert into c values " +
+                    "('2020-01-05T00:00:00.000000Z','A','BTCUSDT',5.0), ('2020-01-05T06:00:00.000000Z','E','NEWUSDT',5.5)");
+            drainWalQueue();
+            Assert.assertFalse("c must not be suspended after the post-restore insert",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+
+            // Pre-checkpoint cells: (day1,A) (day1,B) (day2,A) (day2,B) (day3,C) == 5. The post-restore
+            // insert adds day5 for both A (reused cell) and E (brand-new cell) == +2 leaf partitions.
+            assertQuery("select count() from table_partitions('c')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n7\n");
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n8\n");
+
+            try (TableReader r = getReader("c")) {
+                Assert.assertEquals("repeated exch='A' must still resolve to its original key after a fresh insert",
+                        exchADimKeyBefore, r.keyOfDimensionValue(0, "A"));
+                int exchEKey = r.keyOfDimensionValue(0, "E");
+                Assert.assertTrue("brand-new exch='E' must get a genuinely new key, distinct from 'A'",
+                        exchEKey != exchADimKeyBefore && exchEKey >= 0);
+            }
         } finally {
             // Mirrors CheckpointTest#testCheckpointRestoreIndexNonPartitioned's own closing call (and its
             // class-wide @After safety net "checkpoint release"): checkpointRecover() does NOT itself
@@ -384,10 +477,56 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
     }
 
     /**
-     * Companion to {@link #testCheckpointRestoreRefusesRoutedCompositeTable()}: a composite table that
+     * Companion to {@link #testCheckpointRestoreRoutedCompositeTableRoundTrips()}: Plan 4d's fix does
+     * NOT cover every {@code TableSnapshotRestore} internal -- {@code rebuildBitmapIndexes} (only
+     * reached when the caller opts into {@code cairo.checkpoint.recovery.rebuild.column.indexes}, off by
+     * default) still resolves every partition's on-disk path the bare, cellKey-blind way, the same shape
+     * C2's now-fixed day-dir walk used to. A routed composite table CAN legitimately have an indexed real
+     * column (declared at CREATE time -- {@code ADD INDEX} is separately gated, see {@code
+     * CompositeUnsupportedOpsTest#testAddIndexGated}/{@code #testDropIndexGated}'s own documented
+     * workaround), so {@code TableSnapshotRestore} keeps a narrow, targeted refusal for exactly this
+     * combination instead of silently rebuilding a wrong (or missing) bitmap index. Mirrors {@code
+     * CheckpointTest}'s own {@code CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES} opt-in idiom (e.g.
+     * {@code testCheckpointRestoreIndexNonPartitioned}) to actually reach the guarded code path.
+     */
+    @Test
+    public void testCheckpointRestoreRefusesRoutedCompositeTableWithIndex() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+
+        engine.clear();
+        setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+        setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+
+        // exch is indexed AT CREATE time (retroactive ADD INDEX is separately gated -- see class javadoc).
+        execute("create table c (ts timestamp, exch symbol index, px double) timestamp(ts) partition by day, exch wal");
+        execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-02T00:00:00.000000Z','A',2.0)");
+        drainWalQueue();
+
+        execute("checkpoint create");
+
+        engine.clear();
+        setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+        try {
+            engine.checkpointRecover();
+            Assert.fail("expected checkpoint restore of a routed composite table with an indexed column to be refused");
+        } catch (CairoException e) {
+            TestUtils.assertContains(
+                    e.getFlyweightMessage(),
+                    "composite partitioning does not yet support checkpoint/snapshot restore of an indexed column");
+        } finally {
+            engine.checkpointRelease();
+            engine.releaseInactive();
+            engine.clear();
+        }
+    }
+
+    /**
+     * Companion to {@link #testCheckpointRestoreRoutedCompositeTableRoundTrips()}: a composite table that
      * has NEVER been committed -- the {@code _cell} registry is still empty, no cell has ever actually
-     * been routed -- must NOT be refused by the C2/C3 guard. Mirrors {@code TableSnapshotRestore
-     * #rebuildTableFiles}'s own documented condition (dimCount &gt; 0 AND the registry non-empty).
+     * been routed -- must NOT be refused, exactly as before Plan 4d (this case was never gated). Mirrors
+     * {@code TableSnapshotRestore#rebuildTableFiles}'s own documented {@code isRoutedComposite} condition
+     * (dimCount &gt; 0 AND the registry non-empty).
      */
     @Test
     public void testCheckpointRestoreAllowsNeverCommittedCompositeTable() throws Exception {

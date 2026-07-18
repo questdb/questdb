@@ -111,6 +111,16 @@ public final class CompositeInternerLayout {
     }
 
     /**
+     * Number of composite partition dimensions this layout was derived from (see {@link #of(PartitionSpec)}),
+     * i.e. the valid {@code [0, dimensionCount())} range for {@code dimIndex} arguments to
+     * {@link #needsDedicatedDict(int)}, {@link #dictName(int)}, {@link #dedicatedDictSlot(int)} and
+     * {@link #dictColumnNameTxn(int)}. Zero for {@link #EMPTY}.
+     */
+    public int dimensionCount() {
+        return dictNames.size();
+    }
+
+    /**
      * The dense slot of dimension {@code dimIndex}'s dedicated dictionary, or -1 if it needs none.
      */
     public int dedicatedDictSlot(int dimIndex) {

@@ -89,6 +89,13 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader;
+    // Set at the top of each rebuildTableFiles call (Plan 4d); true iff the CURRENT table is a
+    // composite table that has genuinely routed at least one cell (dimCount > 0 AND the _cell
+    // registry's committed count > 0 -- see the assignment site for the full derivation). Read by
+    // removePartitionDirsNotAttached (C2: day-dir cleanup must ask "is this day live at all", not a
+    // cellKey-0-only nameTxn match, once the table root holds bare day-dir CONTAINERS rather than real
+    // leaf partitions) and by the residual column-index restore guard (both below).
+    private boolean isRoutedComposite;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
     private Path partitionCleanPath;
     private DateFormat partitionDirFmt;
@@ -359,44 +366,63 @@ public class TableSnapshotRestore implements QuietCloseable {
             txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
             txWriter.unsafeLoadAll();
 
-            // C2/C3 (whole-branch review, Plan 4a): guard BEFORE any of this method's mutating steps
-            // (parquet validation/regeneration, symbol-file rebuild, bitmap-index rebuild, orphaned
-            // partition-dir cleanup) run. Every one of them assumes the pre-Plan-4a physical shape --
-            // each direct child of the table root IS a real leaf partition, one per distinct day,
-            // whose OWN name-txn is directly comparable 1:1 against _txn's per-(ts) [cellKey-0]
-            // record -- which is exactly what a REAL, routed composite table breaks: the table root
-            // instead holds BARE day-dir CONTAINERS (no name-txn of their own) with the real per-cell
-            // leaf partitions nested one level deeper. removePartitionDirsNotAttached (below) parses a
-            // bare day dir's [missing] name-txn suffix and compares it against a cellKey-0-only probe,
-            // so it can delete an entire live day -- every cell in it -- the moment that probe's
-            // answer doesn't match what it expects (C2); rebuildSymbolFilesForColumns (below) only
-            // iterates tableMetadata's real columns and never rebuilds the dedicated dimension
-            // dictionaries or the _cell registry (C3, ticket T-I3) -- both genuinely live, on-disk
-            // symbol maps once any cell has ever been routed, just as exposed to a torn file from a
-            // live copy as any real SYMBOL column's own files. A cell-aware restore is deferred to
-            // Plan 4d; until then, refuse outright rather than silently corrupt or lose data.
+            // C2/C3 (whole-branch review, Plan 4a; fixed Plan 4d): every mutating step below (parquet
+            // validation/regeneration, symbol-file rebuild, bitmap-index rebuild, orphaned partition-dir
+            // cleanup) originally assumed the pre-Plan-4a physical shape -- each direct child of the
+            // table root IS a real leaf partition, one per distinct day, whose OWN name-txn is directly
+            // comparable 1:1 against _txn's per-(ts) [cellKey-0] record -- which is exactly what a REAL,
+            // routed composite table breaks: the table root instead holds BARE day-dir CONTAINERS (no
+            // name-txn of their own) with the real per-cell leaf partitions nested one level deeper.
+            // isRoutedComposite (used by removePartitionDirsNotAttached below, C2) and
+            // rebuildCompositeInternerFiles (invoked from rebuildSymbolFiles below, C3/ticket T-I3) fix
+            // the two gaps that used to make this refuse outright.
             //
-            // Gate: dimCount > 0 (composite table) AND the _cell registry -- always the LAST reserved
-            // dense symbol-map slot for a composite table (TableWriter's own interner registration
-            // appends every dedicated dictionary first, then the registry, immediately before using
-            // this exact txWriter.getSymbolValueCount(slot) call to seed each one's initial clean
-            // count -- see TableWriter's composite-interner construction) -- is non-empty, i.e. at
-            // least one cell has genuinely been interned/routed. A composite table that has never
-            // routed a single cell (registry count 0: e.g. brand new and never committed, or one
-            // whose only data predates real per-cell routing) has no nested cell directories and no
-            // multi-entry _txn day at all, so every assumption above still holds exactly as it does
-            // for a plain table -- correctly NOT refused, matching the requirement that a dormant
-            // composite restore keeps working. Every dimension (IDENTITY/HASH/TRUNCATE alike) requires
-            // a SYMBOL source column (enforced at CREATE), so dimCount > 0 always guarantees at least
-            // one real symbol column plus the registry slot -- getSymbolColumnCount() - 1 is always a
-            // valid, in-bounds index whenever this branch is taken.
-            if (tableMetadata.getPartitionSpec().getDimensionCount() > 0) {
-                int registrySlot = txWriter.getSymbolColumnCount() - 1;
-                if (txWriter.getSymbolValueCount(registrySlot) > 0) {
-                    throw CairoException.critical(0)
-                            .put("composite partitioning does not yet support checkpoint/snapshot restore [table=")
-                            .put(tablePath.trimTo(pathTableLen))
-                            .put(']');
+            // isRoutedComposite: dimCount > 0 (composite table) AND the _cell registry -- always the
+            // LAST reserved dense symbol-map slot for a composite table (TableWriter's own interner
+            // registration appends every dedicated dictionary first, then the registry, immediately
+            // before using this exact txWriter.getSymbolValueCount(slot) call to seed each one's initial
+            // clean count -- see TableWriter's composite-interner construction) -- is non-empty, i.e. at
+            // least one cell has genuinely been interned/routed. A composite table that has never routed
+            // a single cell (registry count 0: e.g. brand new and never committed, or one whose only
+            // data predates real per-cell routing) has no nested cell directories and no multi-entry
+            // _txn day at all, so every assumption above still holds exactly as it does for a plain
+            // table -- isRoutedComposite is correctly false, matching the requirement that a dormant
+            // composite restore keeps working unmodified. Every dimension (IDENTITY/HASH/TRUNCATE alike)
+            // requires a SYMBOL source column (enforced at CREATE), so dimCount > 0 always guarantees at
+            // least one real symbol column plus the registry slot -- getSymbolColumnCount() - 1 is
+            // always a valid, in-bounds index whenever the dimCount > 0 branch is taken.
+            isRoutedComposite = tableMetadata.getPartitionSpec().getDimensionCount() > 0
+                    && txWriter.getSymbolValueCount(txWriter.getSymbolColumnCount() - 1) > 0;
+
+            // Residual sub-case Plan 4d does NOT fix: rebuildBitmapIndexes (below, only reached when the
+            // caller opts into rebuildPartitionColumnIndexes -- off by default, see
+            // CairoConfiguration#getCheckpointRecoveryRebuildColumnIndexes) resolves every partition's
+            // on-disk path via the bare, cellKey-blind 5-arg TableUtils#setPathForNativePartition (no
+            // cellSegment) -- the same shape as C2's now-fixed day-dir walk and every other bare-path
+            // call site Plan 4b's feature-gate sweep found and gated, but this one sits behind this
+            // class's OWN (until now, blanket) entry-point gate, so that sweep explicitly deferred
+            // auditing it (see .superpowers/sdd/plan4b-feature-gate-sweep-report.md, "Honest open items"
+            // -- "TableSnapshotRestore's many internal rebuild* methods sit behind that class's single
+            // already-gated entry point"). A real composite table CAN legitimately have an indexed real
+            // column declared at CREATE time (ADD INDEX is separately gated, but CREATE-time SYMBOL
+            // INDEX is not -- see CompositeUnsupportedOpsTest#testDropIndexGated's own documented
+            // workaround), so this is reachable, not just theoretical. Parquet needs no equivalent guard
+            // here: CONVERT PARTITION TO PARQUET is unconditionally gated for composite (see
+            // CompositeUnsupportedOpsTest#testConvertPartitionToParquetGated), so a real composite table
+            // can never legitimately reach parquet format, and prepareParquetPartitions's own
+            // isPartitionParquet(i) check always skips every partition. Refuse loudly rather than
+            // silently rebuild a wrong (or missing) bitmap index, mirroring this whole project's
+            // no-silent-path convention, until a dedicated fix threads cellSegment through the
+            // bitmap-index restore path too.
+            if (isRoutedComposite && rebuildPartitionColumnIndexes) {
+                for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+                    if (tableMetadata.isColumnIndexed(i)) {
+                        throw CairoException.critical(0)
+                                .put("composite partitioning does not yet support checkpoint/snapshot restore of an indexed column [table=")
+                                .put(tablePath.trimTo(pathTableLen))
+                                .put(", column=").put(tableMetadata.getColumnName(i))
+                                .put(']');
+                    }
                 }
             }
 
@@ -1336,21 +1362,115 @@ public class TableSnapshotRestore implements QuietCloseable {
         final String tablePathStr = tablePath.toString();
 
         final int columnCount = tableMetadata.getColumnCount();
-        if (columnCount == 0) {
-            return;
+        if (columnCount > 0) {
+            // Cursor over columns: each worker pulls column indices and rebuilds the
+            // symbol files of the symbol columns, reusing one Path per worker instead
+            // of allocating a Path (and queuing a future/lambda) per symbol column.
+            final AtomicInteger cursor = new AtomicInteger(0);
+            final int workerCount = Math.min(threadCount, columnCount);
+            for (int w = 0; w < workerCount; w++) {
+                futures.add(submitParallelTask(() -> rebuildSymbolFilesForColumns(
+                        tablePathStr,
+                        recoveredSymbolFiles,
+                        cursor,
+                        columnCount
+                )));
+            }
         }
-        // Cursor over columns: each worker pulls column indices and rebuilds the
-        // symbol files of the symbol columns, reusing one Path per worker instead
-        // of allocating a Path (and queuing a future/lambda) per symbol column.
-        final AtomicInteger cursor = new AtomicInteger(0);
-        final int workerCount = Math.min(threadCount, columnCount);
-        for (int w = 0; w < workerCount; w++) {
-            futures.add(submitParallelTask(() -> rebuildSymbolFilesForColumns(
-                    tablePathStr,
-                    recoveredSymbolFiles,
-                    cursor,
-                    columnCount
-            )));
+
+        // C3/ticket T-I3 (Plan 4d): a composite table's per-dimension dedicated dictionaries and its
+        // _cell registry are ordinary dense _txn symbol maps too (columnIndex == -1, registered into
+        // denseSymbolMapWriters right after every real column -- see
+        // TableWriter#configureColumnMemory), committed via _txn exactly like a real symbol column's
+        // (Plan 2) -- but they sit OUTSIDE tableMetadata's real column range (getColumnCount() above),
+        // so the cursor-driven loop never reaches them. Rebuild them here, addressed by their
+        // CompositeInternerLayout name/nameTxn rather than a column index, as one extra sibling task.
+        // Gated on hasInterners() (dimCount > 0), NOT isRoutedComposite: mirrors how a real symbol
+        // column's files are rebuilt unconditionally above regardless of whether that column has ever
+        // been populated -- rebuilding a still-empty (count 0) dedicated dict/registry is a cheap,
+        // idempotent no-op (SymbolMapUtil#rebuildSymbolFiles truncates the .o/.k/.v files to the
+        // existing header's capacity and returns immediately once it sees an empty .c file), and doing
+        // it unconditionally means this code does not need to duplicate isRoutedComposite's own
+        // registry-count probe to decide whether it's "worth" running.
+        CompositeInternerLayout layout = CompositeInternerLayout.of(tableMetadata.getPartitionSpec());
+        if (layout.hasInterners()) {
+            futures.add(submitParallelTask(() -> rebuildCompositeInternerFiles(tablePathStr, recoveredSymbolFiles, layout)));
+        }
+    }
+
+    /**
+     * Sibling of {@link #rebuildSymbolFilesForColumns}, invoked from the same {@link #rebuildSymbolFiles}
+     * orchestration as one extra parallel task: rebuilds a composite table's dedicated dimension
+     * dictionaries (one per {@code TRUNCATE}/{@code EXPRESSION} dimension, {@link CompositeInternerLayout
+     * #dedicatedCount()} of them) and its {@code _cell} registry, using the exact same {@link
+     * SymbolMapUtil#rebuildSymbolFiles} mechanism {@link #rebuildSymbolFilesForColumns} uses for real
+     * columns, just addressed by {@link CompositeInternerLayout} name/nameTxn instead of a column index.
+     * <p>
+     * Slot arithmetic mirrors {@code TableWriter#configureColumnMemory}'s own registration order
+     * exactly: every real symbol column's {@link SymbolMapWriter} is added to {@code
+     * denseSymbolMapWriters} first (dense index {@code 0 .. registrySlot - dedicatedCount() - 1}), then
+     * each dimension that {@link CompositeInternerLayout#needsDedicatedDict(int)} in dimension order
+     * (dense index {@code registrySlot - dedicatedCount() .. registrySlot - 1}), then the registry last
+     * (dense index {@code registrySlot}). {@code registrySlot == txWriter.getSymbolColumnCount() - 1} is
+     * the same derivation {@code isRoutedComposite} itself uses, so a dedicated dict's or the registry's
+     * clean committed count reads back from {@code _txn} at the identical slot {@code TableWriter} wrote
+     * it to and seeded each {@link SymbolMapWriter} from at open.
+     */
+    private void rebuildCompositeInternerFiles(
+            String tablePathStr,
+            AtomicInteger recoveredSymbolFiles,
+            CompositeInternerLayout layout
+    ) {
+        final Path path = new Path();
+        try {
+            final int registrySlot = txWriter.getSymbolColumnCount() - 1;
+            final int dedicatedBase = registrySlot - layout.dedicatedCount();
+            for (int i = 0, n = layout.dimensionCount(); i < n && !abortParallelTasks.get(); i++) {
+                if (!layout.needsDedicatedDict(i)) {
+                    continue;
+                }
+                final int slot = dedicatedBase + layout.dedicatedDictSlot(i);
+                final int cleanSymbolCount = txWriter.getSymbolValueCount(slot);
+                final String dictName = layout.dictName(i);
+
+                LOG.info().$("rebuilding composite dictionary symbol files [table=").$(tablePathStr)
+                        .$(", dim=").$safe(dictName)
+                        .$(", count=").$(cleanSymbolCount)
+                        .I$();
+
+                final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
+                symbolMapUtil.rebuildSymbolFiles(
+                        configuration,
+                        path.of(tablePathStr),
+                        dictName,
+                        layout.dictColumnNameTxn(i),
+                        cleanSymbolCount,
+                        -1,
+                        TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE
+                );
+                recoveredSymbolFiles.incrementAndGet();
+            }
+
+            if (!abortParallelTasks.get()) {
+                final int cleanRegistryCount = txWriter.getSymbolValueCount(registrySlot);
+                LOG.info().$("rebuilding composite cell registry symbol files [table=").$(tablePathStr)
+                        .$(", count=").$(cleanRegistryCount)
+                        .I$();
+
+                final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
+                symbolMapUtil.rebuildSymbolFiles(
+                        configuration,
+                        path.of(tablePathStr),
+                        CompositeInternerLayout.REGISTRY_NAME,
+                        CompositeInternerLayout.REGISTRY_TXN,
+                        cleanRegistryCount,
+                        -1,
+                        TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE
+                );
+                recoveredSymbolFiles.incrementAndGet();
+            }
+        } finally {
+            path.close();
         }
     }
 
@@ -1422,7 +1542,28 @@ public class TableSnapshotRestore implements QuietCloseable {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
                 long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
-                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
+                // C2 (Plan 4b Task 1b's TableWriter fix, mirrored here for the restore path in Plan 4d):
+                // for a routed composite table (isRoutedComposite), this walk's immediate table-root
+                // children are bare DAY containers, not leaf partitions -- a cell's own nameTxn suffix
+                // lives one level deeper (TableUtils#setPathForNativePartition's cellSegment overload),
+                // and the day container itself is NEVER dot-suffixed. The plain txn-mismatch check below
+                // assumes a day-level nameTxn directly comparable to the cellKey-0-only
+                // getPartitionNameTxnByPartitionTimestamp, which is the wrong question here: the moment
+                // ANY cell (cellKey 0 or otherwise) under a live day acquires its own non-sentinel
+                // nameTxn via a real merge/extend, this bare day dir's parsed txn (-1) stops matching
+                // that cellKey-0-resolved "expected" nameTxn, and unconditional removal below would
+                // delete the WHOLE day -- every live sibling cell nested under it. Ask only "is this day
+                // live AT ALL" (any cellKey) via the same cellKey-agnostic TxReader primitive
+                // TableWriter#removePartitionDirsNotAttached uses. A genuinely fully-evicted day (no
+                // cell attached at all) is still swept exactly as before -- nothing live can be under it
+                // either way. A dormant composite table (isRoutedComposite false: never routed, or
+                // pre-existing data that predates routing) is physically shaped exactly like a plain
+                // table, so it keeps the original cellKey-0/nameTxn-match check unmodified, same as a
+                // genuinely plain table.
+                boolean keep = isRoutedComposite
+                        ? txWriter.hasAnyAttachedPartitionForTimestamp(dirTimestamp)
+                        : txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn;
+                if (keep) {
                     return;
                 }
                 if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
