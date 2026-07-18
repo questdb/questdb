@@ -87,7 +87,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     public void testCursorReuseWithoutCloseResolvesAgainstRebuiltDictionary() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}});
             final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
             final ObjList<Function> functions = functions(function);
             try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
@@ -119,7 +119,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     public void testFactoryCloseReleasesCursorOwnedState() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha"}, {"beta"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}, {"beta"}});
             final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
             final ObjList<Function> functions = functions(function);
             try {
@@ -146,7 +146,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     public void testFunctionInitFailureClosesBaseCursorAndFunctions() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha", "beta"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha", "beta"}});
             final TrackingSymbolFunction functionA = new TrackingSymbolFunction(new StrColumn(0));
             final TrackingSymbolFunction functionB = new FailingInitSymbolFunction(new StrColumn(1));
             final ObjList<Function> functions = functions(functionA, functionB);
@@ -172,7 +172,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
             // (source key 100) appears three times, beta (200) once. The projection caches the
             // source-key -> result-key translation per source, so it must intern each distinct
             // source value exactly once and serve the rest from the cache.
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{
                     {"alpha"},
                     {"alpha"},
                     {"beta"},
@@ -215,7 +215,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     public void testPartialSourceStateFailureClosesCursorAndFunctions() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha", "beta"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha", "beta"}});
             base.cursor.symbolTableFailureColumn = 1;
             final TrackingSymbolFunction functionA = new TrackingSymbolFunction(new StrColumn(0));
             final TrackingSymbolFunction functionB = new TrackingSymbolFunction(new StrColumn(1));
@@ -241,7 +241,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     @Test
     public void testProjectionDelegatesRowIdToTheBaseRecord() throws Exception {
         assertMemoryLeak(() -> {
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha"}, {"beta"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}, {"beta"}});
             final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
             final ObjList<Function> functions = functions(function);
             try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
@@ -265,7 +265,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     public void testSourceStateRegistrationFailureIsCleanAndRetryable() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}});
             final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
             final ObjList<Function> functions = functions(function);
             try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
@@ -301,7 +301,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     @Test
     public void testTextReadsBypassTheSymbolFunction() throws Exception {
         assertMemoryLeak(() -> {
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{{"alpha", "beta"}});
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha", "beta"}});
             final TrackingSymbolFunction functionA = new TrackingSymbolFunction(new StrColumn(0));
             final TrackingSymbolFunction functionB = new TrackingSymbolFunction(new StrColumn(1));
             final ObjList<Function> functions = functions(functionA, functionB);
@@ -331,7 +331,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     public void testUnsupportedSourceSymbolTableFallsBackToTextKeys() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE,new String[][]{
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{
                     {"alpha"},
                     {null},
                     {"beta"},
