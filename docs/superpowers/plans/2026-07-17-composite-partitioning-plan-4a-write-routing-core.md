@@ -107,25 +107,31 @@
 
 ---
 
-### Task 5: `switchPartitions` / `openPartition` / partition-advance generalized to `(ts, cellKey)`
+### Task 5: Per-cell frontiers — multi-commit / continuous composite ingestion (remove the guard)
 
-**Files:**
-- Modify: `TxWriter.switchPartitions` (`:569`, currently hardcodes `initPartitionAt(..., 0)`) to take/seal/open the correct `(ts, cellKey)` cell; `TableWriter.switchPartition` + `openPartition(timestamp, rowCount)` (`:9211`) to thread cellKey into `setStateForTimestamp`/the dir-creation `mkdirs`; and confirm `getNextExistingPartitionTimestamp`'s stride advance walks `(ts, cellKey)`-ordered records correctly for the append tail (per research §5).
-- Test: `CompositeRoutingTest` (extend) — an in-order append that crosses a day boundary within a single hot cell, plus interleaved writes to two cells in one commit, both read back correct.
+**Scope note:** Task 4's opus review widened this beyond the original "switch/open/advance" — the whole single-active-tail frontier machinery is cell-blind. This task makes REPEATED commits into a composite table route correctly and REMOVES the Task-4 second-commit guard. **Keep composite tables on the always-full-commit path** (the guard fix already made `applyFromWalLagToLastPartitionPossible` return false for composite; making the WAL-LAG copy/apply itself cell-aware is a later perf optimization, out of scope — composite = always route through `processO3BlockComposite`).
+
+**Files (all `core/src/main/java/io/questdb/cairo/`):**
+- `TxWriter.switchPartitions` (`:569`, hardcodes `initPartitionAt(..., 0)`) + `getNextPartitionTimestamp`/`getNextExistingPartitionTimestamp` — the review found `getNextPartitionTimestamp` conflates a partition-SPLIT sibling with an ordinary sibling CELL sharing a day, corrupting `partitionTimestampHi` from the first commit (inert only because the guard blocks the 2nd). Make the advance cell-aware over `(ts,cellKey)`-ordered records.
+- `TableWriter.o3ConsumePartitionUpdateSink` — the `partitionTimestamp == lastPartitionTimestamp` special-cases (`closeActivePartition`/`setAppendPosition`/`transientRowCount`/`fixedRowCount` accounting, ~`:8884`, `:8897-8912`, `:8949`) assume ONE last partition; make them per-cell so two cells sharing the last day each finalize their own row count/size.
+- `TableWriter.openPartition`/`setStateForTimestamp`/`partitionTimestampHi`/`lastOpenPartition*`/`columns`/`indexers` — the active-tail state must track the correct cell (process cells sequentially, re-point the single open-handle set per cell, or a small per-cell cache — pick the simplest correct approach).
+- `TableWriter.guardCompositeSecondCommitNotYetSupported` — REMOVE it (and the `applyFromWalLagToLastPartitionPossible` force-full stays, but the throw goes) once the above are cell-aware.
+- Minor carry: the orphan bare day-root artificial partition (`openPartition(o3TimestampMin, 0)` at empty-table first commit) — make it cell-aware or avoid it.
+- Test: `CompositeRoutingTest` / `CompositeEndToEndTest`.
 
 **Interfaces:**
-- Consumes: Task 4's per-cell iteration; the `(ts,cellKey)` `_txn` records.
-- Produces: the writer opens/seals the correct cell's column files as the loop moves between cells; per-cell `transientRowCount` (already a per-cell `_txn` field) is finalized correctly.
+- Consumes: Task 4's per-cell routing + `(ts,cellKey)` `_txn`/`_cv` records; per-cell `transientRowCount` is already a per-cell `_txn` field.
+- Produces: repeated composite commits (into new days AND into already-routed days/cells, in-order AND out-of-order) route correctly; the second-commit guard is gone; `SELECT` == plain twin.
 
-- [ ] **Step 1: Write the failing test** — insert into cell A day1, cell B day1, cell A day2 (one composite table) and a plain twin (day1×2, day2); assert row counts per (day, exch) and the aggregate scan match the twin, and that A-day1's sealed size isn't clobbered by B-day1.
+- [ ] **Step 1: Write the failing test** — the exact sequence Task 4's review named as silently corrupting: commit 1 routes `(day1: A,B)`; commit 2 (separate `insert` + `drainWalQueue`) adds `(day1: A,B)` again AND `(day2: A,B)`; a plain twin gets identical data. Assert per-`(day,exch)` counts + the full ordered scan + `LATEST ON ts PARTITION BY exch` all match the twin, with NO guard exception (the guard is being removed). Add an out-of-order variant (commit 2 targets an earlier day). Show it RED against the current guard/cell-blind accounting → GREEN.
 
-- [ ] **Step 2: Run** — FAIL (single-tail assumption seals/opens the wrong cell).
+- [ ] **Step 2: Run** — FAIL (guard throws / cell-blind accounting corrupts).
 
-- [ ] **Step 3: Implement** — generalize the switch/open/advance to cellKey; keep plain (cellKey 0) byte-identical.
+- [ ] **Step 3: Implement** — per-cell frontier handling for the sequential per-cell processing; fix `getNextPartitionTimestamp`/`partitionTimestampHi`; make the consume accounting per-cell; remove the guard. Keep plain (dimCount 0) byte-identical — every change behind the composite gate. If the full generalization is too large, land it incrementally (e.g. new-day-only multi-commit first, then same-day-cell multi-commit) but the guard must not be removed until NO silent-corruption sequence remains — if any sequence can't be made correct yet, keep a narrower guard for exactly that sequence (loud, never silent) and document it.
 
-- [ ] **Step 4: Run** — PASS. Regression: `TableWriterTest` + `CompositeEndToEndTest` green.
+- [ ] **Step 4: Run** — PASS. Regression: `TableWriterTest`, `CompositeEndToEndTest`, `CompositePartitionDdlTest`, `O3PartitionPurgeTest`, `O3SquashPartitionTest` all green; the capstone's multi-operation composite pattern works under live routing.
 
-- [ ] **Step 5: Commit** — `feat(cairo): per-cell switchPartitions/openPartition and (ts,cellKey) partition advance`
+- [ ] **Step 5: Commit** — `feat(cairo): per-cell frontiers for multi-commit composite ingestion; remove second-commit guard`
 
 ---
 
