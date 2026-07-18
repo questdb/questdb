@@ -77,6 +77,15 @@ set -euo pipefail
 # Under `sudo`, $HOME is /root — derive the invoking user's home from SUDO_USER instead.
 WT="${WT:-/home/${SUDO_USER:-$(id -un)}/claude/wt/oss/adaptive-commit}"
 JAR="${JAR:-$WT/benchmarks/target/benchmarks.jar}"
+# Prefer the lean exploded classpath: the FunctionFactory scan hits the ~10MB core jar (~0.5s) instead
+# of the 44MB shaded fat jar (~2min per JVM start). Falls back to the self-contained fat jar if the
+# classpath file is absent. Build it with: mvn -q -pl benchmarks dependency:build-classpath \
+#   -Dmdep.outputFile="$PWD/benchmarks/target/bench-cp.txt"
+if [ -d "$WT/benchmarks/target/classes" ] && [ -s "$WT/benchmarks/target/bench-cp.txt" ]; then
+    CP="$WT/benchmarks/target/classes:$(cat "$WT/benchmarks/target/bench-cp.txt")"
+else
+    CP="$JAR"
+fi
 # QuestDB needs these JVM flags on JDK 21+ (same set as core/pom.xml argLine).
 # WITHOUT --add-exports ...jdk.internal.vm=ALL-UNNAMED the worker continuation class
 # fails to init and QuestDB runs DEGRADED (workers dead) — invalidating the test.
@@ -237,7 +246,7 @@ run_one() {
     local DBDIR="$MNT/db"
     mkdir -p "$DBDIR"
     echo "  [5] starting CrashIngestWriter (commitMode=$MODE) → $DBDIR"
-    java $QDB_JVM -cp "$JAR" \
+    java $QDB_JVM -cp "$CP" \
         -DcommitMode="$MODE" \
         -Dgroup.window.us="$W" \
         -Dbatched="$BATCHED" \
@@ -313,7 +322,7 @@ run_one() {
     VERIFY_EXIT=0
     # The verifier must be told the mode + W (mode is not stored on disk): adaptive runs the recovery
     # triple and the (C,Wm) oracle; SYNC/NOSYNC take the original bit-check path.
-    VERIFY_OUT=$(java $QDB_JVM -cp "$JAR" -DcommitMode="$MODE" -Dgroup.window.us="$W" \
+    VERIFY_OUT=$(java $QDB_JVM -cp "$CP" -DcommitMode="$MODE" -Dgroup.window.us="$W" \
         org.questdb.CrashVerifier "$DBDIR" 2>&1) || VERIFY_EXIT=$?
     echo "$VERIFY_OUT"
 
