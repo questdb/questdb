@@ -225,10 +225,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
-    // Min interval between adaptive durable epochs per table (ms); default 1000. See
+    // Min interval between adaptive durable epochs per table (ms); default 60000. See
     // CairoConfiguration.getAdaptiveEpochIntervalMs / ApplyWal2TableJob.
     private final long adaptiveEpochIntervalMs;
-    private long adaptiveEpochMaxRows;
+    // Max rows applied to a table since its last durable epoch before an epoch is FORCED, independent
+    // of the interval. Bounds WAL retention + recovery replay. Default 5_000_000; <= 0 disables the cap.
+    private final long adaptiveEpochMaxRows;
     // Adaptive group-commit window (us); default 0 = synchronous fsync-before-return (zero loss). >0 batches
     // the WAL fdatasync across an adaptive table's commits within the window (RPO <= W). See
     // CairoConfiguration.getAdaptiveCommitGroupWindowUs / WalWriter group-commit / WalPurgeJob flusher.
