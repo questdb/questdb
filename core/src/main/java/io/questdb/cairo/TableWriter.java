@@ -13949,6 +13949,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long repairDataGaps(final long timestamp) {
+        // Plan 4a Task 6: this walk enumerates attached partitions BY DAY ONLY (the loop below
+        // advances via getNextPartitionTimestamp, which -- correctly, per Task 5's own fix -- skips
+        // every composite CELL SIBLING sharing one day's exact raw ts) and, per day visited, tallies
+        // exactly ONE entry's row count (getPartitionRowCountByTimestamp -> the thin cellKey=0 wrapper
+        // around findAttachedPartitionRawIndexBy -- see that method's own docs). For a plain (or
+        // dormant-composite) table there is only ever one entry per day, so this is exactly correct.
+        // For a REAL composite table with 2+ cells sharing at least one day, it silently ignores every
+        // sibling cell's rows, undercounts the recomputed fixedRowCount, and -- because that then
+        // mismatches the correctly-persisted _txn state -- OVERWRITES the correct state with the
+        // wrong, undercounted one via txWriter.reset(...) below: a genuine, reproduced native-heap-
+        // corrupting bug (glibc "malloc(): invalid size (unsorted)"/"corrupted top size"), found by
+        // this task's own reopen-routing test. This method's body only ever runs from a fresh
+        // TableWriter bootstrap (initLastPartition <- configureAppendPosition, called from the
+        // constructor and from rollback()), which is exactly why no earlier composite test ever
+        // exercised it: none released and reopened a writer instance mid a multi-cell-day sequence.
+        // Properly generalizing this crash-gap repair to walk and validate every cell's own physical
+        // directory is a materially larger change -- the same "detach/attach/Parquet cell paths"
+        // bucket Plan 4a's own decomposition already defers to its 4b follow-up -- so this skips the
+        // repair walk entirely for a real composite table rather than claiming a fix: the method only
+        // ever *repairs* a detected mismatch, so skipping it is a strict no-op for a table that never
+        // hit this undercounting bug, and safe (rather than actively harmful) for one that does, since
+        // the already-correct, persisted _txn state (Task 5's own guarantee) is left alone instead of
+        // being overwritten by a wrong recomputation. Plain and dormant-composite tables are completely
+        // unaffected -- same gate as every other Task 5 fix site (finishO3Commit, o3ConsumePartitionUpdateSink,
+        // processO3Block).
+        final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+        if (composite) {
+            return timestamp;
+        }
         if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
             long lastTimestamp = -1;
