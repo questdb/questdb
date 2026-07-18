@@ -114,6 +114,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getAdaptiveEpochMaxRows() {
+        return getDelegate().getAdaptiveEpochMaxRows();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }

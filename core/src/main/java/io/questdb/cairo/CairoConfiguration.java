@@ -220,6 +220,18 @@ public interface CairoConfiguration {
     }
 
     /**
+     * The maximum rows applied to a table since its last durable epoch before an epoch is FORCED,
+     * independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds both post-epoch WAL retention (the
+     * {@code WalPurgeJob} floor is the epoch) and post-crash recovery-replay lag, so the interval can be
+     * long without either growing unbounded. {@code <= 0} disables the cap (interval-only cadence).
+     *
+     * @return the per-table un-epoched applied-row cap; {@code <= 0} disables it
+     */
+    default long getAdaptiveEpochMaxRows() {
+        return 5_000_000;
+    }
+
+    /**
      * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
      * {@code cairo.adaptive.commit.group.window.us}). Default {@code 0} keeps today's synchronous
      * fsync-before-return under {@link CommitMode#ADAPTIVE}: every acked WAL commit is fdatasync-durable

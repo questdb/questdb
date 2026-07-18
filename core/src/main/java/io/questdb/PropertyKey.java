@@ -51,6 +51,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     // worker fires a durable epoch at most this often, right after an apply batch commits while it
     // still holds the writer. 0 => every batch; NEGATIVE => epochs disabled. See ApplyWal2TableJob.
     CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS("cairo.adaptive.epoch.interval.ms"),
+    // Max rows applied to a table since its last durable epoch before an epoch is FORCED, independent of
+    // the interval above. Bounds post-epoch WAL retention (the WalPurgeJob floor IS the epoch) + recovery
+    // replay, so the interval can be long. Default 5_000_000; <= 0 disables the cap. See ApplyWal2TableJob.
+    CAIRO_ADAPTIVE_EPOCH_MAX_ROWS("cairo.adaptive.epoch.max.rows"),
     // Plan 3 Task C: run the adaptive durable-epoch recovery roll-forward at startup. Default true;
     // false makes it a no-op (operator kill-switch / negative-control test hook). See RecoveryCoordinator.
     CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
