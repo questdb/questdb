@@ -2179,7 +2179,7 @@ public class ExpressionParser {
                             // it rather than at 'from', which is only where the parser noticed.
                             if (SqlKeywords.isFromKeyword(tok)) {
                                 int localDepth = 0;
-                                boolean balanced = false;
+                                boolean isBalanced = false;
                                 CharSequence ahead;
                                 while ((ahead = SqlUtil.fetchNext(lexer)) != null) {
                                     if (ahead.length() == 1) {
@@ -2188,7 +2188,7 @@ public class ExpressionParser {
                                             localDepth++;
                                         } else if (c == ')') {
                                             if (localDepth == 0) {
-                                                balanced = true;
+                                                isBalanced = true;
                                                 break;
                                             }
                                             localDepth--;
@@ -2197,7 +2197,7 @@ public class ExpressionParser {
                                         }
                                     }
                                 }
-                                if (!balanced) {
+                                if (!isBalanced) {
                                     for (int i = 0, n = opStack.size(); i < n; i++) {
                                         ExpressionNode open = opStack.peek(i);
                                         if (open.type == ExpressionNode.CONTROL && !open.token.isEmpty() && open.token.charAt(0) == '(') {

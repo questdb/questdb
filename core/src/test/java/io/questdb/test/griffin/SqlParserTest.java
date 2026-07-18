@@ -15072,7 +15072,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // FROM must point at the unclosed '(', not at FROM (which is only where
         // the parser first notices the problem).
         assertSyntaxError(
-                "select abs(1000*rnd_double(), timestamp_sequence('2022-07-01', 1000000) from long_sequence(1000000)",
+                "select abs(1000*rnd_double(), timestamp_sequence('2022-07-01', 1_000_000) from long_sequence(1_000_000)",
                 10,
                 "unbalanced ("
         );
