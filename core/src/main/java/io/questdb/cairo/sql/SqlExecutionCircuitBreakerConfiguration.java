@@ -32,15 +32,15 @@ public interface SqlExecutionCircuitBreakerConfiguration {
 
     boolean checkConnection();
 
-    int getBufferSize();
-
     int getCircuitBreakerThrottle();
 
     /**
      * Minimum wall-clock interval, in milliseconds, between heavy connection probes performed by
-     * {@link SqlExecutionCircuitBreaker#statefulThrowExceptionIfTrippedTimeThrottled()}. Cancellation
-     * and timeout are still checked on every call; only the recv() connection probe is throttled, so
-     * a coarse, re-scanned check site (e.g. a per-page-frame scan re-run once per master row by a
+     * {@link SqlExecutionCircuitBreaker#statefulThrowExceptionIfTrippedTimeThrottled()},
+     * {@link SqlExecutionCircuitBreaker#checkIfTripped(long, long)} and
+     * {@link SqlExecutionCircuitBreaker#getState(long, long)}. Cancellation and timeout are still
+     * checked on every call; only the hangup-poll connection probe is throttled, so a coarse,
+     * re-scanned check site (e.g. a per-page-frame scan re-run once per master row by a
      * nested-loop join) cannot turn into one syscall per re-scan.
      */
     default long getCircuitBreakerConnectionCheckThrottle() {
