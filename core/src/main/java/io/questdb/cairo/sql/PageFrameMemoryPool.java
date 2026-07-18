@@ -827,6 +827,35 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
+     * Releases every resource and borrowed binding owned by the current query while retaining
+     * reusable container allocations for the next {@link #of(PageFrameAddressCache)} call.
+     * <p>
+     * Callers must first abandon any {@link PageFrameMemoryRecord} aliases into this pool. This
+     * method closes the pool-local decoders while their source frame decoders are still valid, so
+     * it must also run before the cursor that owns the address cache's Parquet metadata mappings is
+     * closed. The address cache itself is borrowed and must be cleared separately by its owner.
+     */
+    public void releaseQueryResources() {
+        releaseParquetBuffers();
+        releaseCoveringBuffers();
+        Misc.free(parquetMetaDecoder);
+        Misc.free(legacyDecoder);
+        activeDecoder = null;
+        addressCache = null;
+        memoryTracker = null;
+        hasFullProjectionMap = false;
+        hasTypeCasts = false;
+        parquetColumns.clear();
+        parquetIdxToDecodeSlot.clear();
+        columnIdToParquetIdx.clear();
+        queryToSlot.clear();
+        sourceColumnTypes.clear();
+        declaredFrameRowCounts.clear();
+        recordAtSlices.clear();
+        Misc.clear(recordAtRows);
+    }
+
+    /**
      * Frees every per-frame covered decode buffer. Called only at query
      * boundaries ({@link #of}, {@link #clear}, {@link #close}); see
      * {@link #coveringByFrame} for why covered buffers are query-lifetime rather

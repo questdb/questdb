@@ -605,6 +605,44 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMarkRemoteParquetStaleRejectsNonGeneratedPartition() throws Exception {
+        // [F G R U] = [1 0 0 1] is not produced by the storage-policy state machine: marking a
+        // parquet partition uploaded also sets G. Keep the defensive writer guard covered so a
+        // malformed/future state cannot silently lose U and become a local parquet partition with
+        // no generated data.parquet to read.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-02T00:00:00', 20)");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            try (TableWriter writer = getWriter("t")) {
+                TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("precondition: old partition is parquet-format", tx.isPartitionParquet(0));
+                Assert.assertTrue("precondition: local parquet was generated", tx.isPartitionParquetGenerated(0));
+                Assert.assertFalse("precondition: partition is writable", tx.isPartitionReadOnly(0));
+                Assert.assertFalse("precondition: partition is not uploaded", tx.isPartitionRemote(0));
+
+                tx.setPartitionParquetGenerated(0, false);
+                tx.setPartitionRemote(0, true);
+                Assert.assertTrue("the malformed tuple is classified as remotely served", tx.isPartitionRemotelyServed(0));
+                final long partitionTableVersion = tx.getPartitionTableVersion();
+
+                CairoException ex = Assert.assertThrows(
+                        CairoException.class,
+                        () -> writer.markParquetPartitionRemoteStale(0)
+                );
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot invalidate remotely-served parquet partition");
+
+                Assert.assertTrue("rejection preserves parquet format", tx.isPartitionParquet(0));
+                Assert.assertFalse("rejection preserves the absent local parquet marker", tx.isPartitionParquetGenerated(0));
+                Assert.assertFalse("rejection preserves writable state", tx.isPartitionReadOnly(0));
+                Assert.assertTrue("rejection must not clear REMOTE", tx.isPartitionRemote(0));
+                Assert.assertEquals("rejection must not bump partition metadata", partitionTableVersion, tx.getPartitionTableVersion());
+            }
+        });
+    }
+
+    @Test
     public void testNativePartitionWithStrayParquetMetadataReadsNativeOnDrop() throws Exception {
         // A native-format partition can transiently carry a data.parquet/_pm next to its native columns
         // (a staged/stray parquet sidecar), while its offset-3 word is a seqTxn, not a file size. A DROP of an
@@ -1009,6 +1047,33 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                 // every commit appends to the active partition and stamps it with the committed seqTxn
                 Assert.assertTrue(tx.getSeqTxn() > 0);
                 Assert.assertEquals(tx.getSeqTxn(), tx.getNativePartitionSeqTxn(0));
+            }
+        });
+    }
+
+    @Test
+    public void testWalBlockStampsFirstPartitionWithBlockFinalSeqTxn() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Two separately committed INSERTs are visible to the same apply pass. With an exact
+            // two-transaction lookahead they form one block spanning day1 and day2; day1 was last
+            // written by the first transaction but must be conservatively stamped with the block's
+            // final seqTxn.
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1)");
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 2)");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the two commits must create two partitions", 2, tx.getPartitionCount());
+                Assert.assertEquals("a fresh table with two INSERT commits ends at seqTxn 2", 2L, tx.getSeqTxn());
+                Assert.assertEquals(
+                        "the first partition touched by a WAL block must use its final seqTxn",
+                        tx.getSeqTxn(),
+                        tx.getNativePartitionSeqTxn(0)
+                );
             }
         });
     }

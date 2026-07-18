@@ -119,6 +119,37 @@ public class WalCustomEventTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCustomEventCommitsPriorPendingRows() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable("custom_pending_data");
+            int walId;
+            long customSeqTxn;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walId = walWriter.getWalId();
+                appendOneRow(walWriter, 1);
+                customSeqTxn = walWriter.appendCustomEvent(CUSTOM_TYPE_LONG, mem -> mem.putLong(42L));
+                // appendCustomEvent must have committed the preceding row, so this is a no-op.
+                walWriter.commit();
+            }
+
+            assertEquals(
+                    "custom event must be the final sequencer transaction",
+                    customSeqTxn,
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn()
+            );
+            try (Path path = new Path();
+                 WalEventReader reader = new WalEventReader(configuration)) {
+                segmentPath(path, tableToken, walId);
+                WalEventCursor cursor = reader.of(path, 0);
+                assertEquals("pending DATA must be sequenced first", WalTxnType.DATA, cursor.getType());
+                assertTrue(cursor.hasNext());
+                assertEquals("custom event must follow pending DATA", CUSTOM_TYPE_LONG, cursor.getType());
+                assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
     public void testCustomEventEmptyPayloadRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable("custom_empty");
@@ -216,6 +247,76 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 assertEquals(Long.BYTES, info.getPayloadSize());
                 assertEquals(payload, Unsafe.getUnsafe().getLong(info.getPayloadAddr()));
 
+                assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testCustomEventPayloadFailureDistressesAndExpelsWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable("custom_payload_failure");
+            long seqTxnBefore = engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
+            RuntimeException injected = new RuntimeException("injected custom WAL payload failure");
+
+            int failedWalId;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                failedWalId = walWriter.getWalId();
+                RuntimeException thrown = assertThrows(
+                        RuntimeException.class,
+                        () -> walWriter.appendCustomEvent(CUSTOM_TYPE_LONG, mem -> {
+                            // Leave a real partial native record before failing: txn/type and this
+                            // payload word are present, but length/sentinel/index are not finalized.
+                            mem.putLong(0x0123456789ABCDEFL);
+                            throw injected;
+                        })
+                );
+                assertSame("the payload callback's exception must propagate unchanged", injected, thrown);
+                assertTrue("a partial custom record must distress the writer", walWriter.isDistressed());
+                assertEquals(
+                        "a failed payload must not publish a sequencer transaction",
+                        seqTxnBefore,
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn()
+                );
+
+                boolean[] secondPayloadInvoked = {false};
+                CairoException distressed = assertThrows(
+                        CairoException.class,
+                        () -> walWriter.appendCustomEvent(CUSTOM_TYPE_SECOND, mem -> secondPayloadInvoked[0] = true)
+                );
+                assertFalse(
+                        "a distressed writer must reject before invoking another payload",
+                        secondPayloadInvoked[0]
+                );
+                assertTrue(distressed.getMessage(), distressed.getMessage().contains("WAL writer is distressed"));
+            }
+
+            int replacementWalId;
+            long replacementSeqTxn;
+            try (WalWriter replacement = engine.getWalWriter(tableToken)) {
+                replacementWalId = replacement.getWalId();
+                assertFalse("the replacement writer must be healthy", replacement.isDistressed());
+                replacementSeqTxn = replacement.appendCustomEvent(
+                        CUSTOM_TYPE_SECOND,
+                        mem -> mem.putLong(0x0FEDCBA987654321L)
+                );
+            }
+            assertTrue(
+                    "the distressed pooled writer must be expelled, not handed out again",
+                    replacementWalId != failedWalId
+            );
+            assertEquals(
+                    "only the replacement event may advance the sequencer",
+                    seqTxnBefore + 1,
+                    replacementSeqTxn
+            );
+
+            try (Path path = new Path();
+                 WalEventReader reader = new WalEventReader(configuration)) {
+                segmentPath(path, tableToken, replacementWalId);
+                WalEventCursor cursor = reader.of(path, 0);
+                assertEquals(CUSTOM_TYPE_SECOND, cursor.getType());
+                assertEquals(0x0FEDCBA987654321L, Unsafe.getUnsafe().getLong(cursor.getUnknownInfo().getPayloadAddr()));
                 assertFalse(cursor.hasNext());
             }
         });

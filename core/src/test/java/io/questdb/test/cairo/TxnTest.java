@@ -517,9 +517,9 @@ public class TxnTest extends AbstractCairoTest {
 
     @Test
     public void testOffset3ValueMaskBoundary() throws Exception {
-        // The offset-3 value occupies the low 56 bits; bit 56 is the first reserved flag bit. A value
-        // equal to PARTITION_VERSION_VALUE_MASK round-trips, and bit 56 set on top of a real size is
-        // masked off the value and never bleeds into REMOTE (bit 63).
+        // The offset-3 value occupies the low 56 bits. A value equal to
+        // PARTITION_VERSION_VALUE_MASK round-trips, while caller-supplied reserved bits 56..61 must
+        // be absent from the raw stored word, not merely hidden by the masked value accessor.
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
             assertMemoryLeak(() -> {
@@ -540,10 +540,20 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals(TxReader.PARTITION_VERSION_VALUE_MASK, tw.getPartitionParquetFileSize(0));
                         Assert.assertFalse(tw.isPartitionRemote(0));
 
-                        // bit 56 over a real size is masked off the value and does not reach REMOTE
-                        tw.setPartitionParquet(ts, (TxReader.PARTITION_VERSION_VALUE_MASK + 1) | 4096L);
-                        Assert.assertEquals("bit 56 is masked off the value", 4096L, tw.getPartitionParquetFileSize(0));
-                        Assert.assertFalse("bit 56 must not bleed into REMOTE", tw.isPartitionRemote(0));
+                        for (int bit = 56; bit <= 61; bit++) {
+                            tw.setPartitionParquet(ts, 4096L | (1L << bit));
+                            Assert.assertEquals(
+                                    "reserved input bit " + bit + " must not persist in the raw word",
+                                    4096L,
+                                    RawOffset3Reader.rawOffset3Of(tw, 0)
+                            );
+                            Assert.assertEquals(
+                                    "reserved input bit " + bit + " must be masked off the value",
+                                    4096L,
+                                    tw.getPartitionParquetFileSize(0)
+                            );
+                            Assert.assertFalse("reserved input bits must not bleed into REMOTE", tw.isPartitionRemote(0));
+                        }
                     }
                 }
             });

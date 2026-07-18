@@ -558,7 +558,9 @@ impl FooterBuilder {
 
         // Force feature bits to match section presence so a caller-set
         // feature_flags() can't desync from the actual payload.
-        let mut effective_flags = self.feature_flags;
+        let known_section_bits =
+            FooterFeatureFlags::SEQ_TXN_BIT | FooterFeatureFlags::SCRATCHPAD_BIT;
+        let mut effective_flags = FooterFeatureFlags(self.feature_flags.0 & !known_section_bits);
         if self.seq_txn.is_some() {
             effective_flags = effective_flags.with_seq_txn();
         }
@@ -759,6 +761,27 @@ mod tests {
 
         let footer = parse_footer(&buf, start);
         assert_eq!(footer.feature_flags(), FooterFeatureFlags::new());
+    }
+
+    #[test]
+    fn caller_flags_cannot_claim_absent_known_sections() {
+        use crate::types::FooterFeatureFlags;
+
+        let unknown_optional_bit = 1 << 5;
+        let caller_flags = FooterFeatureFlags(
+            FooterFeatureFlags::SEQ_TXN_BIT
+                | FooterFeatureFlags::SCRATCHPAD_BIT
+                | unknown_optional_bit,
+        );
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.feature_flags(caller_flags);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert_eq!(footer.feature_flags().0, unknown_optional_bit);
+        assert_eq!(footer.seq_txn(), None);
+        assert_eq!(footer.scratchpad_entries().count(), 0);
     }
 
     #[test]

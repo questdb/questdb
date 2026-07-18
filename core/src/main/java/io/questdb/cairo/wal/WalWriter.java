@@ -261,6 +261,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     public long appendCustomEvent(byte txnType, WalEventPayloadWriter payload) {
         try {
+            // A custom event is an ordering barrier. Publish any rows appended before it as a
+            // DATA transaction first; otherwise the custom event would receive the earlier
+            // seqTxn and a later commit would make those rows overtake their call-site order.
+            commit();
             lastSegmentTxn = events.appendCustomEvent(txnType, payload);
             return getSequencerTxn();
         } catch (Throwable th) {

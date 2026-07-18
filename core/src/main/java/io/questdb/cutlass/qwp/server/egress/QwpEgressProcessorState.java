@@ -138,8 +138,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private byte negotiatedVersion = QwpConstants.VERSION;
     // Page-frame iteration scaffolding. Allocated lazily on first page-frame query and
     // reused across queries on the same connection; per-query binding happens in
-    // beginStreamingPageFrame. None of these are freed on endStreaming -- only the
-    // per-query streamingPageFrameCursor is.
+    // beginStreamingPageFrame. endStreaming abandons every per-query binding and releases
+    // decoded resources, but keeps these reusable wrapper objects alive.
     private PageFrameAddressCache pageFrameAddressCache;
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
@@ -609,10 +609,30 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Releases the in-flight cursor + factory and marks streaming inactive.
+     * A page-frame query may have transferred opaque decode resources (for
+     * example, an enterprise cold-storage chunk lease) into the memory pool's
+     * final cached frame. Abandon the record and current-frame aliases first,
+     * then release the pool-local decoders and clear the address cache while
+     * their cursor-owned metadata mappings are still valid. Only after that is
+     * it safe to close the page-frame cursor. The wrapper objects themselves
+     * remain connection-scoped and are rebound by the next query.
+     * <p>
      * Idempotent -- safe to call from completion, error, or disconnect paths.
      */
     public void endStreaming() {
         streamingActive = false;
+        streamingCurrentPageFrame = null;
+        if (pageFrameMemoryRecord != null) {
+            // of(null) also drops the record's borrowed SymbolTableSource; clear()
+            // alone only abandons its page-address aliases.
+            pageFrameMemoryRecord.of(null);
+        }
+        if (pageFrameMemoryPool != null) {
+            pageFrameMemoryPool.releaseQueryResources();
+        }
+        if (pageFrameAddressCache != null) {
+            pageFrameAddressCache.clear();
+        }
         streamingCursor = Misc.free(streamingCursor);
         streamingPageFrameCursor = Misc.free(streamingPageFrameCursor);
         streamingFactory = Misc.free(streamingFactory);
@@ -626,7 +646,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
-        streamingCurrentPageFrame = null;
         streamingSqlText = null;
     }
 
