@@ -593,7 +593,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // concern, independently policy-gated at each write site via
                     // LocalDurabilityPolicy.resolveCommitMode (S5.1 Task 5).
                     if (totalTransactionCount > 0) {
-                        maybeAdvanceDurableEpoch(tableToken, writer);
+                        maybeAdvanceDurableEpoch(tableToken, writer, rowsAdded);
                     }
 
                     // The apply loop holds the writer across this batch of transactions and never
@@ -674,7 +674,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * epoch only means more WAL to roll forward on recovery, never data loss. Errors (OOM, writer
      * distress) propagate to the apply loop's existing failure handling.
      */
-    private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer) {
+    private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer, long rowsApplied) {
         // Per-table EFFECTIVE mode (Deferred 1): the epoch lifecycle is driven by THIS table's mode, so a
         // WITH commit_mode='adaptive' table fires epochs even under a NOSYNC instance default, while a
         // sibling NOSYNC table never does (fastest path).
@@ -695,10 +695,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        // Feed the backlog counter for THIS batch BEFORE the gate, so the just-applied rows count toward it.
+        tracker.addRowsSinceEpoch(rowsApplied);
         final long nowMs = microClock.getTicks() / 1000L;
         final long lastEpochTs = tracker.getLastEpochTs();
-        // Cadence gate: fire on the first batch (lastEpochTs == 0) or once intervalMs has elapsed.
-        if (lastEpochTs != 0 && (nowMs - lastEpochTs) < intervalMs) {
+        final long maxRows = config.getAdaptiveEpochMaxRows();
+        // Fire on the first batch (lastEpochTs == 0), once intervalMs has elapsed, OR once the un-epoched
+        // applied-row backlog reaches the cap (maxRows > 0). The cap bounds WAL retention + recovery replay
+        // so the interval can be long; maxRows <= 0 disables it (interval-only). A negative interval already
+        // returned above, so an operator opt-out of epochs also opts out of the cap.
+        final boolean timeElapsed = lastEpochTs == 0 || (nowMs - lastEpochTs) >= intervalMs;
+        final boolean backlogHit = maxRows > 0 && tracker.getRowsSinceEpoch() >= maxRows;
+        if (!timeElapsed && !backlogHit) {
             return;
         }
         try {
@@ -790,6 +798,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
         metrics.incrementEpochAdvances();
         tracker.setLastEpochTs(nowMs);
+        // Restart the backlog count now the epoch is published (success path only; the demote/slot-busy
+        // early returns above intentionally leave it intact so a skipped epoch retries on the next batch).
+        tracker.resetRowsSinceEpoch();
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();

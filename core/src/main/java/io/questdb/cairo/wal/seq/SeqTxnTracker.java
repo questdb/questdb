@@ -67,6 +67,10 @@ public class SeqTxnTracker {
     // yet (so the first apply batch under adaptive is eligible to epoch). Read+written ONLY by the
     // apply worker that holds the table writer (single-threaded per table) -> no CAS needed.
     private long lastEpochTs = 0;
+    // Rows applied to this table since its last durable epoch (adaptive backlog gate). Reset to 0 in
+    // ApplyWal2TableJob.advance() when an epoch publishes. Read+written ONLY by the apply worker that
+    // holds the table writer (single-threaded per table) -> plain long, no CAS (mirrors lastEpochTs).
+    private long rowsSinceEpoch = 0;
     // The epoch partition-version txn currently PINNED in the scoreboard, or -1 if none. advance()
     // pins the new epoch txn in the FREE ping-pong slot, then releases this prior one from the other
     // slot (INV-5 pin-before-release; the brief double-pin is safe). Like the scoreboard itself these
@@ -155,6 +159,21 @@ public class SeqTxnTracker {
     /** Wall-clock ms of the last durable epoch (adaptive cadence gate); 0 if none yet. */
     public long getLastEpochTs() {
         return lastEpochTs;
+    }
+
+    /** Rows applied since the last durable epoch (adaptive backlog gate). Apply-worker-only. */
+    public long getRowsSinceEpoch() {
+        return rowsSinceEpoch;
+    }
+
+    /** Adds to the un-epoched applied-row count (adaptive backlog gate). Apply-worker-only. */
+    public void addRowsSinceEpoch(long rows) {
+        rowsSinceEpoch += rows;
+    }
+
+    /** Resets the un-epoched applied-row count; called when an epoch publishes. Apply-worker-only. */
+    public void resetRowsSinceEpoch() {
+        rowsSinceEpoch = 0;
     }
 
     /** The epoch txn currently pinned in the scoreboard, or -1 if none. */
