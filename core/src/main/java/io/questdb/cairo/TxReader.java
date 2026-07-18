@@ -123,6 +123,27 @@ public class TxReader implements Closeable, Mutable {
         return findAttachedPartitionRawIndexByLoTimestamp(ts) > -1L;
     }
 
+    /**
+     * Returns true if AT LEAST ONE partition (any cellKey) is attached at exactly this raw
+     * timestamp -- the cellKey-agnostic existence check that {@link #findAttachedPartitionRawIndexBy}
+     * already computes internally as its own first stage (the binary search to the first same-ts
+     * entry), exposed standalone for composite-aware callers (Plan 4b Task 1b) that need "is this
+     * logical day live at all" without caring which specific cell.
+     * <p>
+     * Unlike {@link #attachedPartitionsContains(long)} (a cellKey-0-ONLY check, via {@link
+     * #findAttachedPartitionRawIndexByLoTimestamp}'s hardcoded {@code cellKey = 0}), this considers
+     * every sibling cell sharing the timestamp -- required by {@code TableWriter#removePartitionDirsNotAttached}
+     * to avoid misclassifying a live composite day (whose only attached cell is NOT cellKey 0, or
+     * whose cellKey-0 cell has since been merged to a non-sentinel nameTxn) as orphaned.
+     * <p>
+     * For a plain table (or dormant composite, stride 4) this and {@code attachedPartitionsContains}
+     * always agree: a plain table can never have two entries sharing a raw ts, so "cellKey 0 present"
+     * and "any cellKey present" are the same question.
+     */
+    public boolean hasAnyAttachedPartitionForTimestamp(long ts) {
+        return attachedPartitions.binarySearchBlock(attachedPartitionsShl, ts, Vect.BIN_SEARCH_SCAN_UP) >= 0;
+    }
+
     @Override
     public void clear() {
         clearData();

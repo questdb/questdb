@@ -2413,6 +2413,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void forceRemovePartitions(LongList partitionTimestamps) {
+        // Plan 4b Task 1b: FORCE DROP PARTITION is not yet cell-aware for a real (routed) composite
+        // table, for the same reasons removePartition's own "Plan 4a DDL gate sweep" comment already
+        // documents for plain DROP PARTITION (which this method is the ungated sibling of --
+        // AlterOperation#isForceWalBypass routes FORCE DROP PARTITION around that gate entirely).
+        // txWriter#getPartitionIndex(long) below is cellKey-blind (always resolves cellKey 0 for the
+        // day); for a day with 2+ cells this can only ever select and drop ONE cell, silently leaving
+        // sibling cells attached while columnVersionWriter.removePartition(timestamp) -- also
+        // cellKey-blind -- wipes column-version records that may still belong to an untouched sibling
+        // cell sharing the same timestamp. Gated unconditionally for any real (non-dormant) composite
+        // table -- cell-aware FORCE DROP PARTITION is deferred to a later sub-plan. Plain and
+        // dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support FORCE DROP PARTITION [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
         boolean firstPartitionDropped = false;
@@ -2440,11 +2457,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
+            // cellKey resolved before removeAttachedPartitions (below) mutates the array -- gated
+            // above for any real composite table, so this is always 0 here, matching plain behaviour.
+            final int cellKey = txWriter.getPartitionCellKey(index);
             columnVersionWriter.removePartition(timestamp);
             txWriter.removeAttachedPartitions(timestamp);
             // Add the partition to the partition remove list that can be deleted if there are no open readers
             // after the commit
-            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index));
+            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index), cellKey);
         }
 
         if (removedCount > 0) {
@@ -7276,6 +7296,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        // Resolved before any removeAttachedPartitions call below mutates the array. Both of this
+        // method's callers (removePartition/DROP PARTITION and enforceTtl/TTL eviction) are gated
+        // for any real composite table (see their own gate comments), so cellKey is always 0 here in
+        // practice -- getPartitionCellKey returns 0 unconditionally for a plain-stride table anyway,
+        // so this is threaded through for defense-in-depth/consistency rather than to fix a live gap.
+        final int cellKey = txWriter.getPartitionCellKey(index);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
             // removing active partition
@@ -7348,7 +7374,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.removePartition(timestamp);
         }
 
-        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
         return true;
     }
 
@@ -7361,6 +7387,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
+        }
+
+        // Plan 4b Task 1b: TTL eviction is not yet cell-aware for a real (routed) composite table.
+        // dropPartitionByExactTimestamp (below) shares the EXACT same cell-blind selection/removal
+        // chain that removePartition's own "Plan 4a DDL gate sweep" comment already documents and
+        // gates for plain DROP PARTITION: txWriter#getPartitionIndex resolves cellKey 0 only, and
+        // TxWriter#removeAttachedPartitions(long)'s cellKey-0 default can re-probe the SAME raw index
+        // forever once cellKey 0's entry is gone and a sibling cell -- sharing the exact same
+        // timestamp -- is left sitting there untouched (an empirically-reproduced infinite loop for
+        // DROP PARTITION; TTL eviction's do-while loop below has the identical shape). Gated
+        // unconditionally for any real (non-dormant) composite table -- cell-aware TTL eviction is
+        // deferred to a later sub-plan. Note this gate runs AFTER setMetaTtl (see AlterOperation
+        // #applyTtl) has already persisted the new ttl value: that write is harmless on its own (it
+        // touches no partition directory), and leaving it in place means eviction starts working
+        // immediately, with no need to re-run SET TTL, once a future task makes it cell-aware. Plain
+        // and dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support TTL-based partition eviction [table=")
+                    .put(tableToken.getTableName()).put(']');
         }
 
         if (getPartitionCount() < 2) {
@@ -9242,7 +9288,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             txWriter.removeAttachedPartitions(partitionTimestamp);
                             columnVersionWriter.removePartition(partitionTimestamp);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         } else {
                             // Set partition size to 0 and process all 0 size partitions at the end of the method.
                             // It will be removed if there are no readers on the previous partition.
@@ -9284,7 +9330,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             txWriter.resetPartitionParquetGeneratedByRawIndex(partitionIndexRaw);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         }
                         txWriter.bumpPartitionTableVersion();
                     }
@@ -9306,7 +9352,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Bump the partition name txn and queue old dir for removal.
                         final long srcNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
                         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
-                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         // After O3 rewrite, the Rust updater zeros all column_tops
                         // in the parquet metadata (update.rs), so the decoder will
@@ -9477,9 +9523,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // This is a split partition that is fully removed in the last commit.
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                // Resolved by raw index before any removeAttachedPartitions call below mutates the
+                // array (Plan 4b Task 1b: split-partition removal is provably unreachable for a real
+                // composite table today -- dispatchCompositeCellRange's own srcDataMax > 0 guard blocks
+                // every extend of an existing cell, and a genuine O3 SPLIT can only ever be produced by
+                // extending a large, already-populated partition -- but threaded through for
+                // defense-in-depth/consistency; always 0 for a plain table).
+                int partitionCellKey = txWriter.getPartitionCellKey(i);
                 long prevPartitionTimestamp = txWriter.getPartitionTimestampByIndex(i - 1);
                 long prevPartitionSize = txWriter.getPartitionSize(i - 1);
                 long prevPartitionTxn = txWriter.getPartitionNameTxn(i - 1);
+                int prevPartitionCellKey = txWriter.getPartitionCellKey(i - 1);
 
                 if (txWriter.getPartitionFloor(partitionTimestamp) != txWriter.getPartitionFloor(prevPartitionTimestamp)
                         || prevPartitionSize == 0
@@ -9489,7 +9543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // or previous partition is also 0 size, e.g. removed split
                     // or the previous partition was just re-created in this commit
                     // in this case we can remove the current partition fully
-                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn, partitionCellKey);
                     txWriter.removeAttachedPartitions(partitionTimestamp);
                 } else {
                     try {
@@ -9524,7 +9578,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // to open 2 frames to the same partition timestamp
                             if (newPrevPartitionSize == 0) {
                                 // newSplitPartitionTimestamp can be equal to partitionTimestamp
-                                partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
+                                partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn, prevPartitionCellKey);
                                 insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
@@ -9540,7 +9594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
 
                         // Now it's safe to remove the empty split partition
-                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn, partitionCellKey);
                         txWriter.removeAttachedPartitions(partitionTimestamp);
                     } finally {
                         path.trimTo(pathSize);
@@ -11431,22 +11485,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
         long lastCommittedTxn = this.getTxn();
+        // Composite-partitioning (Plan 4b Task 1b): a routed cell's on-disk directory carries a
+        // cellSegment component the bare 5-arg setPathForNativePartition below knows nothing about
+        // (see TableUtils#setPathForNativePartition's 6-arg cellSegment overload) -- every queued
+        // candidate below now also carries its own cellKey (see every partitionRemoveCandidates.add
+        // call site), resolved once per drain via the writer's own structural compositeness, exactly
+        // mirroring every other `composite` gate in this class. isDormantWithPreexistingData tables
+        // use the plain on-disk layout despite having a PartitionSpec, so they resolve cellSegment
+        // = null too, same as every other composite gate -- byte-identical to a plain table.
+        boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+        StringSink cellSegmentSink = composite ? Misc.getThreadLocalSink() : null;
 
-        for (int i = 0; i < n; i += 2) {
+        for (int i = 0; i < n; i += 3) {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
-                final long txn = partitionRemoveCandidates.get(i + 1);
+                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                final int cellKey = (int) partitionRemoveCandidates.getQuick(i + 2);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
                 // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
+                    CharSequence cellSegment = null;
+                    if (composite) {
+                        cellSegmentSink.clear();
+                        renderCellSegment(cellSegmentSink, cellKey);
+                        cellSegment = cellSegmentSink;
+                    }
                     setPathForNativePartition(
                             other,
                             timestampType,
                             partitionBy,
                             timestamp,
-                            txn
+                            txn,
+                            cellSegment
                     );
                     other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
@@ -12641,8 +12713,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionTimestampHi = Long.MIN_VALUE;
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                 long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
+                // Resolved before removeAttachedPartitions (below) mutates the array. Reachable for a
+                // real composite table (a fresh table's very first WAL commit) -- getPartitionCount() ==
+                // 1 here means index 0 (logical) is this sole entry's own raw index.
+                int cellKey = txWriter.getPartitionCellKey(0);
                 txWriter.removeAttachedPartitions(partitionTimestamp);
-                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn, cellKey);
             }
 
             processO3Block(
@@ -13652,7 +13728,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Schedule partitions directory deletions
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionTxn = txWriter.getPartitionNameTxn(i);
-                    partitionRemoveCandidates.add(timestamp, partitionTxn);
+                    // Resolved by raw index before txWriter.reconcileOptimisticPartitions() (below)
+                    // mutates the array. Confirmed unreachable for composite (non-WAL commit(long
+                    // o3MaxLag) path only -- see Plan 4b Task 1's own report), threaded through for
+                    // defense-in-depth/consistency; always 0 for a plain table.
+                    int cellKey = txWriter.getPartitionCellKey(i);
+                    partitionRemoveCandidates.add(timestamp, partitionTxn, cellKey);
                 }
                 txWriter.reconcileOptimisticPartitions();
                 return true;
@@ -14051,8 +14132,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
                 long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
-                if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
-                    partitionRemoveCandidates.add(dirTimestamp, txn);
+                // Plan 4b Task 1b: this per-entry callback walks the TABLE ROOT's immediate children --
+                // for a real composite table those are DAY containers, never a specific cell (a cell's
+                // own .nameTxn suffix lives one level deeper, see TableUtils#setSinkForNativePartition's
+                // 6-arg cellSegment overload: "<day>/<cellSegment>.<nameTxn>", the day component itself
+                // is NEVER dot-suffixed for composite). The plain txn-mismatch check below assumes a
+                // day-level nameTxn suffix exists and is cellKey-blind (getPartitionNameTxnByPartitionTimestamp
+                // resolves cellKey 0 only) -- for composite this is simply the wrong question at this
+                // level, and answering it wrong is dangerous: the moment ANY cell under a live day
+                // acquires its own non-sentinel nameTxn from a real merge (this task's own extend fix),
+                // the bare on-disk day dir (txn=-1, correctly, since it is never itself suffixed) stops
+                // matching the cellKey-0-resolved "expected" nameTxn, and this method would queue the
+                // WHOLE day -- every sibling cell's still-live data -- for removal via the cell-blind
+                // (no cellSegment) purge path. The only question that is SAFE to ask at the day level for
+                // composite is "is this day live AT ALL" (any cellKey): if any cell is attached here,
+                // this directory (and everything under it, regardless of any individual cell's own
+                // nameTxn) must never be queued through this bare-day path. A genuinely fully-evicted day
+                // (no cell attached at all) is still swept exactly as before -- nothing live can be under
+                // it, so the bare 5-arg (no cellSegment) removal is correct there too. Orphaned CELL
+                // subdirectories one level deeper are not (and were never, pre-existing) discovered by
+                // this single-level iterateDir walk either way -- a pre-existing, safe (non-corrupting)
+                // gap, not one this fix introduces or is required to close. Plain and dormant-composite
+                // tables are completely unaffected (this whole branch is additive, gated on `composite`,
+                // and never touches the existing txn-mismatch check below).
+                boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+                if (composite) {
+                    if (!txWriter.hasAnyAttachedPartitionForTimestamp(dirTimestamp)) {
+                        partitionRemoveCandidates.add(dirTimestamp, txn, 0);
+                    }
+                } else if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
+                    partitionRemoveCandidates.add(dirTimestamp, txn, 0);
                 }
             } catch (NumericException ignore) {
                 // not a date?
@@ -14721,9 +14830,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void safeDeletePartitionDir(long timestamp, long partitionNameTxn) {
+        safeDeletePartitionDir(timestamp, partitionNameTxn, 0);
+    }
+
+    /**
+     * Plan 4b Task 1b: {@code cellKey}-aware counterpart of {@link #safeDeletePartitionDir(long, long)}.
+     * Every OTHER call site of the 2-arg overload sits inside a method already gated unconditionally
+     * for any real composite table (parquet conversion, DETACH PARTITION -- see each one's own gate
+     * comment), so cellKey 0 there is always correct (and the only value reachable). The one call site
+     * that IS reachable for a real composite table (the mainline WAL-commit-finish "artificial 0-length
+     * lag partition" first-commit cleanup, in processWalCommitFinishApply) uses this overload instead,
+     * passing the true resolved cellKey.
+     */
+    private void safeDeletePartitionDir(long timestamp, long partitionNameTxn, int cellKey) {
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
         partitionRemoveCandidates.clear();
-        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
         processPartitionRemoveCandidates();
     }
 
@@ -14751,10 +14873,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void scheduleRemoveAllPartitions() {
+        // Plan 4b Task 1b: TRUNCATE-over-WAL (unlike TTL/FORCE DROP PARTITION) has no SELECTION
+        // ambiguity for composite -- "remove every partition" trivially means every cell of every day,
+        // and this loop already walks every raw index (one entry per cell, not per day), so resolving
+        // each entry's own cellKey here makes this path fully correct for composite, not just gated.
         for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
             long partitionTxn = txWriter.getPartitionNameTxn(i);
-            partitionRemoveCandidates.add(timestamp, partitionTxn);
+            int cellKey = txWriter.getPartitionCellKey(i);
+            partitionRemoveCandidates.add(timestamp, partitionTxn, cellKey);
         }
     }
 
@@ -15363,6 +15490,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
+        // Plan 4b Task 1b: split-squash housekeeping is provably unreachable for a real composite
+        // table today (same reasoning as o3ConsumePartitionUpdateSink_processSplitPartitionRemoval's
+        // own comment: it only ever fires on genuine O3 SPLIT partitions, which composite dispatch
+        // cannot yet produce), threaded through for defense-in-depth/consistency; always 0 for plain.
+        int targetPartitionCellKey = txWriter.getPartitionCellKey(targetPartitionIndex);
         setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
         final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
 
@@ -15381,7 +15513,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * txWriter.getLongsPerAttachedPartition(), originalSize);
-                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn, targetPartitionCellKey);
                     targetPartitionNameTxn = txWriter.txn;
                 } finally {
                     Misc.free(firstPartitionFrame);
@@ -15399,6 +15531,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             for (int i = 0; i < squashCount; i++) {
                 long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
+                // Resolved before removeAttachedPartitions (below) mutates the array -- see this
+                // method's own composite-reachability note above.
+                int sourcePartitionCellKey = txWriter.getPartitionCellKey(targetPartitionIndex + 1);
 
                 other.trimTo(pathSize);
                 long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
@@ -15430,7 +15565,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.removeAttachedPartitions(sourcePartition);
                 columnVersionWriter.squashPartition(targetPartition, sourcePartition);
-                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn, sourcePartitionCellKey);
                 if (sourcePartition == minSplitPartitionTimestamp) {
                     minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
                 }
