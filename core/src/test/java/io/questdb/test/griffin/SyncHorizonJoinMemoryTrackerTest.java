@@ -62,7 +62,7 @@ import org.junit.Test;
  * allocated through the {@code GroupByAllocator}, so the build-loop growth trips
  * the limit and surfaces with {@code isOutOfMemory()} set. Without the binding the
  * lists grow unbounded and escape the limit, so the query would complete and the
- * {@code Assert.fail} below would fire. The {@code assertInTree} routing guard pins
+ * {@code Assert.fail} below would fire. The {@code assertFactoryInTree} routing guard pins
  * the test to the synchronous factory, so a future change that drops the binding or
  * re-routes to the parallel path fails loudly here rather than silently passing.
  * <p>
@@ -106,13 +106,13 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                         try (RecordCursorFactory f = compiler.compile(
                                 "SELECT t.sym, array_agg(p.price) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, HorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, HorizonJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                         try (RecordCursorFactory f = compiler.compile(
                                 "SELECT array_agg(p.price) FROM trades t HORIZON JOIN prices p RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, HorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, HorizonJoinNotKeyedRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                     },
@@ -148,7 +148,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, HorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -175,7 +175,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, HorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -202,7 +202,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, HorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext, 8);
                         }
                     },
@@ -237,7 +237,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, MultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, MultiHorizonJoinRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -263,7 +263,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, MultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, MultiHorizonJoinRecordCursorFactory.class);
                             assertOpenFailureReleasesAllocations(factory, sqlExecutionContext);
                         }
                     },
@@ -290,7 +290,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, MultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, MultiHorizonJoinRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext, 8);
                         }
                     },
@@ -314,7 +314,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                         "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) HORIZON JOIN prices1 p1 " +
                                         "RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, MultiHorizonJoinRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, MultiHorizonJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                         try (RecordCursorFactory f = compiler.compile(
@@ -322,7 +322,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                         "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) HORIZON JOIN prices1 p1 " +
                                         "RANGE FROM -2s TO 2s STEP 1s AS h",
                                 sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(f, MultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(f, MultiHorizonJoinNotKeyedRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
                     },
@@ -356,7 +356,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -382,7 +382,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext, 1);
                         }
                     },
@@ -415,7 +415,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, MultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, MultiHorizonJoinNotKeyedRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
@@ -441,7 +441,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 "HORIZON JOIN prices1 p1 " +
                                 "RANGE FROM -2s TO 2s STEP 1s AS h";
                         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                            assertInTree(factory, MultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            TestUtils.assertFactoryInTree(factory, MultiHorizonJoinNotKeyedRecordCursorFactory.class);
                             assertReleasesAllocations(factory, sqlExecutionContext, 1);
                         }
                     },
@@ -449,17 +449,6 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     LOG
             );
         });
-    }
-
-    private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (expected.isInstance(f)) {
-                return;
-            }
-            f = f.getBaseFactory();
-        }
-        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
     }
 
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {

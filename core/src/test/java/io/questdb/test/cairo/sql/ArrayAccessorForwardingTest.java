@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.join.JoinRecord;
+import io.questdb.griffin.engine.join.UnnestRecord;
+import io.questdb.griffin.engine.table.ExtraNullColumnRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
 import io.questdb.griffin.engine.table.SelectedRecord;
@@ -69,6 +71,16 @@ public class ArrayAccessorForwardingTest {
         final DelegatingRecord record = new DelegatingRecord();
         record.of(new DirectOnlyArrayRecord(0));
         assertForwards(record);
+    }
+
+    @Test
+    public void testExtraNullColumnRecordForwardsBaseColumn() {
+        // columnSplit = 1: column 0 is a base column, so the direct array accessors must forward to
+        // the base record; column 1 is a spliced NULL column and reports a NULL array instead.
+        final ExtraNullColumnRecord record = new ExtraNullColumnRecord(1);
+        record.of(new DirectOnlyArrayRecord(0));
+        assertForwards(record);
+        assertNullSource(record, 1);
     }
 
     @Test
@@ -146,6 +158,19 @@ public class ArrayAccessorForwardingTest {
         record.of(new DirectOnlyArrayRecord(0), new DirectOnlyArrayRecord(0));
         assertForwards(record);
         record.setAb(false);
+        assertForwards(record);
+    }
+
+    @Test
+    public void testUnnestRecordForwardsBaseColumn() throws Exception {
+        // split = 1: column 0 is a base table column, so getArrayDimLen/getArrayDouble1d2d must
+        // forward to the base record rather than fall through to Record's ArrayView default. The
+        // sources list stays empty because only the base-column branch is under test here.
+        final UnnestRecord record = new UnnestRecord(1, new ObjList<>());
+        // of(Record) is package-private; reflect it in to seat the base record.
+        final Method of = UnnestRecord.class.getDeclaredMethod("of", Record.class);
+        of.setAccessible(true);
+        of.invoke(record, new DirectOnlyArrayRecord(0));
         assertForwards(record);
     }
 

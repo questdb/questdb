@@ -97,17 +97,18 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                     execute(compiler, "CREATE TABLE tab (k SYMBOL, a DOUBLE[][], d INT)", ctx);
                     execute(
                             compiler,
-                            // Row 0 carries the only in-bounds dim, so first_not_null takes it and
-                            // rows 1 and 2 lose. Their args must still be evaluated: a batched path
-                            // that skipped losing rows would swallow the out-of-bounds error. The
-                            // last_not_null half cannot pin that - the record-based path scans
-                            // forward, so every row outranks the stored one and none of them lose -
-                            // and rides along as an error-propagation check.
+                            // The middle row (d=3) asks for a dimension the 2D array does not have and
+                            // throws; the outer rows (d=2, d=1) are in bounds. That middle row is a
+                            // genuine loser for both aggregates: first_not_null keeps row 0 (the first
+                            // non-null) and last_not_null keeps row 2 (the last non-null, since the
+                            // record-based batch scans backwards). Its arg must still be evaluated -
+                            // a batched path that only touched the winning row would swallow the
+                            // out-of-bounds error - so both queries surface it.
                             """
                                     INSERT INTO tab VALUES
                                         ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 2),
                                         ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 3),
-                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 5)
+                                        ('x', ARRAY[ARRAY[1.0, 2.0], ARRAY[3.0, 4.0]], 1)
                                     """,
                             ctx
                     );
@@ -183,6 +184,50 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                             .noRandomAccess()
                             .expectSize()
                             .returns(expected);
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testPlainLastKeyedBatchPicksMaxRowIdValue() throws Exception {
+        // Plain last() keeps each key's max-rowId value. Pin that on the same batched keyed path
+        // (computeKeyedBatch) that testNotNullKeyedBatchKeepsNonNull exercises, for a direct column
+        // and for an expression arg. The expression routes through the record-based fallback branch,
+        // the loop that scans the sub-batch to pick the winner. Every non-last row carries a sentinel
+        // that differs from the last-occurrence value, so a scan that committed the wrong row would
+        // drop the count below KEY_COUNT.
+        final String createSql = "CREATE TABLE tab AS (" +
+                "  SELECT (x % " + KEY_COUNT + ")::int AS g," +
+                "  CASE WHEN " + LAST_OCCURRENCE + " THEN 42 ELSE 7 END::int AS vint," +
+                "  CASE WHEN " + LAST_OCCURRENCE + " THEN 42 ELSE 7 END::long AS vlong," +
+                "  CASE WHEN " + LAST_OCCURRENCE + " THEN 42.0 ELSE 7.0 END AS vdouble" +
+                "  FROM long_sequence(" + ROW_COUNT + ")" +
+                ")";
+        final String keyedQuery = "SELECT g, last(vint) li, last(vlong) ll, last(vdouble) ld," +
+                " last(vint + 1) le FROM tab";
+        // count(*) must see every key, and every key's four last() values must be the sentinel that
+        // only the max-rowId row carries - so ok must equal KEY_COUNT too.
+        final String query = "SELECT count(*) total," +
+                " sum(CASE WHEN li = 42 AND ll = 42 AND ld = 42.0 AND le = 43 THEN 1 ELSE 0 END) ok" +
+                " FROM (" + keyedQuery + ")";
+
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (ignore, compiler, ctx) -> {
+                    execute(compiler, createSql, ctx);
+                    assertQuery(keyedQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining("Async Group By");
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("total\tok\n" + KEY_COUNT + "\t" + KEY_COUNT + "\n");
                 }, configuration, LOG);
             }
         });

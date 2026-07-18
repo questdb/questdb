@@ -165,6 +165,10 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .put(dims)
                         .put(']');
             }
+            // getInt()'s arrayColumnIndex >= 0 fast path hands dim to an unchecked shape read, so a
+            // plain array column must decode to a concrete dimensionality. Parity with Func.init().
+            assert arrayColumnIndex < 0 || dims > 0
+                    : "array column with no concrete dimensionality: " + ColumnType.nameOf(arrayArg.getType());
         }
 
         @Override

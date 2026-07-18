@@ -119,7 +119,8 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                     }
                 }
             } else {
-                for (long i = 0; i < rowCount; i++) {
+                // Backwards for the same last-wins reason as the direct-column path above.
+                for (long i = rowCount - 1; i >= 0; i--) {
                     final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                     final long rowIndex = Map.decodeBatchRowIndex(encoded);
                     record.setRowIndex(rowIndex);
