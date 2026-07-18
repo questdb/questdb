@@ -89,11 +89,12 @@ public class CompositeTxnConsumerSitesTest extends AbstractCairoTest {
     public void testTableStoragePartitionCountNotDoubledForCompositeTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             execute("insert into c values " +
                     "('2020-01-01T00:00:00.000000Z','A',1.0), " +
                     "('2020-01-02T00:00:00.000000Z','A',2.0), " +
                     "('2020-01-03T00:00:00.000000Z','A',3.0)");
+            drainWalQueue();
             engine.releaseAllWriters();
 
             assertQuery("select partitionCount from table_storage() where tableName = 'c'")
@@ -145,11 +146,12 @@ public class CompositeTxnConsumerSitesTest extends AbstractCairoTest {
     public void testReusedTxReaderDoesNotLeakCompositeStrideIntoPlainTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             execute("insert into c values " +
                     "('2020-01-01T00:00:00.000000Z','A',1.0), " +
                     "('2020-01-02T00:00:00.000000Z','A',2.0), " +
                     "('2020-01-03T00:00:00.000000Z','A',3.0)");
+            drainWalQueue();
 
             execute("create table p (ts timestamp, x double) timestamp(ts) partition by day");
             execute("insert into p values " +

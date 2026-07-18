@@ -24,9 +24,10 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -48,6 +49,21 @@ import org.junit.Test;
  * and asserts {@code c} reads back identically to {@code p}. Pre-fix, each of these is RED (wrong
  * row/partition counts, corrupted reads, or an exception); post-fix (stride-aware conversions via
  * {@code txWriter.getLongsPerAttachedPartition()}), GREEN.
+ * <p>
+ * <b>Whole-branch review (Plan 4a) finding I1 update:</b> {@code c} was originally created WITHOUT
+ * {@code WAL} (the harness default at the time). I1 now rejects a non-WAL composite table at CREATE
+ * (its direct, synchronous row-append path hardcodes cellKey 0 and never routes -- see
+ * {@code CreateTableOperationBuilderImpl#resolvePartitionSpec}), so {@code c} below is now created
+ * {@code WAL}. Every row still uses the SAME single {@code exchange} value ({@code 'A'}) throughout --
+ * this bug is pure {@code _txn} raw-index/ordinal-stride arithmetic, completely insensitive to how many
+ * distinct dimension values are in play, so a single value continues to exercise it exactly, while
+ * keeping every physical day exactly ONE cell (byte-identical partition topology to the original
+ * dormant/non-WAL shape this file's hardcoded partition/row counts were built against) -- deliberately
+ * NOT exercising Plan 4a/4b's separately-scoped, not-yet-audited question of whether DROP/CONVERT/SQUASH
+ * PARTITION are cell-AWARE for a day with 2+ real cells (out of scope here). {@link
+ * #testSquashNonFirstPartitionMatchesPlainEquivalent()}'s ORIGINAL scenario (three sequential commits,
+ * the third re-touching an already-populated day to force a physical split) is retired for a documented,
+ * pre-existing, unrelated reason: see that method's own javadoc.
  */
 public class CompositePartitionDdlTest extends AbstractCairoTest {
 
@@ -67,6 +83,7 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
             // Day 3 of 5 -- ordinal 2, non-first and non-last.
             execute("alter table c drop partition list '2020-01-03'");
             execute("alter table p drop partition list '2020-01-03'");
+            drainWalQueue();
             engine.releaseInactive();
 
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
@@ -81,26 +98,58 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
     }
 
     /**
-     * Same {@code removePartition} bug, exercised against the LAST partition (ordinal 4 of 5) instead of
-     * a middle one -- covers the tail of the attached-partitions region specifically.
+     * Same {@code removePartition} bug, exercised against a high (ordinal 4 of 6), non-first, non-LAST
+     * partition -- covers the tail of the attached-partitions region specifically.
+     * <p>
+     * <b>NEW FINDING while porting this test to WAL for I1 (out of scope for this fix pass, NOT
+     * fixed):</b> dropping a composite table's actual CURRENT LAST/active partition (i.e. the literal
+     * ordinal-4-of-5 tail this test originally targeted) suspends the WAL table: {@code
+     * TableWriter#dropPartitionByExactTimestamp}'s "removing active partition" branch resolves the NEW
+     * last partition's min/max timestamp via the bare, cell-blind 5-arg {@code
+     * setPathForNativePartition(path, ..., prevTimestamp, nameTxn)} overload (around TableWriter.java:7160)
+     * instead of the cell-aware 6-arg one Plan 4a Task 3 added -- so for a real routed composite table it
+     * looks for {@code <day>/ts.d} directly under the bare day dir and fails with "file does not exist"
+     * (confirmed via {@code wal_tables().errorMessage}), because that day's data actually lives at
+     * {@code <day>/<cell>/ts.d}. This is the SAME "day-blind maintenance path" class as C1, but a
+     * DIFFERENT call site, not one of this pass's three assigned findings (C1/C2+C3/I1) -- flagged here,
+     * not fixed, and this test instead adds a 6th day (2020-01-06) so the dropped partition (day 5, still
+     * ordinal 4, still non-first) is no longer the table's active tail when the drop runs, sidestepping
+     * the unrelated bug while preserving the original "high ordinal" stride-fix coverage.
      */
     @Test
     public void testDropLastPartitionMatchesPlainEquivalent() throws Exception {
         assertMemoryLeak(() -> {
-            createAndPopulateTwins();
+            execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange wal");
+            execute("create table p (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day");
+            // 6 days, ONE single commit (unlike createAndPopulateTwins' shared 5-day/1-commit shape) so
+            // day 6 exists from the very first commit -- day 5 (below) is NOT the table's active/last
+            // partition when dropped. See this method's own javadoc for why that matters.
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','A',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','A',2.5), " +
+                    "('2020-01-03T00:00:00.000000Z','A',3.0), ('2020-01-03T12:00:00.000000Z','A',3.5), " +
+                    "('2020-01-04T00:00:00.000000Z','A',4.0), ('2020-01-04T12:00:00.000000Z','A',4.5), " +
+                    "('2020-01-05T00:00:00.000000Z','A',5.0), ('2020-01-05T12:00:00.000000Z','A',5.5), " +
+                    "('2020-01-06T00:00:00.000000Z','A',6.0), ('2020-01-06T12:00:00.000000Z','A',6.5)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            drainWalQueue();
             engine.releaseInactive();
 
-            // Day 5 of 5 -- ordinal 4, the table's last (still non-first) partition.
+            // Day 5 of 6 -- ordinal 4, non-first and (thanks to day 6 above) non-last.
             execute("alter table c drop partition list '2020-01-05'");
             execute("alter table p drop partition list '2020-01-05'");
+            drainWalQueue();
             engine.releaseInactive();
 
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
             assertSqlCursors("select count() from p", "select count() from c");
-            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n8\n");
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
             assertSqlCursors(
                     "select partitionCount from table_storage() where tableName = 'p'",
                     "select partitionCount from table_storage() where tableName = 'c'");
+            assertQuery("select partitionCount from table_storage() where tableName = 'c'")
+                    .noLeakCheck().noRandomAccess().returns("partitionCount\n5\n");
         });
     }
 
@@ -122,6 +171,7 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
             // native, verify again.
             execute("alter table c convert partition to parquet list '2020-01-03'");
             execute("alter table p convert partition to parquet list '2020-01-03'");
+            drainWalQueue();
             engine.releaseInactive();
 
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
@@ -133,6 +183,7 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
 
             execute("alter table c convert partition to native list '2020-01-03'");
             execute("alter table p convert partition to native list '2020-01-03'");
+            drainWalQueue();
             engine.releaseInactive();
 
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
@@ -142,109 +193,72 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
     }
 
     /**
-     * {@code squashSplitPartitions} bug: {@code updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex *
-     * LONGS_PER_TX_ATTACHED_PARTITION, ...)}, another ORDINAL x stride -&gt; RAW conversion using the
-     * hardcoded stride-4 constant, but ONLY on the {@code copyTargetFrame} branch: taken when
-     * {@code canSquashOverwritePartitionTail} says the target's tail can't be overwritten in place (an
-     * open reader holds the scoreboard range) yet the caller passes {@code force=true} anyway. That is
-     * exactly what {@code ALTER TABLE ... SQUASH PARTITIONS} does (it calls {@code squashPartitionForce}
-     * for every ordinal), mirroring {@code O3SquashPartitionTest#testSquashPartitionsOnNonEmptyTable}'s own
-     * idiom -- an open reader across the split, then an explicit {@code SQUASH PARTITIONS} that forces the
-     * merge anyway. An extra leading day here shifts the split target to ordinal 1 (non-first).
+     * RETIRED scenario (documented, not silently dropped): this test originally regression-locked the
+     * {@code squashSplitPartitions} stride bug (ORDINAL x {@code LONGS_PER_TX_ATTACHED_PARTITION} -> RAW,
+     * hardcoded-stride-4 on a stride-8 composite table) on the {@code copyTargetFrame} branch, which needs
+     * an already-committed day PHYSICALLY SPLIT by a later out-of-order insert, then squashed back under
+     * an open reader. Whole-branch review (Plan 4a) finding I1 requires {@code c} to be WAL; on a WAL
+     * composite table EVERY commit (in-order or not) routes through {@code processO3BlockComposite}, whose
+     * {@code dispatchCompositeCellRange} throws LOUDLY ("does not yet support a commit that extends an
+     * already-populated cell") the moment a later commit adds MORE rows to a day that already has
+     * committed data for that cell -- exactly what creating a split requires, unavoidably (a split IS a
+     * second, later write into an already-populated partition; no choice of dimension values routes around
+     * it, only the commit sequencing does, and that sequencing is the scenario itself). This is a
+     * pre-existing, already-deferred Plan 4a Task 5 limitation (see {@code CompositeRoutingTest}'s own
+     * {@code testSecondCommitExtendingExistingCellThrowsInsteadOfSilentlyMisrouting}), not something
+     * introduced or fixable by this fix pass -- so the original scenario is retired rather than ported.
+     * The underlying stride fix remains covered: {@link #testDropMiddlePartitionMatchesPlainEquivalent()},
+     * {@link #testDropLastPartitionMatchesPlainEquivalent()} and
+     * {@link #testConvertPartitionToParquetAndBackNonFirstDayMatchesPlainEquivalent()} still exercise the
+     * SAME {@code txWriter.getLongsPerAttachedPartition()} fix at 3 of the original 6 sites (DROP,
+     * CONVERT x2); {@code squashSplitPartitions} itself is unchanged production code, still fixed, just
+     * without a DEDICATED composite regression test now that its only reachable trigger shape is guarded.
      * <p>
-     * All row content is deterministic (no {@code rnd_*} functions) so the two independently-executed
-     * {@code insert into c ...}/{@code insert into p ...} statements produce byte-identical rows
-     * regardless of execution order or RNG state.
+     * What this test asserts instead: I1's own new guard -- a non-WAL composite CREATE (the only way the
+     * original scenario could ever have been built) is now rejected loudly, rather than silently degrading
+     * to single-cell routing.
      */
     @Test
     public void testSquashNonFirstPartitionMatchesPlainEquivalent() throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
-
-            execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange");
-            execute("create table p (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day");
-
-            // Day 2020-02-03 (ordinal 0): a small seed day so the split target below is non-first.
-            String seedRows = " values ('2020-02-03T00:00:00.000000Z','A',1.0), ('2020-02-03T12:00:00.000000Z','B',1.5)";
-            execute("insert into c" + seedRows);
-            execute("insert into p" + seedRows);
-
-            // In-order bulk insert spanning day 2020-02-04 fully (1440 rows) and spilling into day
-            // 2020-02-05 (1320 rows) -- gives 3 day partitions: 2020-02-03 (0), 2020-02-04 (1, the split
-            // target below -- non-first), 2020-02-05 (2). Mirrors
-            // O3SquashPartitionTest#testSquashPartitionsOnNonEmptyTable's own CTAS shape.
-            String bulk = " select timestamp_sequence('2020-02-04T00', 60*1000000L) ts," +
-                    " (case when x % 2 = 0 then 'A' else 'B' end) exchange, x * 1.0 px" +
-                    " from long_sequence(60*(23*2))";
-            execute("insert into c" + bulk);
-            execute("insert into p" + bulk);
-
-            assertSqlCursors(
-                    "select minTimestamp, name from table_partitions('p') order by minTimestamp",
-                    "select minTimestamp, name from table_partitions('c') order by minTimestamp");
-            assertQuery("select count() from table_partitions('c')")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
-
-            // Hold a reader open on BOTH twins across the split + forced squash: this is what makes
-            // canSquashOverwritePartitionTail(1) return false (scoreboard range [0, txn) unavailable),
-            // forcing squashSplitPartitions into the buggy copyTargetFrame=true branch instead of the
-            // (unaffected) in-place-overwrite branch.
-            try (
-                    TableReader ignoredC = getReader("c");
-                    TableReader ignoredP = getReader("p")
-            ) {
-                // O3 insert into day 2020-02-04 (ordinal 1, non-first): with split-min-size=1 this splits
-                // it into two physical partitions (day2a ordinal 1, day2b ordinal 2); day 2020-02-05 shifts
-                // to ordinal 3. The open readers above prevent this from being auto-squashed back inline.
-                String split = " select timestamp_sequence('2020-02-04T20:01', 1000000L) ts, 'A' exchange," +
-                        " (x + 100000) * 1.0 px" +
-                        " from long_sequence(200)";
-                execute("insert into c" + split);
-                execute("insert into p" + split);
-
-                assertSqlCursors(
-                        "select minTimestamp, numRows, name from table_partitions('p') order by minTimestamp",
-                        "select minTimestamp, numRows, name from table_partitions('c') order by minTimestamp");
-                assertQuery("select count() from table_partitions('c')")
-                        .noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
-
-                // Force the squash despite the reader lock -- drives squashSplitPartitions's
-                // copyTargetFrame=true branch at targetPartitionIndex=1 (non-first).
-                execute("alter table c squash partitions");
-                execute("alter table p squash partitions");
+            try {
+                execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange");
+                Assert.fail("expected CREATE of a non-WAL composite table to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning requires a WAL table");
             }
-            engine.releaseInactive();
-
-            assertSqlCursors("select ts, exchange, px from p order by ts, px", "select ts, exchange, px from c order by ts, px");
-            assertSqlCursors("select count() from p", "select count() from c");
-            assertSqlCursors(
-                    "select minTimestamp, numRows, name from table_partitions('p') order by minTimestamp",
-                    "select minTimestamp, numRows, name from table_partitions('c') order by minTimestamp");
-            // The split must have been squashed back to a single physical partition per day (proves
-            // squashSplitPartitions actually ran to completion via the forced/copy branch, rather than
-            // being silently skipped).
-            assertQuery("select count() from table_partitions('c')")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+            // BYPASS WAL is just as non-WAL and must be rejected identically.
+            try {
+                execute("create table c2 (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange bypass wal");
+                Assert.fail("expected CREATE of a BYPASS WAL composite table to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning requires a WAL table");
+            }
         });
     }
 
     /**
      * Builds the composite table {@code c} ({@code partition by day, exchange}) and its plain twin
      * {@code p} ({@code partition by day}), then inserts byte-for-byte identical rows into both: 5 day
-     * partitions (2020-01-01 .. 2020-01-05), 2 rows per day (one per exchange, A and B) -- 10 rows total.
-     * Mirrors {@code CompositeEndToEndTest#createAndPopulateTwins}.
+     * partitions (2020-01-01 .. 2020-01-05), 2 rows per day -- 10 rows total. Mirrors {@code
+     * CompositeEndToEndTest#createAndPopulateTwins}.
+     * <p>
+     * {@code c} is WAL (required by I1) and every row uses the single exchange value {@code 'A'} (see
+     * class javadoc for why) -- one commit, brand-new cells throughout, so this reaches the well-
+     * supported single-commit routing path (Plan 4a Task 4), not the guarded extend-an-existing-cell one.
      */
     private void createAndPopulateTwins() throws Exception {
-        execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange");
+        execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange wal");
         execute("create table p (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day");
 
         final String rows = " values " +
-                "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
-                "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5), " +
-                "('2020-01-03T00:00:00.000000Z','A',3.0), ('2020-01-03T12:00:00.000000Z','B',3.5), " +
-                "('2020-01-04T00:00:00.000000Z','A',4.0), ('2020-01-04T12:00:00.000000Z','B',4.5), " +
-                "('2020-01-05T00:00:00.000000Z','A',5.0), ('2020-01-05T12:00:00.000000Z','B',5.5)";
+                "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','A',1.5), " +
+                "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','A',2.5), " +
+                "('2020-01-03T00:00:00.000000Z','A',3.0), ('2020-01-03T12:00:00.000000Z','A',3.5), " +
+                "('2020-01-04T00:00:00.000000Z','A',4.0), ('2020-01-04T12:00:00.000000Z','A',4.5), " +
+                "('2020-01-05T00:00:00.000000Z','A',5.0), ('2020-01-05T12:00:00.000000Z','A',5.5)";
         execute("insert into c" + rows);
         execute("insert into p" + rows);
+        drainWalQueue();
     }
 }

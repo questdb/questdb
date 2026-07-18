@@ -131,7 +131,7 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
     public void testCompositeReaderSelfDetectsStrideFromMarkerWithNoSetComposite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -207,7 +207,7 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
     public void testTableReaderPartitionCountAndFullScanMatchPlainEquivalent() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             execute("create table p (ts timestamp, exchange symbol, x double) " +
                     "timestamp(ts) partition by day");
 
@@ -218,6 +218,7 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
                     "('2020-01-03T06:00:00.000000Z','A',4.0)";
             execute("insert into c" + rows);
             execute("insert into p" + rows);
+            drainWalQueue();
             engine.releaseInactive(); // cold reopen -- no pooled reader may mask a fresh self-detect
 
             try (TableReader cr = getReader("c"); TableReader pr = getReader("p")) {
@@ -249,7 +250,7 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
     public void testCreateTimeMarkerIsCompositeBeforeAnyCommit() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive(); // no pooled writer/reader may keep _txn open under our direct use
 
             TableToken tableToken = engine.verifyTableName("c");
@@ -327,7 +328,7 @@ public class CompositeTxStrideMarkerTest extends AbstractCairoTest {
     public void testStaticFindPartitionRawIndexResolvesCorrectRawIndexForComposite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             FilesFacade ff = engine.getConfiguration().getFilesFacade();

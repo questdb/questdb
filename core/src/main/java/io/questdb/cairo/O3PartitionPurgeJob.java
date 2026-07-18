@@ -199,6 +199,27 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
+            // Composite (ts, cellKey) gate: this whole method enumerates the table root's directories
+            // BY DAY ONLY -- one raw index probed per distinct day timestamp, always at cellKey 0
+            // (findAttachedPartitionRawIndexByLoTimestamp(day) == ...By(day, 0), see that method's own
+            // docs). For a REAL composite table -- one whose cells were actually routed by Plan 4a's
+            // write path -- a day whose cells DON'T include cellKey 0 makes that probe return <0 (not
+            // found) even though the day IS attached under a different cellKey, so this misclassifies a
+            // perfectly live day directory as DETACHED (processDetachedPartition) and recursively
+            // deletes it (purgePartition -> ff.unlinkOrRemove) while _txn still references every row in
+            // it: silent data loss. txReader.getLongsPerAttachedPartition() is this exact table's own
+            // self-describing _txn stride marker (Plan 3b Tasks 1+3 -- authoritative from CREATE,
+            // symmetric on every load, just read fresh above by safeReadTxn/unsafeLoadAll), so it is 8
+            // (COMPOSITE) iff this table was declared composite (dimCount>0), regardless of whether it
+            // has ever actually used more than one cell -- skipping a dormant composite table too is
+            // conservative, not a correctness requirement (a cell-aware purge is deferred to Plan 4b).
+            // Plain tables always read 4 here and are completely unaffected -- same idiom as
+            // TableWriter#repairDataGaps's own composite gate.
+            if (txReader.getLongsPerAttachedPartition() > TableUtils.LONGS_PER_TX_ATTACHED_PARTITION) {
+                LOG.info().$("composite table, skipping O3 partition purge (day-blind walk, cell-aware purge deferred) [table=").$(tableToken).I$();
+                return;
+            }
+
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);
                 if (currentPartitionTs != partitionTimestamp) {

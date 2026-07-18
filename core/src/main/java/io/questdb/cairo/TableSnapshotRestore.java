@@ -359,6 +359,47 @@ public class TableSnapshotRestore implements QuietCloseable {
             txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
             txWriter.unsafeLoadAll();
 
+            // C2/C3 (whole-branch review, Plan 4a): guard BEFORE any of this method's mutating steps
+            // (parquet validation/regeneration, symbol-file rebuild, bitmap-index rebuild, orphaned
+            // partition-dir cleanup) run. Every one of them assumes the pre-Plan-4a physical shape --
+            // each direct child of the table root IS a real leaf partition, one per distinct day,
+            // whose OWN name-txn is directly comparable 1:1 against _txn's per-(ts) [cellKey-0]
+            // record -- which is exactly what a REAL, routed composite table breaks: the table root
+            // instead holds BARE day-dir CONTAINERS (no name-txn of their own) with the real per-cell
+            // leaf partitions nested one level deeper. removePartitionDirsNotAttached (below) parses a
+            // bare day dir's [missing] name-txn suffix and compares it against a cellKey-0-only probe,
+            // so it can delete an entire live day -- every cell in it -- the moment that probe's
+            // answer doesn't match what it expects (C2); rebuildSymbolFilesForColumns (below) only
+            // iterates tableMetadata's real columns and never rebuilds the dedicated dimension
+            // dictionaries or the _cell registry (C3, ticket T-I3) -- both genuinely live, on-disk
+            // symbol maps once any cell has ever been routed, just as exposed to a torn file from a
+            // live copy as any real SYMBOL column's own files. A cell-aware restore is deferred to
+            // Plan 4d; until then, refuse outright rather than silently corrupt or lose data.
+            //
+            // Gate: dimCount > 0 (composite table) AND the _cell registry -- always the LAST reserved
+            // dense symbol-map slot for a composite table (TableWriter's own interner registration
+            // appends every dedicated dictionary first, then the registry, immediately before using
+            // this exact txWriter.getSymbolValueCount(slot) call to seed each one's initial clean
+            // count -- see TableWriter's composite-interner construction) -- is non-empty, i.e. at
+            // least one cell has genuinely been interned/routed. A composite table that has never
+            // routed a single cell (registry count 0: e.g. brand new and never committed, or one
+            // whose only data predates real per-cell routing) has no nested cell directories and no
+            // multi-entry _txn day at all, so every assumption above still holds exactly as it does
+            // for a plain table -- correctly NOT refused, matching the requirement that a dormant
+            // composite restore keeps working. Every dimension (IDENTITY/HASH/TRUNCATE alike) requires
+            // a SYMBOL source column (enforced at CREATE), so dimCount > 0 always guarantees at least
+            // one real symbol column plus the registry slot -- getSymbolColumnCount() - 1 is always a
+            // valid, in-bounds index whenever this branch is taken.
+            if (tableMetadata.getPartitionSpec().getDimensionCount() > 0) {
+                int registrySlot = txWriter.getSymbolColumnCount() - 1;
+                if (txWriter.getSymbolValueCount(registrySlot) > 0) {
+                    throw CairoException.critical(0)
+                            .put("composite partitioning does not yet support checkpoint/snapshot restore [table=")
+                            .put(tablePath.trimTo(pathTableLen))
+                            .put(']');
+                }
+            }
+
             if (columnVersionReader == null) {
                 columnVersionReader = new ColumnVersionReader();
             }

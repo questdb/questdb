@@ -235,7 +235,7 @@ public class CompositePartitionTableCompatTest extends AbstractCairoTest {
     public void testCompositeTxnCrashSafetyReloadsFromSelfDescribingRegion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;

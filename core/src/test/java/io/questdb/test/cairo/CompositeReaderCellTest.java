@@ -80,7 +80,7 @@ public class CompositeReaderCellTest extends AbstractCairoTest {
     public void testOpenPartitionInfoCarriesCellKeyAndResolvesColumnVersionPerCell() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive(); // no pooled writer/reader may keep _txn/_cv open under our direct use
 
             final long day1 = 0L;
@@ -189,7 +189,7 @@ public class CompositeReaderCellTest extends AbstractCairoTest {
     public void testReconcileOpenPartitionsInsertsSameTimestampCellNotAliased() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -334,7 +334,7 @@ public class CompositeReaderCellTest extends AbstractCairoTest {
     public void testReconcileOpenPartitionsDeletesSameTimestampCellNotAliased() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -474,7 +474,7 @@ public class CompositeReaderCellTest extends AbstractCairoTest {
     public void testCloseRewrittenPartitionFilesResolvesByCellNotBareTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;

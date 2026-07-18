@@ -26,8 +26,10 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CompositeDimensionTransform;
 import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -64,7 +66,7 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     public void testResolveCellKeyIdentityMemoizedAndPersists() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, exch");
+                    "timestamp(ts) partition by day, exch wal");
 
             try (TableWriter w = getWriter("c")) {
                 // exch is column index 1; a fresh symbol map assigns dense keys 0, 1, ... in
@@ -128,7 +130,7 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     public void testCellKeyMemoResetOnRollback() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, exch");
+                    "timestamp(ts) partition by day, exch wal");
 
             try (TableWriter w = getWriter("c")) {
                 int keyA = w.getSymbolMapWriter(1).put("A");
@@ -218,7 +220,7 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     public void testResolveDimensionOrdinalHashDistinctAndColliding() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table h (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, hash(exch, 4)");
+                    "timestamp(ts) partition by day, hash(exch, 4) wal");
 
             try (TableWriter w = getWriter("h")) {
                 // dim0 = hash(exch, 4); exch is column index 1.
@@ -282,7 +284,7 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     public void testResolveDimensionOrdinalTruncateSharedPrefixAndMemo() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tc (ts timestamp, sku symbol, x double) " +
-                    "timestamp(ts) partition by day, truncate(sku, 3)");
+                    "timestamp(ts) partition by day, truncate(sku, 3) wal");
 
             try (TableWriter w = getWriter("tc")) {
                 // dim0 = truncate(sku, 3); sku is column index 1.
@@ -624,6 +626,124 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             engine.releaseInactive();
             assertTablesMatch("c", "p");
         });
+    }
+
+    /**
+     * Whole-branch review (Plan 4a) finding C1: {@code O3PartitionPurgeJob} walks a table's root BY
+     * DAY ONLY, probing each day at cellKey 0 ({@code findAttachedPartitionRawIndexByLoTimestamp} is
+     * the cellKey-0 delegate of {@code findAttachedPartitionRawIndexBy(ts, cellKey)}). For a REAL
+     * composite table where a day's ONLY cell is NOT cellKey 0, that probe returns &lt;0 (not found)
+     * even though the day IS attached (just under a different cellKey), so
+     * {@code O3PartitionPurgeJob#processPartition} misclassifies the whole day directory as DETACHED
+     * and recursively deletes it via {@code purgePartition}/{@code ff.unlinkOrRemove} -- silent,
+     * permanent data loss for every row {@code _txn} still references there.
+     * <p>
+     * Day1 gets exch='A' in commit 1 (the first-ever interned dimension value -> cellKey 0). Day2 -- a
+     * brand-new day commit 1 never touched -- gets exch='B' in commit 2 (interned second -> cellKey 1),
+     * so day2's ONLY attached-partition entry is cellKey 1, with NO cellKey-0 entry at that day at all:
+     * exactly the trigger shape. This is the brand-new-day/brand-new-cell commit shape Task 5 already
+     * proved safe to ROUTE (see {@link #testSecondCommitNewDayRoutesCorrectly()}), so it reaches the
+     * purge job cleanly, with no unrelated guard (e.g. the extend-existing-cell throw) in the way.
+     * <p>
+     * RED (pre-fix): day2's {@code exch=B} directory -- and its one row -- is deleted; {@code count()}
+     * drops from 2 to 1. GREEN (post-fix): {@code O3PartitionPurgeJob} skips the whole table (gated
+     * {@code txReader.getLongsPerAttachedPartition() > LONGS_PER_TX_ATTACHED_PARTITION}), day2 survives
+     * untouched, both rows still read back correctly.
+     */
+    @Test
+    public void testO3PartitionPurgeJobDoesNotDeleteNonCellZeroDay() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Brand-new day, brand-new (2nd-ever-interned) cell -- day2's ONLY entry ends up at
+            // cellKey 1, never cellKey 0.
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','B',2.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            runPurgeJobDirectly("c");
+
+            // day2's exch=B cell directory (its only cell, cellKey 1) must survive the purge -- the
+            // bug recursively deletes the whole day, taking every cell (here, day2's only row) with it.
+            TableToken tableToken = engine.verifyTableName("c");
+            Assert.assertEquals(
+                    "day2's exch=B cell directory must survive the purge (no cellKey-0 entry at that day)",
+                    setOf("exch=B"),
+                    listCellDirNames(configuration.getFilesFacade(), tableToken, "2020-01-02"));
+
+            assertQuery("select ts, exch, px from c order by ts").timestamp("ts").noLeakCheck().expectSize().returns(
+                    "ts\texch\tpx\n" +
+                            "2020-01-01T00:00:00.000000Z\tA\t1.0\n" +
+                            "2020-01-02T00:00:00.000000Z\tB\t2.0\n");
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    /**
+     * Negative control for {@link #testO3PartitionPurgeJobDoesNotDeleteNonCellZeroDay()}: every day
+     * here DOES have a cellKey-0 entry (the interned value "A" is the first, and only, dimension value
+     * ever interned in this table, so it is always cellKey 0), so the PRE-FIX day-blind probe finds a
+     * match at every day and never misclassifies anything as detached -- nothing is deleted, with or
+     * without the fix. This proves the repro test's RED result is specific to the cellKey-0-absent
+     * shape, not an artifact of this harness/test idiom always losing data regardless of setup.
+     */
+    @Test
+    public void testO3PartitionPurgeJobKeepsDayWhenCellZeroPresent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0)");
+            drainWalQueue();
+            // Brand-new day, but the SAME (already cellKey-0) exch value -- day2's only entry is ALSO
+            // cellKey 0, unlike the repro test above.
+            execute("insert into c values ('2020-01-02T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+
+            runPurgeJobDirectly("c");
+
+            TableToken tableToken = engine.verifyTableName("c");
+            Assert.assertEquals(
+                    setOf("exch=A"),
+                    listCellDirNames(configuration.getFilesFacade(), tableToken, "2020-01-02"));
+            assertQuery("select ts, exch, px from c order by ts").timestamp("ts").noLeakCheck().expectSize().returns(
+                    "ts\texch\tpx\n" +
+                            "2020-01-01T00:00:00.000000Z\tA\t1.0\n" +
+                            "2020-01-02T00:00:00.000000Z\tA\t2.0\n");
+            Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    /**
+     * Directly enqueues (bypassing the reader-release/scoreboard timing that would normally trigger
+     * it -- irrelevant to what these tests probe) and fully drains an {@link O3PartitionPurgeJob} run
+     * for {@code tableName}, mirroring how {@code TableWriter}/{@code TableReader}/
+     * {@code DatabaseCheckpointAgent} themselves call {@link TableUtils#schedulePurgeO3Partitions}.
+     */
+    private void runPurgeJobDirectly(String tableName) throws Exception {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        int timestampType;
+        int partitionBy;
+        try (TableReader r = getReader(tableName)) {
+            timestampType = r.getMetadata().getTimestampType();
+            partitionBy = r.getMetadata().getPartitionBy();
+        }
+        engine.releaseInactive();
+
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            Assert.assertTrue(
+                    "expected a purge task to be queued for " + tableName,
+                    TableUtils.schedulePurgeO3Partitions(engine.getMessageBus(), tableToken, timestampType, partitionBy));
+            purgeJob.drain(0);
+        }
     }
 
     private void assertWalTableNotSuspended(String tableName) {

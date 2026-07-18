@@ -217,6 +217,27 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             throw SqlException.$(pos, "composite partitioning requires time partitioning");
         }
 
+        // Whole-branch review (Plan 4a) finding I1: a non-WAL table's direct, synchronous newRow/
+        // switchPartition row-append path (used for every in-order INSERT) hardcodes cellKey 0 and
+        // never calls into the resolver/interner machinery at all -- unlike a WAL table, whose apply
+        // job always funnels every commit (in-order or not) through processO3Block's composite
+        // dispatch. A non-WAL composite table is therefore NOT a slower version of the same feature:
+        // it silently never routes at all for ordinary in-order inserts (a real per-symbol-value
+        // dimension quietly behaves like plain, single-cell partitioning), and -- because an
+        // out-of-order insert on that SAME non-WAL table still reaches processO3Block, which DOES
+        // route -- can end up with an inconsistent MIX of routed and unrouted rows for the identical
+        // dimension value, depending only on insert order. Reject this shape loudly at CREATE instead
+        // of letting a user discover it empirically. `walEnabled` here is the fully-resolved decision
+        // (explicit WAL/BYPASS WAL keyword, or the configured default when neither is given -- see
+        // SqlParser's isWalEnabled computation, threaded in via setWalEnabled before build() runs), so
+        // this also catches the common case of a bare `PARTITION BY DAY, <dim>` with no WAL keyword at
+        // all under a non-WAL-by-default configuration. Cluster-only tables (dimCount == 0) are
+        // unaffected: they have no dimension to route on and no interner/cell concept at all, so
+        // nothing degrades for them either way.
+        if (dimCount > 0 && !walEnabled) {
+            throw SqlException.$(partitionDimensionExprs.getQuick(0).position, "composite partitioning requires a WAL table");
+        }
+
         PartitionSpec spec = new PartitionSpec();
         spec.setTimeUnit(getPartitionByFromExpr());
         spec.setNamingMode(namingMode);

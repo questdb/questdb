@@ -64,7 +64,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testStrideDerivedFromComposite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");           // composite (1 dimension)
+                    "timestamp(ts) partition by day, exchange wal");           // composite (1 dimension)
             execute("create table p (ts timestamp, x double) timestamp(ts) partition by day"); // plain
 
             try (TableWriter cw = getWriter("c"); TableWriter pw = getWriter("p")) {
@@ -96,7 +96,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testCellKeyRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive(); // no pooled writer/reader may keep _txn open under our direct use
 
             final long day1 = 0L;
@@ -187,13 +187,14 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testReopenAfterCompositeBlindLoad() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c2 (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             execute("insert into c2 values " +
                     "('2020-01-01T00:00:00.000000Z', 'A', 1.0), " +
                     "('2020-01-01T01:00:00.000000Z', 'A', 2.0), " +
                     "('2020-01-02T00:00:00.000000Z', 'A', 3.0), " +
                     "('2020-01-02T01:00:00.000000Z', 'A', 4.0), " +
                     "('2020-01-02T02:00:00.000000Z', 'A', 5.0)");
+            drainWalQueue();
             engine.releaseInactive(); // fully close so the next getWriter() below is a real cold reopen
 
             try (TableWriter tw = getWriter("c2")) {
@@ -246,7 +247,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testFindRawIndexByTsAndCellKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -302,7 +303,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testInsertPartitionForTestKeepsOrder() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -357,7 +358,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table p (ts timestamp, x double) timestamp(ts) partition by day"); // plain
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange"); // dormant composite
+                    "timestamp(ts) partition by day, exchange wal"); // dormant composite
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -433,7 +434,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testMutatorsDoNotAliasAcrossCellsAtSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;
@@ -491,7 +492,7 @@ public class CompositeTxCellTest extends AbstractCairoTest {
     public void testFindRawIndexByTsAndCellKeyMidScanMiss() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, x double) " +
-                    "timestamp(ts) partition by day, exchange");
+                    "timestamp(ts) partition by day, exchange wal");
             engine.releaseInactive();
 
             final long day1 = 0L;

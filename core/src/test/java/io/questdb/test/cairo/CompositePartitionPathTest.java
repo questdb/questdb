@@ -88,7 +88,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
     public void testIdentityHiveAndPlain() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, exch");   // default LAYOUT HIVE
+                    "timestamp(ts) partition by day, exch wal");   // default LAYOUT HIVE
             try (TableWriter w = getWriter("c")) {
                 int keyBtc = w.getSymbolMapWriter(1).put("BTC");
                 int cellKey = w.resolveCellKey(new int[]{keyBtc});
@@ -106,7 +106,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("create table cp (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, exch layout plain");
+                    "timestamp(ts) partition by day, exch layout plain wal");
             try (TableWriter w = getWriter("cp")) {
                 int keyBtc = w.getSymbolMapWriter(1).put("BTC");
                 int cellKey = w.resolveCellKey(new int[]{keyBtc});
@@ -133,7 +133,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
     public void testHashBucketRendersIntegerBothModes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table h (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, hash(exch, 4)");
+                    "timestamp(ts) partition by day, hash(exch, 4) wal");
             try (TableWriter w = getWriter("h")) {
                 int expectedBucket = CompositeDimensionTransform.hashBucket("SYM0", 4);
                 int key = w.getSymbolMapWriter(1).put("SYM0");
@@ -149,7 +149,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("create table hp (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, hash(exch, 4) layout plain");
+                    "timestamp(ts) partition by day, hash(exch, 4) layout plain wal");
             try (TableWriter w = getWriter("hp")) {
                 int expectedBucket = CompositeDimensionTransform.hashBucket("SYM0", 4);
                 int key = w.getSymbolMapWriter(1).put("SYM0");
@@ -171,7 +171,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
     public void testTruncatePrefixReverseLookupBothModes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tc (ts timestamp, sku symbol, x double) " +
-                    "timestamp(ts) partition by day, truncate(sku, 3)");
+                    "timestamp(ts) partition by day, truncate(sku, 3) wal");
             try (TableWriter w = getWriter("tc")) {
                 int key = w.getSymbolMapWriter(1).put("BTCUSDT");
                 int ordinal = w.resolveDimensionOrdinal(0, key, "BTCUSDT");
@@ -185,7 +185,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("create table tcp (ts timestamp, sku symbol, x double) " +
-                    "timestamp(ts) partition by day, truncate(sku, 3) layout plain");
+                    "timestamp(ts) partition by day, truncate(sku, 3) layout plain wal");
             try (TableWriter w = getWriter("tcp")) {
                 int key = w.getSymbolMapWriter(1).put("BTCUSDT");
                 int ordinal = w.resolveDimensionOrdinal(0, key, "BTCUSDT");
@@ -229,7 +229,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
     public void testNameTxnAttachesToCellSegmentNotDayDir() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, exch");
+                    "timestamp(ts) partition by day, exch wal");
             try (TableWriter w = getWriter("c")) {
                 int keyBtc = w.getSymbolMapWriter(1).put("BTC");
                 int cellKey = w.resolveCellKey(new int[]{keyBtc});
@@ -262,7 +262,7 @@ public class CompositePartitionPathTest extends AbstractCairoTest {
     public void testPathUnsafeCharacterEscaped() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table u (ts timestamp, exch symbol, x double) " +
-                    "timestamp(ts) partition by day, exch");
+                    "timestamp(ts) partition by day, exch wal");
             try (TableWriter w = getWriter("u")) {
                 int key = w.getSymbolMapWriter(1).put("A/../B");
                 int cellKey = w.resolveCellKey(new int[]{key});
