@@ -87,7 +87,11 @@ abstract class AbstractUnionSymbolCastTest extends AbstractCairoTest {
     }
 
     protected MemoryTracker acquireTracker() {
-        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1L << 20);
+        return acquireTracker(1L << 20);
+    }
+
+    protected MemoryTracker acquireTracker(long limitBytes) {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limitBytes);
         final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
                 sqlExecutionContext.getSecurityContext(),
                 1L,

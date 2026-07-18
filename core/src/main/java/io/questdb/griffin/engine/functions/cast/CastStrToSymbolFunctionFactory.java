@@ -200,6 +200,9 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         public @Nullable SymbolTable newSymbolTable() {
             // A view owns its A/B flyweights but reads the live dictionary. Unlike copying
             // the dictionary, it needs no native allocation with an otherwise unclear owner.
+            // Note this is not the stable snapshot the old deep copy returned: the values it
+            // yields are live arena flyweights invalidated by the next intern()/getInt() on the
+            // source function (see valueAt), so a caller must not retain them across an intern.
             return new SymbolTable() {
                 private final DirectString viewA = new DirectString();
                 private final DirectString viewB = new DirectString();
@@ -372,6 +375,12 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             symbolB.clear();
         }
 
+        // Returns a flyweight over the native text arena, not a stable copy: the result points
+        // straight at textAddress and stays valid only until the next intern()/getInt() on this
+        // function, which can grow the arena (Unsafe.realloc in ensureTextCapacity) and move or
+        // free the bytes underneath it. A caller must consume or copy the value before the next
+        // intern on the same function and must never retain it across one. valueOf/valueBOf and
+        // the newSymbolTable() view all resolve through here, so the same lifetime applies to them.
         private CharSequence valueAt(int key, DirectString view) {
             if (key < 0 || key >= next - 1) {
                 return null;
