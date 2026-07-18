@@ -122,6 +122,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getIntervalFunctionType();
 
+    /**
+     * Returns the dynamic-interval plan handoff generation: zero outside EXPLAIN, negative while
+     * EXPLAIN prepares its base cursor, and positive while it renders the successfully prepared plan.
+     */
+    default long getIntervalPlanGeneration() {
+        return 0;
+    }
+
     int getJitMode();
 
     /**
@@ -264,6 +272,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isWalApplication();
 
+    /**
+     * Starts a new dynamic-interval plan preparation and returns its negative generation.
+     */
+    default long nextIntervalPlanGeneration() {
+        return 0;
+    }
+
     // This method is used to override intrinsic values in the query execution context
     // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
@@ -297,6 +312,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setIntervalFunctionType(int intervalType);
+
+    default void setIntervalPlanGeneration(long generation) {
+    }
 
     void setJitMode(int jitMode);
 

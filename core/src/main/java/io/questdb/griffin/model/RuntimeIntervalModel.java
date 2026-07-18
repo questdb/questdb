@@ -59,12 +59,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private final int partitionBy;
     private final StringSink sink = new StringSink();
     private final TimestampDriver timestampDriver;
-    // Set true once calculateIntervals() has evaluated the dynamic bounds into outIntervals, so that a
-    // subsequent toPlan() call can render the already-computed intervals instead of re-evaluating the
-    // dynamic bounds (which would re-execute any scalar sub-query cursors). EXPLAIN opens the base data
-    // cursor to initialize bind-variable types, which computes the intervals; toPlan() then consumes
-    // that result rather than repeating the work.
-    private boolean hasComputedIntervals;
+    private SqlExecutionContext intervalPlanContext;
+    private long intervalPlanGeneration;
     // This used to assemble the result
     private LongList outIntervals;
 
@@ -101,6 +97,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             return intervals;
         }
 
+        final long currentIntervalPlanGeneration = sqlExecutionContext.getIntervalPlanGeneration();
+        intervalPlanContext = null;
+        intervalPlanGeneration = 0;
         if (outIntervals == null) {
             outIntervals = new LongList();
         } else {
@@ -120,7 +119,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             sqlExecutionContext.setIntervalFunctionType(oldIntervalType);
         }
 
-        hasComputedIntervals = true;
+        if (currentIntervalPlanGeneration < 0) {
+            intervalPlanContext = sqlExecutionContext;
+            intervalPlanGeneration = -currentIntervalPlanGeneration;
+        }
         return outIntervals;
     }
 
@@ -167,23 +169,31 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     public void toPlan(PlanSink sink) {
         if (intervals != null && intervals.size() > 0) {
             sink.val('[');
+            final SqlExecutionContext executionContext = sink.getExecutionContext();
             try {
-                // Reuse the intervals computed while opening the base cursor (EXPLAIN path) instead of
-                // re-evaluating the dynamic bounds, which would re-execute any scalar sub-query cursors.
-                LongList intervals = hasComputedIntervals ? outIntervals : calculateIntervals(sink.getExecutionContext());
-                hasComputedIntervals = false;
-                for (int i = 0, n = intervals.size(); i < n; i += 2) {
+                // EXPLAIN may reuse intervals calculated by its immediately preceding base-cursor open.
+                // Context identity and generation prevent normal execution or another render from
+                // publishing state that this render can consume.
+                final LongList planIntervals = intervalPlanContext == executionContext
+                        && intervalPlanGeneration != 0
+                        && intervalPlanGeneration == executionContext.getIntervalPlanGeneration()
+                        ? outIntervals
+                        : calculateIntervals(executionContext);
+                for (int i = 0, n = planIntervals.size(); i < n; i += 2) {
                     if (i > 0) {
                         sink.val(',');
                     }
                     sink.val("(\"");
-                    valTs(sink, timestampDriver, intervals.getQuick(i));
+                    valTs(sink, timestampDriver, planIntervals.getQuick(i));
                     sink.val("\",\"");
-                    valTs(sink, timestampDriver, intervals.getQuick(i + 1));
+                    valTs(sink, timestampDriver, planIntervals.getQuick(i + 1));
                     sink.val("\")");
                 }
             } catch (SqlException e) {
                 LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
+            } finally {
+                intervalPlanContext = null;
+                intervalPlanGeneration = 0;
             }
             sink.val(']');
         }
