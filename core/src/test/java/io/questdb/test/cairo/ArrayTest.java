@@ -1017,6 +1017,23 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayDotProductTransposedOperand() throws Exception {
+        // transpose([[1,3],[2,5]]) = [[1,2],[3,5]], right = [[1,5],[7,2]]:
+        // 1*1 + 2*5 + 3*7 + 5*2 = 42.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 3.0], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]])");
+            assertQuery("SELECT dot_product(transpose(left), right) AS product FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            product
+                            42.0
+                            """);
+        });
+    }
+
+    @Test
     public void testArrayFirstFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY");

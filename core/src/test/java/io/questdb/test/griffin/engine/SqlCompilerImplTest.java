@@ -7115,9 +7115,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testProjectionConstantCastOverflowDoesNotLeakInnerFactory() throws Exception {
         // The DECIMAL cast in the projection constant-folds at compile time and
         // throws ImplicitCastException when the literal does not fit. The inner
-        // factory tree -- including the AsyncFiltered factory's PageFrameSequence,
-        // which holds a native circuit-breaker buffer -- was leaking because the
-        // virtual-projection codegen caught only SqlException | CairoException and
+        // factory tree -- including the AsyncFiltered factory's PageFrameSequence
+        // and its native buffers -- was leaking because the virtual-projection
+        // codegen caught only SqlException | CairoException and
         // ImplicitCastException is a plain RuntimeException.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
