@@ -493,7 +493,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     /**
      * Serves disk only - but only in the sense that this factory adds nothing here. The
      * caller ({@code AsyncWindowJoinAtom} and the HORIZON JOIN atoms) feeds the returned
-     * cursor a {@link ConcurrentTimeFrameState} built from whatever
+     * cursor a {@link io.questdb.griffin.engine.table.ConcurrentTimeFrameState} built from whatever
      * {@link #getPageFrameCursor} handed it, so a parallel WINDOW / HORIZON JOIN slave over a
      * live view reads the lead through that state's own lead frames rather than through
      * anything this method does. See {@link #getTimeFrameCursor}, which is the single-
