@@ -95,9 +95,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return followsOrderByAdvice;
     }
 
-    // Provably stable only for a plain (entity, non-indexed) scan of a stable frame set with a
-    // stable (or absent) filter. Index-driven row cursors may embed value functions (for example
-    // a deferred symbol lookup) that this factory cannot inspect, so they stay fail-safe.
+    // Provably deterministic only for a plain (entity, non-indexed) scan of a deterministic frame
+    // set with a deterministic (or absent) filter. Index-driven row cursors may embed value
+    // functions (for example a deferred symbol lookup) that this factory cannot inspect, so they
+    // stay fail-safe.
     @Override
     public boolean isNonDeterministic() {
         if (!rowCursorFactory.isEntity() || rowCursorFactory.isUsingIndex()) {
@@ -108,6 +109,19 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             return true;
         }
         return partitionFrameCursorFactory.isNonDeterministic();
+    }
+
+    // Apply the same inspectability guard while composing the weaker within-execution property.
+    @Override
+    public boolean isStableWithinExecution() {
+        if (!rowCursorFactory.isEntity() || rowCursorFactory.isUsingIndex()) {
+            return false;
+        }
+        final Function filter = this.filter;
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return partitionFrameCursorFactory.isStableWithinExecution();
     }
 
     @Override

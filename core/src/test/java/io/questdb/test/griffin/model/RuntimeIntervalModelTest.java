@@ -154,6 +154,29 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeterminismClassificationSkipsStaticPlaceholder() throws Exception {
+        assertMemoryLeak(() -> {
+            final RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+            builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration);
+            builder.intersectRuntimeTimestamp(
+                    TimestampConstant.newInstance(5_000L, ColumnType.TIMESTAMP),
+                    0
+            );
+            builder.intersect(1_000L, 10_000L);
+            try (RuntimeIntervalModel model = (RuntimeIntervalModel) builder.build()) {
+                builder.clear();
+                Assert.assertEquals(2, model.getDynamicRangeList().size());
+                Assert.assertNull(model.getDynamicRangeList().getQuick(1));
+                Assert.assertFalse(model.isNonDeterministic());
+                Assert.assertTrue(model.isStableWithinExecution());
+            }
+
+            assertRuntimeStabilityClassification(true);
+            assertRuntimeStabilityClassification(false);
+        });
+    }
+
+    @Test
     public void testDynamicIntervalWithNullPositionList() throws Exception {
         assertMemoryLeak(() -> {
             final LongList intervals = new LongList();
@@ -421,6 +444,21 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertRuntimeStabilityClassification(boolean isStableWithinExecution) {
+        final ObjList<Function> dynamicFunctions = new ObjList<>();
+        dynamicFunctions.add(new StabilityFunction(isStableWithinExecution));
+        dynamicFunctions.add(null);
+        try (RuntimeIntervalModel model = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                PartitionBy.DAY,
+                new LongList(),
+                dynamicFunctions
+        )) {
+            Assert.assertTrue(model.isNonDeterministic());
+            Assert.assertEquals(isStableWithinExecution, model.isStableWithinExecution());
+        }
+    }
+
     private static void assertOnePartition(int timestampType, LongList intervals, boolean expected) {
         assertOnePartition(timestampType, intervals, expected, PartitionBy.DAY);
     }
@@ -585,6 +623,30 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        }
+    }
+
+    private static class StabilityFunction extends TimestampFunction {
+        private final boolean isStableWithinExecution;
+
+        private StabilityFunction(boolean isStableWithinExecution) {
+            super(ColumnType.TIMESTAMP);
+            this.isStableWithinExecution = isStableWithinExecution;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return isStableWithinExecution;
         }
     }
 }

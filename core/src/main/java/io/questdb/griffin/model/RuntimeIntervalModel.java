@@ -144,20 +144,34 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         return timestampDriver;
     }
 
-    // Accurate proof: static intervals are compile-time constants; dynamic bounds are stable
-    // iff every bound function is (bind variables and now() are runtime constants and report
-    // false; a non-deterministic or unprovable scalar sub-query bound reports true).
+    // Static placeholders align encoded intervals with dynamic functions and contribute no
+    // instability of their own. Classify only the functions stored in non-null slots.
     @Override
     public boolean isNonDeterministic() {
         if (isStatic()) {
             return false;
         }
         for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
-            if (dynamicRangeList.getQuick(i).isNonDeterministic()) {
+            final Function function = dynamicRangeList.getQuick(i);
+            if (function != null && function.isNonDeterministic()) {
                 return true;
             }
         }
         return false;
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        if (isStatic()) {
+            return true;
+        }
+        for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
+            final Function function = dynamicRangeList.getQuick(i);
+            if (function != null && !function.isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

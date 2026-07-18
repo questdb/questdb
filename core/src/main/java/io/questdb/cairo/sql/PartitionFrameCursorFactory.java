@@ -92,6 +92,14 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return true;
     }
 
+    /**
+     * Returns {@code true} if repeated cursor opens within one query execution produce the same
+     * partition frames. Unknown implementations inherit the fail-safe determinism-derived default.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     TableToken getTableToken();
 
     /**

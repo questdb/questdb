@@ -155,6 +155,79 @@ public class MonotonicSubqueryBoundBoundaryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNestedMixedRuntimeStaticIntervalModelIsStable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO outer_t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-01T01:00:00.000000Z', 2),
+                        ('2024-01-01T02:00:00.000000Z', 3)
+                    """);
+            execute("CREATE TABLE middle_t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO middle_t VALUES ('2024-01-01T02:00:00.000000Z')");
+            execute("CREATE TABLE bounds (ts TIMESTAMP)");
+            execute("INSERT INTO bounds VALUES ('2024-01-01T01:00:00.000000Z')");
+
+            final String expected = """
+                    ts\tv
+                    2024-01-01T01:00:00.000000Z\t2
+                    2024-01-01T02:00:00.000000Z\t3
+                    """;
+            assertQuery("""
+                    SELECT ts, v
+                    FROM outer_t
+                    WHERE dateadd('h', 1, ts) >= (
+                        SELECT ts
+                        FROM middle_t
+                        WHERE ts <= '2024-01-02'
+                          AND ts >= (SELECT ts FROM bounds)
+                    )
+                    """)
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: outer_t")
+                    .returns(expected);
+
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_070_800_000_000L);
+            assertQuery("""
+                    SELECT ts, v
+                    FROM outer_t
+                    WHERE dateadd('h', 1, ts) >= (
+                        SELECT ts
+                        FROM middle_t
+                        WHERE ts <= '2024-01-02'
+                          AND ts >= (SELECT $1::timestamp)
+                    )
+                    """)
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: outer_t")
+                    .returns(expected);
+
+            assertQuery("""
+                    SELECT ts, v
+                    FROM outer_t
+                    WHERE dateadd('h', 1, ts) >= (
+                        SELECT ts
+                        FROM middle_t
+                        WHERE ts <= '2024-01-02'
+                          AND ts >= (
+                              SELECT rnd_timestamp(
+                                  '2020-01-01T00:00:00.000000Z'::timestamp,
+                                  '2020-01-02T00:00:00.000000Z'::timestamp,
+                                  0
+                              )
+                          )
+                    )
+                    """)
+                    .timestamp("ts")
+                    .withPlanContaining("Frame forward scan on: outer_t")
+                    .withPlanNotContaining("Interval forward scan on: outer_t")
+                    .returns(expected);
+        });
+    }
+
     // A runtime-constant scalar-subquery bound (bind variable, now(), now_ns()) re-reads the same
     // execution-scoped snapshot on both cursor opens - once for the pruning inverter and once for
     // the retained residual filter - so it is stable within the execution and must PRUNE: the plan

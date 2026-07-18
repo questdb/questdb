@@ -93,11 +93,18 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         return baseOrder;
     }
 
-    // Stable iff the interval model is: a runtime model re-evaluates its bound functions on
-    // every open, so an unstable bound yields different frames across opens.
+    // Deterministic iff the interval model is: a runtime model re-evaluates its bound functions
+    // on every open, so a non-deterministic bound can yield different frames across executions.
     @Override
     public boolean isNonDeterministic() {
         return intervalModel.isNonDeterministic();
+    }
+
+    // Compose the weaker within-execution property separately so execution-scoped bounds can
+    // remain stable even when they are non-deterministic across executions.
+    @Override
+    public boolean isStableWithinExecution() {
+        return intervalModel.isStableWithinExecution();
     }
 
     @Override

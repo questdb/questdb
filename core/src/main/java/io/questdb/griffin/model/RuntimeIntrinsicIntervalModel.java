@@ -48,5 +48,14 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
         return true;
     }
 
+    /**
+     * Returns {@code true} if repeated interval calculations within one query execution produce
+     * the same intervals. The default stays fail-safe by deriving from determinism; runtime
+     * models may prove the weaker property for execution-scoped bound functions.
+     */
+    default boolean isStableWithinExecution() {
+        return !isNonDeterministic();
+    }
+
     boolean isStatic();
 }
