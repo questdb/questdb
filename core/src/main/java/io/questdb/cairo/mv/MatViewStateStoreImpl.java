@@ -67,6 +67,8 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final Queue<MatViewTimerTask> timerTaskQueue;
     @TestOnly
     private volatile Runnable onPendingTaskReenqueueScanForTesting;
+    @TestOnly
+    private volatile Runnable onTaskQueueAppendForTesting;
 
     public MatViewStateStoreImpl(CairoEngine engine) {
         this.engine = engine;
@@ -131,6 +133,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         isPendingTaskReenqueueRequested.set(false);
         isPendingTaskReenqueueRunning.set(false);
         onPendingTaskReenqueueScanForTesting = null;
+        onTaskQueueAppendForTesting = null;
         taskQueue.clear();
         stateByTableDirName.clear();
         lastNotifiedTxnByTableName.clear();
@@ -425,6 +428,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void reenqueueRefreshTask(MatViewRefreshTask task) {
         try {
+            runTaskQueueAppendSeamForTesting();
             taskQueue.enqueue(task);
         } catch (Throwable th) {
             if (task.matViewToken != null) {
@@ -474,6 +478,18 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @TestOnly
     public void setOnPendingTaskReenqueueScanForTesting(Runnable onPendingTaskReenqueueScanForTesting) {
         this.onPendingTaskReenqueueScanForTesting = onPendingTaskReenqueueScanForTesting;
+    }
+
+    /**
+     * Test seam: runs immediately before every append to the private refresh task queue -- both the
+     * shared {@code enqueueMatViewTask} tail and {@code reenqueueRefreshTask}'s direct append. A
+     * throwing seam stands in for a queue-growth allocation failure, driving the real recovery
+     * catches that no wrapper can reach.
+     * Persistent: fires on every append until reset.
+     */
+    @TestOnly
+    public void setOnTaskQueueAppendForTesting(Runnable onTaskQueueAppendForTesting) {
+        this.onTaskQueueAppendForTesting = onTaskQueueAppendForTesting;
     }
 
     @Override
@@ -548,6 +564,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         if (MatViewRefreshTask.isRefreshOperation(operation)) {
             task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
+        runTaskQueueAppendSeamForTesting();
         taskQueue.enqueue(task);
     }
 
@@ -557,6 +574,13 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     private void runPendingTaskReenqueueScanSeamForTesting() {
         final Runnable seam = onPendingTaskReenqueueScanForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runTaskQueueAppendSeamForTesting() {
+        final Runnable seam = onTaskQueueAppendForTesting;
         if (seam != null) {
             seam.run();
         }

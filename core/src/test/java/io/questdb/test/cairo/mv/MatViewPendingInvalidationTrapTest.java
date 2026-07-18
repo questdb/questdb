@@ -638,8 +638,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // Drive the retry scan directly on the impl and inspect what one scan redelivers:
             // both facets must come back together, pinning that the FULL flag was armed
             // independently of the invalidation retry.
-            final MatViewStateStoreImpl impl =
-                    (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
+            final MatViewStateStoreImpl impl = resolveStateStoreImpl();
             impl.reenqueueFailedPendingTasks();
             final ObjList<MatViewRefreshTask> drained = new ObjList<>();
             MatViewRefreshTask task = new MatViewRefreshTask();
@@ -3151,6 +3150,228 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoreFullRefreshAppendFailureArmsRetryFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final MatViewStateStoreImpl impl = resolveStateStoreImpl();
+
+            // A parked owner whose redelivery enqueue fails at the real queue append: the impl's
+            // own catch must arm the FULL retry flag so the next tick's scan redelivers it.
+            state.markAsPendingFullRefreshForTesting();
+            final Object owner = state.getPendingFullRefreshOwnerForTesting();
+            Assert.assertNotNull(owner);
+
+            impl.setOnTaskQueueAppendForTesting(oneShotOom("test task queue append failure"));
+            try {
+                try {
+                    impl.enqueueFullRefresh(fixture.viewToken(), owner);
+                    Assert.fail("the queue append failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test task queue append failure");
+                }
+            } finally {
+                impl.setOnTaskQueueAppendForTesting(null);
+            }
+
+            // The armed flag redelivers the owner on the next job tick; the drain executes it.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse("the redelivered FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
+    public void testStoreInvalidateAppendFailureArmsRetryFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final MatViewStateStoreImpl impl = resolveStateStoreImpl();
+
+            // The reason marker parks first (publish-before-enqueue, as invalidateView orders it),
+            // so the armed retry flag has a facet to redeliver.
+            state.markAsPendingInvalidation("store invalidate append failure witness");
+
+            impl.setOnTaskQueueAppendForTesting(oneShotOom("test invalidate append failure"));
+            try {
+                try {
+                    impl.enqueueInvalidate(fixture.viewToken(), "store invalidate append failure witness");
+                    Assert.fail("the queue append failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test invalidate append failure");
+                }
+            } finally {
+                impl.setOnTaskQueueAppendForTesting(null);
+            }
+
+            // The armed flag redelivers the invalidation on the next tick; the drain mints invalid.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tstore invalidate append failure witness
+                            """);
+        });
+    }
+
+    @Test
+    public void testStoreMidScanAppendFailureRestoresUnclaimedFlags() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+            final MatViewStateStoreImpl impl = resolveStateStoreImpl();
+
+            // Arm BOTH facets, then make the scan's own INVALIDATION enqueue -- the first facet
+            // the loop attempts -- fail at the queue append before FULL_REFRESH is ever reached.
+            // A single-facet setup cannot isolate this catch: enqueueInvalidate0 and the owner
+            // overload of enqueueFullRefresh each carry their own catch that re-arms the one
+            // facet whose enqueue they call, so with only one facet armed the per-state catch's
+            // restore is redundant and its removal is unobservable. Arming both, with the
+            // failure landing on the first, leaves the second facet's flag genuinely unclaimed:
+            // no facet-specific catch ever touches it, so only the per-state catch here can
+            // restore it and re-arm the store-wide signal for a later scan to redeliver it.
+            state.markAsPendingInvalidation("mid-scan append failure witness");
+            state.markAsPendingFullRefreshForTesting();
+            final Object owner = state.getPendingFullRefreshOwnerForTesting();
+            Assert.assertNotNull(owner);
+            impl.requestPendingInvalidationReenqueue(state);
+            impl.requestPendingFullRefreshReenqueue(state);
+            impl.setOnTaskQueueAppendForTesting(oneShotOom("test mid-scan append failure"));
+            try {
+                try {
+                    impl.reenqueueFailedPendingTasks();
+                    Assert.fail("the mid-scan append failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test mid-scan append failure");
+                }
+            } finally {
+                impl.setOnTaskQueueAppendForTesting(null);
+            }
+
+            // Drive the retry scan directly, seam disarmed, and inspect the raw queue it fills --
+            // NOT a job drain. A job drain would lock/unlock the view to apply the invalidation
+            // task, and that unlock's finalizeAndUnlock handoff independently re-reads the marker
+            // and wakes whatever it still holds, including the FULL_REFRESH owner, regardless of
+            // whether this scan's own retry flag survived. That would mask the mutation this test
+            // exists to catch. Only a raw dequeue, before any task is applied, isolates the scan's
+            // own per-state catch.
+            impl.reenqueueFailedPendingTasks();
+            final ObjList<MatViewRefreshTask> drained = new ObjList<>();
+            MatViewRefreshTask task = new MatViewRefreshTask();
+            while (impl.tryDequeueRefreshTask(task)) {
+                drained.add(task);
+                task = new MatViewRefreshTask();
+            }
+            boolean hasInvalidateTask = false;
+            boolean hasFullTaskWithOwner = false;
+            for (int i = 0, n = drained.size(); i < n; i++) {
+                final MatViewRefreshTask t = drained.getQuick(i);
+                if (t.operation == MatViewRefreshTask.INVALIDATE) {
+                    hasInvalidateTask = true;
+                } else if (t.operation == MatViewRefreshTask.FULL_REFRESH && t.fullRefreshOwner == owner) {
+                    hasFullTaskWithOwner = true;
+                }
+            }
+            Assert.assertTrue("the redelivered scan must include the invalidation facet", hasInvalidateTask);
+            Assert.assertTrue("the per-state catch must have restored the unclaimed FULL facet", hasFullTaskWithOwner);
+
+            // Put the redelivered tasks back and let a real drain recover end-to-end: the
+            // invalidation mints invalid first, then the redelivered FULL performs invalid-view
+            // recovery, so the view ends up valid, mirroring how
+            // testFinalizeBothFacetsInvalidationWakeFailureArmsBothRetryFlags's two-facet
+            // recovery resolves.
+            for (int i = 0, n = drained.size(); i < n; i++) {
+                impl.reenqueueRefreshTask(drained.getQuick(i));
+            }
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse("recovery must consume both facets", state.isPendingInvalidation());
+            Assert.assertFalse("recovery must end valid", state.isInvalid());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
+    public void testStorePutBackAppendFailureArmsRetryFlags() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+            final MatViewStateStoreImpl impl = resolveStateStoreImpl();
+
+            // Phase 1: FULL put-back fails at the real append. The impl's catch keys on the task
+            // operation and owner to arm the FULL retry flag.
+            state.markAsPendingFullRefreshForTesting();
+            final Object owner = state.getPendingFullRefreshOwnerForTesting();
+            final MatViewRefreshTask fullPutBack = new MatViewRefreshTask();
+            fullPutBack.matViewToken = viewToken;
+            fullPutBack.operation = MatViewRefreshTask.FULL_REFRESH;
+            fullPutBack.fullRefreshOwner = owner;
+            impl.setOnTaskQueueAppendForTesting(oneShotOom("test full put-back append failure"));
+            try {
+                try {
+                    impl.reenqueueRefreshTask(fullPutBack);
+                    Assert.fail("the queue append failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test full put-back append failure");
+                }
+            } finally {
+                impl.setOnTaskQueueAppendForTesting(null);
+            }
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse("the redelivered FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
+            Assert.assertFalse(state.isInvalid());
+
+            // Phase 2: INVALIDATE put-back fails at the real append. The catch arms the
+            // invalidation retry flag; the parked reason marker is what the scan redelivers.
+            state.markAsPendingInvalidation("put-back append failure witness");
+            final MatViewRefreshTask invalidatePutBack = new MatViewRefreshTask();
+            invalidatePutBack.matViewToken = viewToken;
+            invalidatePutBack.operation = MatViewRefreshTask.INVALIDATE;
+            invalidatePutBack.invalidationReason = "put-back append failure witness";
+            impl.setOnTaskQueueAppendForTesting(oneShotOom("test invalidate put-back append failure"));
+            try {
+                try {
+                    impl.reenqueueRefreshTask(invalidatePutBack);
+                    Assert.fail("the queue append failure must propagate");
+                } catch (OutOfMemoryError expected) {
+                    TestUtils.assertContains(expected.getMessage(), "test invalidate put-back append failure");
+                }
+            } finally {
+                impl.setOnTaskQueueAppendForTesting(null);
+            }
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tput-back append failure witness
+                            """);
+        });
+    }
+
+    @Test
     public void testSuspendedFullRefreshRetainsOwnerAndRedeliversOnResume() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -3345,6 +3566,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         });
     }
 
+    private static Runnable oneShotOom(String message) {
+        final AtomicBoolean hasFired = new AtomicBoolean();
+        return () -> {
+            if (hasFired.compareAndSet(false, true)) {
+                throw new OutOfMemoryError(message);
+            }
+        };
+    }
+
     private void assertConcurrentCasRetryScenario(boolean isFullOwnerPublishedInBackground) throws Exception {
         // merged body; the flag selects which facet publishes from the background thread
         // and which marker-read seam parks it
@@ -3527,6 +3757,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         return new MatViewFixture(viewToken, state);
     }
 
+    private MatViewStateStoreImpl resolveStateStoreImpl() {
+        return (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
+    }
+
     /**
      * Counts facet enqueues and optionally trips on unbounded re-enqueue. A facet with its
      * isDelegating* flag false is a count-only sink: the call is counted and dropped. Counting
@@ -3648,8 +3882,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
      * The armed overrides MODEL the impl-level failure contract of {@code MatViewStateStoreImpl}
      * (record the per-facet retry flag, then throw) because the store's task queue is private:
      * a genuine queue-growth failure cannot be injected through the engine seam. The real
-     * flag-on-throw catches live in enqueueInvalidate0, the owner overload of enqueueFullRefresh,
-     * and reenqueueRefreshTask.
+     * flag-on-throw catches live in enqueueInvalidate0, the owner overload of
+     * enqueueFullRefresh, and reenqueueRefreshTask; the testStore*AppendFailure* tests drive them
+     * genuinely through MatViewStateStoreImpl#setOnTaskQueueAppendForTesting, so the armed
+     * overrides here remain only for flows that must fail at the engine-wrapper boundary.
      * {@code reenqueuePendingOnResume} models the same flag-recording contract with two independent
      * live reads of the current marker rather than a single atomic snapshot, since the store's own
      * snapshot accessors are package-private to {@code io.questdb.cairo.mv}; the hook only ever fires
