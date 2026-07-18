@@ -57,98 +57,71 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 import java.util.concurrent.TimeUnit;
 
 /**
- * SP-C commit-path benchmark. Measures WAL commit overhead across NOSYNC / ASYNC / SYNC / ADAPTIVE
- * commit modes — the path adaptive actually changes (adaptive is WAL-only). Each invocation appends
- * one batch of rows to a {@link WalWriter} and commits; the commit's durability is what the commit
- * mode controls:
- * <ul>
- *   <li>NOSYNC — no device flush.</li>
- *   <li>ASYNC  — schedule column writeback (msync MS_ASYNC), don't block.</li>
- *   <li>SYNC   — msync/fdatasync the WAL segment + events every commit.</li>
- *   <li>ADAPTIVE (group window 0 = W=0, zero-loss) — fdatasync the smaller WAL <em>events</em>
- *       + sequencer every commit; column materialization is deferred to the durable epoch (lazy
- *       apply). W&gt;0 batches the fdatasync across commits inside the window (RPO &le; W).</li>
- * </ul>
+ * SP-C apply-path benchmark: isolates the cost of the ADAPTIVE durable EPOCH on the WAL apply worker.
  *
- * <p><b>SP-C axes covered by this class:</b>
- * <ul>
- *   <li><b>Workloads</b> (the {@code workload} param, one named axis so the matrix stays sane instead
- *       of a rows×cols×o3 cross-product):
- *       <ul>
- *         <li>{@code HIGH_INGEST} — large batches (5000 rows), 20 cols, in-order.</li>
- *         <li>{@code SMALL_BATCH} — commit every 5 rows, 20 cols, in-order. This is the per-commit
- *             latency lens: the op ≈ one commit, so SampleTime p99 here ≈ per-commit p99.</li>
- *         <li>{@code WIDE_TABLE} — 200 columns, 1000-row batches, in-order.</li>
- *         <li>{@code O3} — 1000-row batches whose timestamps are reversed within the batch (out of
- *             order). NOTE: O3 <em>merge</em> cost is realized at APPLY, not commit — the commit just
- *             journals the out-of-order rows to the WAL — so this axis mainly proves commit-path
- *             parity for O3 ingest. The apply-path O3 question ("does ADAPTIVE apply still fsync
- *             columns for an O3 commit?") is SETTLED separately by
- *             {@code AdaptiveWalDurabilityTest.testAdaptiveO3ApplyIssuesZeroColumnSyncsOnApply}
- *             (zero column syncs), and epoch/apply cost is measured by
- *             {@link WalAdaptiveApplyBenchmark}.</li>
- *       </ul></li>
- *   <li><b>Modes × W</b>: sweep {@code -p commitMode=NOSYNC,ASYNC,SYNC,ADAPTIVE} and, for ADAPTIVE,
- *       {@code -p groupWindowUs=0,1000,5000,50000} to draw the RPO↔throughput curve.</li>
- *   <li><b>Mean throughput AND p99 latency</b>: {@code @BenchmarkMode({AverageTime, SampleTime})}.
- *       AverageTime gives us/op; SampleTime gives the percentile table (p99/p999). Select one with
- *       {@code -bm avgt} / {@code -bm sample} to halve run time.</li>
- * </ul>
+ * <p>Unlike {@link WalCommitModeBenchmark} (which never drains apply so it measures only the commit
+ * path), this benchmark drains apply on every invocation, because the durable epoch fires on the apply
+ * path ({@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}), not on commit. Each invocation appends one
+ * in-order batch, commits, then drains the WAL queue — so the measured op = ingest + apply (+ the epoch
+ * fsync when the cadence fires).
  *
- * <p>The WAL apply job is deliberately NOT drained per invocation — draining it would force adaptive's
- * lazy apply eagerly and erase its advantage. Apply is drained once at teardown for a clean shutdown.
- * Numbers are for RELATIVE comparison between modes on the same box.
+ * <p><b>Epoch-overhead axis</b> — {@code epochIntervalMs}:
+ * <ul>
+ *   <li>{@code -1} — epochs DISABLED (operator opt-out). ADAPTIVE apply is fully lazy: zero column
+ *       msync/fdatasync on apply (proven by {@code AdaptiveWalDurabilityTest} tests (e)/(e2)).</li>
+ *   <li>{@code 0} — epoch on EVERY apply batch. Each apply calls {@code fsyncMaterializedState()}
+ *       (fsync columns + {@code _cv} + {@code _txn}), writes the {@code _snapshot} marker and the
+ *       {@code .epoch} copies. This is the WORST-CASE epoch cadence; the delta vs {@code -1} is the
+ *       per-epoch overhead.</li>
+ * </ul>
+ * The default production interval is 1000ms, which amortizes this cost across ~1s of apply batches, so
+ * real epoch overhead on the hot path is a small fraction of the {@code 0} vs {@code -1} delta measured
+ * here — this benchmark brackets the WORST case.
+ *
+ * <p>{@code commitMode=SYNC} is included as a reference: SYNC fsyncs the columns on EVERY apply
+ * regardless of {@code epochIntervalMs}, so ADAPTIVE/{@code 0} (epoch every batch) ≈ SYNC apply cost,
+ * while ADAPTIVE/{@code -1} is the lazy floor. ({@code SYNC} ignores {@code epochIntervalMs}, so its two
+ * rows are duplicates.)
+ *
+ * <p>In-order only: batches advance forward so apply stays on the append fast path and the working
+ * partition doesn't rewrite — keeping the measurement stable across a long run. (O3 apply correctness /
+ * zero-column-sync is settled by {@code AdaptiveWalDurabilityTest.testAdaptiveO3ApplyIssuesZeroColumnSyncsOnApply};
+ * O3 apply <em>cost</em> is a controlled-HW item — see the SP-C spec.)
  * <p>
- * DB root is on real disk (ext4/xfs) so fdatasync is a real syscall.
- * <p>
- * Run (see {@code docs/superpowers/specs/2026-07-17-adaptive-sp-c-perf-validation-design.md} for the
- * full recipe incl. the {@code JAVA_TOOL_OPTIONS} module-args gotcha).
+ * DB root on real disk so fdatasync is a real syscall. Relative comparison only.
  */
 @State(Scope.Benchmark)
-@BenchmarkMode({Mode.AverageTime, Mode.SampleTime})
+@BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class WalCommitModeBenchmark {
+public class WalAdaptiveApplyBenchmark {
 
     private static final long APPEND_PAGE_SIZE = 256 * 1024L;
+    private static final int COLUMN_COUNT = 20;
+    private static final int ROWS_PER_BATCH = 1000;
     private static final String[] SYMBOLS = {"alpha", "beta", "gamma", "delta", "epsilon"};
-    private static final String TABLE_NAME = "walbench";
+    private static final String TABLE_NAME = "walapplybench";
 
-    @Param({"NOSYNC", "ASYNC", "SYNC", "ADAPTIVE"})
+    @Param({"ADAPTIVE", "SYNC"})
     public String commitMode;
 
-    /**
-     * ADAPTIVE group-commit window in microseconds (the RPO knob; ignored by other modes). 0 = W=0,
-     * zero-loss (fdatasync every commit). Larger W batches commits per device flush → higher throughput at
-     * the cost of an RPO of up to W. Sweep {@code 0,1000,5000,50000} to draw the RPO ↔ throughput curve.
-     */
-    @Param({"0"})
-    public long groupWindowUs;
-
-    /**
-     * Named workload. One JMH axis instead of a rows×cols×o3 cross-product (keeps the matrix small and
-     * excludes nonsensical combos). Sets {@link #rowsPerCommit}, {@link #columnCount}, {@link #o3} in setup.
-     */
-    @Param({"HIGH_INGEST", "SMALL_BATCH", "WIDE_TABLE", "O3"})
-    public String workload;
+    /** Adaptive durable-epoch cadence: -1 = disabled (lazy floor), 0 = every apply batch (worst case). */
+    @Param({"-1", "0"})
+    public long epochIntervalMs;
 
     private final Rnd rnd = new Rnd();
     private final Utf8StringSink varcharSink = new Utf8StringSink();
     private ApplyWal2TableJob applyJob;
-    private int columnCount;
+    private CheckWalTransactionsJob checkJob;
     private String dbRoot;
     private CairoEngine engine;
-    private boolean o3;
-    private int rowsPerCommit;
     private int symbolColIndex;
     private long ts;
     private int varcharColIndex;
     private WalWriter walWriter;
 
     public static void main(String[] args) throws RunnerException {
-        // Directional default: mean throughput only, all 4 modes at W=0 across all 4 workloads.
-        // For the RPO curve, run the uber-jar CLI with -p groupWindowUs=0,1000,5000,50000 (see spec).
         Options opt = new OptionsBuilder()
-                .include(WalCommitModeBenchmark.class.getSimpleName())
+                .include(WalAdaptiveApplyBenchmark.class.getSimpleName())
                 .warmupIterations(2)
                 .measurementIterations(3)
                 .forks(1)
@@ -157,15 +130,11 @@ public class WalCommitModeBenchmark {
     }
 
     @Benchmark
-    public void ingestAndCommit() {
+    public void ingestAndApply() {
         final int varIdx = varcharColIndex;
         final int symIdx = symbolColIndex;
-        final long base = ts;
-        for (int i = 0; i < rowsPerCommit; i++) {
-            // O3: reverse the timestamps WITHIN the batch (base+rows-1 .. base) so the committed WAL
-            // block is out-of-order; batches still advance forward so the table grows monotonically.
-            final long rowTs = o3 ? (base + (rowsPerCommit - 1 - i)) : (base + i);
-            TableWriter.Row row = walWriter.newRow(rowTs);
+        for (int i = 0; i < ROWS_PER_BATCH; i++) {
+            TableWriter.Row row = walWriter.newRow(ts++);
             for (int c = 1; c < varIdx; c++) {
                 row.putLong(c, rnd.nextLong());
             }
@@ -176,23 +145,32 @@ public class WalCommitModeBenchmark {
             row.putSym(symIdx, SYMBOLS[rnd.nextPositiveInt() % SYMBOLS.length]);
             row.append();
         }
-        ts = base + rowsPerCommit;
         walWriter.commit();
+        // Apply the batch we just committed. Under ADAPTIVE this fires the durable epoch per cadence
+        // (epochIntervalMs); that epoch's fsyncMaterializedState is the overhead this benchmark isolates.
+        applyJob.drain(0);
+        if (checkJob.run()) {
+            applyJob.drain(0);
+        }
     }
 
     @Setup(Level.Trial)
     public void setupTrial() {
-        resolveWorkload();
-
         final String baseDir = new java.io.File("/data").isDirectory() ? "/data" : System.getProperty("user.home");
-        dbRoot = baseDir + "/qdb-walcommitbench-" + System.nanoTime();
+        dbRoot = baseDir + "/qdb-walapplybench-" + System.nanoTime();
         new java.io.File(dbRoot).mkdirs();
 
         final int mode = parseCommitMode(commitMode);
+        final long epochMs = epochIntervalMs;
         final CairoConfiguration cfg = new DefaultCairoConfiguration(dbRoot) {
             @Override
             public long getAdaptiveCommitGroupWindowUs() {
-                return groupWindowUs; // W=0: zero-loss; W>0: batch commits per flush (RPO up to W)
+                return 0; // W=0: isolate the APPLY/epoch path, not the group-commit window
+            }
+
+            @Override
+            public long getAdaptiveEpochIntervalMs() {
+                return epochMs;
             }
 
             @Override
@@ -213,7 +191,7 @@ public class WalCommitModeBenchmark {
 
         engine = new CairoEngine(cfg);
 
-        final int longCols = Math.max(0, columnCount - 2);
+        final int longCols = Math.max(0, COLUMN_COUNT - 2);
         final StringBuilder ddl = new StringBuilder("create table ").append(TABLE_NAME).append(" (ts timestamp");
         for (int c = 0; c < longCols; c++) {
             ddl.append(", c").append(c).append(" long");
@@ -226,6 +204,7 @@ public class WalCommitModeBenchmark {
         final TableToken token = engine.verifyTableName(TABLE_NAME);
         walWriter = engine.getWalWriter(token);
         applyJob = new ApplyWal2TableJob(engine, 0);
+        checkJob = new CheckWalTransactionsJob(engine);
 
         ts = 0;
         rnd.reset();
@@ -241,16 +220,15 @@ public class WalCommitModeBenchmark {
             walWriter.close();
             walWriter = null;
         }
-        // Drain the accumulated WAL now (not per-invocation) so shutdown is clean.
         if (applyJob != null && engine != null) {
-            CheckWalTransactionsJob check = new CheckWalTransactionsJob(engine);
             applyJob.drain(0);
-            if (check.run()) {
+            if (checkJob.run()) {
                 applyJob.drain(0);
             }
             applyJob.close();
             applyJob = null;
         }
+        checkJob = null;
         if (engine != null) {
             engine.close();
             engine = null;
@@ -296,32 +274,6 @@ public class WalCommitModeBenchmark {
             CairoEngine.execute(compiler, ddl, ctx, null);
         } catch (SqlException e) {
             throw new RuntimeException("DDL failed: " + ddl, e);
-        }
-    }
-
-    private void resolveWorkload() {
-        switch (workload) {
-            case "HIGH_INGEST" -> {
-                rowsPerCommit = 5000;
-                columnCount = 20;
-                o3 = false;
-            }
-            case "SMALL_BATCH" -> {
-                rowsPerCommit = 5;
-                columnCount = 20;
-                o3 = false;
-            }
-            case "WIDE_TABLE" -> {
-                rowsPerCommit = 1000;
-                columnCount = 200;
-                o3 = false;
-            }
-            case "O3" -> {
-                rowsPerCommit = 1000;
-                columnCount = 20;
-                o3 = true;
-            }
-            default -> throw new IllegalArgumentException("Unknown workload: " + workload);
         }
     }
 }
