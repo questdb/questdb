@@ -919,8 +919,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * surfaced this method's necessity: an O3-routed composite commit's cell files went unread, "file does
      * not exist" against the bare day directory).
      *
-     * @throws UnsupportedOperationException if called on a non-composite table, or if any dimension is
-     *                                        {@code KIND_EXPRESSION}
+     * @throws UnsupportedOperationException if called on a non-composite table
      */
     public void renderCellSegment(CharSink<?> sink, int cellKey) {
         PartitionSpec spec = metadata.getPartitionSpec();
@@ -939,7 +938,18 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             PartitionDimension dim = spec.getDimension(i);
             if (namingMode == PartitionSpec.MODE_HIVE) {
-                sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+                // KIND_EXPRESSION has no source column (getColumnIndex() == -1 by construction --
+                // composite-partitioning Plan 4e Task 2/3): use its alias instead, mirroring
+                // TableWriter#renderDimensionSegment's identical MODE_HIVE prefix choice and how
+                // SHOW CREATE TABLE already renders this dimension via its alias (see
+                // PartitionDimension#toSink). Otherwise metadata.getColumnName(-1) below is an
+                // uncontrolled ArrayIndexOutOfBoundsException -- this is the read-side twin of the
+                // exact landmine Task 1 fixed on the write side.
+                if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                    sink.put(dim.getAlias()).put('=');
+                } else {
+                    sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+                }
             }
             if (dim.getKind() == PartitionDimension.KIND_HASH) {
                 sink.put(tuple[i]);
@@ -949,17 +959,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Reverse-looks-up dense interned key {@code key} for dimension {@code dimIndex} back to its
+     * value -- the read-only half {@code TableWriter} has no counterpart for. {@code IDENTITY} and
+     * {@code TRUNCATE} look the key up in their respective symbol map; {@code HASH} has no reverse (a
+     * bucket cannot be un-hashed), so this returns {@code null}. {@code EXPRESSION} (composite-
+     * partitioning Plan 4e Task 2/3) is a pure dedicated-dict reverse lookup, byte-identical to
+     * {@code TRUNCATE} -- NOT a re-evaluation of the expression (there is no {@code Function}-eval
+     * bridge on the read side at all, nor does there need to be: the ordinal already IS the
+     * dedicated dict's key, interned once at write/eval time -- see {@code
+     * TableWriter#resolveExpressionDimensionOrdinal}/{@code internDimensionValue}). {@code
+     * EXPRESSION} shares {@code TRUNCATE}'s dedicated-dict bucket ({@link CompositeInternerLayout}),
+     * so {@link #getCompositeDictionaries()}'s reader-side {@code dictReaderFor(dimIndex)} is already
+     * populated for it exactly as it is for a real {@code TRUNCATE} dimension -- no additional
+     * provisioning needed here.
+     */
     public CharSequence valueOfDimensionKey(int dimIndex, int key) {
         PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
         switch (dim.getKind()) {
             case PartitionDimension.KIND_IDENTITY:
                 return getSymbolMapReader(denseIndexOfDimensionSource(dim)).valueOf(key);
             case PartitionDimension.KIND_TRUNCATE:
+            case PartitionDimension.KIND_EXPRESSION:
                 return getCompositeDictionaries().dictReaderFor(dimIndex).valueOf(key);
             case PartitionDimension.KIND_HASH:
                 return null;
             default:
-                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+                throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
         }
     }
 

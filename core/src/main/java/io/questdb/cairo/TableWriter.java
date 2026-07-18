@@ -40,8 +40,12 @@ import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -70,13 +74,17 @@ import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -101,6 +109,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -354,6 +363,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private CompositeDictionaries compositeDicts;
     // reused across internDimensionValue() calls to avoid an allocation per TRUNCATE-dimension intern
     private final StringSink compositeDimSink = new StringSink();
+    // Composite-partitioning Plan 4e Task 2: per-dimension compiled Function cache for KIND_EXPRESSION
+    // dimensions (the Function-eval bridge -- see ensureCompositeExpressionFunctionsCompiled()). Null
+    // until the first EXPRESSION-dimension row is ever routed (never allocated for a table with no
+    // EXPRESSION dimension); indexed by dimension index, with a null entry for every non-EXPRESSION
+    // dimension. Freed on writer teardown in freeSymbolMapWriters() (mirrors compositeDicts).
+    private ObjList<Function> compositeExpressionFunctions;
+    // -1 (never compiled) until the first successful compile of compositeExpressionFunctions, then
+    // the writer's own getMetadataVersion() at that point; a mismatch at the next EXPRESSION-row
+    // route triggers a full recompile (see ensureCompositeExpressionFunctionsCompiled()) -- mirrors
+    // InsertAsSelectOperationImpl's own cached-metadataVersion invalidation. Composite tables already
+    // hard-reject RENAME/DROP COLUMN and ALTER COLUMN TYPE outright, so in practice the only
+    // reachable trigger is ADD COLUMN, which never actually invalidates an EXPRESSION dimension's own
+    // column-index bindings (a new column is always appended past every existing index) -- this is
+    // therefore defensive future-proofing, not a currently-reachable correctness fix.
+    private long compositeExpressionFunctionsMetadataVersion = -1;
+    // Reused Record adapter over this writer's own o3Columns buffers (composite-partitioning Plan 4e
+    // Task 2), positioned per row by compositeExpressionRecord.of(absoluteRow) immediately before
+    // each compiled EXPRESSION Function#getStrA(...) call. One instance for the life of the writer --
+    // safe because resolveRowCellKey's only caller (processO3BlockComposite) evaluates rows strictly
+    // serially on the writer's own thread, exactly like compositeDimSink/dimensionOrdinalMemo above.
+    private CompositeExpressionRecord compositeExpressionRecord;
+    // Minimal background-job SqlExecutionContext for compiling/evaluating composite EXPRESSION
+    // dimensions (composite-partitioning Plan 4e Task 2); allocated lazily alongside the first
+    // compile and reused thereafter -- it carries no per-table-schema state of its own, only a
+    // reference to engine, so a metadata-version-triggered recompile never needs a fresh one.
+    private CompositeExpressionSqlExecutionContext compositeExpressionSqlExecutionContext;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
@@ -2892,9 +2927,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * dimension's transform kind (see {@link PartitionDimension#getKind()}): {@code IDENTITY} reuses
      * the source column's own symbol map ({@link #getSymbolMapWriter(int)}), {@code HASH} computes a
      * pure hash bucket with no dictionary involved (see {@link CompositeDimensionTransform#hashBucket}),
-     * and {@code TRUNCATE} interns the first-{@code N}-char prefix into the dimension's dedicated
+     * {@code TRUNCATE} interns the first-{@code N}-char prefix into the dimension's dedicated
      * dictionary ({@link #getCompositeDictionaries()}; a composite table always has one for a
-     * TRUNCATE dimension). {@code EXPRESSION} dimensions are not supported here (Plan 4).
+     * TRUNCATE dimension), and {@code EXPRESSION} interns {@code value} verbatim into that SAME kind
+     * of dedicated dictionary (composite-partitioning Plan 4e Task 2) -- {@code value} is already the
+     * fully-evaluated string result of the dimension's compiled {@code Function} by the time it
+     * reaches this method (see {@code resolveExpressionDimensionOrdinal}), so unlike {@code
+     * TRUNCATE} no further transform is applied here.
      */
     public int internDimensionValue(int dimIndex, CharSequence value) {
         PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
@@ -2904,21 +2943,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             case PartitionDimension.KIND_HASH:
                 return CompositeDimensionTransform.hashBucket(value, dim.getParam());
             case PartitionDimension.KIND_TRUNCATE:
-                CompositeDictionaries dicts = getCompositeDictionaries();
-                MapWriter dedicatedDict = dicts != null ? dicts.dedicatedDictFor(dimIndex) : null;
-                if (dedicatedDict == null) {
-                    // Should not happen for a real TRUNCATE dimension (a composite table always
-                    // provisions one), but guard explicitly rather than let a wrong-kind/stale
-                    // dimIndex surface as a bare NPE here.
-                    throw CairoException.nonCritical()
-                            .put("no dedicated dictionary for composite dimension [dimIndex=").put(dimIndex).put(']');
-                }
-                return dedicatedDict.put(
+                return getDedicatedDictOrThrow(dimIndex).put(
                         CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), compositeDimSink)
                 );
+            case PartitionDimension.KIND_EXPRESSION:
+                return getDedicatedDictOrThrow(dimIndex).put(value);
             default:
-                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+                throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
         }
+    }
+
+    /**
+     * The dedicated dictionary {@link MapWriter} for a {@code TRUNCATE} or {@code EXPRESSION}
+     * dimension (composite-partitioning Plan 2 / Plan 4e Task 2) -- both kinds share the same
+     * {@code CompositeInternerLayout} dedicated-dict bucket. Throws rather than returning {@code
+     * null}: should not happen for a real TRUNCATE/EXPRESSION dimension (a composite table always
+     * provisions one), but a wrong-kind/stale {@code dimIndex} must surface as a clear error here,
+     * not a bare NPE downstream.
+     */
+    private MapWriter getDedicatedDictOrThrow(int dimIndex) {
+        CompositeDictionaries dicts = getCompositeDictionaries();
+        MapWriter dedicatedDict = dicts != null ? dicts.dedicatedDictFor(dimIndex) : null;
+        if (dedicatedDict == null) {
+            throw CairoException.nonCritical()
+                    .put("no dedicated dictionary for composite dimension [dimIndex=").put(dimIndex).put(']');
+        }
+        return dedicatedDict;
     }
 
     public boolean inTransaction() {
@@ -3866,28 +3916,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Renders one dimension's cell-directory segment -- one path component out of
      * {@link #renderCellSegment(CharSink, int)}'s possibly-multi-segment output -- into {@code sink}.
+     * <p>
+     * {@code KIND_EXPRESSION} (composite-partitioning Plan 4e Task 2/3) has no source column
+     * ({@code getColumnIndex() == -1} by construction), so the {@code MODE_HIVE} prefix uses the
+     * dimension's {@code alias} instead of a source column name (mirroring how {@code SHOW CREATE
+     * TABLE} already renders this dimension via its alias, see {@link PartitionDimension#toSink}),
+     * and its value is a pure dedicated-dict reverse lookup -- byte-identical to {@code
+     * KIND_TRUNCATE} below, NOT a re-evaluation of the expression: the ordinal already IS the
+     * dedicated dict's key, interned once at eval time by {@link
+     * #resolveExpressionDimensionOrdinal(int, long)}/{@link #internDimensionValue(int, CharSequence)}.
+     * This method is reached even for a commit that never dispatches a single row (a brand new
+     * composite table's first WAL commit unconditionally tears down an artificial 0-length "lag"
+     * placeholder partition -- see {@code processWalCommitFinishApply} -- before real row data is
+     * ever processed, and that teardown renders the placeholder's own cell segment name through
+     * here too); this is exactly the same placeholder path every other dimension kind already
+     * renders through successfully today, so {@code KIND_EXPRESSION} needs no special handling for it.
      */
     private void renderDimensionSegment(CharSink<?> sink, PartitionSpec spec, int dimIndex, int ordinal, byte namingMode) {
         PartitionDimension dim = spec.getDimension(dimIndex);
-        if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
-            // Same landmine shape as resolveRowCellKey's clean-throw (composite-partitioning Plan 4e
-            // Task 1): getColumnIndex() == -1 for KIND_EXPRESSION, so the unconditional MODE_HIVE
-            // column-name prefix two lines below (metadata.getColumnName(-1)) is an uncontrolled
-            // ArrayIndexOutOfBoundsException -- and unlike resolveRowCellKey, this method is reached
-            // even for a commit that never dispatches a single row: a brand new composite table's
-            // first WAL commit unconditionally tears down an artificial 0-length "lag" placeholder
-            // partition (see processWalCommitFinishApply) before real row data is ever processed, and
-            // that teardown renders the placeholder's own cell segment name through here. Guarded
-            // unconditionally (not just for MODE_HIVE) so MODE_PLAIN gets the same clean error instead
-            // of reaching the switch's default case below with a different, internal-sounding message.
-            // Real EXPRESSION rendering (a dedicated-dict reverse lookup, byte-identical to
-            // KIND_TRUNCATE below) is Plan 4e Task 3.
-            throw CairoException.nonCritical()
-                    .put("composite partitioning does not yet support EXPRESSION dimension evaluation at ingest [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
         if (namingMode == PartitionSpec.MODE_HIVE) {
-            sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+            if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                sink.put(dim.getAlias()).put('=');
+            } else {
+                sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+            }
         }
         switch (dim.getKind()) {
             case PartitionDimension.KIND_IDENTITY:
@@ -3897,18 +3949,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 sink.put(ordinal);
                 break;
             case PartitionDimension.KIND_TRUNCATE:
-                MapWriter dedicatedDict = getCompositeDictionaries().dedicatedDictFor(dimIndex);
-                if (dedicatedDict == null) {
-                    // Should not happen for a real TRUNCATE dimension (a composite table always
-                    // provisions one), but guard explicitly rather than let a wrong-kind/stale
-                    // dimIndex surface as a bare NPE here -- mirrors internDimensionValue's guard.
-                    throw CairoException.nonCritical()
-                            .put("no dedicated dictionary for composite dimension [dimIndex=").put(dimIndex).put(']');
-                }
-                TableUtils.putPathSafe(sink, MapWriter.valueOf(dedicatedDict, ordinal));
+                TableUtils.putPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
+                break;
+            case PartitionDimension.KIND_EXPRESSION:
+                TableUtils.putPathSafe(sink, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
                 break;
             default:
-                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+                throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
         }
     }
 
@@ -7820,6 +7867,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // entries in denseSymbolMapWriters and are freed by the loop below (freeing here too would
         // double-free).
         compositeDicts = null;
+        // Owning, unlike compositeDicts above: composite-partitioning Plan 4e Task 2's compiled
+        // EXPRESSION-dimension Function cache is built fresh by this writer (ensureCompositeExpressionFunctionsCompiled())
+        // and referenced nowhere else, so it must actually be closed here, not just dropped.
+        Misc.freeObjList(compositeExpressionFunctions);
+        compositeExpressionFunctions = null;
+        compositeExpressionFunctionsMetadataVersion = -1;
         if (denseSymbolMapWriters != null) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 Misc.freeIfCloseable(denseSymbolMapWriters.getQuick(i));
@@ -11577,6 +11630,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *     memoizes per {@code (dimIndex, sourceSymbolKey)} for the life of this commit -- global keys
      *     are stable across the whole commit, so no per-segment memo reset is needed here (unlike a
      *     hypothetical per-segment-local-key caller).</li>
+     *     <li>{@code EXPRESSION} (composite-partitioning Plan 4e Task 2): has no single source
+     *     column ({@code getColumnIndex() == -1} by construction), so it is resolved BEFORE the
+     *     unconditional {@code getColumnIndex()}/{@code o3Columns} read below via {@link
+     *     #resolveExpressionDimensionOrdinal(int, long)} instead -- evaluating the dimension's
+     *     compiled {@link Function} (see {@link #ensureCompositeExpressionFunctionsCompiled()})
+     *     against a {@link CompositeExpressionRecord} view of THIS SAME {@code o3Columns} row.</li>
      * </ul>
      *
      * @param absoluteRow       the row's absolute index into {@code o3Columns}/{@code sortedTimestampsAddr}
@@ -11590,17 +11649,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             PartitionDimension dim = spec.getDimension(d);
             if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
                 // KIND_EXPRESSION has no source column (getColumnIndex() == -1 by construction --
-                // see PartitionTransform/CreateTableOperationBuilderImpl#resolveExpressionDimension).
-                // Per-row evaluation of the stored exprText via a compiled Function is composite-
-                // partitioning Plan 4e Task 2 (not yet landed); left unguarded, the unconditional
-                // getColumnIndex()/o3Columns read two lines below computes
-                // getPrimaryColumnIndex(-1) == -2 and indexes o3Columns with it, an uncontrolled
-                // ArrayIndexOutOfBoundsException: -2. Throw a clean, diagnosable error instead --
-                // this table is SQL-creatable (grammar + DDL-time safe gate landed in Task 1) but not
-                // yet writable.
-                throw CairoException.nonCritical()
-                        .put("composite partitioning does not yet support EXPRESSION dimension evaluation at ingest [table=")
-                        .put(tableToken.getTableName()).put(']');
+                // see PartitionTransform/CreateTableOperationBuilderImpl#resolveExpressionDimension),
+                // so it must never reach the unconditional getColumnIndex()/o3Columns read below --
+                // that would compute getPrimaryColumnIndex(-1) == -2 and index o3Columns with it, an
+                // uncontrolled ArrayIndexOutOfBoundsException: -2 (composite-partitioning Plan 4e
+                // Task 1's original landmine). Resolve via the compiled-Function bridge instead.
+                dimOrdinalScratch[d] = resolveExpressionDimensionOrdinal(d, absoluteRow);
+                continue;
             }
             int colIndex = dim.getColumnIndex();
             MemoryCR col = o3Columns.getQuick(getPrimaryColumnIndex(colIndex));
@@ -11612,6 +11667,427 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return resolveCellKey(dimOrdinalScratch);
+    }
+
+    /**
+     * Resolves one row's {@code KIND_EXPRESSION} dimension ordinal (composite-partitioning Plan 4e
+     * Task 2 -- the Function-eval bridge, the crux of this whole task): evaluates this dimension's
+     * compiled {@link Function} (see {@link #ensureCompositeExpressionFunctionsCompiled()}) against
+     * {@link #compositeExpressionRecord} positioned at {@code absoluteRow}, then interns the
+     * resulting string via {@link #internDimensionValue(int, CharSequence)}'s {@code EXPRESSION}
+     * case -- the exact {@code TRUNCATE} shape ({@code dedicatedDict.put(value)}), since {@code
+     * EXPRESSION} shares {@code TRUNCATE}'s dedicated-dict bucket ({@code CompositeInternerLayout}).
+     * <p>
+     * Any exception here -- a compile failure, or an unexpected runtime failure evaluating the
+     * compiled Function against real row data (e.g. an implicit-cast surprise the DDL-time gate
+     * could not have caught) -- is wrapped into a clean, diagnosable {@link CairoException} rather
+     * than left to escape as a raw/uncontrolled exception type, mirroring Task 1's own clean-throw
+     * precedent for this same branch: never a silent wrong cellKey, always either the RIGHT cellKey
+     * or a loud abort of the current commit.
+     *
+     * @param dimIndex    the EXPRESSION dimension's index
+     * @param absoluteRow the row's absolute index into {@code o3Columns}/{@code sortedTimestampsAddr}
+     * @return the resolved dense per-dimension ordinal, ready to feed into {@link #resolveCellKey(int[])}
+     */
+    private int resolveExpressionDimensionOrdinal(int dimIndex, long absoluteRow) {
+        ensureCompositeExpressionFunctionsCompiled();
+        try {
+            Function function = compositeExpressionFunctions.getQuick(dimIndex);
+            compositeExpressionRecord.of(absoluteRow);
+            CharSequence value = function.getStrA(compositeExpressionRecord);
+            return internDimensionValue(dimIndex, value);
+        } catch (CairoException e) {
+            throw e;
+        } catch (Throwable e) {
+            throw CairoException.nonCritical()
+                    .put("composite partitioning: failed to evaluate EXPRESSION dimension [table=")
+                    .put(tableToken.getTableName())
+                    .put(", dimIndex=").put(dimIndex)
+                    .put(", msg=").put(flyweightOrPlainMessage(e))
+                    .put(']');
+        }
+    }
+
+    /**
+     * The best available diagnostic message for {@code e}: {@link FlyweightMessageContainer#getFlyweightMessage()}
+     * when {@code e} is one (e.g. {@link SqlException}, whose own {@code getMessage()} is NOT
+     * overridden and returns {@code null} -- its real message lives only behind {@code
+     * getFlyweightMessage()}), otherwise the plain {@link Throwable#getMessage()} (falling back to
+     * the exception's class name when even that is {@code null}, e.g. a bare {@link
+     * NullPointerException}) -- used by {@link #ensureCompositeExpressionFunctionsCompiled()} and
+     * {@link #resolveExpressionDimensionOrdinal(int, long)} so a wrapped compile/eval failure is
+     * never reported with an empty {@code msg=} (composite-partitioning Plan 4e Task 2).
+     */
+    private static String flyweightOrPlainMessage(Throwable e) {
+        CharSequence msg = e instanceof FlyweightMessageContainer
+                ? ((FlyweightMessageContainer) e).getFlyweightMessage()
+                : e.getMessage();
+        if (msg == null || msg.length() == 0) {
+            return e.getClass().getName();
+        }
+        return msg.toString();
+    }
+
+    /**
+     * Lazily (re)compiles every {@code KIND_EXPRESSION} composite partition dimension's stored
+     * {@code exprText} into a real {@link Function} (composite-partitioning Plan 4e Task 2 -- the
+     * crux: replaces Task 1's clean-throw placeholder with real per-row evaluation), caching the
+     * whole {@link #compositeExpressionFunctions} list keyed on {@link #getMetadataVersion()}.
+     * Cheap after the first successful compile for the writer's current metadata version -- a single
+     * long comparison, since a {@link TableWriter} is never accessed concurrently.
+     * <p>
+     * Compilation happens entirely against THIS writer's own {@link #metadata} ({@link
+     * TableWriterMetadata} implements {@code RecordMetadata} directly) -- never through a real
+     * {@code RecordCursorFactory}/{@code TableReader} -- so every compiled {@link Function}'s
+     * column-index bindings are, by construction, in the SAME index space {@link
+     * CompositeExpressionRecord} exposes. Per EXPRESSION dimension, delegated to {@link
+     * #compileExpressionDimensionFunction(SqlCompiler, FunctionParser, PartitionDimension)}:
+     * <ol>
+     *     <li>Re-parse {@code exprText} back into an {@link ExpressionNode} via {@link
+     *     SqlCompiler#testParseExpression(CharSequence, IQueryModel)} -- a PURE syntax parse (no
+     *     query optimizer, no table/column resolution: confirmed directly against its implementation,
+     *     {@code clear(); lexer.of(expression); return parser.expr(lexer, model, this);}) -- safe to
+     *     call with a {@code null} {@link IQueryModel} for this feature's safe-subset expression
+     *     shapes (no CASE/lambda/decl construct needs a real model here; the same {@code null}-model
+     *     idiom is already established across this codebase's own expression-parsing tests, e.g.
+     *     {@code ConstantReassociationTest}). It is annotated {@code @TestOnly}, but is the only
+     *     production-reachable entry point for turning bare expression TEXT back into an {@link
+     *     ExpressionNode} without ALSO forcing a full {@code SELECT ... FROM <table>} compile-and-
+     *     optimize -- which would re-resolve columns through a SEPARATE {@code RecordMetadata}
+     *     (typically a {@code TableReader}'s), risking a column-index space that does not actually
+     *     match {@link #metadata}'s: a silent-wrong-cell hazard this design avoids entirely by
+     *     resolving directly against {@link #metadata} itself in the next step, never a reader's.</li>
+     *     <li>Reject (a defense-in-depth check, NOT a duplicate of the DDL-time gate) any reference
+     *     to a column type this dimension's {@link CompositeExpressionRecord} adapter cannot yet
+     *     expose (see {@link #assertExpressionSourceColumnsSupported(ExpressionNode)}).</li>
+     *     <li>Bind the node against {@link #metadata} via {@link FunctionParser#parseFunction}, verify
+     *     its result type is string-coercible, and {@code init} it against {@link
+     *     #compositeExpressionRecord} (itself a {@link SymbolTableSource}) so any nested {@code
+     *     SymbolColumn} leaf can reverse-look-up its symbol values (see {@link
+     *     WriterColumnSymbolTable}). {@link #compositeExpressionSqlExecutionContext}'s hard-wired
+     *     {@code allowNonDeterministicFunctions() == false} makes {@link FunctionParser} itself
+     *     reject any non-deterministic function here -- independent of, and strictly stronger than,
+     *     {@code CreateTableOperationBuilderImpl}'s DDL-time name-based deny-list.</li>
+     * </ol>
+     * A compile failure (a {@link SqlException}, or any other unexpected {@link Throwable} --
+     * mirrors {@code FunctionParser.checkAndCreateFunction}'s own defensive {@code catch (Throwable)}
+     * for the same reason: third-party-ish function-factory code) is wrapped into a clean {@link
+     * CairoException} and thrown -- this table's EXPRESSION dimension stays permanently un-routable
+     * (every future commit re-attempts and re-fails identically) until whatever is wrong is fixed,
+     * exactly as loud and non-silent as Task 1's own clean-throw was before this task existed.
+     * {@link #compositeExpressionFunctions}/{@link #compositeExpressionFunctionsMetadataVersion} are
+     * only overwritten AFTER every dimension in this pass compiles successfully, so a failed
+     * recompile attempt never clobbers a still-valid older cache.
+     */
+    private void ensureCompositeExpressionFunctionsCompiled() {
+        long currentMetadataVersion = getMetadataVersion();
+        if (compositeExpressionFunctions != null && compositeExpressionFunctionsMetadataVersion == currentMetadataVersion) {
+            return;
+        }
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        ObjList<Function> functions = new ObjList<>(dimCount);
+        functions.setPos(dimCount);
+        if (compositeExpressionSqlExecutionContext == null) {
+            compositeExpressionSqlExecutionContext = new CompositeExpressionSqlExecutionContext(engine);
+        }
+        if (compositeExpressionRecord == null) {
+            compositeExpressionRecord = new CompositeExpressionRecord();
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            for (int d = 0; d < dimCount; d++) {
+                PartitionDimension dim = spec.getDimension(d);
+                if (dim.getKind() != PartitionDimension.KIND_EXPRESSION) {
+                    continue;
+                }
+                functions.setQuick(d, compileExpressionDimensionFunction(compiler, functionParser, dim));
+            }
+        } catch (Throwable e) {
+            Misc.freeObjList(functions);
+            if (e instanceof CairoException) {
+                throw (CairoException) e;
+            }
+            throw CairoException.nonCritical()
+                    .put("composite partitioning: failed to compile EXPRESSION dimension [table=")
+                    .put(tableToken.getTableName())
+                    .put(", msg=").put(flyweightOrPlainMessage(e))
+                    .put(']');
+        }
+        if (compositeExpressionFunctions != null) {
+            Misc.freeObjList(compositeExpressionFunctions);
+        }
+        compositeExpressionFunctions = functions;
+        compositeExpressionFunctionsMetadataVersion = currentMetadataVersion;
+    }
+
+    /**
+     * Compiles ONE {@code KIND_EXPRESSION} dimension's {@code exprText} into a bound, initialized
+     * {@link Function} -- see {@link #ensureCompositeExpressionFunctionsCompiled()} for the full
+     * three-step account of what this does and why each step is safe/necessary.
+     */
+    private Function compileExpressionDimensionFunction(
+            SqlCompiler compiler,
+            FunctionParser functionParser,
+            PartitionDimension dim
+    ) throws SqlException {
+        ExpressionNode node = compiler.testParseExpression(dim.getExprText(), (IQueryModel) null);
+        assertExpressionSourceColumnsSupported(node);
+        Function function = functionParser.parseFunction(node, metadata, compositeExpressionSqlExecutionContext);
+        boolean ok = false;
+        try {
+            int type = function.getType();
+            if (!ColumnType.isSymbolOrStringOrVarchar(type) && !ColumnType.isChar(type)) {
+                throw SqlException.$(node.position, "composite partition dimension expression must evaluate to a string-coercible type, got ")
+                        .put(ColumnType.nameOf(type));
+            }
+            function.init(compositeExpressionRecord, compositeExpressionSqlExecutionContext);
+            ok = true;
+            return function;
+        } finally {
+            if (!ok) {
+                Misc.free(function);
+            }
+        }
+    }
+
+    /**
+     * DDL-time-mirroring, but write-side, safe-subset walk for a composite {@code EXPRESSION}
+     * dimension's re-parsed {@link ExpressionNode} (composite-partitioning Plan 4e Task 2):
+     * recursively rejects a reference to any column whose type {@link
+     * #isSupportedExpressionSourceColumnType(int)} does not (yet) allow -- every var-size type
+     * (VARCHAR/STRING/BINARY) and every not-yet-wired-up fixed type (GEO*, LONG256, LONG128/UUID,
+     * DECIMAL*, INTERVAL, ARRAY) that {@link CompositeExpressionRecord} cannot expose. Recurses
+     * through {@code lhs}/{@code rhs}/{@code args} uniformly, mirroring {@code
+     * CreateTableOperationBuilderImpl#assertDeterministic}'s exact traversal shape (per {@link
+     * ExpressionNode}'s own field-usage contract, exactly one of "rhs only", "lhs and rhs", or
+     * "args" is populated for any given node depending on {@code paramCount}, so walking all three
+     * unconditionally, null/size-guarded, visits every child exactly once regardless of shape).
+     * <p>
+     * Column resolution mirrors {@link FunctionParser#createColumn(int, CharSequence,
+     * io.questdb.cairo.sql.RecordMetadata)} exactly ({@link SqlUtil#getColumnIndexQuiet(
+     * io.questdb.cairo.sql.RecordMetadata, CharSequence)}, NOT the verbatim {@code
+     * RecordMetadata#getColumnIndexQuiet(CharSequence)} default, which does not apply the same
+     * quoted-identifier handling) -- this runs BEFORE {@link FunctionParser#parseFunction}, purely
+     * to fail fast with a clearer message before building (and having to discard) a Function tree
+     * for an expression this feature does not yet support; {@code parseFunction} itself remains the
+     * authoritative existence/resolution check (a miss here, {@code columnIndex == -1}, is silently
+     * skipped -- {@code parseFunction} will already reject it with its own "invalid column" error).
+     */
+    private void assertExpressionSourceColumnsSupported(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, node.token);
+            if (columnIndex != -1) {
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType >= 0 && !isSupportedExpressionSourceColumnType(columnType)) {
+                    throw SqlException.$(node.position, "composite partitioning does not yet support an EXPRESSION dimension referencing column '")
+                            .put(node.token).put("' of type ").put(ColumnType.nameOf(columnType));
+                }
+            }
+        }
+        assertExpressionSourceColumnsSupported(node.lhs);
+        assertExpressionSourceColumnsSupported(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            assertExpressionSourceColumnsSupported(node.args.getQuick(i));
+        }
+    }
+
+    /**
+     * The fixed-size column types {@link CompositeExpressionRecord} currently exposes to a compiled
+     * EXPRESSION dimension {@link Function} (composite-partitioning Plan 4e Task 2) -- deliberately
+     * narrower than "every fixed-size type": the common scalar/temporal family plus {@code SYMBOL}
+     * (dimension source columns generally, and the single-symbol-column case -- {@code upper(region)}
+     * etc. -- this feature's canonical target). Every var-size type and every NOT-listed fixed type
+     * (GEO*, LONG256, LONG128/UUID, DECIMAL*, INTERVAL, ARRAY, BINARY) is rejected loudly by {@link
+     * #assertExpressionSourceColumnsSupported(ExpressionNode)} before any row is ever routed, rather
+     * than silently misread or left to a raw {@link UnsupportedOperationException} from {@link
+     * Record}'s own unimplemented-getter defaults.
+     */
+    private static boolean isSupportedExpressionSourceColumnType(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.CHAR:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.IPv4:
+            case ColumnType.SYMBOL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Lightweight {@link Record} adapter over this writer's own {@code o3Columns} buffers
+     * (composite-partitioning Plan 4e Task 2): the SAME buffers/row-addressing {@link
+     * #resolveRowCellKey(long, int[])} already reads for a plain dimension source column,
+     * generalized to expose ANY of this table's fixed-size columns (by writer column index) to a
+     * compiled EXPRESSION-dimension {@link Function} tree. Positioned per row via {@link #of(long)}
+     * immediately before each {@code function.getStrA(...)} call; one instance is reused for the
+     * life of the writer (see {@link TableWriter#compositeExpressionRecord}) -- never shared across
+     * threads (this writer's O3 composite dispatch loop evaluates rows strictly serially on its own
+     * thread).
+     * <p>
+     * Only implements the fixed-size getters {@link #isSupportedExpressionSourceColumnType(int)}
+     * allows -- {@link #assertExpressionSourceColumnsSupported(ExpressionNode)} rejects every other
+     * column type BEFORE a Function is ever compiled against this adapter, so in practice none of
+     * {@link Record}'s other (unimplemented, default-throwing) getters should ever actually be
+     * invoked here; they are deliberately left as {@link Record}'s own inherited defaults (a clean
+     * {@link UnsupportedOperationException}) as a last-resort safety net, not a primary control.
+     * {@code getTimestamp}/{@code getDate} need no override either: {@link Record}'s own defaults
+     * for both already delegate to {@link #getLong(int)}.
+     * <p>
+     * {@code SYMBOL} is deliberately NOT special-cased in the typed getters below: a {@code SYMBOL}
+     * column's O3 buffer already holds a plain 4-byte GLOBAL symbol key (confirmed directly against
+     * {@link #resolveRowCellKey(long, int[])}'s own pre-existing IDENTITY/HASH/TRUNCATE handling --
+     * by this point in the O3/WAL-apply pipeline the WAL symbol remap has always already happened),
+     * so {@link #getInt(int)} reads it exactly like any other {@code int}-width column; the REVERSE
+     * string lookup a compiled {@code SymbolColumn}/{@code SymbolFunction} leaf needs is supplied
+     * separately, at {@code Function#init} time, via this same class's {@link SymbolTableSource}
+     * implementation ({@link #getSymbolTable(int)}/{@link #newSymbolTable(int)}) -- see {@link
+     * WriterColumnSymbolTable}. This mirrors {@code io.questdb.griffin.engine.functions.columns.
+     * SymbolColumn} exactly: it reads its raw key via {@code rec.getInt(columnIndex)}, never a
+     * {@code Record.getSymA}/{@code getSymB}.
+     */
+    private final class CompositeExpressionRecord implements Record, SymbolTableSource {
+        private long absoluteRow;
+
+        @Override
+        public boolean getBool(int col) {
+            return rawColumn(col).getBool(byteOffset(col));
+        }
+
+        @Override
+        public byte getByte(int col) {
+            return rawColumn(col).getByte(byteOffset(col));
+        }
+
+        @Override
+        public char getChar(int col) {
+            return rawColumn(col).getChar(byteOffset(col));
+        }
+
+        @Override
+        public double getDouble(int col) {
+            return rawColumn(col).getDouble(byteOffset(col));
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return rawColumn(col).getFloat(byteOffset(col));
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            return rawColumn(col).getIPv4(byteOffset(col));
+        }
+
+        @Override
+        public int getInt(int col) {
+            return rawColumn(col).getInt(byteOffset(col));
+        }
+
+        @Override
+        public long getLong(int col) {
+            return rawColumn(col).getLong(byteOffset(col));
+        }
+
+        @Override
+        public short getShort(int col) {
+            return rawColumn(col).getShort(byteOffset(col));
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return new WriterColumnSymbolTable(TableWriter.this, columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return new WriterColumnSymbolTable(TableWriter.this, columnIndex);
+        }
+
+        void of(long absoluteRow) {
+            this.absoluteRow = absoluteRow;
+        }
+
+        private long byteOffset(int col) {
+            return absoluteRow << ColumnType.pow2SizeOf(metadata.getColumnType(col));
+        }
+
+        private MemoryCR rawColumn(int col) {
+            return o3Columns.getQuick(getPrimaryColumnIndex(col));
+        }
+    }
+
+    /**
+     * Per-{@code (writer, columnIndex)} reverse-symbol-lookup adapter (composite-partitioning Plan
+     * 4e Task 2): wraps {@link TableWriter#symbolValueOf(int, int)} so a compiled EXPRESSION
+     * dimension Function's {@code SymbolColumn} leaf (see {@code
+     * io.questdb.griffin.engine.functions.columns.SymbolColumn#getSymbol}) can resolve a raw global
+     * symbol key back to its string -- the EXACT SAME global-dictionary reverse lookup {@link
+     * TableWriter#resolveRowCellKey(long, int[])} already performs for a plain (non-EXPRESSION)
+     * dimension source column. Built at {@code Function#init} time (see {@link
+     * CompositeExpressionRecord#getSymbolTable(int)}), i.e. once per (re)compile -- not once per row.
+     * {@code valueOf}/{@code valueBOf} both delegate identically: {@link
+     * TableWriter#symbolValueOf(int, int)} reads a stable, already-durably-written flyweight view
+     * straight off the symbol map's own backing memory (see {@code MapWriter#valueOf(MapWriter,
+     * int)}), never a mutable reused sink, so there is no "A"/"B" instance distinction to preserve.
+     * <p>
+     * Implements {@link StaticSymbolTable}, not just the bare {@link SymbolTable}, because {@code
+     * SymbolColumn#init} asserts {@code !symbolTableStatic || getStaticSymbolTable() != null} for
+     * any symbol column whose metadata flags it static (true for an ordinary table column) --
+     * discovered empirically the first time this bridge actually ran end-to-end (a bare {@code
+     * SymbolTable} tripped that assertion). {@link #containsNullValue()}/{@link #getSymbolCount()}/
+     * {@link #keyOf(CharSequence)} only satisfy that {@code instanceof} check: nothing in this
+     * dimension's per-row eval loop ({@link TableWriter#resolveExpressionDimensionOrdinal(int,
+     * long)}, the sole caller reachable through {@link CompositeExpressionRecord}) ever calls
+     * forward lookup/count/null-check -- those exist for query-engine-level optimizations (e.g. an
+     * {@code IN}-list rewrite) this narrow, plan-free eval bridge never runs through -- so they throw
+     * loud rather than silently returning a made-up answer if some future caller ever reaches them.
+     */
+    private static final class WriterColumnSymbolTable implements StaticSymbolTable {
+        private final int columnIndex;
+        private final TableWriter writer;
+
+        WriterColumnSymbolTable(TableWriter writer, int columnIndex) {
+            this.writer = writer;
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            throw new UnsupportedOperationException("not supported for a composite EXPRESSION dimension's writer-side symbol table");
+        }
+
+        @Override
+        public int getSymbolCount() {
+            throw new UnsupportedOperationException("not supported for a composite EXPRESSION dimension's writer-side symbol table");
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            throw new UnsupportedOperationException("not supported for a composite EXPRESSION dimension's writer-side symbol table");
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return writer.symbolValueOf(columnIndex, key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return writer.symbolValueOf(columnIndex, key);
+        }
     }
 
     /**
