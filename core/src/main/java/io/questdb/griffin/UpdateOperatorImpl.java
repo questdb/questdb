@@ -103,6 +103,23 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
         TableToken tableToken = tableWriter.getTableToken();
+        // Plan 4a DDL gate sweep: UPDATE is not yet cell-aware for a real composite table.
+        // openColumns (this class's sole file-resolution point) independently reconstructs each
+        // target partition's path via the bare 5-arg TableUtils#setPathForNativePartition overload --
+        // it has no way to obtain the cellKey needed to render the missing path segment (a structural
+        // gap, not just a missed argument: TableWriter exposes no cell-aware path primitive this class
+        // can call). Separately, rebuildIndexes' own reindexAfterUpdate call silently skips a phantom
+        // partition (logs "partition does not exist", no exception) rather than actually
+        // updating the index, leaving it stale with no error surfaced. Checked here, coarsely
+        // (dimCount > 0 alone -- this class has no access to TableWriter's private
+        // isDormantWithPreexistingData(), so a dormant composite table is also conservatively
+        // refused, matching this sweep's other conservative gates), before any row is touched. Plain
+        // tables are completely unaffected.
+        if (tableWriter.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support UPDATE [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
         QueryRegistry queryRegistry = sqlExecutionContext.getCairoEngine().getQueryRegistry();
         long queryId = -1L;

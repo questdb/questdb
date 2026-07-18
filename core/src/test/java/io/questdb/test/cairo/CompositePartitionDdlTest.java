@@ -58,21 +58,38 @@ import org.junit.Test;
  * this bug is pure {@code _txn} raw-index/ordinal-stride arithmetic, completely insensitive to how many
  * distinct dimension values are in play, so a single value continues to exercise it exactly, while
  * keeping every physical day exactly ONE cell (byte-identical partition topology to the original
- * dormant/non-WAL shape this file's hardcoded partition/row counts were built against) -- deliberately
- * NOT exercising Plan 4a/4b's separately-scoped, not-yet-audited question of whether DROP/CONVERT/SQUASH
- * PARTITION are cell-AWARE for a day with 2+ real cells (out of scope here). {@link
+ * dormant/non-WAL shape this file's hardcoded partition/row counts were built against).
+ * <p>
+ * <b>Plan 4a DEFINITIVE DDL gate sweep update:</b> the "is DROP/CONVERT/SQUASH PARTITION cell-AWARE for
+ * a day with 2+ real cells" question this class's tests originally left deliberately unexercised is now
+ * answered: NO, and each is unsafe well beyond the stride bug this class was written to regression-lock
+ * (see {@code CompositeUnsupportedOpsTest} for the full multi-cell evidence, including a live-reproduced
+ * infinite loop for DROP PARTITION) -- so DROP PARTITION and CONVERT PARTITION are now gated
+ * unconditionally for any real composite table, single-cell-per-day or not. {@link
+ * #testDropMiddlePartitionMatchesPlainEquivalent()}, {@link #testDropLastPartitionMatchesPlainEquivalent()}
+ * and {@link #testConvertPartitionToParquetAndBackNonFirstDayMatchesPlainEquivalent()} were updated in
+ * place to assert the new guard fires (rather than stride-correct equivalence, no longer the observable
+ * behavior for composite {@code c} regardless of ordinal) while their plain twin {@code p} still proves
+ * the underlying stride fix remains correct and unaffected. {@link
  * #testSquashNonFirstPartitionMatchesPlainEquivalent()}'s ORIGINAL scenario (three sequential commits,
- * the third re-touching an already-populated day to force a physical split) is retired for a documented,
- * pre-existing, unrelated reason: see that method's own javadoc.
+ * the third re-touching an already-populated day to force a physical split) was already retired for a
+ * documented, pre-existing, unrelated reason (see that method's own javadoc) before this update; SQUASH
+ * PARTITIONS is now ALSO separately gated (see {@code CompositeUnsupportedOpsTest}), for the same
+ * reason DROP/CONVERT are.
  */
 public class CompositePartitionDdlTest extends AbstractCairoTest {
 
     /**
-     * {@code removePartition} bug: {@code partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION} converts a
-     * RAW attached-partitions index to an ordinal using the hardcoded stride-4 constant. On a stride-8
-     * composite table, dropping a middle day (ordinal 2 of 5) computes the wrong ordinal, so the
-     * drop-loop's logical-timestamp comparison never matches and the whole operation silently no-ops --
-     * {@code c} keeps all 5 partitions/10 rows while {@code p} correctly drops to 4 partitions/8 rows.
+     * ORIGINALLY a regression test for the {@code removePartition} stride bug ({@code partitionIndex /=
+     * LONGS_PER_TX_ATTACHED_PARTITION} hardcoded stride-4 on a stride-8 composite table). The stride fix
+     * itself is still correct and still in production code, but Plan 4a's DEFINITIVE DDL gate sweep
+     * (composite-partitioning branch, {@code CompositeUnsupportedOpsTest}) found DROP PARTITION unsafe
+     * for a REAL, routed composite table for reasons well beyond the stride bug -- most severely, an
+     * empirically-reproduced INFINITE LOOP for a day with 2+ cells (see that test class's own javadoc) --
+     * and gated it unconditionally in {@code TableWriter#removePartition}. This test now asserts that
+     * gate fires instead of asserting stride-correct equivalence, which is no longer the observable
+     * behavior for ANY real composite table regardless of stride correctness. {@code p} (the plain twin)
+     * is unaffected and still drops the middle partition normally, proving the gate is composite-only.
      */
     @Test
     public void testDropMiddlePartitionMatchesPlainEquivalent() throws Exception {
@@ -81,49 +98,37 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             // Day 3 of 5 -- ordinal 2, non-first and non-last.
-            execute("alter table c drop partition list '2020-01-03'");
             execute("alter table p drop partition list '2020-01-03'");
+            execute("alter table c drop partition list '2020-01-03'");
             drainWalQueue();
-            engine.releaseInactive();
 
-            assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
-            assertSqlCursors("select count() from p", "select count() from c");
-            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n8\n");
-            assertSqlCursors(
-                    "select partitionCount from table_storage() where tableName = 'p'",
-                    "select partitionCount from table_storage() where tableName = 'c'");
-            assertQuery("select partitionCount from table_storage() where tableName = 'c'")
+            Assert.assertTrue("c must be suspended by the new DROP PARTITION guard",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            assertQuery("select suspended, errorMessage like '%composite partitioning does not yet support DROP PARTITION%' clearMessage " +
+                    "from wal_tables() where name = 'c'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("suspended\tclearMessage\ntrue\ttrue\n");
+
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n8\n");
+            assertQuery("select partitionCount from table_storage() where tableName = 'p'")
                     .noLeakCheck().noRandomAccess().returns("partitionCount\n4\n");
         });
     }
 
     /**
-     * Same {@code removePartition} bug, exercised against a high (ordinal 4 of 6), non-first, non-LAST
-     * partition -- covers the tail of the attached-partitions region specifically.
-     * <p>
-     * <b>NEW FINDING while porting this test to WAL for I1 (out of scope for this fix pass, NOT
-     * fixed):</b> dropping a composite table's actual CURRENT LAST/active partition (i.e. the literal
-     * ordinal-4-of-5 tail this test originally targeted) suspends the WAL table: {@code
-     * TableWriter#dropPartitionByExactTimestamp}'s "removing active partition" branch resolves the NEW
-     * last partition's min/max timestamp via the bare, cell-blind 5-arg {@code
-     * setPathForNativePartition(path, ..., prevTimestamp, nameTxn)} overload (around TableWriter.java:7160)
-     * instead of the cell-aware 6-arg one Plan 4a Task 3 added -- so for a real routed composite table it
-     * looks for {@code <day>/ts.d} directly under the bare day dir and fails with "file does not exist"
-     * (confirmed via {@code wal_tables().errorMessage}), because that day's data actually lives at
-     * {@code <day>/<cell>/ts.d}. This is the SAME "day-blind maintenance path" class as C1, but a
-     * DIFFERENT call site, not one of this pass's three assigned findings (C1/C2+C3/I1) -- flagged here,
-     * not fixed, and this test instead adds a 6th day (2020-01-06) so the dropped partition (day 5, still
-     * ordinal 4, still non-first) is no longer the table's active tail when the drop runs, sidestepping
-     * the unrelated bug while preserving the original "high ordinal" stride-fix coverage.
+     * Same underlying stride-bug coverage as {@link #testDropMiddlePartitionMatchesPlainEquivalent()},
+     * originally exercised against a high (ordinal 4 of 6), non-first, non-LAST partition. Per that
+     * test's own updated javadoc, DROP PARTITION is now gated unconditionally for any real composite
+     * table (not just the active-tail shape a prior fix pass flagged but left unfixed) -- so this test
+     * now asserts the SAME gate fires here too, on a differently-shaped (higher-ordinal) target, and that
+     * {@code p} is unaffected.
      */
     @Test
     public void testDropLastPartitionMatchesPlainEquivalent() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day, exchange wal");
             execute("create table p (ts timestamp, exchange symbol, px double) timestamp(ts) partition by day");
-            // 6 days, ONE single commit (unlike createAndPopulateTwins' shared 5-day/1-commit shape) so
-            // day 6 exists from the very first commit -- day 5 (below) is NOT the table's active/last
-            // partition when dropped. See this method's own javadoc for why that matters.
             final String rows = " values " +
                     "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','A',1.5), " +
                     "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','A',2.5), " +
@@ -136,30 +141,35 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseInactive();
 
-            // Day 5 of 6 -- ordinal 4, non-first and (thanks to day 6 above) non-last.
-            execute("alter table c drop partition list '2020-01-05'");
+            // Day 5 of 6 -- ordinal 4, non-first and non-last.
             execute("alter table p drop partition list '2020-01-05'");
+            execute("alter table c drop partition list '2020-01-05'");
             drainWalQueue();
-            engine.releaseInactive();
 
-            assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
-            assertSqlCursors("select count() from p", "select count() from c");
-            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
-            assertSqlCursors(
-                    "select partitionCount from table_storage() where tableName = 'p'",
-                    "select partitionCount from table_storage() where tableName = 'c'");
-            assertQuery("select partitionCount from table_storage() where tableName = 'c'")
+            Assert.assertTrue("c must be suspended by the new DROP PARTITION guard",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            assertQuery("select suspended, errorMessage like '%composite partitioning does not yet support DROP PARTITION%' clearMessage " +
+                    "from wal_tables() where name = 'c'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("suspended\tclearMessage\ntrue\ttrue\n");
+
+            engine.releaseInactive();
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+            assertQuery("select partitionCount from table_storage() where tableName = 'p'")
                     .noLeakCheck().noRandomAccess().returns("partitionCount\n5\n");
         });
     }
 
     /**
-     * {@code convertPartitionNativeToParquet}/{@code convertPartitionParquetToNative} bug: both call
-     * {@code updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, ...)},
-     * an ORDINAL x stride -&gt; RAW conversion using the hardcoded stride-4 constant. On a stride-8
-     * composite table, converting a non-first day (ordinal 2 of 5) writes the new size/nameTxn into the
-     * wrong raw record, leaving the target partition's real record stale (pointing at a native directory
-     * that conversion then deletes) while scribbling into a neighboring partition's record.
+     * ORIGINALLY a regression test for the {@code convertPartitionNativeToParquet}/
+     * {@code convertPartitionParquetToNative} stride bug. Plan 4a's DEFINITIVE DDL gate sweep found
+     * BOTH conversion directions independently cell-blind well beyond the stride bug (every path is
+     * built with the bare, non-cell-aware {@code setPathForNativePartition} overload -- see
+     * {@code CompositeUnsupportedOpsTest}) and gated both unconditionally. This test now asserts CONVERT
+     * TO PARQUET is rejected (the round-trip back to native is consequently unreachable via ordinary SQL
+     * for a composite table, so it is not separately exercised here -- {@code
+     * CompositeUnsupportedOpsTest#testConvertPartitionToNativeGated} covers that direction directly). The
+     * plain twin {@code p} is unaffected and completes the full round-trip normally.
      */
     @Test
     public void testConvertPartitionToParquetAndBackNonFirstDayMatchesPlainEquivalent() throws Exception {
@@ -167,28 +177,24 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            // Day 3 of 5 -- ordinal 2, non-first: convert to parquet, verify, then convert back to
-            // native, verify again.
-            execute("alter table c convert partition to parquet list '2020-01-03'");
+            // Day 3 of 5 -- ordinal 2, non-first.
             execute("alter table p convert partition to parquet list '2020-01-03'");
+            execute("alter table c convert partition to parquet list '2020-01-03'");
             drainWalQueue();
+
+            Assert.assertTrue("c must be suspended by the new CONVERT PARTITION guard",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            assertQuery("select suspended, errorMessage like '%composite partitioning does not yet support CONVERT PARTITION TO PARQUET%' clearMessage " +
+                    "from wal_tables() where name = 'c'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("suspended\tclearMessage\ntrue\ttrue\n");
+
             engine.releaseInactive();
-
-            assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
-            assertSqlCursors("select count() from p", "select count() from c");
-            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
-            assertSqlCursors(
-                    "select partitionCount from table_storage() where tableName = 'p'",
-                    "select partitionCount from table_storage() where tableName = 'c'");
-
-            execute("alter table c convert partition to native list '2020-01-03'");
             execute("alter table p convert partition to native list '2020-01-03'");
             drainWalQueue();
             engine.releaseInactive();
 
-            assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
-            assertSqlCursors("select count() from p", "select count() from c");
-            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
         });
     }
 

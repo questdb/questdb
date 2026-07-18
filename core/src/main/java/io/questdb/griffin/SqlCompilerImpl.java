@@ -3623,6 +3623,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         checkViewModification(tableToken);
         checkMatViewModification(tableToken);
 
+        // Plan 4a DDL gate sweep: REINDEX TABLE is not yet cell-aware for a real composite table.
+        // Unlike ALTER TABLE ... ADD INDEX, this command builds its own IndexBuilder directly against
+        // the table's directory (just below) without ever opening a TableWriter, so it hits the same
+        // cell-blind bare-path IndexBuilder#doReindex mechanism as ADD INDEX/UPDATE's index rebuild
+        // (see TableWriter#addIndex's own gate comment) with no TableWriter-level dormancy signal
+        // available to check here -- only the coarser dimCount > 0 (a quick TableReader is opened
+        // purely for this check, mirroring compileVacuum's own idiom just above in this file).
+        // Gated unconditionally for any composite table (including a still-dormant one, conservatively
+        // -- no cheap way to check routedness without a writer here). Plain tables are unaffected.
+        try (TableReader rdr = executionContext.getReader(tableToken)) {
+            if (rdr.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), "composite partitioning does not yet support REINDEX TABLE [table=")
+                        .put(tableToken.getTableName()).put(']');
+            }
+        }
+
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
 

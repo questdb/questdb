@@ -882,6 +882,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
         }
 
+        // Plan 4a DDL gate sweep: ADD INDEX is not yet cell-aware for a real composite table
+        // (whole-branch review finding N2, refined here). The retroactive index-build walk
+        // (indexHistoricPartitions/indexLastPartition, via setStateForTimestamp's own bare 5-arg
+        // setPathForNativePartition call) has TWO distinct failure modes for a routed cell: historic
+        // partitions silently no-op (a double ff.exists guard both evaluate false against the phantom
+        // bare-day path, so ADD INDEX reports success while historic partitions are never actually
+        // indexed), while the current/last partition throws a raw, confusing CairoException
+        // ("could not create index file") when createIndexFiles tries to create a .k file whose parent
+        // directory was never created. Gated unconditionally for any real (non-dormant) composite
+        // table, with a clear message instead of either failure mode. Plain and dormant-composite
+        // tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support ADD INDEX [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
 
         commit();
@@ -1022,6 +1039,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table has it
         assert metadata.getTimestampIndex() > -1;
+
+        // Plan 4a DDL gate sweep: ATTACH PARTITION is not yet cell-aware for a real composite table,
+        // and is the WORST of this sweep's findings -- not a crash but a SILENT one. The destination
+        // write (TableWriter.java ~1046) is unconditionally bare (flat "<day>.<txn>", never nested
+        // under a cell segment); attachPartitionCheckFilesMatchFixedColumn/VarSizeColumn/SymbolColumn
+        // validate columns via flat concatenation with no cell concept, and a missing column is not
+        // treated as an error -- it is silently recorded as a full-partition column top
+        // (upsertColumnTop). So attaching a genuinely multi-cell ".detached" source can return
+        // AttachDetachStatus.OK while every column reads back NULL/absent, with the real bytes sitting
+        // one directory level deeper, never linked in. Thrown directly (see detachPartition's own
+        // comment for why this bypasses the AttachDetachStatus convention). Gated unconditionally for
+        // any real (non-dormant) composite table. Plain and dormant-composite tables are completely
+        // unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support ATTACH PARTITION [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
 
         if (txWriter.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$substr(pathRootSize, path).I$();
@@ -1267,6 +1302,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // It only makes sense to change symbol parameters
             // It has to be another type of ALTER command since it's non-structural change in WAL tables
             throw CairoException.nonCritical().put("cannot change column type, new type is the same as existing [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
+        // Plan 4a DDL gate sweep: ALTER COLUMN TYPE is not yet cell-aware for a real composite table
+        // for ANY target type, not just SYMBOL (the narrower, pre-existing guard just below covers
+        // only the symbol-interner-ordering hazard). ConvertOperatorImpl's per-partition rewrite loop
+        // (the actual data-copy machinery this method hands off to via getConvertOperator()) resolves
+        // each partition's on-disk path with the bare 5-arg setPathForNativePartition overload -- no
+        // cell segment -- so for a routed cell that path does not correspond to any real directory.
+        // Reachable even for a non-symbol target type, so this must be its own, broader check. Gated
+        // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
+        // tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support ALTER COLUMN TYPE [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
         }
 
@@ -1702,6 +1752,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        // Plan 4a DDL gate sweep: CONVERT PARTITION TO PARQUET is not yet cell-aware for a real
+        // composite table. It calls squashPartitionForce (below) unconditionally as its first
+        // mutating step -- itself cell-blind (see squashPartitionForce's own gate/comment) -- and,
+        // even past that, independently builds every one of its own paths (source native dir, the
+        // "upgraded" native dir, the target parquet file) with the bare 5-arg
+        // setPathForNativePartition/setPathForParquetPartition overloads, which do not have a
+        // cell-aware overload at all for the parquet case. A "successful" conversion's cell-blind
+        // safeDeletePartitionDir cleanup step could also delete a shared day container -- i.e. every
+        // sibling cell's data -- not just the target cell's. Separately, composite ingestion itself
+        // already explicitly refuses to write into a parquet-formatted composite cell (see
+        // processO3BlockComposite's own "does not yet support FORMAT PARQUET" guard), so even a
+        // hypothetically-successful conversion would brick future ingestion into that day. Gated
+        // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
+        // tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support CONVERT PARTITION TO PARQUET [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
         if (inTransaction()) {
             assert !tableToken.isWal();
             LOG.info()
@@ -1833,6 +1903,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        // Plan 4a DDL gate sweep: CONVERT PARTITION TO NATIVE is not yet cell-aware for a real
+        // composite table -- it independently builds the source parquet path and the "upgraded"
+        // native dir path (below) with the bare 5-arg setPathForParquetPartition/
+        // setPathForNativePartition overloads, mirroring convertPartitionNativeToParquet's own gate
+        // (see its comment for the fuller mechanism). Gated unconditionally for any real
+        // (non-dormant) composite table. Plain and dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support CONVERT PARTITION TO NATIVE [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
         if (doCommit && inTransaction()) {
             LOG.info()
                     .$("committing open transaction before applying convert partition to native command [table=")
@@ -1955,6 +2037,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Should be checked by SQL compiler
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
+
+        // Plan 4a DDL gate sweep: DETACH PARTITION is not yet cell-aware for a real composite table.
+        // Both the source (the folder to be detached, TableWriter.java ~1994) and destination (the
+        // ".detached" folder, ~2020) paths are built with the bare, cell-blind 5-arg
+        // setPathForNativePartition overload -- for a routed cell that path does not correspond to any
+        // real on-disk directory. Thrown directly (bypassing this method's own AttachDetachStatus
+        // return-code convention) so the message is unambiguous and consistent with every other gate
+        // in this sweep; a non-OK AttachDetachStatus would still surface as a CairoException to the
+        // caller via AttachDetachStatus#getException, but with a generic, less specific message.
+        // Gated unconditionally for any real (non-dormant) composite table. Plain and
+        // dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support DETACH PARTITION [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
 
         if (inTransaction()) {
             assert !tableToken.isWal();
@@ -2157,6 +2255,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
+
+        // Plan 4a DDL gate sweep: DROP INDEX is not yet cell-aware for a real composite table.
+        // DropIndexOperator#executeDropIndex is not a pure metadata flip -- for a NATIVE-format
+        // partition it hard-links the column's .d file to a new version, and both the source and
+        // destination paths are built (via its own partitionDFile helper) with the bare 5-arg
+        // setPathForNativePartition overload. Since the source never exists at that bare path for a
+        // routed cell, ff.hardLink fails and this throws unconditionally for any composite table with
+        // routed, indexed NATIVE data. Gated unconditionally for any real (non-dormant) composite
+        // table, with a clear message rather than the raw "cannot hardLink" failure. Plain and
+        // dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support DROP INDEX [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
@@ -3198,6 +3312,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
+        }
+        // Plan 4a DDL gate sweep: DROP PARTITION is not yet cell-aware for a real (routed) composite
+        // table, and is actively unsafe, not just imprecise. Two independently-confirmed mechanisms:
+        // (1) dropPartitionByExactTimestamp's "removing active partition" branch resolves the new
+        // tail's min/max timestamp via the bare, cell-blind 5-arg setPathForNativePartition overload
+        // and throws "file does not exist" for a routed composite table's own current tail (N1).
+        // (2) TxWriter#removeAttachedPartitions(long) (its non-active-partition branch) silently
+        // defaults to cellKey 0 only; for a day with 2+ cells, this while-loop (below,
+        // getLogicalPartitionTimestamp-driven) re-probes the SAME raw index forever once cellKey 0's
+        // entry is gone and a sibling cell's entry -- which shares the exact same raw/floor timestamp
+        // -- is left sitting there untouched: a genuine, empirically-reproduced INFINITE LOOP (not a
+        // clean crash), confirmed live in this sweep (a forked test JVM spun logging "partition is
+        // already removed" until forcibly killed after several minutes). Composite on-disk versioning
+        // is also per-cell (nameTxn differs per cell sharing a day), so the physical-delete step
+        // (processPartitionRemoveCandidates0's own bare-path unlink) can, depending on which cell's
+        // nameTxn happens to be the initial -1 sentinel, collapse to the SHARED day container and
+        // delete sibling cells' data that was never meant to be touched. Gated unconditionally for any
+        // real (non-dormant) composite table -- cell-aware DROP PARTITION is deferred to a later
+        // sub-plan (4b+). Plain and dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support DROP PARTITION [table=")
+                    .put(tableToken.getTableName()).put(']');
         }
 
         // commit changes, there may be uncommitted rows of any partition
@@ -15011,6 +15148,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashPartitionForce(int partitionIndex) {
+        // Plan 4a DDL gate sweep: partition-squashing is not yet cell-aware for a real composite
+        // table. Its forward-scan (below and in squashSplitPartitions) decides whether the NEXT raw
+        // attached-partition entry is a "split" sibling to force-merge purely via calendar-FLOOR
+        // equality (getLogicalPartitionTimestamp) -- but two different CELLS of the same day share the
+        // exact same RAW timestamp, not just the same floor, so a genuine sibling cell is
+        // indistinguishable from a true split fragment by this check alone. Misidentifying one triggers
+        // a cross-cell merge via squashSplitPartitions, which builds every path with the bare 5-arg
+        // setPathForNativePartition overload -- no cell segment, so it operates on paths that do not
+        // correspond to any real on-disk directory. This single gate point covers every caller: the
+        // direct SQL "ALTER TABLE ... SQUASH PARTITIONS" entry (squashPartitions()),
+        // convertPartitionNativeToParquet/detachPartition (each already separately gated, so this is
+        // defense in depth for those two), and the two remaining internal parquet-producing/switching
+        // helpers that call this method directly without their own composite gate. Gated
+        // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
+        // tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support SQUASH PARTITIONS [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
