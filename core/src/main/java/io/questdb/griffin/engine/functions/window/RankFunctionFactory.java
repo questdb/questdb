@@ -376,6 +376,9 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private Map compactionScratch;
         private Map map;
         private ArrayColumnTypes mapValueTypes;
+        // The per-query MemoryTracker bound by setMemoryTracker; retained so
+        // retainPartitions can charge the lazily-created compaction scratch too.
+        private MemoryTracker memoryTracker;
         private long rank;
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
@@ -430,6 +433,15 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             // The reusable scratch ping-pongs with map; only the first sweep allocates.
             if (compactionScratch == null) {
                 compactionScratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+                // createUnorderedMap returns an OPEN map allocated under no tracker.
+                // Free that untracked backing, bind the tracker, then reopen so the
+                // scratch's malloc and free stay symmetric on the per-query counter
+                // once the ping-pong swap below promotes it to the live map.
+                if (memoryTracker != null) {
+                    compactionScratch.close();
+                    compactionScratch.setMemoryTracker(memoryTracker);
+                    compactionScratch.reopen();
+                }
             } else {
                 compactionScratch.clear();
             }
@@ -768,6 +780,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Retain the tracker so retainPartitions can charge the compaction scratch
+            // to it. The live map (which may itself be a scratch promoted by a prior
+            // swap) is tracked here directly.
+            this.memoryTracker = tracker;
             if (map != null) {
                 map.setMemoryTracker(tracker);
             }

@@ -46,6 +46,10 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     // Non-final so retainPartitions can swap the Map instance. Single-writer
     // (refresh worker), no synchronization needed.
     protected Map map;
+    // The per-query MemoryTracker bound by setMemoryTracker. Retained so
+    // retainPartitions can bind it on the lazily-created compaction scratch too.
+    // See BasePartitionedWindowFunction.
+    protected MemoryTracker memoryTracker;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
     // Live-view tombstone bookkeeping; mirrors BasePartitionedWindowFunction.
@@ -152,6 +156,7 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
             if (compactionScratch == null) {
                 return;
             }
+            bindScratchTracker();
         } else {
             compactionScratch.clear();
         }
@@ -164,6 +169,10 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Retain the tracker so retainPartitions can charge the lazily-created
+        // compaction scratch to it. The live map (which may itself be a scratch
+        // promoted by a prior swap) is tracked here directly.
+        this.memoryTracker = tracker;
         if (map != null) {
             map.setMemoryTracker(tracker);
         }
@@ -174,6 +183,22 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         super.toTop();
         Misc.clear(map);
         tombstoneCount = 0;
+    }
+
+    /**
+     * Charges the freshly created compaction scratch to the per-query tracker.
+     * Mirrors {@link BasePartitionedWindowFunction#bindScratchTracker()}: free the
+     * untracked open backing, bind the tracker, then reopen so the scratch's malloc
+     * and free stay symmetric on the per-query counter after the ping-pong swap. A
+     * no-op when no tracker is bound.
+     */
+    private void bindScratchTracker() {
+        if (memoryTracker == null || compactionScratch == null) {
+            return;
+        }
+        compactionScratch.close();
+        compactionScratch.setMemoryTracker(memoryTracker);
+        compactionScratch.reopen();
     }
 
     /**

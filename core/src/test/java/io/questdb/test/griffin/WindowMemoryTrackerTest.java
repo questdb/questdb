@@ -814,6 +814,125 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStreamingRowNumberPartitionMapFailsOnHighCardinality() throws Exception {
+        // row_number() over (partition by k) routes through the streaming window cursor and
+        // grows one LONG counter per distinct partition key. The map is the only unbounded
+        // native structure on this path, so its growth past the per-query limit must produce a
+        // clean isOutOfMemory() breach - it used to allocate untracked and slip past the limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k, x::double AS v FROM long_sequence(200_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("SELECT k, row_number() OVER (PARTITION BY k) FROM tab", sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, WindowRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingRowNumberPartitionMapReleasesAllocations() throws Exception {
+        // A handful of partitions keep the row_number() map well under the limit; repeated
+        // getCursor/close cycles must release every byte the lazy map allocates (assertMemoryLeak
+        // around the loop is the load-bearing check).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 50) AS k, x::double AS v FROM long_sequence(2_000))");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT k, row_number() OVER (PARTITION BY k) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                for (int i = 0; i < 10; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 2_000, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingBivariatePartitionRowsMapFailsOnHighCardinality() throws Exception {
+        // covar_samp(x, y) over (partition by k rows between 1 preceding and current row) keeps
+        // BOTH a per-partition ring buffer (16 bytes/partition, tracked) and an unbounded
+        // per-partition map (value 8 slots = 64 bytes/partition). With a small frame the map
+        // dominates. The limit sits above the ring's total but below the map's, so the query
+        // breaches only when the map is charged too - it used to omit super.setMemoryTracker()
+        // and leave the map untracked, slipping past the limit.
+        assertMemoryLeak(() -> {
+            // 2 MiB: the ring (~800 KiB at 50k partitions) stays under it; the map (>3 MiB)
+            // crosses it once tracked.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+            execute("CREATE TABLE tab AS (" +
+                    "  SELECT (x * 1_000_000L)::timestamp ts, x AS k, x::double AS v, (x + 1)::double AS v2" +
+                    "  FROM long_sequence(50_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "SELECT k, covar_samp(v, v2) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM tab",
+                        sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    assertInTree(factory, WindowRecordCursorFactory.class);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain until breach
+                        }
+                        Assert.fail("expected per-query memory breach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamingBivariatePartitionRowsMapSucceedsOnLowCardinality() throws Exception {
+        // A handful of partitions keep both the ring buffer and the map well under the limit;
+        // the query returns one row per input row and the tracker accounting stays balanced.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+            execute("CREATE TABLE tab AS (" +
+                    "  SELECT (x * 1_000_000L)::timestamp ts, (x % 5) AS k, x::double AS v, (x + 1)::double AS v2" +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT k, covar_samp(v, v2) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, WindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    long rows = 0;
+                    while (cursor.hasNext()) {
+                        rows++;
+                    }
+                    Assert.assertEquals(10_000, rows);
+                }
+            }
+        });
+    }
+
     private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
         RecordCursorFactory f = factory;
         while (f != null) {

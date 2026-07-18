@@ -44,6 +44,7 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.std.BoolList;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -104,6 +105,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     // that band rather than a dense-from-zero range. Only read when the matching
     // overlay is non-empty, where buildTxnSymbolDiffs has just set it.
     private final IntList txnSymbolCleanCounts = new IntList();
+    // Per-column null flag for the current transaction's diff, keyed by base-table
+    // writer index (parallel to txnSymbolDiffs). Carries SymbolMapDiff.hasNullValue,
+    // which the WAL writer sets true whenever the base's committed dictionary already
+    // holds a null OR this transaction wrote one (resetSymbolMaps seeds it from the
+    // reader's null flag and markSymbolMapNull raises it), so it is the exact answer
+    // WalSymbolTable.containsNullValue needs for this txn's rows. Set even when the
+    // overlay is empty: a txn that writes only a null still emits a 0-entry diff.
+    private final BoolList txnSymbolHasNull = new BoolList();
     // Number of base-table columns the current of() call projects; rebound on
     // each of() invocation. Internal capacity lists (pageAddresses, pageSizes,
     // symbolTables) grow lazily to match.
@@ -291,6 +300,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         for (int i = 0, n = txnSymbolCleanCounts.size(); i < n; i++) {
             txnSymbolCleanCounts.setQuick(i, 0);
         }
+        // Null flags are per-transaction too: a column with no diff in THIS txn has no
+        // recorded null of its own, so default to false and let each diff below set it.
+        for (int i = 0, n = txnSymbolHasNull.size(); i < n; i++) {
+            txnSymbolHasNull.setQuick(i, false);
+        }
         if (txnDiffs == null) {
             return;
         }
@@ -303,8 +317,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 txnSymbolDiffs.extendAndSet(colIdx, map);
             }
             // Record the diff's clean symbol count so keyOf can probe the overlay's
-            // real key band [cleanSymbolCount, cleanSymbolCount + size).
+            // real key band [cleanSymbolCount, cleanSymbolCount + size). Read the null
+            // flag here too, before nextEntry() advances the shared diff cursor, so
+            // containsNullValue is correct even for a 0-entry (null-only) diff.
             txnSymbolCleanCounts.extendAndSet(colIdx, diff.getCleanSymbolCount());
+            txnSymbolHasNull.extendAndSet(colIdx, diff.hasNullValue());
             SymbolMapDiffEntry entry = diff.nextEntry();
             while (entry != null) {
                 // DirectSymbolMap.put copies the CharSequence's bytes off-heap, so the
@@ -392,7 +409,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 final int cleanSymbolCount = walColumnIndex < txnSymbolCleanCounts.size()
                         ? txnSymbolCleanCounts.getQuick(walColumnIndex)
                         : 0;
-                symTab.of(walColumnIndex, reader, hasOverlay ? diff : null, cleanSymbolCount);
+                // A residual filter comparing two SYMBOL columns (EqSymFunctionFactory)
+                // asks the table whether it holds a null when the other side is null, so
+                // this must be the real per-txn answer, not a hard-coded false.
+                final boolean containsNull = walColumnIndex < txnSymbolHasNull.size()
+                        && txnSymbolHasNull.get(walColumnIndex);
+                symTab.of(walColumnIndex, reader, hasOverlay ? diff : null, cleanSymbolCount, containsNull);
             } else {
                 symbolTables.setQuick(i, null);
             }
@@ -422,6 +444,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         // Start of the overlay's key band: this txn's diff keys occupy the
         // contiguous range [cleanSymbolCount, cleanSymbolCount + txnDiff.size()).
         private int cleanSymbolCount;
+        // Whether this txn's rows can carry a null symbol for the column: true when the
+        // base's committed dictionary already holds a null or this txn wrote one. See
+        // containsNullValue.
+        private boolean containsNull;
         private WalReader reader;
         // Per-transaction overlay (key -> symbol) built from the current txn's
         // SymbolMapDiff. Null when the txn has no diff entries for this column;
@@ -431,15 +457,16 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public boolean containsNullValue() {
-            // Sentinel: this table cannot answer the question without walking the
-            // backing store. It is safe only because every consumer that branches on
-            // containsNullValue (joins, LATEST BY, the excluded-values filter) sits
-            // behind a factory shape CairoEngine.validateLiveViewFactory already
-            // rejects, so nothing on the refresh path reads it. A future LV query
-            // shape that plans off it would read this answer as fact and be wrong: a
-            // WAL segment can carry null symbols. Compute it properly before widening
-            // what the LV path asks of this table.
-            return false;
+            // Reported per transaction from the segment's SymbolMapDiff null flag
+            // (see WalSegmentPageFrameCursor.txnSymbolHasNull). A residual filter
+            // comparing two SYMBOL columns (EqSymFunctionFactory) reads this to decide
+            // whether a null on one side matches a null on the other: a hard-coded
+            // false dropped (NULL, NULL) rows under '=' and admitted them under '!=',
+            // diverging from the base SELECT. The flag is true whenever the base's
+            // committed dictionary already holds a null or this txn wrote one, which
+            // over-covers a slice that carries no null itself - harmless, since no row
+            // then has a null key to mis-resolve - but never under-reports a real null.
+            return containsNull;
         }
 
         @Override
@@ -507,11 +534,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             return reader.getSymbolKey(walColumnIndex, value, cleanSymbolCount);
         }
 
-        public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff, int cleanSymbolCount) {
+        public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff, int cleanSymbolCount, boolean containsNull) {
             this.walColumnIndex = walColumnIndex;
             this.reader = reader;
             this.txnDiff = txnDiff;
             this.cleanSymbolCount = cleanSymbolCount;
+            this.containsNull = containsNull;
         }
 
         @Override

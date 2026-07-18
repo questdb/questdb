@@ -1088,6 +1088,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
         @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Bind the tracker on BOTH native structures: super handles the unbounded
+            // per-partition map (and the compaction scratch), this handles the ring
+            // buffer. Omitting super left the map untracked, so a high-cardinality
+            // PARTITION BY grew it past the per-query limit unaccounted.
+            super.setMemoryTracker(tracker);
             memory.setMemoryTracker(tracker);
         }
 

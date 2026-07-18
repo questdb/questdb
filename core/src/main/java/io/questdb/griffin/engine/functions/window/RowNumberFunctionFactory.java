@@ -50,9 +50,11 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
@@ -136,6 +138,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         // so a sweep never allocates. Allocated once on the first sweep.
         private Map compactionScratch;
         private Map map;
+        // The per-query MemoryTracker bound by setMemoryTracker; retained so
+        // retainPartitions can charge the lazily-created compaction scratch too.
+        private MemoryTracker memoryTracker;
         private long rowNumber;
         // Single-writer (refresh worker), not volatile.
         private long tombstoneCount;
@@ -156,6 +161,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             this.valueColumnTypes = valueColumnTypes;
             this.tombstoneValueIndex = tombstoneValueIndex;
             this.configuration = configuration;
+            // Start the map closed (lazy): the owning cursor binds the per-query
+            // MemoryTracker via setMemoryTracker() before reopen() allocates the
+            // backing under it, so a high-cardinality PARTITION BY is charged to the
+            // per-query limit. reset() frees it symmetrically at cursor close.
+            this.map.close();
         }
 
         @Override
@@ -172,6 +182,15 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             // with map; only the first sweep allocates.
             if (compactionScratch == null) {
                 compactionScratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, valueColumnTypes);
+                // createUnorderedMap returns an OPEN map allocated under no tracker.
+                // Free that untracked backing, bind the tracker, then reopen so the
+                // scratch's malloc and free stay symmetric on the per-query counter
+                // once the ping-pong swap below promotes it to the live map.
+                if (memoryTracker != null) {
+                    compactionScratch.close();
+                    compactionScratch.setMemoryTracker(memoryTracker);
+                    compactionScratch.reopen();
+                }
             } else {
                 compactionScratch.clear();
             }
@@ -281,6 +300,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void onSnapshotRestoreBegin() {
+            // The map starts closed (lazy) and the live-view restore path can run
+            // before any cursor of()/ofIncremental reopens it, so reopen() first;
+            // it allocates the backing when closed and is a no-op when already open.
+            map.reopen();
             map.clear();
             tombstoneCount = 0;
         }
@@ -318,6 +341,15 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Retain the tracker so retainPartitions can charge the compaction scratch
+            // to it, and bind it on the lazily-allocated map before the cursor's
+            // reopen() allocates the backing under it.
+            this.memoryTracker = tracker;
+            map.setMemoryTracker(tracker);
         }
 
         @Override

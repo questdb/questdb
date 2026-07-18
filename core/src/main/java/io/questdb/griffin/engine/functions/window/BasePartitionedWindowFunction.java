@@ -52,6 +52,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // Non-final so retainPartitions can swap the partition state Map during
     // the anchor-driven frontier sweep.
     protected Map map;
+    // The per-query MemoryTracker bound by setMemoryTracker. Retained so
+    // retainPartitions can bind it on the lazily-created compaction scratch too,
+    // and so the binding survives the ping-pong swap that promotes the scratch to
+    // the live map. Null until the owning cursor binds one (or for direct callers).
+    protected MemoryTracker memoryTracker;
     // Live-view tombstone bookkeeping. Subclasses set tombstoneValueIndex in
     // their constructor (= the BYTE slot index in the partition state map's
     // value layout); -1 means "no tombstone tracking" (non-LV mode or
@@ -173,6 +178,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             if (compactionScratch == null) {
                 return;
             }
+            bindScratchTracker();
         } else {
             // Discard the previous sweep's old map (held here as scratch) before
             // reuse. Clearing up front -- rather than after the swap -- keeps the
@@ -197,6 +203,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Retain the tracker so retainPartitions can charge the lazily-created
+        // compaction scratch to it. The live map (which may itself be a scratch
+        // promoted by a prior swap) is tracked here directly.
+        this.memoryTracker = tracker;
         if (map != null) {
             map.setMemoryTracker(tracker);
         }
@@ -224,6 +234,24 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         super.toTop();
         Misc.clear(map);
         tombstoneCount = 0;
+    }
+
+    /**
+     * Charges the freshly created compaction scratch to the per-query tracker.
+     * {@link #newCompactionScratch()} returns an OPEN map allocated under no tracker,
+     * so - mirroring the deferred lifecycle the constructor gives the primary map -
+     * free that untracked backing (still on the null tracker), bind the tracker, then
+     * reopen to reallocate under it. This keeps the scratch's malloc and free
+     * symmetric on the per-query counter once the ping-pong swap promotes it to the
+     * live map. A no-op when no tracker is bound.
+     */
+    private void bindScratchTracker() {
+        if (memoryTracker == null || compactionScratch == null) {
+            return;
+        }
+        compactionScratch.close();
+        compactionScratch.setMemoryTracker(memoryTracker);
+        compactionScratch.reopen();
     }
 
     /**

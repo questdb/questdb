@@ -878,6 +878,122 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefreshWithSymbolColumnComparisonHandlesNullOnlyColumn() throws Exception {
+        // Edge of the containsNullValue fix: the right column b carries a committed null but zero
+        // distinct non-null symbols (count 0, null flag set) before the view exists, and the
+        // incremental txn then writes only nulls into b. The per-txn SymbolMapDiff must still report
+        // hasNullValue so the (NULL, NULL) row matches under '=' on the raw-WAL path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (a SYMBOL, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // Applied before the view exists: b's committed dictionary carries a null with no
+            // non-null symbols; a gets a real dictionary entry.
+            execute("INSERT INTO base (a, b, val, ts) VALUES ('seed', NULL, 1, '2026-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv_eq FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT a, b, val, ts, row_number() OVER () AS rn FROM base WHERE a = b");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv_eq");
+                // Incremental txn writes only nulls into b (no new distinct symbol), with a null a too.
+                execute("INSERT INTO base (a, b, val, ts) VALUES (NULL, NULL, 2, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT a, b, val FROM base WHERE a = b ORDER BY ts").noLeakCheck().returns("a\tb\tval\n" +
+                    "\t\t2\n");
+            assertQuery("SELECT a, b, val FROM lv_eq ORDER BY ts").noLeakCheck().expectSize().returns("a\tb\tval\n" +
+                    "\t\t2\n");
+            assertNoRefreshFaults("lv_eq");
+
+            execute("DROP LIVE VIEW lv_eq");
+        });
+    }
+
+    @Test
+    public void testRefreshWithSymbolColumnComparisonHandlesNulls() throws Exception {
+        // Regression for the raw-WAL live view symbol table's NULL handling. A residual filter that
+        // compares two SYMBOL columns (a = b / a != b) runs through EqSymFunctionFactory.Func during
+        // incremental refresh. When the left value is NULL, that function asks the right column's
+        // symbol table containsNullValue() to decide whether a NULL left can match a NULL right.
+        // WalSegmentPageFrameCursor.WalSymbolTable used to hard-code containsNullValue() = false, so
+        // (NULL, NULL) rows were dropped by '=' and admitted by '!=', diverging from the base SELECT.
+        // Only (NULL, NULL) rows are affected: for a non-null-vs-NULL row the right key is never
+        // VALUE_IS_NULL, so the containsNullValue() answer never changes the outcome.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (a SYMBOL, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // Applied before the views exist, seeding the clean dictionaries for a and b.
+            execute("INSERT INTO base (a, b, val, ts) VALUES " +
+                    "('x', 'x', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('x', 'y', 2, '2026-01-01T00:01:00.000000Z')");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv_eq FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT a, b, val, ts, row_number() OVER () AS rn FROM base WHERE a = b");
+            execute("CREATE LIVE VIEW lv_ne FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT a, b, val, ts, row_number() OVER () AS rn FROM base WHERE a != b");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Finish seeding from the applied base FIRST, so the (NULL, NULL) rows below arrive
+                // only through incremental refresh. Otherwise the seed reads them from the base table
+                // via its real symbol reader and never exercises WalSymbolTable.
+                driveSeedToCompletion(job, "lv_eq");
+                driveSeedToCompletion(job, "lv_ne");
+
+                // These commits arrive after the seed, so incremental refresh reads them straight
+                // from the WAL segment through WalSymbolTable rather than a recompute of the applied
+                // base. The right column b carries NULLs (val=3, val=4), so its symbol table must
+                // report containsNullValue() = true for the (NULL, NULL) row to match under '='.
+                execute("INSERT INTO base (a, b, val, ts) VALUES " +
+                        "(NULL, NULL, 3, '2026-01-01T00:02:00.000000Z'), " +
+                        "('x', NULL, 4, '2026-01-01T00:03:00.000000Z')");
+                execute("INSERT INTO base (a, b, val, ts) VALUES " +
+                        "('y', 'y', 5, '2026-01-01T00:04:00.000000Z'), " +
+                        "(NULL, 'y', 6, '2026-01-01T00:05:00.000000Z'), " +
+                        "('z', 'z', 7, '2026-01-01T00:06:00.000000Z')");
+                drainWalQueue();
+
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            // Ground truth: the base SELECT itself. QuestDB treats NULL = NULL as true for symbols
+            // when the column contains a null, so a = b keeps (NULL, NULL) and a != b drops it.
+            assertQuery("SELECT a, b, val FROM base WHERE a = b ORDER BY ts").noLeakCheck().returns("a\tb\tval\n" +
+                    "x\tx\t1\n" +
+                    "\t\t3\n" +
+                    "y\ty\t5\n" +
+                    "z\tz\t7\n");
+            // The live view refreshed off the raw WAL must agree with it, row for row.
+            assertQuery("SELECT a, b, val FROM lv_eq ORDER BY ts").noLeakCheck().expectSize().returns("a\tb\tval\n" +
+                    "x\tx\t1\n" +
+                    "\t\t3\n" +
+                    "y\ty\t5\n" +
+                    "z\tz\t7\n");
+
+            assertQuery("SELECT a, b, val FROM base WHERE a != b ORDER BY ts").noLeakCheck().returns("a\tb\tval\n" +
+                    "x\ty\t2\n" +
+                    "x\t\t4\n" +
+                    "\ty\t6\n");
+            assertQuery("SELECT a, b, val FROM lv_ne ORDER BY ts").noLeakCheck().expectSize().returns("a\tb\tval\n" +
+                    "x\ty\t2\n" +
+                    "x\t\t4\n" +
+                    "\ty\t6\n");
+
+            // The incremental raw-WAL path, not a recompute, must have produced these rows: a refresh
+            // fault self-heals into a full recompute from the applied base (correct symbol tables),
+            // which would mask a WalSymbolTable defect.
+            assertNoRefreshFaults("lv_eq");
+            assertNoRefreshFaults("lv_ne");
+
+            execute("DROP LIVE VIEW lv_eq");
+            execute("DROP LIVE VIEW lv_ne");
+        });
+    }
+
+    @Test
     public void testRefreshWithSymbolFilterUnderJitDisabled() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
         assertSymbolEqualityFilterRefreshes();
