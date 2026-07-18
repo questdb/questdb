@@ -203,22 +203,26 @@ public class CompositePartitionDdlTest extends AbstractCairoTest {
      * {@code squashSplitPartitions} stride bug (ORDINAL x {@code LONGS_PER_TX_ATTACHED_PARTITION} -> RAW,
      * hardcoded-stride-4 on a stride-8 composite table) on the {@code copyTargetFrame} branch, which needs
      * an already-committed day PHYSICALLY SPLIT by a later out-of-order insert, then squashed back under
-     * an open reader. Whole-branch review (Plan 4a) finding I1 requires {@code c} to be WAL; on a WAL
-     * composite table EVERY commit (in-order or not) routes through {@code processO3BlockComposite}, whose
-     * {@code dispatchCompositeCellRange} throws LOUDLY ("does not yet support a commit that extends an
-     * already-populated cell") the moment a later commit adds MORE rows to a day that already has
-     * committed data for that cell -- exactly what creating a split requires, unavoidably (a split IS a
-     * second, later write into an already-populated partition; no choice of dimension values routes around
-     * it, only the commit sequencing does, and that sequencing is the scenario itself). This is a
-     * pre-existing, already-deferred Plan 4a Task 5 limitation (see {@code CompositeRoutingTest}'s own
-     * {@code testSecondCommitExtendingExistingCellThrowsInsteadOfSilentlyMisrouting}), not something
-     * introduced or fixable by this fix pass -- so the original scenario is retired rather than ported.
-     * The underlying stride fix remains covered: {@link #testDropMiddlePartitionMatchesPlainEquivalent()},
+     * an open reader. Whole-branch review (Plan 4a) finding I1 requires {@code c} to be WAL.
+     * <p>
+     * UPDATE (Plan 4b Task 1b): extending an already-populated cell (a prerequisite for a split, which is
+     * always a second write into an already-populated partition) is no longer blocked by {@code
+     * dispatchCompositeCellRange}'s own guard -- that guard was removed once the cell-blind
+     * partition-remove-candidates purge it was protecting against was fixed (see {@code TableWriter}'s own
+     * updated docs and {@code CompositeRoutingTest#testSecondCommitExtendingExistingCellOutOfOrderMergeMatchesPlainTwin}).
+     * The scenario remains impractical to construct here for an unrelated, purely resource reason: a
+     * genuine O3 SPLIT only triggers once a partition's prefix exceeds {@code
+     * TableWriter#getPartitionO3SplitThreshold()} (default {@code cairo.o3.partition.split.min.size},
+     * 50 MiB) -- far beyond any ordinary unit test's row counts, composite or plain. This is a scale
+     * limitation of the test harness, not a safety gate; {@code squashSplitPartitions}'s own
+     * {@code partitionRemoveCandidates} call sites were threaded with {@code cellKey} defensively (Plan 4b
+     * Task 1b) even though unexercised by any test today. The underlying stride fix remains covered:
+     * {@link #testDropMiddlePartitionMatchesPlainEquivalent()},
      * {@link #testDropLastPartitionMatchesPlainEquivalent()} and
      * {@link #testConvertPartitionToParquetAndBackNonFirstDayMatchesPlainEquivalent()} still exercise the
      * SAME {@code txWriter.getLongsPerAttachedPartition()} fix at 3 of the original 6 sites (DROP,
      * CONVERT x2); {@code squashSplitPartitions} itself is unchanged production code, still fixed, just
-     * without a DEDICATED composite regression test now that its only reachable trigger shape is guarded.
+     * without a DEDICATED composite regression test given the scale needed to trigger it.
      * <p>
      * What this test asserts instead: I1's own new guard -- a non-WAL composite CREATE (the only way the
      * original scenario could ever have been built) is now rejected loudly, rather than silently degrading

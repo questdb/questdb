@@ -151,21 +151,26 @@ public class CompositeRoutingEndToEndTest extends AbstractCairoTest {
     }
 
     /**
-     * Group 2 (guarded extend is loud, not silent -- positive boundary assertion). Commit 1 establishes
-     * two brand-new days with two brand-new cells each (all new, succeeds). Commit 2 sends a single row
-     * that EXTENDS the already-populated day1/A cell -- the documented, guarded shape (Task 5 report
-     * §4/§6: a real, unresolved native-heap-corruption hazard, guarded rather than fixed). This must
-     * throw the clear {@code CairoException} (table suspends), and -- the assertion Task 6 adds beyond
-     * Task 5's own regression tests -- both the plain twin AND {@code c}'s own PRIOR, already-committed
-     * cells (from commit 1, before the guard fired) must be completely unaffected: no silent partial
-     * application of the rejected commit, no corruption of what was already durably routed.
+     * Group 2 (extend an already-populated cell -- positive proof, formerly a guarded-throw boundary
+     * assertion). Commit 1 establishes two brand-new days with two brand-new cells each (all new,
+     * succeeds). Commit 2 sends a single row that EXTENDS the already-populated day1/A cell, in order.
+     * This used to throw a documented {@code CairoException} (Task 5 report §4/§6: a real,
+     * unresolved native-heap-corruption hazard, guarded rather than fixed); Plan 4b Task 1 root-caused
+     * and fixed that hazard's bookkeeping bugs, and Plan 4b Task 1b closed the remaining cell-blind purge
+     * gap and removed the guard entirely (see {@code TableWriter#dispatchCompositeCellRange}'s own
+     * updated docs). This test now proves the positive case instead: commit 2 succeeds, AND -- the
+     * assertion Task 6 originally added beyond Task 5's own regression tests, preserved here in its
+     * positive form -- both the plain twin AND {@code c}'s own PRIOR, already-committed cells (from
+     * commit 1) remain intact alongside the newly-extended data: no silent misroute, no corruption of
+     * what was already durably routed.
      * <p>
-     * {@code pBaseline} is a second plain table that only ever receives commit 1's rows -- the oracle
-     * for {@code c}'s expected POST-guard state, since {@code p} itself goes on to receive commit 2 too
-     * (to prove commit 2 succeeds fully and normally on a plain table).
+     * {@code pBaseline} is a second plain table that only ever receives commit 1's rows -- kept as a
+     * historical record of commit 1's own exact content, even though {@code c} itself no longer needs an
+     * external oracle for its post-commit-2 state (that role is now played by {@code p}, via {@link
+     * #assertTablesMatch}).
      */
     @Test
-    public void testGuardedExtendThrowsLoudlyAndLeavesPriorCellsAndPlainTwinUnaffected() throws Exception {
+    public void testExtendingExistingCellRoutesCorrectlyAndLeavesPriorCellsIntact() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -180,27 +185,28 @@ public class CompositeRoutingEndToEndTest extends AbstractCairoTest {
             drainWalQueue();
             assertWalTableNotSuspended("c");
 
-            // Commit 2: ONE row that EXTENDS the already-populated day1/A cell -- the guarded shape.
+            // Commit 2: ONE row that EXTENDS the already-populated day1/A cell, in order.
             final String rows2 = " values ('2020-01-01T06:00:00.000000Z','A',1.1)";
             execute("insert into c" + rows2);
             execute("insert into p" + rows2);
             drainWalQueue();
 
-            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
             engine.releaseInactive();
 
-            // p (plain) is completely unaffected by c's suspension: commit 2 applied fully and normally.
-            assertWalTableNotSuspended("p");
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            assertTablesMatch("c", "p");
 
-            // c's PRIOR, already-committed cells (commit 1, before the guard fired) are unaffected: no
-            // silent misroute, no partial/corrupt application of the rejected commit 2 -- exactly
-            // pBaseline's rows (== commit 1's own), byte for byte, still visible.
-            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
-            assertSqlCursors("select ts, exch, px from pBaseline order by ts, exch", "select ts, exch, px from c order by ts, exch");
-            assertSqlCursors("select exch, count() from pBaseline order by exch", "select exch, count() from c order by exch");
+            // c's PRIOR, already-committed cells (commit 1) are unaffected by commit 2's extend -- day2
+            // (untouched this commit) still matches pBaseline's own commit-1-only content exactly.
+            assertSqlCursors(
+                    "select ts, exch, px from pBaseline where to_str(ts, 'yyyy-MM-dd') = '2020-01-02' order by ts, exch",
+                    "select ts, exch, px from c where to_str(ts, 'yyyy-MM-dd') = '2020-01-02' order by ts, exch");
 
-            // Physical cell directories for the prior, successfully-committed cells are also untouched.
+            // Physical cell directories for both days are present and correct -- day1/A's new merged
+            // content and day1/B, day2/A, day2/B (all untouched by commit 2) are all intact.
             TableToken tableToken = engine.verifyTableName("c");
             FilesFacade ff = configuration.getFilesFacade();
             Assert.assertEquals(setOf("exch=A", "exch=B"), listCellDirNames(ff, tableToken, "2020-01-01"));
@@ -349,17 +355,6 @@ public class CompositeRoutingEndToEndTest extends AbstractCairoTest {
         Assert.assertFalse(
                 tableName + " must not be suspended",
                 engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
-    }
-
-    private void assertWalTableSuspendedWithMessage(String tableName, String expectedMessageSubstring) throws Exception {
-        Assert.assertTrue(
-                tableName + " must be suspended after the not-yet-supported commit",
-                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
-        assertQuery("select suspended, errorMessage like '%" + expectedMessageSubstring + "%' clearMessage " +
-                "from wal_tables() where name = '" + tableName + "'")
-                .noLeakCheck()
-                .noRandomAccess()
-                .returns("suspended\tclearMessage\ntrue\ttrue\n");
     }
 
     /**

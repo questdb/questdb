@@ -394,20 +394,17 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     }
 
     /**
-     * Plan 4a Task 5 (per-cell frontiers). This used to be the first of two dedicated regression tests
-     * for Task 4's loud second-commit guard ({@code guardCompositeSecondCommitNotYetSupported}, removed
-     * by this task) and was originally written expecting a second commit landing on the table's CURRENT
-     * last day to route correctly. It does NOT: this specific commit revisits (extends) day2's ALREADY-
-     * populated cellA from commit 1, and that shape reproduces a genuine native heap corruption (glibc
-     * "malloc(): invalid size (unsorted)"), not just a bookkeeping nit -- see this task's own report.
-     * Per the project's safety rule, a new, NARROWER guard ({@code dispatchCompositeCellRange}'s own
-     * {@code srcDataMax > 0} check) now blocks exactly this shape, loudly, while every OTHER
-     * repeated-commit shape this task proved safe (new day, new cell on an existing or single-cell day,
-     * out-of-order backfill into a brand-new earlier day -- see the other tests in this class) is
-     * unaffected. This test now proves the guard, not success.
+     * Plan 4a Task 5 (per-cell frontiers) originally, then Plan 4b Task 5's own successor guard
+     * ({@code dispatchCompositeCellRange}'s {@code srcDataMax > 0} check, since removed) -- this test
+     * revisits (extends) day2's already-populated cellA from commit 1 with a second, in-order row.
+     * Plan 4b Task 1 root-caused and fixed the bookkeeping bugs that made this shape corrupt the native
+     * heap, and Plan 4b Task 1b closed the remaining cell-blind purge gap and removed the guard (see
+     * {@code dispatchCompositeCellRange}'s own updated docs) -- this now proves success, matching {@link
+     * #testSecondCommitExtendingExistingCellInOrderAppendMatchesPlainTwin()}'s identical shape (kept as
+     * a separate test for this class's own historical continuity from Task 4/5, not deleted).
      */
     @Test
-    public void testSecondCommitExtendingExistingCellThrowsInsteadOfSilentlyMisrouting() throws Exception {
+    public void testSecondCommitExtendingExistingCellRoutesCorrectly() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -424,17 +421,16 @@ public class CompositeRoutingTest extends AbstractCairoTest {
 
             // Commit 2: ONE small, in-order row landing on day2 (the CURRENT last day), which ALREADY
             // has two cells (A, B) from commit 1 -- revisits (extends) the existing cellA partition
-            // rather than creating a new one -- the guarded shape.
+            // rather than creating a new one.
             execute("insert into c values ('2020-01-02T18:00:00.000000Z','A',3.0)");
             execute("insert into p values ('2020-01-02T18:00:00.000000Z','A',3.0)");
             drainWalQueue();
 
-            // c must be suspended with the new, narrower guard's clear message -- NOT silently wrong,
-            // NOT a native crash. p (plain) is completely unaffected.
-            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("c");
             assertWalTableNotSuspended("p");
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            assertTablesMatch("c", "p");
         });
     }
 
@@ -472,19 +468,14 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     /**
      * Plan 4a Task 5's ORIGINAL acceptance-test shape, as the dispatch specified it verbatim: commit 1
      * populates day1 with both cells; commit 2 -- a SEPARATE {@code insert}/{@code drainWalQueue} --
-     * adds MORE rows to day1's two EXISTING cells AND rows for a brand-new day2. This does NOT route
-     * correctly: "more rows for day1's two EXISTING cells" is precisely the "extends an already-
-     * populated cell" shape {@link #testSecondCommitExtendingExistingCellThrowsInsteadOfSilentlyMisrouting()}
-     * documents -- a real native heap corruption, not a bookkeeping nit -- so per the project's safety
-     * rule this whole commit is now blocked loudly rather than left to silently corrupt (the guard
-     * fires on day1's cellA block before day2's brand-new cells are ever reached, so the "new day2 cells"
-     * half of this scenario is separately proven safe by {@link #testMultiCommitAddsSecondCellToSingleCellDayMatchesPlainTwin()}
-     * and {@link #testMultiCommitOutOfOrderEarlierDayMatchesPlainTwin()}, just not combined with a
-     * same-commit cell-extension the way the dispatch's own example combined them). This test now
-     * documents that gap explicitly rather than silently passing or silently corrupting.
+     * adds MORE rows to day1's two EXISTING cells (both in-order appends) AND rows for a brand-new
+     * day2. Distinct from every other extend test in this class: TWO different cells (A and B) are each
+     * extended within the SAME commit, not just one. Formerly
+     * {@code testMultiCommitExtendingExistingCellsThrowsInsteadOfSilentlyMisrouting} -- see Plan 4b
+     * Task 1b's report for why the guard this test used to prove was removed.
      */
     @Test
-    public void testMultiCommitExtendingExistingCellsThrowsInsteadOfSilentlyMisrouting() throws Exception {
+    public void testMultiCommitExtendingExistingCellsMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -496,9 +487,9 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Commit 2: a SEPARATE insert + drainWalQueue (not a continuation of commit 1's WAL
-            // segment) -- more rows for day1's two EXISTING cells (A, B) AND rows for a brand-new
-            // day2, itself with two brand-new cells (A, B). The "day1" half of this is the guarded
-            // shape.
+            // segment) -- more rows for day1's two EXISTING cells (A, B), each strictly in-order after
+            // its own cell's existing row, AND rows for a brand-new day2, itself with two brand-new
+            // cells (A, B).
             final String rows2 = " values " +
                     "('2020-01-01T06:00:00.000000Z','A',1.1), ('2020-01-01T18:00:00.000000Z','B',1.6), " +
                     "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
@@ -506,11 +497,13 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             execute("insert into p" + rows2);
             drainWalQueue();
 
-            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("c");
             assertWalTableNotSuspended("p");
             engine.releaseInactive();
-            // p: 2 rows from commit 1 + 4 rows from commit 2 = 6, fully committed and unaffected.
+            // p: 2 rows from commit 1 + 4 rows from commit 2 = 6.
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            assertPerDayExchCountsMatch("2020-01-01", "2020-01-02");
+            assertTablesMatch("c", "p");
         });
     }
 
@@ -586,23 +579,19 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     }
 
     /**
-     * Plan 4b Task 1: distinguishes the {@code canAppendOnly} sub-shape of the guarded "extend an
-     * already-populated cell" case from the genuine-merge sub-shape below. Commit 2 lands a single row
-     * on day2's already-populated cellA, IN ORDER (strictly after cellA's one existing row) -- the
-     * {@code O3PartitionJob#processPartition}'s {@code srcDataMax >= 1} branch would take the
-     * {@code canAppendOnly}/{@code OPEN_MID_PARTITION_FOR_APPEND} path (append after existing data, no
-     * merge, no directory rewrite) if it ran. Plan 4b Task 1's investigation root-caused and fixed two
-     * independent bugs that made exactly this shape corrupt the native heap (see
-     * {@code TableWriter#o3ConsumePartitionUpdateSink}'s and {@code TxWriter#beginPartitionSizeUpdate}'s
-     * own updated docs) -- this specific sub-shape (pure append, no directory rewrite) is now provably
-     * safe end to end (verified directly with the guard temporarily removed: no crash, correct data,
-     * byte-for-byte match with the plain twin, across repeated fresh-JVM runs -- see the task's own
-     * report). It still throws here because the guard fires uniformly on {@code srcDataMax > 0} before
-     * dispatch can know whether the shape will end up append-only or a genuine merge -- see the
-     * out-of-order test below for why the guard cannot yet be narrowed to "only genuine merges."
+     * Plan 4b Task 1b: the {@code canAppendOnly} sub-shape of "extend an already-populated cell".
+     * Commit 2 lands a single row on day2's already-populated cellA, IN ORDER (strictly after cellA's
+     * one existing row) -- {@code O3PartitionJob#processPartition}'s {@code srcDataMax >= 1} branch
+     * takes the {@code canAppendOnly}/{@code OPEN_MID_PARTITION_FOR_APPEND} path (append after existing
+     * data, no merge, no directory rewrite). Plan 4b Task 1 root-caused and fixed the bookkeeping bugs
+     * that made this shape corrupt the native heap (see {@code TableWriter#o3ConsumePartitionUpdateSink}'s
+     * and {@code TxWriter#beginPartitionSizeUpdate}'s own updated docs); Plan 4b Task 1b then closed the
+     * one remaining gap (the cell-blind partition-remove-candidates purge, {@code
+     * TableWriter#processPartitionRemoveCandidates0}) and removed the {@code srcDataMax > 0} guard this
+     * test used to prove. Formerly {@code testSecondCommitExtendingExistingCellInOrderAppendThrowsInsteadOfSilentlyMisrouting}.
      */
     @Test
-    public void testSecondCommitExtendingExistingCellInOrderAppendThrowsInsteadOfSilentlyMisrouting() throws Exception {
+    public void testSecondCommitExtendingExistingCellInOrderAppendMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -616,44 +605,39 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             assertWalTableNotSuspended("c");
 
             // Commit 2: ONE row, in-order (18:00 > cellA's existing 00:00), on day2's already-populated
-            // cellA -- would be a pure append after existing data (canAppendOnly), no merge, if the
-            // guard did not block it first.
+            // cellA -- a pure append after existing data (canAppendOnly), no merge, no directory rewrite.
             execute("insert into c values ('2020-01-02T18:00:00.000000Z','A',3.0)");
             execute("insert into p values ('2020-01-02T18:00:00.000000Z','A',3.0)");
             drainWalQueue();
 
-            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("c");
             assertWalTableNotSuspended("p");
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            assertPerDayExchCountsMatch("2020-01-01", "2020-01-02");
+            assertTablesMatch("c", "p");
         });
     }
 
     /**
-     * Plan 4b Task 1: the genuine-merge sub-shape. Day2's cellA gets TWO rows in commit 1 (00:00,
+     * Plan 4b Task 1b: the genuine-merge sub-shape. Day2's cellA gets TWO rows in commit 1 (00:00,
      * 12:00); commit 2 lands a single row at 06:00 -- strictly BETWEEN cellA's two existing rows --
-     * which would force {@code O3PartitionJob#processPartition}'s {@code srcDataMax >= 1} branch to
-     * take a genuine {@code O3_BLOCK_MERGE} (not {@code canAppendOnly}), i.e.
-     * {@code OPEN_MID_PARTITION_FOR_MERGE} -- a directory-version rewrite, queuing the old cellA
-     * directory version for removal. This is still guarded (unlike the pure-append sub-shape above):
-     * Plan 4b Task 1's investigation found and fixed the two bugs that were the guard's own documented
-     * proximate cause (both also cover this sub-shape -- verified directly, no crash, correct merged
-     * row content, with the guard temporarily removed), but surfaced a THIRD, independent, and more
-     * severe bug specifically in the post-merge directory-purge step: {@code
-     * TableWriter#processPartitionRemoveCandidates0} resolves the physical path of the OLD (now
-     * superseded) directory version via the cell-BLIND 5-arg {@code setPathForNativePartition} overload
-     * (no {@code cellSegment}), which for a composite table can resolve to the bare, multi-cell DAY
-     * directory instead of the one cell's own subdirectory -- risking deleting sibling cells' still-live
-     * data, not just corrupting bookkeeping. That bug is broader than this task's own scope (the same
-     * cell-blind {@code partitionRemoveCandidates} queue also feeds TTL eviction, TRUNCATE, writer-open/
-     * rollback cleanup, and automatic split-squash housekeeping -- none of those are guarded today
-     * either) and needs its own dedicated fix, not a rushed one here. Per the project's safety rule, the
-     * guard therefore stays for this sub-shape too, loudly, rather than risk shipping a merge path that
-     * can delete a sibling cell's directory. See the task's own report for the full root-cause chain and
-     * evidence.
+     * forcing {@code O3PartitionJob#processPartition}'s {@code srcDataMax >= 1} branch to take a
+     * genuine {@code O3_BLOCK_MERGE} (not {@code canAppendOnly}), i.e. {@code
+     * OPEN_MID_PARTITION_FOR_MERGE} -- a directory-version rewrite, queuing the OLD cellA directory
+     * version for removal via {@code partitionRemoveCandidates}. This is precisely the shape that used
+     * to corrupt/lose data in the post-merge purge step (root cause #3 of Plan 4b Task 1's report): the
+     * old, cell-blind 5-arg {@code setPathForNativePartition} resolved the superseded directory's path
+     * without a cell segment, which for a composite table can collapse to the bare, multi-cell DAY
+     * directory (when the old {@code nameTxn} was the {@code -1} "never rewritten" sentinel) instead of
+     * the one cell's own subdirectory. Plan 4b Task 1b threaded {@code cellKey} through the whole
+     * {@code partitionRemoveCandidates} queue and {@code processPartitionRemoveCandidates0} now resolves
+     * the cell-aware 6-arg overload, closing that gap -- this test is the direct positive proof: cellA's
+     * OLD version is correctly purged, cellA's NEW (merged) version and sibling cellB are both intact.
+     * Formerly {@code testSecondCommitExtendingExistingCellOutOfOrderMergeThrowsInsteadOfSilentlyMisrouting}.
      */
     @Test
-    public void testSecondCommitExtendingExistingCellOutOfOrderMergeThrowsInsteadOfSilentlyMisrouting() throws Exception {
+    public void testSecondCommitExtendingExistingCellOutOfOrderMergeMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -668,16 +652,103 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             assertWalTableNotSuspended("c");
 
             // Commit 2: ONE row at 06:00 -- strictly between cellA's existing 00:00 and 12:00 rows on
-            // day2 -- would be a genuine out-of-order merge into the existing cell (directory rewrite),
-            // not a pure append, if the guard did not block it first.
+            // day2 -- a genuine out-of-order merge into the existing cell (directory rewrite, old
+            // version queued for removal).
             execute("insert into c values ('2020-01-02T06:00:00.000000Z','A',2.1)");
             execute("insert into p values ('2020-01-02T06:00:00.000000Z','A',2.1)");
             drainWalQueue();
 
-            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("c");
             assertWalTableNotSuspended("p");
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            assertPerDayExchCountsMatch("2020-01-01", "2020-01-02");
+            assertTablesMatch("c", "p");
+
+            // Direct proof sibling cellB (day2) and cellA's own new merged content are BOTH intact --
+            // not just a count match (a sibling-deletion bug could still coincidentally match counts if
+            // it deleted and something else silently filled the gap; the full ordered scan in
+            // assertTablesMatch above already guards against that too, this is an extra, narrower check
+            // naming the exact rows root cause #3 threatened).
+            assertQuery("select ts, px from c where exch = 'A' and to_str(ts, 'yyyy-MM-dd') = '2020-01-02' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\tpx\n" +
+                                    "2020-01-02T00:00:00.000000Z\t2.0\n" +
+                                    "2020-01-02T06:00:00.000000Z\t2.1\n" +
+                                    "2020-01-02T12:00:00.000000Z\t2.2\n");
+            assertQuery("select ts, px from c where exch = 'B' and to_str(ts, 'yyyy-MM-dd') = '2020-01-02' order by ts")
+                    .timestamp("ts").noLeakCheck().returns(
+                            "ts\tpx\n" +
+                                    "2020-01-02T18:00:00.000000Z\t2.5\n");
+        });
+    }
+
+    /**
+     * Plan 4b Task 1b: rollback-cleanup cell safety. {@code TableWriter#removePartitionDirsNotAttached}
+     * (the writer-open/rollback orphan-directory sweep) used to compare a day directory's on-disk
+     * {@code .nameTxn} suffix (always absent/{@code -1} for a real composite table -- a day container is
+     * never itself dot-suffixed, only its per-cell subdirectories are) against a cellKey-0-resolved
+     * "expected" nameTxn -- which would misclassify a live multi-cell day as orphaned, and queue the
+     * WHOLE day (every sibling cell's still-live data) for cell-blind removal, the moment ANY cell under
+     * it acquired a real (non-sentinel) nameTxn from a merge. This is exactly the state the out-of-order
+     * merge test above establishes for day2/cellA. This test reuses that same merged state, then forces a
+     * REAL {@code rollback()} (an uncommitted, fully-appended row on a fresh writer reopen -- content
+     * irrelevant, discarded either way) to drive {@code purgeUnusedPartitions()} ->
+     * {@code removePartitionDirsNotAttached} over the actual on-disk day directories, and asserts BOTH
+     * day2/cellA (merged, real nameTxn) and its untouched sibling day2/cellB (nameTxn {@code -1}) survive,
+     * with all data for both days still correct afterward -- a broader, one-level-up sibling-deletion risk
+     * (whole DAY, not just one cell's stale version) than the post-merge cleanup path {@link
+     * #testSecondCommitExtendingExistingCellOutOfOrderMergeMatchesPlainTwin()} already covers.
+     */
+    @Test
+    public void testRollbackAfterMergePreservesSiblingCellDirectories() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','A',2.2), " +
+                    "('2020-01-02T18:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // Genuine out-of-order merge into day2/cellA (the exact shape
+            // testSecondCommitExtendingExistingCellOutOfOrderMergeMatchesPlainTwin proves correct) --
+            // bumps cellA's nameTxn away from the -1 sentinel; sibling cellB (day2, untouched this
+            // commit) stays at -1.
+            execute("insert into c values ('2020-01-02T06:00:00.000000Z','A',2.1)");
+            execute("insert into p values ('2020-01-02T06:00:00.000000Z','A',2.1)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            engine.releaseInactive();
+
+            // Force a REAL rollback on a fresh writer reopen: an uncommitted, fully-appended row (its own
+            // content is irrelevant -- it is discarded) makes inTransaction() true so rollback()'s real
+            // body runs, including purgeUnusedPartitions() -> removePartitionDirsNotAttached over the
+            // actual on-disk day directories (mirrors this class's own
+            // testCellKeyMemoResetOnRollback idiom).
+            try (TableWriter w = getWriter("c")) {
+                TableWriter.Row row = w.newRow(0);
+                row.putSym(1, "A");
+                row.append();
+                w.rollback();
+            }
+
+            engine.releaseInactive();
+            // Both day2 cell directories -- cellA (merged, real nameTxn) and cellB (untouched, -1) --
+            // must survive the rollback's orphan sweep, along with day1's own two cells.
+            TableToken tableToken = engine.verifyTableName("c");
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertEquals(setOf("exch=A", "exch=B"), listCellDirNames(ff, tableToken, "2020-01-01"));
+            Assert.assertEquals(setOf("exch=A", "exch=B"), listCellDirNames(ff, tableToken, "2020-01-02"));
+
+            // Full data correctness survives too, not just the directory listing.
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            assertPerDayExchCountsMatch("2020-01-01", "2020-01-02");
+            assertTablesMatch("c", "p");
         });
     }
 
@@ -846,17 +917,6 @@ public class CompositeRoutingTest extends AbstractCairoTest {
         Assert.assertFalse(
                 tableName + " must not be suspended",
                 engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
-    }
-
-    private void assertWalTableSuspendedWithMessage(String tableName, String expectedMessageSubstring) throws Exception {
-        Assert.assertTrue(
-                tableName + " must be suspended after the not-yet-supported commit",
-                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
-        assertQuery("select suspended, errorMessage like '%" + expectedMessageSubstring + "%' clearMessage " +
-                "from wal_tables() where name = '" + tableName + "'")
-                .noLeakCheck()
-                .noRandomAccess()
-                .returns("suspended\tclearMessage\ntrue\ttrue\n");
     }
 
     /**

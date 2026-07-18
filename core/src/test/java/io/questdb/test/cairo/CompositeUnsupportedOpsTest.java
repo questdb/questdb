@@ -125,6 +125,40 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Plan 4b Task 1b. FORCE DROP PARTITION is the ungated sibling of (plain) DROP PARTITION --
+     * {@code AlterOperation#isForceWalBypass} routes it around the WAL entirely (applied synchronously,
+     * bypassing the sequencer), so it needed its own dedicated gate; {@link #testDropPartitionGated()}
+     * alone never exercised it.
+     */
+    @Test
+    public void testForceDropPartitionGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            assertCompositeGateFires(
+                    "alter table c force drop partition list '2020-01-01'",
+                    "c",
+                    "composite partitioning does not yet support FORCE DROP PARTITION");
+        });
+    }
+
+    /**
+     * Plan 4b Task 1b. TTL eviction shares {@code dropPartitionByExactTimestamp}'s cell-blind selection
+     * chain with (plain) DROP PARTITION -- the same infinite-loop/sibling-deletion risk {@link
+     * #testDropPartitionGated()}'s own gate was added for, but reached via {@code ALTER TABLE ... SET TTL}
+     * instead, which was left ungated until now.
+     */
+    @Test
+    public void testSetTtlGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            assertCompositeGateFires(
+                    "alter table c set ttl 1 day",
+                    "c",
+                    "composite partitioning does not yet support TTL-based partition eviction");
+        });
+    }
+
     @Test
     public void testAlterColumnTypeGated() throws Exception {
         assertMemoryLeak(() -> {
@@ -295,15 +329,27 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
             drainWalQueue();
             assertWalTableNotSuspended("p");
 
-            execute("alter table p convert partition to parquet list '2020-01-02'");
+            // FORCE DROP PARTITION bypasses WAL entirely (AlterOperation#isForceWalBypass), applied
+            // synchronously -- no drainWalQueue needed. Leaves only 2020-01-03 attached.
+            execute("alter table p force drop partition list '2020-01-02'");
+            assertWalTableNotSuspended("p");
+
+            execute("alter table p convert partition to parquet list '2020-01-03'");
             drainWalQueue();
             assertWalTableNotSuspended("p");
 
-            execute("alter table p convert partition to native list '2020-01-02'");
+            execute("alter table p convert partition to native list '2020-01-03'");
             drainWalQueue();
             assertWalTableNotSuspended("p");
 
             execute("alter table p squash partitions");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+
+            // Only one partition remains (2020-01-03) at this point -- enforceTtl's own
+            // getPartitionCount() < 2 short-circuit makes this a guaranteed no-op eviction-wise,
+            // regardless of the TTL duration chosen; this only proves SET TTL itself is unaffected.
+            execute("alter table p set ttl 1 day");
             drainWalQueue();
             assertWalTableNotSuspended("p");
 

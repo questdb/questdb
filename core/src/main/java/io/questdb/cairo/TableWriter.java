@@ -9524,11 +9524,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                 // Resolved by raw index before any removeAttachedPartitions call below mutates the
-                // array (Plan 4b Task 1b: split-partition removal is provably unreachable for a real
-                // composite table today -- dispatchCompositeCellRange's own srcDataMax > 0 guard blocks
-                // every extend of an existing cell, and a genuine O3 SPLIT can only ever be produced by
-                // extending a large, already-populated partition -- but threaded through for
-                // defense-in-depth/consistency; always 0 for a plain table).
+                // array (Plan 4b Task 1b: split-partition removal is unexercised by any composite test
+                // today -- a genuine O3 SPLIT only triggers once a partition's prefix exceeds
+                // TableWriter#getPartitionO3SplitThreshold(), default 50 MiB, far beyond any unit test's
+                // row counts, composite or plain -- a scale limitation, not a code-level gate, since
+                // extending an already-populated composite cell is itself now supported. Threaded through
+                // for defense-in-depth/consistency regardless; always 0 for a plain table).
                 int partitionCellKey = txWriter.getPartitionCellKey(i);
                 long prevPartitionTimestamp = txWriter.getPartitionTimestampByIndex(i - 1);
                 long prevPartitionSize = txWriter.getPartitionSize(i - 1);
@@ -11216,34 +11217,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long srcDataMax = partitionIndexRaw > -1 ? getPartitionSizeByRawIndex(partitionIndexRaw) : 0;
         final long srcNameTxn = partitionIndexRaw > -1 ? getPartitionNameTxnByRawIndex(partitionIndexRaw) : txWriter.getTxn() - 1;
 
-        // Plan 4a Task 5 (per-cell frontiers) SAFETY GUARD, not a byte-identity/plain concern (plain
-        // tables never call this method). This task made repeated composite commits route correctly
-        // for every (ts, cellKey) pair that is BRAND NEW as of this commit -- proven end to end for a
-        // new day, a new cell added to an already-multi-cell day, a new cell added to a day that
-        // previously had only one cell, and an out-of-order backfill into a brand-new earlier day, all
-        // with dedicated passing tests. A commit that instead EXTENDS an already-populated cell
-        // (srcDataMax > 0 here -- this specific cell has real committed data from a PRIOR commit,
-        // whether this dispatch would merge/reshuffle it or purely append after it) hit a native heap
-        // corruption (glibc "malloc(): invalid size (unsorted)") reproduced directly while building this
-        // task -- likely in the async O3PartitionJob/O3OpenColumnJob nameTxn-versioning or existing-data
-        // read-back path for a composite cell specifically, since Task 4 never exercised (and this task
-        // did not find time to fully chase down) a real per-cell merge -- every prior test of that
-        // machinery, composite or plain, only ever exercised a brand-new partition. Per the project's
-        // safety rule (never silently misroute/mis-account -- an unresolved unsafe sequence gets a loud,
-        // narrow guard, not a claim of correctness), this specific shape still throws; every other
-        // repeated-commit shape above does not. Follow-up: read-back path for existing composite cell
-        // data (O3PartitionJob's merge-range planning / O3OpenColumnJob's existing-file open) -- see this
-        // task's report for the precise next investigation step.
-        if (srcDataMax > 0) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support a commit that extends an already-populated cell ")
-                    .put("(per-cell frontiers for in-place cell extension are not yet safe -- see Plan 4a Task 5's own ")
-                    .put("report) [table=").put(tableToken.getTableName())
-                    .put(", partitionTimestamp=").put(partitionTimestamp)
-                    .put(", cellKey=").put(cellKey)
-                    .put(", existingRowCount=").put(srcDataMax)
-                    .put(']');
-        }
+        // Plan 4a Task 5 (per-cell frontiers) formerly guarded (srcDataMax > 0: a commit that EXTENDS
+        // an already-populated cell) with a loud CairoException here, because it hit a native heap
+        // corruption (glibc "malloc(): invalid size (unsorted)") whose root cause was not yet
+        // understood. Plan 4b Task 1 root-caused and fixed three independent cell-blind bookkeeping
+        // bugs behind that corruption (TableWriter#o3ConsumePartitionUpdateSink's trackedTail proxy,
+        // TxWriter#beginPartitionSizeUpdate, TableWriter#initLastPartition -- see each one's own updated
+        // docs) and proved the in-order (canAppendOnly) sub-shape fully safe, but kept the guard because
+        // a fourth, broader bug (the cell-blind partitionRemoveCandidates purge queue, TableWriter#
+        // processPartitionRemoveCandidates0) still made the out-of-order (genuine O3_BLOCK_MERGE)
+        // sub-shape corrupt/lose sibling-cell data in its post-merge directory cleanup step. Plan 4b
+        // Task 1b threaded cellKey through that whole queue (see processPartitionRemoveCandidates0's own
+        // updated docs) and verified both sub-shapes byte-for-byte match a plain twin, no crash, across
+        // repeated fresh-JVM runs (CompositeRoutingTest#testSecondCommitExtendingExistingCellInOrderAppendMatchesPlainTwin
+        // / #testSecondCommitExtendingExistingCellOutOfOrderMergeMatchesPlainTwin) -- the guard is
+        // removed. Every OTHER repeated-commit shape (new day, new cell on an existing or single-cell
+        // day, out-of-order backfill into a brand-new earlier day) was already proven safe by Plan 4a
+        // Task 5's own tests and remains unaffected.
 
         final boolean isParquet = partitionIndexRaw > -1
                 ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
@@ -15490,10 +15480,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
-        // Plan 4b Task 1b: split-squash housekeeping is provably unreachable for a real composite
-        // table today (same reasoning as o3ConsumePartitionUpdateSink_processSplitPartitionRemoval's
-        // own comment: it only ever fires on genuine O3 SPLIT partitions, which composite dispatch
-        // cannot yet produce), threaded through for defense-in-depth/consistency; always 0 for plain.
+        // Plan 4b Task 1b: split-squash housekeeping is unexercised by any composite test today (same
+        // scale-threshold reasoning as o3ConsumePartitionUpdateSink_processSplitPartitionRemoval's own
+        // comment: it only ever fires on genuine O3 SPLIT partitions), threaded through for
+        // defense-in-depth/consistency; always 0 for plain.
         int targetPartitionCellKey = txWriter.getPartitionCellKey(targetPartitionIndex);
         setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
         final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
