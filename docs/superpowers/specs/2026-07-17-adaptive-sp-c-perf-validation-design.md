@@ -97,6 +97,24 @@ incl. recover) and **catchupDrain** separately.
 This is a **timing proxy on a clean reopen** — crash *correctness* (torn-tail rewind, zero corruption,
 every acked txn survives) is SP-D's job (adaptive crash-fuzz + power-loss harness), NOT read here.
 
+### 3.4 `WalMultiWriterCommitBenchmark` (JMH) — group commit under concurrency
+
+5 concurrent writers (`@Threads(5)`) each committing SMALL_BATCH to its OWN table through ONE shared
+`CairoEngine`, so they share the engine-wide `WalGroupCommitFlushQueue`. W>0 stays faithful via the
+commit-driven trigger. `@BenchmarkMode(AverageTime)` → JMH aggregates across the 5 threads;
+**concurrency scaling = `5 × single-writer avgt ÷ 5-writer aggregate`** (5.0 = perfect linear). This
+is the "multi-writer group-commit-under-concurrency" measurement §8 flags as the most important gap.
+Committed `f31ba0dbb4`. (A JMH-harness race — no barrier between thread-teardown writer-close and
+trial-teardown `engine.close()` — was fixed with a `CountDownLatch(5)`; not an adaptive-path bug.)
+
+### 3.5 `WalBatchSizeSweepBenchmark` (JMH) — durability tax vs batch size
+
+Single writer, `@Param rowsPerCommit ∈ {1,10,100,1000,10000,100000,1000000}` × commitMode, 20-col
+schema held constant (only batch size varies). Reports avgt us/commit; the informative metric is the
+derived **us/row** (= avgt ÷ rowsPerCommit) and the ADAPTIVE÷NOSYNC per-row ratio, isolating how the
+fixed per-commit fsync amortizes as batches grow. 1M-row commit peaks ~440 MB RSS (off-heap WAL), no
+OOM. Committed `b2df7167ee`.
+
 ## 4. Methodology — how to run
 
 ### 4.1 The module-args gotcha (critical)
@@ -218,6 +236,55 @@ epoch roll-forward is O(1) (roll the table to the epoch cut). **catchupDrain is 
 un-applied post-epoch tail** (~2.4–3.6 M rows/s catch-up on this box). **Tuning finding: worst-case
 recovery time = fixed boot + (post-epoch WAL ÷ catch-up rate); the operator bounds it by the epoch
 cadence, which bounds how far the tail can run past the last epoch.**
+
+---
+
+### 5.6 Multi-writer group commit — 5 writers × 5 tables (`WalMultiWriterCommitBenchmark`, aggregate avgt us/op)
+
+| commitMode | W=0 | W=5ms | W=50ms |
+|---|--:|--:|--:|
+| NOSYNC | 4.5 | 4.9 | 4.1 |
+| SYNC | 9285 | 10582 | 11565 |
+| ADAPTIVE | 17564 | 46.4 | 70.3 |
+
+Concurrency scaling (`5 × single-writer avgt ÷ 5-writer aggregate`; 5.0 = perfect linear):
+
+| mode / W | scaling | reading |
+|---|--:|---|
+| NOSYNC W=0 | **4.53×** | near-linear ceiling (no device flush) |
+| SYNC W=0 | 1.77× | fsync-every-commit serializes writers at the device |
+| ADAPTIVE W=0 | 1.47× | same — device-flush-bound |
+| **ADAPTIVE W=5ms** | **3.30×** | group window removes most flushes → concurrency recovers |
+
+**Headline:** at W=5ms the group commit amortizes the device flush across concurrent writers,
+recovering most of the scaling W=0 loses (3.30× vs 1.47×), climbing toward NOSYNC's 4.53× ceiling —
+the direct multi-writer evidence §8 flagged as missing. Sharp corollary: **ADAPTIVE W=0 under 5-way
+concurrency (17.6 ms/commit) is *slower* than SYNC (9.3 ms)** — all the group-commit machinery, none
+of the batching benefit (W=0 flushes every commit). W=50ms was noisy on the shared box.
+
+### 5.7 Durability tax vs batch size (`WalBatchSizeSweepBenchmark`, single writer, derived us/row)
+
+| rows/commit | NOSYNC us/row | SYNC us/row | ADAPTIVE us/row | **ADAPTIVE ÷ NOSYNC** |
+|---:|--:|--:|--:|--:|
+| 1 | 1.200 | 3810 | 4976 | **4146×** |
+| 10 | 0.544 | 366 | 590 | **1084×** |
+| 100 | 0.443 | 50.8 | 58.8 | **133×** |
+| 1,000 | 0.460 | 7.16 | 8.60 | **18.7×** |
+| 10,000 | 0.482 | 1.93 | 2.59 | **5.37×** |
+| 100,000 | 0.419 | 1.54 | 1.20 | **2.86×** |
+| 1,000,000 | 0.505 | 1.31 | 1.02 | **2.02×** |
+
+**Headline:** NOSYNC per-row is flat at ~0.5 us/row (pure ingest). The ADAPTIVE÷NOSYNC per-row ratio
+collapses **4146× → 2.02×** as the batch grows — the fixed per-commit fsync amortizes over more rows.
+It bottoms out at a **~2× floor, not 1×**: the residual ~0.5 us/row gap at 1M is the *per-byte* cost
+of physically flushing the WAL for zero-loss durability, which scales with data volume and cannot
+amortize. Within ~2× is reached at ~1M rows; within 1.5× is not reached in range — the 2× floor is
+the irreducible price of zero data loss. Corollary: **ADAPTIVE overtakes SYNC above ~100k
+rows/commit** (it defers column materialization, so its big-batch commit flushes less).
+
+> **Figures.** §5.1–5.7 are visualised in the this-box performance chart — the RPO window (single +
+> 5 writers), the concurrency scaling, and the batch-size amortization on one page:
+> <https://claude.ai/code/artifact/eb719b73-31cd-410c-8c53-9de9a69df08e>
 
 ---
 
