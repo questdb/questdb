@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,43 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.test.tools;
 
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import org.jetbrains.annotations.NotNull;
 
-public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
-    @Override
-    public boolean checkConnection() {
-        return true;
+/**
+ * A settable {@link MillisecondClock} for tests that need to advance wall-clock time
+ * deterministically. Mutate {@link #millis} directly to move the clock forward.
+ */
+public class TestMillisecondClock implements MillisecondClock {
+    public long millis;
+
+    public TestMillisecondClock(long millis) {
+        this.millis = millis;
     }
 
     @Override
-    public int getCircuitBreakerThrottle() {
-        return 5;
-    }
-
-    @Override
-    public @NotNull MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public @NotNull NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public long getQueryTimeout() {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
+    public long getTicks() {
+        return millis;
     }
 }
