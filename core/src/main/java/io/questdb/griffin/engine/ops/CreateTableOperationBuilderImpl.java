@@ -238,6 +238,30 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             throw SqlException.$(partitionDimensionExprs.getQuick(0).position, "composite partitioning requires a WAL table");
         }
 
+        // Plan 4b feature-gate sweep: DEDUP UPSERT KEYS is not yet cell-aware for a real composite
+        // table. O3PartitionJob#getDedupRowsWithAdditionalKeys (reached whenever the upsert-key list
+        // has any column besides the designated timestamp) resolves per-partition columnTop/nameTxn
+        // via TableWriter#getColumnTop/getColumnNameTxn using only the bare timestamp -- the same
+        // cellKey-0-only lookup family every other gate in this sweep rejects -- so it can silently
+        // dedup against (or overwrite) the wrong cell's data once a day has 2+ live cells. Rather than
+        // carve out the narrower timestamp-only-key shape (whose own broader WAL-commit-reconciliation/
+        // symbol-remap machinery is not yet audited for composite either), reject the whole feature
+        // combination loudly and unconditionally here, at CREATE time, mirroring the WAL guard just
+        // above. A column carries the dedup-key flag whenever DEDUP UPSERT KEYS is specified at all
+        // (the designated timestamp column is always itself a required member of that list -- see
+        // CreateTableOperationImpl's "deduplicate key list must include dedicated timestamp column"
+        // check), so checking for any flagged column is equivalent to "DEDUP UPSERT KEYS was
+        // specified". Non-composite tables (dimCount == 0) are completely unaffected.
+        if (dimCount > 0) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                CreateTableColumnModel model = columnModels.get(columnNames.getQuick(i));
+                if (model != null && model.isDedupKey()) {
+                    throw SqlException.$(partitionDimensionExprs.getQuick(0).position, "composite partitioning does not yet support DEDUP UPSERT KEYS [table=")
+                            .put(getTableName()).put(']');
+                }
+            }
+        }
+
         PartitionSpec spec = new PartitionSpec();
         spec.setTimeUnit(getPartitionByFromExpr());
         spec.setNamingMode(namingMode);

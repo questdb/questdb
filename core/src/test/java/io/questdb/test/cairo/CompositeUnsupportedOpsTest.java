@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -224,6 +225,129 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Plan 4b feature-gate sweep. {@code O3PartitionJob#getDedupRowsWithAdditionalKeys} (reached
+     * whenever the upsert-key list has any column besides the designated timestamp) resolves
+     * per-partition columnTop/nameTxn via the same cellKey-0-only lookups this whole sweep rejects
+     * elsewhere -- confirmed reachable (this exact CREATE statement was NOT rejected before this
+     * gate was added). Gated unconditionally at CREATE time.
+     */
+    @Test
+    public void testCreateCompositeWithDedupUpsertKeysGated() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) " +
+                        "partition by day, exch wal dedup upsert keys(ts, exch)");
+                Assert.fail("expected composite + DEDUP UPSERT KEYS(ts, exch) to be rejected at CREATE time");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DEDUP UPSERT KEYS");
+            }
+        });
+    }
+
+    /**
+     * Same gate as {@link #testCreateCompositeWithDedupUpsertKeysGated()}, but for the
+     * timestamp-only upsert-key shape ({@code DEDUP UPSERT KEYS(ts)}, no additional columns). This
+     * narrower shape does NOT reach the confirmed-unsafe {@code getDedupRowsWithAdditionalKeys} (it
+     * takes the plain {@code Vect.mergeDedupTimestampWithLongIndexAsc} path instead), but the gate is
+     * intentionally unconditional -- DEDUP's broader WAL-commit-reconciliation/symbol-remap machinery
+     * is not yet audited for composite either, so the whole feature is rejected rather than carving
+     * out a narrower "safe" subset. This test proves the gate condition is "any dedup key", not
+     * "more than one dedup key".
+     */
+    @Test
+    public void testCreateCompositeWithTimestampOnlyDedupGated() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) " +
+                        "partition by day, exch wal dedup upsert keys(ts)");
+                Assert.fail("expected composite + DEDUP UPSERT KEYS(ts) to be rejected at CREATE time");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DEDUP UPSERT KEYS");
+            }
+        });
+    }
+
+    /**
+     * Plan 4b feature-gate sweep. The CREATE-time guard ({@link #testCreateCompositeWithDedupUpsertKeysGated()})
+     * stops a composite table from ever being BORN with dedup keys, but {@code ALTER TABLE ... DEDUP
+     * ENABLE UPSERT KEYS(...)} is a second, independent SQL path that can attach dedup keys to an
+     * already-existing composite table. Must be rejected too, synchronously (validated at compile
+     * time, before any AlterOperation is built/enqueued).
+     */
+    @Test
+    public void testAlterTableDedupEnableGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            try {
+                execute("alter table c dedup enable upsert keys(ts, exch)");
+                Assert.fail("expected ALTER TABLE ... DEDUP ENABLE on a composite table to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support DEDUP UPSERT KEYS");
+            }
+            assertWalTableNotSuspended("c");
+        });
+    }
+
+    /**
+     * Plan 4b feature-gate sweep. {@code TableWriter#removeColumn}'s file purge
+     * ({@code removeColumnFiles} -&gt; {@code PurgingOperator}/{@code ColumnPurgeOperator}) resolves
+     * per-cell columnNameTxn and physical paths via cellKey-0-only/bare-path lookups with zero
+     * composite awareness anywhere in either purge class -- confirmed reachable (this exact DROP
+     * COLUMN was NOT rejected before this gate was added; it silently leaked the dropped column's
+     * per-cell files instead).
+     */
+    @Test
+    public void testDropColumnGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            assertCompositeGateFires(
+                    "alter table c drop column px",
+                    "c",
+                    "composite partitioning does not yet support DROP COLUMN");
+        });
+    }
+
+    /**
+     * Plan 4b feature-gate sweep. {@code TableWriter#renameColumn}'s
+     * {@code hardLinkAndPurgeColumnFiles} resolves both the old-name source path (bare 5-arg
+     * {@code setPathForNativePartition}) and the columnNameTxn to link (cellKey-0-only 2-arg
+     * {@code ColumnVersionWriter} lookups) cell-blind, AFTER the new name is already durably
+     * committed to metadata -- a worse failure shape than most gates in this sweep (a partial
+     * metadata-vs-files split, not just a clean rejection). Confirmed reachable.
+     */
+    @Test
+    public void testRenameColumnGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createRoutedTwoCellTable("c");
+            assertCompositeGateFires(
+                    "alter table c rename column px to px2",
+                    "c",
+                    "composite partitioning does not yet support RENAME COLUMN");
+        });
+    }
+
+    /**
+     * Plan 4b feature-gate sweep. Unlike every other gate in this class, this one is reached by an
+     * ORDINARY INSERT, not a discrete DDL command: {@code TableWriter#sealPostingIndexForPartition}
+     * (run after every O3 commit that touches an indexed partition, for any table with a POSTING
+     * index -- {@code TYPE POSTING} is a normal, documented feature, not an edge case) resolves the
+     * partition's nameTxn via the cellKey-0-only {@code TxReader#getPartitionNameTxnByPartitionTimestamp}
+     * wrapper, then (for the common, non-PARQUET case) builds the on-disk path via
+     * {@code TableWriter#setStateForTimestamp}'s own bare 5-arg {@code setPathForNativePartition} --
+     * cell-blind either way, and confirmed reachable simply by inserting into a routed 2-cell day.
+     */
+    @Test
+    public void testPostingIndexSealGated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol index type posting, px double) timestamp(ts) partition by day, exch wal");
+            assertCompositeGateFires(
+                    "insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)",
+                    "c",
+                    "composite partitioning does not yet support a POSTING index seal");
+        });
+    }
+
     @Test
     public void testReindexTableGated() throws Exception {
         assertMemoryLeak(() -> {
@@ -269,14 +393,75 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Plan 4b feature-gate sweep. Unlike every other gate in this class, the automatic O3
+     * split-fragment squash ({@code TableWriter#squashSplitPartitions}, reached from
+     * {@code housekeep()} after ordinary commits, once a cell's partition has split "too many"
+     * times) is fixed by SKIPPING rather than throwing -- it is background housekeeping, not a
+     * discrete DDL a user can avoid, and skipping causes no wrong answers (each split fragment
+     * remains an independently valid, fully queryable physical partition). This test forces the
+     * split threshold down to the minimum so an ordinary out-of-order commit into one cell of a
+     * routed composite table genuinely triggers a real split, then asserts the table survives
+     * {@code housekeep()}'s follow-on squash attempt with no corruption, no crash, and no
+     * suspension -- proving the skip is effective, not just that nothing happened to trigger it.
+     */
+    @Test
+    public void testAutomaticO3SplitOnCompositeTableDoesNotCorrupt() throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            // A large in-order batch for cell A on day1 (the "prefix" a later small O3 write will
+            // split off), plus one row for cell B on day1 -- the routed 2-cell shape.
+            execute("insert into c select timestamp_sequence('2020-01-01T00:00:00.000000Z', 40000L), 'A', x::double from long_sequence(2000)");
+            execute("insert into c values ('2020-01-01T23:59:59.000000Z','B',9999.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+            engine.releaseInactive();
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n2001\n");
+
+            // One small out-of-order row landing well inside cell A's already-committed range --
+            // a large untouched prefix + a tiny O3 merge is exactly the shape that triggers a real
+            // partition SPLIT (TableWriter#getPartitionO3SplitThreshold(), forced to ~1 row above).
+            execute("insert into c values ('2020-01-01T00:01:00.000000Z','A',-1.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            // A further commit (any commit) drives housekeep() again, exercising the squash-skip
+            // path a second time on an already-split composite table.
+            execute("insert into c values ('2020-01-03T00:00:00.000000Z','A',3.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("c");
+
+            engine.releaseInactive();
+            assertQuery("select count() from c").noLeakCheck().noRandomAccess().expectSize().returns("count\n2003\n");
+            // The O3 row's timestamp (2020-01-01T00:01:00.000000Z) coincides exactly with the
+            // already-committed row at x=1501 (row index 1500 * 40000us = 60s past midnight) -- with
+            // no DEDUP configured, both rows legitimately survive (same timestamp, distinct rows);
+            // seeing BOTH back, in full, is itself further evidence the split+merge preserved every
+            // row rather than silently dropping/overwriting one.
+            assertQuery("select px from c where ts = '2020-01-01T00:01:00.000000Z' and exch = 'A'")
+                    .noLeakCheck().returns("px\n1501.0\n-1.0\n");
+
+            // Evidence a real physical SPLIT happened (not just that nothing was triggered): with the
+            // threshold forced to ~1 row, day1's cell A must have split into more than one physical
+            // partition entry -- table_partitions() is already cell-aware (Plan 4a), so this counts
+            // raw (ts,cellKey[,split]) entries, not logical days.
+            engine.releaseInactive();
+            printSql("select count() from table_partitions('c')");
+            TestUtils.assertNotContains(sink, "count\n3\n");
+        });
+    }
+
     @Test
     public void testVacuumTableStillWorks() throws Exception {
         assertMemoryLeak(() -> {
             createRoutedTwoCellTable("c");
-            execute("alter table c drop column px"); // generates a column version to (not) vacuum
-            drainWalQueue();
-            assertWalTableNotSuspended("c");
-
+            // Previously used "alter table c drop column px" here to generate a column version for
+            // VACUUM to (not) reconcile -- DROP COLUMN is now itself gated for composite (see
+            // testDropColumnGated), so that setup shape is no longer SQL-reachable at all. VACUUM's
+            // own safety (a no-op walk, per Plan 4a's sweep) does not depend on there being anything
+            // to reconcile, so this simply proves VACUUM TABLE still runs cleanly on a routed
+            // composite table with no setup beyond ordinary INSERT.
             execute("vacuum table c");
 
             engine.releaseInactive();
@@ -380,7 +565,62 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
             drainWalQueue();
             assertWalTableNotSuspended("p");
 
+            // Plan 4b feature-gate sweep additions: DROP COLUMN, RENAME COLUMN, and DEDUP
+            // ENABLE/DISABLE must all remain completely unaffected on a plain table.
+            execute("alter table p drop column px");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+
+            execute("alter table p rename column note to note2");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+
+            execute("alter table p dedup enable upsert keys(ts)");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+
+            execute("alter table p dedup disable");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+
             execute("vacuum table p");
+        });
+    }
+
+    /**
+     * Plan 4b feature-gate sweep. {@code CREATE TABLE ... DEDUP UPSERT KEYS(...)} on a PLAIN
+     * (non-composite) table must be completely unaffected by {@link
+     * #testCreateCompositeWithDedupUpsertKeysGated()}'s new CREATE-time guard.
+     */
+    @Test
+    public void testPlainTableCreateWithDedupUnaffected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal dedup upsert keys(ts, exch)");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T00:00:00.000000Z','A',2.0)");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            // The duplicate (ts, exch) pair must have been deduped down to the last-committed value --
+            // proves DEDUP is not just accepted at CREATE time but genuinely still active/functional.
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("select px from p").noLeakCheck().expectSize().returns("px\n2.0\n");
+        });
+    }
+
+    /**
+     * Plan 4b feature-gate sweep. A POSTING index on a PLAIN (non-composite) table must be completely
+     * unaffected by {@link #testPostingIndexSealGated()}'s new gate: ordinary inserts must keep
+     * sealing the index correctly, proven here by an indexed-column filter returning the right rows.
+     */
+    @Test
+    public void testPlainTablePostingIndexSealUnaffected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table p (ts timestamp, exch symbol index type posting, px double) timestamp(ts) partition by day wal");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T00:00:01.000000Z','B',1.5)");
+            drainWalQueue();
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertQuery("select count() from p where exch = 'A'").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
         });
     }
 

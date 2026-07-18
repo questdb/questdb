@@ -1297,9 +1297,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, GenericLexer lexer) throws SqlException {
+    private void alterTableDedupEnable(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            GenericLexer lexer
+    ) throws SqlException {
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
+        }
+        // Plan 4b feature-gate sweep: mirrors the CREATE-time guard in
+        // CreateTableOperationBuilderImpl#resolvePartitionSpec (same rationale: DEDUP UPSERT KEYS is
+        // not yet cell-aware -- see O3PartitionJob#getDedupRowsWithAdditionalKeys). A composite table
+        // can only ever reach this method already-clean of dedup keys (the CREATE-time guard rejects
+        // the combination outright), so this closes the one remaining way SQL could attach dedup keys
+        // to an already-existing composite table. TableRecordMetadata does not expose PartitionSpec,
+        // so a quick TableReader is opened purely for this check, mirroring compileReindex's/
+        // compileVacuum's own idiom elsewhere in this file.
+        try (TableReader rdr = executionContext.getReader(tableToken)) {
+            if (rdr.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                throw SqlException.$(tableNamePosition, "composite partitioning does not yet support DEDUP UPSERT KEYS [table=")
+                        .put(tableToken.getTableName()).put(']');
+            }
         }
         AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
                 tableNamePosition,
@@ -2660,7 +2680,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     lexer.unparseLast();
                     executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
-                    alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
+                    alterTableDedupEnable(executionContext, tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else if (isEnableKeyword(tok)) {
                 compileAlterTableEnableExt(executionContext, tok, tableToken, tableNamePosition);

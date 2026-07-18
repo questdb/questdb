@@ -3262,6 +3262,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final byte indexType = metadata.getColumnIndexType(index);
         String columnName = metadata.getColumnName(index);
 
+        // Plan 4b feature-gate sweep: DROP COLUMN is not yet cell-aware for a real composite table.
+        // removeColumnFiles (below, via commit()) iterates every raw (ts,cellKey) partition-row index
+        // and calls columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex) -- the bare
+        // 2-arg, cellKey-0-only overload -- so every cell sharing a day with cellKey 0 gets cellKey 0's
+        // columnNameTxn queued for purge instead of its own. The resulting PurgingOperator/
+        // ColumnPurgeOperator consumers then resolve the physical file location via the bare 5-arg
+        // TableUtils#setPathForNativePartition overload (no cell segment) in both the synchronous
+        // (PurgingOperator#purge) and async (ColumnPurgeOperator#setUpPartitionPath) halves -- neither
+        // has ANY composite/cellKey awareness at all. ff.removeQuiet swallows the mismatch silently: a
+        // routed multi-cell day's dropped-column files are never reclaimed (an unbounded, silent space
+        // leak, confirmed by code inspection: zero cell-aware call sites in PurgingOperator.java or
+        // ColumnPurgeOperator.java), while metadata.removeColumn (below) correctly forgets the column
+        // table-wide via its writer-index tombstone, unaffected by cellKey. This is a genuine, larger
+        // instance of the same "unaudited purge" gap the O3PartitionPurgeJob C1 gate closed for
+        // partition-level purge -- but for column-level purge, never previously found/gated. Rejected
+        // unconditionally for any real (non-dormant) composite table, before the narrower dimension/
+        // cluster-column-reference guard just below (which is orthogonal -- a permanent partition-spec
+        // integrity rule, not a cell-blindness issue -- and becomes unreachable-first here, mirroring
+        // changeColumnType's identical precedent elsewhere in this file). Plain and dormant-composite
+        // tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support DROP COLUMN [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
         // A composite partition dimension pins its source SYMBOL column by stable WRITER index
         // (PartitionDimension.getColumnIndex() is documented as a writer index, never a dense
         // position -- see its javadoc). Resolve via getWriterIndex() rather than comparing the dense
@@ -3427,6 +3453,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int type = metadata.getColumnType(index);
         final byte indexType = metadata.getColumnIndexType(index);
         String columnName = metadata.getColumnName(index);
+
+        // Plan 4b feature-gate sweep: RENAME COLUMN is not yet cell-aware for a real composite table,
+        // and its failure mode is worse than most other gates in this sweep -- not just a clean throw.
+        // metadata.renameColumn + rewriteAndSwapMetadata (below) commit the NEW name to durable _meta
+        // BEFORE hardLinkAndPurgeColumnFiles (the actual per-partition file rename) ever runs. That
+        // helper iterates every raw (ts,cellKey) partition-row index and resolves both the old-name
+        // source path AND the columnNameTxn to hard-link via the same cellKey-0-only 2-arg
+        // columnVersionWriter.getColumnNameTxn/getColumnTop lookups DROP COLUMN's gate (just above)
+        // rejects, then builds the actual hardlink source/destination paths with the bare 5-arg
+        // TableUtils#setPathForNativePartition overload (TableWriter#hardLinkAndPurgeColumnFiles,
+        // no cell segment). For a real multi-cell day, at least one cell's phantom source path will not
+        // exist where hardLinkAndPurgeColumnFiles expects it: any cell that DOES hard-link successfully
+        // (e.g. one coinciding with the bare/dormant-shaped path) survives under the new name; a cell
+        // that fails mid-loop throws (converted to throwDistressException) with metadata ALREADY
+        // switched and persisted to the new name for every cell, and column files under the OLD name
+        // permanently orphaned for whichever cells never got hard-linked -- a genuine partial/torn
+        // metadata-vs-files split, not just a clean rejection. A reader reopening after that finds no
+        // file for the (new name, that cell) combination, which -- per the sibling ATTACH PARTITION gate's
+        // own precedent in this sweep -- reads back as a column-top/NULL rather than an error: a silent
+        // wrong-answer, not merely an availability loss. Rejected unconditionally, before any of this
+        // runs, for any real (non-dormant) composite table. Plain and dormant-composite tables are
+        // completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support RENAME COLUMN [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
 
         LOG.info().$("renaming column '").$safe(columnName).$('[')
                 .$(ColumnType.nameOf(type)).$("]' to '").$safe(newName)
@@ -14507,6 +14560,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!hasCoveringPostingIndex()) {
             return false;
         }
+        // Plan 4b feature-gate sweep: reachable via ordinary commit finalization (finishO3Commit ->
+        // sealPostingIndexesForO3Partitions -> sealPostingIndexForPartition -> here) through a
+        // dormant-to-real transition, not any single DDL command: CONVERT PARTITION TO PARQUET and ADD
+        // INDEX ... TYPE POSTING (with a covering column) are both permitted on a still-DORMANT
+        // composite table (every gate in this sweep exempts dormant tables, by design -- a dormant
+        // composite table behaves identically to a plain one). If that same table LATER receives an
+        // ordinary INSERT that routes a genuinely second cellKey, it flips table-wide from dormant to
+        // real -- but the caller's own dispatch (sealPostingIndexForPartition, via
+        // TxReader#isPartitionParquetByPartitionTimestamp -> the cellKey-0-only
+        // findAttachedPartitionRawIndexByLoTimestamp wrapper) still resolves "is this day parquet" at
+        // cellKey 0 only, and this method then resolves the on-disk path with the bare 5-arg
+        // setPathForNativePartition (below) -- no cell segment. Unlike the automatic split/squash
+        // housekeeping gate elsewhere in this file, skipping here is NOT provably safe: this method's
+        // job is to keep a covering POSTING index's parquet-backed rowids in sync with the committed
+        // partition size after a shrink/split/replace, so silently skipping it risks a STALE index
+        // (a genuine wrong-answer risk for that index), not merely an un-consolidated file count. Reject
+        // loudly instead. Plain and dormant-composite tables are completely unaffected (the
+        // hasCoveringPostingIndex()/dormant-CONVERT preconditions above and below mean this is reached
+        // rarely, only for a table that actually combines composite + covering POSTING + PARQUET).
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support a covering POSTING index reseal on a PARQUET partition [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
         final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
         if (partitionIndex < 0) {
             return false;
@@ -14923,6 +15000,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void scaleSymbolCapacities() {
+        // Plan 4b feature-gate sweep: another automatic housekeeping call from housekeep() (same
+        // class as the split/squash gate above), reachable on ordinary commits once
+        // cairo.symbol.autoscale is enabled and a symbol column's cardinality outgrows its capacity --
+        // not a rare DDL command. changeSymbolCapacity's own symbol-dictionary rewrite
+        // (hardLinkAndPurgeSymbolTableFiles) is table-root-scoped and cellKey-agnostic (symbol
+        // dictionaries aren't partitioned), but its OWN follow-on "reopen the last partition's column
+        // file at the new columnNameTxn" step resolves that partition via the same cellKey-0-only
+        // setStateForTimestamp/getColumnNameTxn(ts,col) family every other gate in this sweep rejects
+        // -- for a real multi-cell day this can reposition the ACTIVE WRITER's column file handle onto
+        // the WRONG cell going forward, a genuine correctness risk, not merely a missed optimization.
+        // Skip rather than throw: like split/squash, autoscaling is a pure performance optimization
+        // (a composite table simply keeps its original symbol capacity, i.e. more hash collisions at
+        // high cardinality, if skipped) -- throwing would suspend an otherwise-healthy, high-cardinality
+        // composite table's ordinary commits. Plain and dormant-composite tables are unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            LOG.info().$("composite table, skipping symbol capacity autoscale (cell-blind reopen, cell-aware autoscale deferred) [table=").$(tableToken).I$();
+            return;
+        }
         if (configuration.autoScaleSymbolCapacity()) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 var w = denseSymbolMapWriters.getQuick(i);
@@ -14988,6 +15083,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // that when no POSTING index column exists.
         if (!hasPostingIndex()) {
             return false;
+        }
+        // Plan 4b feature-gate sweep: this whole method -- not just the PARQUET-covering branch
+        // gated below in resealParquetCoveringForPartition -- is cell-blind, and unlike that branch's
+        // rare dormant-to-real-transition trigger, this one is reachable on EVERY ordinary O3 commit
+        // that touches an indexed partition of any composite table with a POSTING index (a normal,
+        // documented feature, not an edge case): (1) the very next line's
+        // getPartitionNameTxnByPartitionTimestamp is the cellKey-0-only findAttachedPartitionRawIndexByLoTimestamp
+        // wrapper, so it can wrongly report a live non-zero-cellKey partition as "dropped" and skip
+        // sealing it entirely; (2) the native (non-parquet) branch's own path resolution,
+        // setStateForTimestamp (below), also calls that same cellKey-0-only lookup and then the bare
+        // 5-arg TableUtils#setPathForNativePartition (no cell segment). Either way the posting index
+        // chain for a non-zero-cellKey partition is sealed at the wrong (or a phantom) location, or
+        // simply never resealed at all -- a genuine wrong-answer risk for that index (stale/incomplete
+        // rowid chain), not merely an un-consolidated file count, so this is rejected loudly rather than
+        // skipped, mirroring resealParquetCoveringForPartition's own severity call just below. Plain and
+        // dormant-composite tables are completely unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support a POSTING index seal on this partition [table=")
+                    .put(tableToken.getTableName()).put(']');
         }
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
@@ -15530,6 +15645,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+        // Plan 4b feature-gate sweep: this is the shared split-fragment-merge implementation reached
+        // from THREE places -- (1) squashPartitionForce (force=true; SQL SQUASH PARTITIONS + the
+        // convert/detach internal callers), which already throws its own composite gate before ever
+        // calling here, so this is unreachable defense-in-depth for that caller; (2) squashPartitionRange
+        // (force=false), called ONLY from housekeep() -- automatic, background housekeeping that runs
+        // after ordinary O3/WAL commits once a partition has accumulated "too many" split fragments, with
+        // NO SQL gate in front of it at all; (3) the @TestOnly squashAllPartitionsIntoOne() test helper.
+        // The comment just below (targetPartitionCellKey) already flagged this as "unexercised by any
+        // composite test" -- Task 1b threaded a cellKey through for the LATER purge-candidate bookkeeping
+        // but the actual frame merge a few lines down (frameFactory.open/openRW on `path`/`other`) still
+        // resolves every path via the bare, cell-blind 5-arg setPathForNativePartition overload.
+        // Unlike the other gates in this sweep, path (2) is NOT a rare, explicit, opt-in DDL command --
+        // it is automatic background housekeeping that fires after ordinary ingestion once a single
+        // cell's partition has split "too many" times. Throwing here would suspend/fail an otherwise
+        // healthy, high-volume composite table's ordinary commits purely because of a size threshold,
+        // which is a far worse outcome than skipping: unlike DROP PARTITION/RENAME COLUMN/etc, skipping
+        // this housekeeping step causes no wrong answers and no data loss -- each split fragment remains
+        // an independently valid, fully queryable physical partition; the only cost is not consolidating
+        // fragment COUNT for read-performance, the same "acceptable, non-corrupting" residual class as
+        // the already-documented harmless orphan-directory leak. So, mirroring O3PartitionPurgeJob's own
+        // established composite skip (not throw) for this same "automatic background job" class of gate:
+        // skip cell-aware-ly rather than corrupt. Plain and dormant-composite tables are unaffected.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            LOG.info().$("composite table, skipping split-fragment squash (cell-blind merge, cell-aware squash deferred) [table=").$(tableToken).I$();
+            return;
+        }
+
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
             return;

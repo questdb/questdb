@@ -154,9 +154,15 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
     /**
      * Brief assertions 7-8: mutating DDL that must re-derive per-partition state across a composite
      * table's every day partition -- {@code ALTER TABLE ... ALTER COLUMN ... ADD INDEX} and {@code ADD
-     * COLUMN}/{@code DROP COLUMN} followed by a forced column-purge cycle ({@link ColumnPurgeJob}/{@code
-     * ColumnPurgeOperator}, which resolves the table's partitions through {@code _txn}) -- must leave the
-     * composite table exactly as correct as before.
+     * COLUMN} -- must leave the composite table exactly as correct as before.
+     * <p>
+     * <b>Plan 4b feature-gate sweep UPDATE (assertion 8):</b> this used to also DROP the added column
+     * and drive its async column-purge cycle ({@link ColumnPurgeJob}/{@code ColumnPurgeOperator}, which
+     * resolves the table's partitions through {@code _txn}) to completion. DROP COLUMN is now
+     * unconditionally gated for a real composite table (its purge queue was confirmed cell-blind --
+     * see {@code TableWriter#removeColumn}'s own gate comment and {@code
+     * CompositeUnsupportedOpsTest#testDropColumnGated}), so assertion 8 now proves the gate fires
+     * instead of driving a purge cycle that can no longer happen.
      * <p>
      * <b>NEW FINDING while porting assertion 7 to WAL for I1 (out of scope for this fix pass, NOT
      * fixed):</b> {@code ALTER TABLE ... ALTER COLUMN ... ADD INDEX} on a composite dimension column that
@@ -200,69 +206,41 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 
             // 8. ADD COLUMN + DROP COLUMN, then force a column-purge cycle to completion, then re-query.
+            //
+            // Plan 4b feature-gate sweep UPDATE: DROP COLUMN is now unconditionally gated for a real
+            // (routed) composite table -- see TableWriter#removeColumn's own gate comment and
+            // CompositeUnsupportedOpsTest#testDropColumnGated for the dedicated coverage (its
+            // PurgingOperator/ColumnPurgeOperator purge queue was confirmed cell-blind: it silently
+            // leaked a routed multi-cell day's dropped-column files rather than reclaiming them, with
+            // ZERO composite awareness anywhere in either purge class). This assertion previously drove
+            // DROP COLUMN's async ColumnPurgeJob cycle to completion on THIS composite table `c` -- that
+            // shape is no longer reachable at all (the ALTER is rejected before any purge task is ever
+            // queued), so this now proves the gate fires instead, and that `q` -- since the drop never
+            // happened -- correctly remains part of `c`'s live schema. The general (non-composite)
+            // ColumnPurgeJob drive-to-completion mechanism this assertion used to exercise remains
+            // covered independently by ColumnPurgeJobTest; it does not depend on composite tables at all.
             execute("alter table c add column q double");
             drainWalQueue();
-            // Hold a reader open ACROSS the DROP COLUMN's actual application (the drainWalQueue call
-            // below, not just the execute -- for a WAL table the ALTER only reaches TableWriter when the
-            // WAL-apply job processes it). TableWriter#finishColumnPurge only defers q's now-orphaned
-            // column files to the async purge queue (ColumnPurgeJob / ColumnPurgeOperator) when
-            // checkScoreboardHasReadersBeforeLastCommittedTxn() sees a reader pinned to an earlier txn;
-            // otherwise it deletes the files synchronously in-line and NOTHING is ever queued. Without
-            // this reader, the purge queue stays empty regardless of retry delay or clock, and the
-            // drive-to-completion below would be exercising an empty job -- mirrors every
-            // ColumnPurgeJobTest test's "open reader spanning the mutating DDL" idiom.
-            try (TableReader ignored = getReader("c")) {
-                execute("alter table c drop column q");
-                drainWalQueue();
-            }
-            engine.releaseInactive(); // release the pinning reader above so the purge below can delete files
+            Assert.assertFalse(
+                    "c must not be suspended after ADD COLUMN",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
 
-            // Force the purge cycle to be deterministic AND self-verifying instead of assumed:
-            // production's default retry delay (10,000us) raced real wall-clock time between the two
-            // run() calls with no assertion on whether it ever actually fired. Mirror
-            // ColumnPurgeJobTest's idiom -- shrink the retry delay and step a frozen clock across
-            // run() calls -- then PROVE the purge drained via getOutstandingPurgeTasks() rather than
-            // assuming a fixed number of run() calls sufficed.
-            setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
-            setCurrentMicros(0);
-            try {
-                try (ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine)) {
-                    columnPurgeJob.run(); // enqueues q's purge task (deferred: nextRunTimestamp == now, not yet due)
-                    Assert.assertTrue(
-                            "DROP COLUMN must have queued an outstanding purge task for column q",
-                            columnPurgeJob.getOutstandingPurgeTasks() > 0);
-                    // Bump the clock past the configured retry-delay CAP (not just the initial delay)
-                    // each iteration: a failed purge attempt reschedules with an exponentially growing
-                    // delay (ColumnPurgeJob#calculateNextTimestamp), so a small fixed bump can fall
-                    // behind and waste guard iterations on "not yet due" no-ops instead of genuine
-                    // retries. Jumping past the cap guarantees every iteration is a real attempt.
-                    long clockStep = configuration.getColumnPurgeRetryDelayLimit() + 1;
-                    int guard = 0;
-                    while (columnPurgeJob.getOutstandingPurgeTasks() > 0 && guard++ < 20) {
-                        // Mirrors ColumnPurgeJobTest#runPurgeJob: release on EVERY iteration, not just
-                        // once before the loop -- a pooled reader can go through further internal
-                        // teardown as time is stepped, so a single upfront sweep is not always enough.
-                        engine.releaseInactive();
-                        setCurrentMicros(currentMicros + clockStep);
-                        columnPurgeJob.run();
-                    }
-                    // Self-verifying proof the purge genuinely completed -- i.e. ColumnPurgeOperator
-                    // actually opened and read the composite table's _txn -- rather than assuming the
-                    // loop above was enough.
-                    Assert.assertEquals(
-                            "column purge must have fully drained (ColumnPurgeOperator never ran otherwise)",
-                            0, columnPurgeJob.getOutstandingPurgeTasks());
-                }
-            } finally {
-                setCurrentMicros(-1);
-                setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
-            }
+            execute("alter table c drop column q");
+            drainWalQueue();
+            Assert.assertTrue(
+                    "c must be suspended after a not-yet-supported composite DROP COLUMN",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            printSql("select errorMessage from wal_tables() where name = 'c'");
+            TestUtils.assertContains(sink, "composite partitioning does not yet support DROP COLUMN");
+            engine.getTableSequencerAPI().resumeTable(engine.verifyTableName("c"), 0);
+            drainWalQueue();
+
             assertSqlCursors("select ts, exchange, px from p order by ts", "select ts, exchange, px from c order by ts");
-            // Explicit metadata proof DROP COLUMN completed (not just that ts/exchange/px are undisturbed):
-            // q must be fully gone, back to the original 3-column shape shared with p.
+            // Explicit metadata proof DROP COLUMN did NOT complete (the gate fired before any mutation):
+            // q must still be present, one column ahead of the original 3-column shape shared with p.
             try (TableReader reader = getReader("c")) {
-                Assert.assertEquals(-1, reader.getMetadata().getColumnIndexQuiet("q"));
-                Assert.assertEquals(3, reader.getMetadata().getColumnCount());
+                Assert.assertTrue(reader.getMetadata().getColumnIndexQuiet("q") > -1);
+                Assert.assertEquals(4, reader.getMetadata().getColumnCount());
             }
         });
     }
