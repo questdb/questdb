@@ -3745,6 +3745,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsOrSubqueryOnLeft() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) or timestamp = '2018-01-01'");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2018-01-01' timestamp = (select-choose * from (x)) or");
+    }
+
+    @Test
+    public void testTimestampEqualsOrSubqueryOnRight() throws Exception {
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (select * from x)");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "(select-choose * from (x)) '2018-01-01' timestamp = or");
+    }
+
+    @Test
     public void testTimestampEqualsRejectedSubqueryCloseFailureClosesOnce() throws Exception {
         ThrowingCloseFunction function = new ThrowingCloseFunction(false, false, null, new RuntimeException("injected close failure"));
         try {

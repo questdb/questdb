@@ -2919,7 +2919,7 @@ public final class WhereClauseParser implements Mutable {
      * - Nested OR of the above
      */
     private boolean isOrOfTimestampIn(ExpressionNode node) {
-        if (node == null) {
+        if (node == null || node.token == null) {
             return false;
         }
 
