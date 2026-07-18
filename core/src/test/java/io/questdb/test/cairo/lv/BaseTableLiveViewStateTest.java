@@ -91,6 +91,7 @@ public class BaseTableLiveViewStateTest extends AbstractCairoTest {
                     errors.add(e);
                 }
             }, "lv-committer-" + i);
+            t.setDaemon(true);
             threads.add(t);
             t.start();
         }
@@ -125,29 +126,42 @@ public class BaseTableLiveViewStateTest extends AbstractCairoTest {
                     errors.add(e);
                 }
             }, "lv-refresher-" + i);
+            t.setDaemon(true);
             threads.add(t);
             t.start();
         }
 
-        for (int i = 0; i < baseCommitThreads; i++) {
-            try {
-                threads.getQuick(i).join();
-            } catch (InterruptedException e) {
-                errors.add(e);
+        try {
+            for (int i = 0; i < baseCommitThreads; i++) {
+                try {
+                    threads.getQuick(i).join();
+                } catch (InterruptedException e) {
+                    errors.add(e);
+                }
             }
-        }
 
-        // Let the refreshers drain every outstanding notification before stopping.
-        while (refreshNotification.get() != refreshNotificationProcessed.get()) {
-            Os.sleep(1);
-        }
-        stop.set(true);
-
-        for (int i = baseCommitThreads; i < threads.size(); i++) {
-            try {
-                threads.getQuick(i).join();
-            } catch (InterruptedException e) {
-                errors.add(e);
+            // Let the refreshers drain every outstanding notification before stopping.
+            // Bounded and error-aware: a refresher that died mid-processing can leave the
+            // counters permanently unequal, so an unbounded wait here would hang the main
+            // thread forever. On timeout or an error, fall through to the finally, which
+            // stops and joins the refreshers so the real failure surfaces below.
+            for (int i = 0;
+                    i < 120_000 && refreshNotification.get() != refreshNotificationProcessed.get() && errors.isEmpty();
+                    i++) {
+                Os.sleep(1);
+            }
+        } finally {
+            // Always release and join the refreshers, even if the wait above threw or an
+            // error left the counters unequal. The threads are daemon, so a wedged
+            // refresher cannot block JVM exit, and the bounded join keeps a single stuck
+            // thread from hanging the whole suite.
+            stop.set(true);
+            for (int i = baseCommitThreads; i < threads.size(); i++) {
+                try {
+                    threads.getQuick(i).join(60_000);
+                } catch (InterruptedException e) {
+                    errors.add(e);
+                }
             }
         }
 

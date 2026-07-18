@@ -1873,6 +1873,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute(sink);
     }
 
+    // Joins a worker thread, tolerating a null reference (a thread never started
+    // because the try body threw before assigning it) and an interrupt. Used by the
+    // cleanup finally so it can join every worker before freeing shared native state.
+    private static void joinSilently(Thread thread) {
+        if (thread == null) {
+            return;
+        }
+        try {
+            thread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     // A writer thread that owns its own WalWriter and ingests the round-robin slice
     // [fromIndex+writerId, rowCount) with stride numWriters, committing every batch
     // rows. The slices are disjoint and globally ts-ordered, so timestamps stay
@@ -4008,13 +4022,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final AtomicBoolean running = new AtomicBoolean(true);
         LiveViewRefreshJob job = null;
+        Thread driver = null;
+        Thread nativeReader = null;
+        Thread wrapperReader = null;
         try {
             job = new LiveViewRefreshJob(0, engine, 1);
             final LiveViewRefreshJob driverJob = job;
 
             // The single refresh driver owns the clock and both apply jobs for
             // the whole concurrent phase; the main thread only commits inserts.
-            final Thread driver = new Thread(() -> {
+            driver = new Thread(() -> {
                 try {
                     while (running.get()) {
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
@@ -4029,8 +4046,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }, "lv-rvr-refresh-driver");
             final AtomicLong nativeRowsValidated = new AtomicLong();
             final AtomicLong wrapperRowsValidated = new AtomicLong();
-            final Thread nativeReader = newPrefixInvariantReader("SELECT * FROM lv", running, errors, nativeRowsValidated);
-            final Thread wrapperReader = newPrefixInvariantReader("(lv) ORDER BY 1", running, errors, wrapperRowsValidated);
+            nativeReader = newPrefixInvariantReader("SELECT * FROM lv", running, errors, nativeRowsValidated);
+            wrapperReader = newPrefixInvariantReader("(lv) ORDER BY 1", running, errors, wrapperRowsValidated);
             driver.start();
             nativeReader.start();
             wrapperReader.start();
@@ -4088,6 +4105,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
             driveRefreshToQuiescence(job);
         } finally {
+            // Stop and join the workers BEFORE freeing the job. An assertion failure or an
+            // ingestion error in the try jumps straight here while the driver thread may
+            // still be inside drainJob(job); freeing first would be a use-after-free of the
+            // job's native state, and skipping the joins would strand non-daemon threads.
+            running.set(false);
+            joinSilently(driver);
+            joinSilently(nativeReader);
+            joinSilently(wrapperReader);
             Misc.free(job);
         }
 

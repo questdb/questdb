@@ -600,6 +600,10 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        // A refresh fault self-heals into a full recompute from the applied base, which this
+        // oracle would match either way; assert no cycle faulted so an incremental-path
+        // regression cannot hide behind the recovery.
+        assertNoRefreshFaults("lv");
     }
 
     private void assertViewValid() {

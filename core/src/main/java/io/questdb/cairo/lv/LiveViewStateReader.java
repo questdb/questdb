@@ -167,7 +167,11 @@ public class LiveViewStateReader implements Mutable {
                 coreBlockFound = true;
                 long offset = 0;
                 int onDiskVersion = block.getInt(offset);
-                if (onDiskVersion > LiveViewState.LIVE_VIEW_STATE_FORMAT_VERSION) {
+                // Require an exact version match. The writer only ever stamps the current
+                // format version, so a zero, negative or older value signals a torn or
+                // corrupt block rather than a real older layout; there are no older-version
+                // decoders, so decoding such a block as v1 would misread it silently.
+                if (onDiskVersion != LiveViewState.LIVE_VIEW_STATE_FORMAT_VERSION) {
                     throw CairoException.critical(CairoException.LV_FILE_VERSION_UNSUPPORTED)
                             .put("live view state format version not supported [view=")
                             .put(liveViewToken.getTableName())

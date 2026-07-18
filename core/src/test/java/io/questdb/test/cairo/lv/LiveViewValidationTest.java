@@ -90,6 +90,49 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateNameNormalization() throws Exception {
+        // CREATE LIVE VIEW normalizes its target name exactly like CREATE TABLE and
+        // CREATE MATERIALIZED VIEW: an unquoted SQL keyword is rejected, a quoted keyword
+        // is accepted verbatim, and a leading "public." schema is stripped to the bare
+        // name. Without the shared normalization the live-view path diverged from the
+        // other CREATE forms (it accepted keyword names and did not strip public.).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String body = " FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base";
+
+            // Unquoted keyword name: rejected, like a table of the same name.
+            try {
+                execute("CREATE LIVE VIEW select" + body);
+                // Should not reach here; drop defensively so a spurious success does not
+                // leave a view that trips a later assertion.
+                execute("DROP LIVE VIEW select");
+                Assert.fail("expected an unquoted keyword name to be rejected");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "SQL keywords have to be enclosed in double quotes")
+                );
+            }
+            Assert.assertNull("no view should be registered under a rejected keyword name",
+                    engine.getLiveViewRegistry().getViewInstance("select"));
+
+            // Quoted keyword name: accepted verbatim.
+            execute("CREATE LIVE VIEW \"select\"" + body);
+            Assert.assertNotNull("a quoted keyword name must be accepted",
+                    engine.getLiveViewRegistry().getViewInstance("select"));
+            execute("DROP LIVE VIEW \"select\"");
+
+            // A leading public. schema is stripped to the bare name, matching tables.
+            execute("CREATE LIVE VIEW public.lv" + body);
+            Assert.assertNotNull("the public. prefix must normalize to the bare name 'lv'",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull("the dotted form must not survive as a literal name",
+                    engine.getLiveViewRegistry().getViewInstance("public.lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCreateRejectedWhenLiveViewsDisabled() throws Exception {
         // Parity with materialized views (CreateMatViewTest#testCreateMatViewDisabled): when the
         // feature is turned off, CREATE is rejected at parse time rather than silently creating a

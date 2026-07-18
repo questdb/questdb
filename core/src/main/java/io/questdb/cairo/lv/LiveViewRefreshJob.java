@@ -6361,8 +6361,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     && instance.getAppliedWatermark() >= instance.getRefreshedUpToSeqTxn();
             final boolean needsLeadReconcile = leadOnly && (isLeadSlotStale(instance) || leadSubsumedByDisk);
             if (head > processedTo || needsLeadReconcile || needsRestore || needsSeeding) {
-                refreshInstance(instance, head);
-                didWork = true;
+                // Only count a turn that actually refreshed. refreshInstance returns false
+                // when it lost the refresh latch to another worker (or backed off), so the
+                // losing workers fall through to the idle backoff instead of rescanning the
+                // whole registry at full tilt while one worker holds the latch.
+                didWork |= refreshInstance(instance, head);
             }
         }
         return didWork;
@@ -6630,7 +6633,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private void refreshInstance(LiveViewInstance instance, long seqTxn) {
+    private boolean refreshInstance(LiveViewInstance instance, long seqTxn) {
+        // Tracks whether this call did real refresh work (seed sweep, drain, flush,
+        // reconcile). Returned to the fallback scan so a call that did nothing - most
+        // importantly one that lost the refresh latch to another worker - does NOT count
+        // as work; otherwise the losing workers keep rescanning the whole registry at full
+        // tilt (Worker.runAsap, no nap) while one worker refreshes, an O(workers x views)
+        // busy-spin. The notification-driven caller ignores the result.
+        boolean attempted = false;
         // Apply-lag back-off: a prior cycle deferred this view (raw-WAL O3 or coupled dedup
         // drain) because ApplyWal2TableJob had not applied the base to the seqTxn the replay
         // reads. Skip re-entering the full window recompute until the floor elapses so the
@@ -6639,7 +6649,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // clock read, not a re-drain. Covers both refresh entry paths. Side-effect free: the
         // floor is cleared only by the authoritative under-latch check below.
         if (isApplyLagDeferred(instance, false)) {
-            return;
+            return false;
         }
         // Live-view WAL apply back-off: the refresh worker drives the view's OWN WAL apply
         // inline (applyWalDirect) after committing a flushed lead or a coupled-drain batch.
@@ -6654,10 +6664,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Cheap guard before the latch, like the apply-lag defer above.
         if (!engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken())
                 .getMemPressureControl().isReadyToProcess()) {
-            return;
+            return false;
         }
+        // Another worker already holds this view's refresh latch. Report no work so this
+        // worker backs off instead of busy-rescanning the registry while the holder runs.
         if (!instance.tryLockForRefresh()) {
-            return;
+            return false;
         }
         String invalidationReason = null;
         // Bound each refresh turn (one refreshInstance call) by max commits
@@ -6684,7 +6696,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // structurally excludes it), so this is defense-in-depth against a future
             // third caller reaching a stub here and NPEing on getDefinition().
             if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
-                return;
+                return false;
             }
             // Snapshot freeze: DatabaseCheckpointAgent is mid-copy of this LV's
             // files. Skip this turn so _lv.s and the on-disk tier do not
@@ -6699,7 +6711,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // waitForUnfrozen() without racing the agent's copy - do not move a rewrite
             // ahead of this guard or out of the latch hold.
             if (instance.isFreezeInProgress()) {
-                return;
+                return false;
             }
             // Authoritative apply-lag gate, under the refresh latch, and the only place the floor is
             // cleared. The pre-latch check above races: a worker that reads a satisfied floor there can
@@ -6709,9 +6721,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // this latch too (the LiveViewApplyLagException catch below), so checking and clearing here
             // is atomic against it.
             if (isApplyLagDeferred(instance, true)) {
-                return;
+                return false;
             }
-            boolean attempted = false;
             // Labels the refresh body so a compromised head-checkpoint restore
             // can break straight to the out-of-latch invalidation below, skipping
             // the refresh + flush that would otherwise materialise the
@@ -6782,13 +6793,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // (applyLiveViewData preserves the local seedState), so this view stays
                         // disk-only until the node promotes (and completes/resumes the sweep) or the
                         // view is recreated.
-                        return;
+                        return attempted;
                     }
                     attempted = true;
                     runSeedSweep(instance);
                     instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                     instance.recordRefreshSuccess();
-                    return;
+                    return attempted;
                 }
                 // Decide the cadence. A lead-eligible LV decouples refresh (drain
                 // into the in-mem tier as the un-flushed lead, every tick with new
@@ -6815,7 +6826,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // before it releases. B would then drain straight through the barrier A just
                         // raised. Re-check here, where arming and checking serialise on the same latch.
                         if (deferReplicaLeadWork(instance, true)) {
-                            return;
+                            return attempted;
                         }
                         final WindowRecordCursorFactory leadWindowFactory = getWindowFactory(instance);
                         if (!isLeadRollbackSupported(instance, leadWindowFactory)) {
@@ -6826,7 +6837,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // views -- including partitioned and anchored shapes -- round-trip their window
                             // state through the in-RAM rollback; only non-snapshot-capable windows take this
                             // branch.
-                            return;
+                            return attempted;
                         }
                         // Reconcile the in-RAM lead with the on-disk tier the global apply job
                         // advances asynchronously (as the primary's flushes replicate). Without this,
@@ -6866,7 +6877,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // output type) keeps its in-mem tier a strict subset of disk -- no un-flushed
                         // lead exists, so the replica serves it correctly off the replicated on-disk
                         // tier. Nothing to reconstruct.
-                        return;
+                        return attempted;
                     }
                     long lastSeqTxn = instance.getLastProcessedSeqTxn();
                     if (seqTxn > lastSeqTxn) {
@@ -6876,7 +6887,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // We bump lastFlushTimeUs to nowUs only after a successful refresh,
                         // so a long-running first commit does not double-charge the budget.
                         if (!flushDue) {
-                            return;
+                            return attempted;
                         }
                         // TransactionLogCursor treats txnLo as exclusive (lastApplied), so we
                         // pass lastSeqTxn directly. The cursor's getTxn() returns entries with
@@ -6966,6 +6977,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (invalidationReason != null) {
             engine.invalidateLiveView(instance, invalidationReason);
         }
+        return attempted;
     }
 
     /**

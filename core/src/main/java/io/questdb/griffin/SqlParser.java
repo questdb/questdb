@@ -1316,8 +1316,13 @@ public class SqlParser {
             tok = tok(lexer, "live view name");
         }
 
-        // view name
-        builder.setViewName(Chars.toString(GenericLexer.unquote(tok)));
+        // view name - apply the same normalization as CREATE TABLE / MATERIALIZED
+        // VIEW: strip a leading public. schema, reject an unquoted keyword name, and
+        // reject dots/slashes. Without this the live-view path diverged (accepting
+        // keyword names and a public. prefix that the other CREATE paths normalize).
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        builder.setViewName(Chars.toString(assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
         builder.setViewNamePosition(lexer.lastTokenPosition());
 
         // FLUSH EVERY <duration> -- required

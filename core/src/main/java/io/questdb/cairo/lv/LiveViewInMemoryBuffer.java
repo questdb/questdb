@@ -184,23 +184,33 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.arrayBuffers = new ObjList<>(columnTypes.size());
         this.newSymbolMaxIds = new int[columnTypes.size()];
         this.varAppendSavepoint = new long[columnTypes.size() * 2];
-        for (int i = 0, n = columnTypes.size(); i < n; i++) {
-            int type = columnTypes.getQuick(i);
-            this.columnTypes.add(type);
-            // Per-row footprint of the fixed-width primary write (row << shift); 0
-            // for a var-size column, whose payload size is not a fixed per-row
-            // stride but is tracked by the dataMem / auxMem append cursors instead.
-            int sz = ColumnType.isVarSize(type) ? 0 : ColumnType.sizeOf(type);
-            this.columnTypeSizes.add(sz);
-            this.dataMem.add(new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
-            // Var-size columns get a real aux buffer for the offset/header vector;
-            // fixed-width / SYMBOL columns park the secondary at the shared stub.
-            this.auxMem.add(
-                    ColumnType.isVarSize(type)
-                            ? new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
-                            : NullMemory.INSTANCE
-            );
-            seedAuxLeadingOffset(i);
+        // A native allocation below (a var-size aux buffer, or the aux page that
+        // seedAuxLeadingOffset touches for a STRING / BINARY column) can fail
+        // mid-loop after earlier columns already claimed pages. Free whatever was
+        // allocated before rethrowing so a partial construction leaks nothing -
+        // close() walks the lists filled so far.
+        try {
+            for (int i = 0, n = columnTypes.size(); i < n; i++) {
+                int type = columnTypes.getQuick(i);
+                this.columnTypes.add(type);
+                // Per-row footprint of the fixed-width primary write (row << shift); 0
+                // for a var-size column, whose payload size is not a fixed per-row
+                // stride but is tracked by the dataMem / auxMem append cursors instead.
+                int sz = ColumnType.isVarSize(type) ? 0 : ColumnType.sizeOf(type);
+                this.columnTypeSizes.add(sz);
+                this.dataMem.add(new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+                // Var-size columns get a real aux buffer for the offset/header vector;
+                // fixed-width / SYMBOL columns park the secondary at the shared stub.
+                this.auxMem.add(
+                        ColumnType.isVarSize(type)
+                                ? new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                                : NullMemory.INSTANCE
+                );
+                seedAuxLeadingOffset(i);
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
         this.timestampColumnIndex = timestampColumnIndex;
         this.rowCount = 0;

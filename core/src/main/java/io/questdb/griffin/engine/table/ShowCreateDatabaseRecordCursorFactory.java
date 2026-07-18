@@ -24,6 +24,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -32,6 +33,8 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -56,6 +59,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -330,10 +334,18 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             collectMatViewDependencies(token, engine, executionContext, out);
         } else if (token.isLiveView()) {
             // a live view reads exactly one base table; emit it first so the
-            // CREATE LIVE VIEW replays
+            // CREATE LIVE VIEW replays. Prefer the runtime definition, but fall
+            // back to the on-disk _lv when the instance is a state-unreadable
+            // stub with no runtime definition. Emission always rereads _lv, so
+            // without the fallback dependency ordering would disagree with what
+            // is emitted and an alphabetically earlier view could be emitted
+            // before its base, making the dump unreplayable.
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(token.getTableName());
-            if (instance != null && instance.getDefinition() != null) {
-                final TableToken base = engine.getTableTokenIfExists(instance.getDefinition().getBaseTableName());
+            final CharSequence baseTableName = instance != null && instance.getDefinition() != null
+                    ? instance.getDefinition().getBaseTableName()
+                    : readLiveViewBaseTableNameFromDisk(token, engine);
+            if (baseTableName != null) {
+                final TableToken base = engine.getTableTokenIfExists(baseTableName);
                 if (base != null) {
                     out.add(base);
                 }
@@ -425,6 +437,28 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             return viewFactory(token);
         }
         return tableFactory(token);
+    }
+
+    // Reads a live view's base table name directly from its on-disk _lv, mirroring the
+    // emission path (ShowCreateLiveViewRecordCursorFactory). Used when the runtime
+    // definition is unavailable - e.g. a state-unreadable stub whose _lv is still intact -
+    // so dependency ordering stays in lock-step with what emission rereads. Returns null
+    // (degrading to no dependency edge) when the _lv cannot be read; cancellation and
+    // timeouts still abort the dump.
+    private CharSequence readLiveViewBaseTableNameFromDisk(TableToken token, CairoEngine engine) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration)
+        ) {
+            path.of(configuration.getDbRoot());
+            return LiveViewDefinition.readBaseTableName(reader, path, path.size(), token);
+        } catch (CairoException e) {
+            if (e.isInterruption() || e.isCancellation()) {
+                throw e;
+            }
+            return null;
+        }
     }
 
     private void topoEmit(

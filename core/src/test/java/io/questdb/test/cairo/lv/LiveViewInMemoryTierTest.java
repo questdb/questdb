@@ -45,6 +45,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
@@ -58,6 +59,8 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -309,41 +312,71 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testReaderObservesWriterSentinelAndSpins() throws Exception {
-        // Reader CAS-loop: rc < 0 means a writer holds
-        // the sentinel; the reader must spin until the writer releases. We hold
-        // the sentinel on a non-published slot, run acquireRead in the
-        // background — it pins the *currently-published* slot immediately, so
-        // no spin. Then we publishSwap onto the sentinel-held slot to validate
-        // the "publishedIdx moved during pin" path actually retries cleanly.
+        // Reader CAS-loop: rc < 0 on the PUBLISHED slot means a writer holds the
+        // sentinel; the reader must spin until it is released. This is the fast-path
+        // in-place append: the writer takes the sentinel on the published slot,
+        // appends, then releases via releaseWriteWithoutPublish WITHOUT swapping. A
+        // background reader entering acquireRead must block in the spin until that
+        // release, then pin the published slot. (The old version of this test held the
+        // sentinel on the NON-published slot, so acquireRead pinned the published slot
+        // immediately and never exercised the spin.)
         assertMemoryLeak(() -> {
             IntList types = singleLongCol();
             try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
-                // Seed a known value in the initially-published slot.
-                int initialPublished = tier.getPublishedIdx();
-                LiveViewInMemoryBuffer seed = tier.getSlot(initialPublished);
+                int published = tier.getPublishedIdx();
+                LiveViewInMemoryBuffer seed = tier.getSlot(published);
                 seed.putLong(0, 0, 11L);
                 seed.setRowCount(1);
 
-                // Writer takes sentinel on the OTHER slot.
-                int writeIdx = 1 - initialPublished;
-                LiveViewInMemoryBuffer write = tier.tryAcquireWrite(writeIdx);
-                Assert.assertNotNull(write);
-                write.putLong(0, 0, 22L);
-                write.setRowCount(1);
+                // Writer takes the sentinel on the PUBLISHED slot (fast-path append).
+                LiveViewInMemoryBuffer write = tier.tryAcquireWrite(published);
+                Assert.assertNotNull("writer must acquire the idle published slot", write);
 
-                // Reader pins the initially-published slot; the sentinel on the
-                // OTHER slot doesn't block this.
-                int pinned = tier.acquireRead();
-                Assert.assertEquals(initialPublished, pinned);
-                Assert.assertEquals(11L, tier.getSlot(pinned).getLong(0, 0));
-                tier.releaseRead(pinned);
+                final CountDownLatch readerEntered = new CountDownLatch(1);
+                final AtomicInteger pinnedResult = new AtomicInteger(Integer.MIN_VALUE);
+                final AtomicLong observedValue = new AtomicLong(Long.MIN_VALUE);
+                final AtomicReference<Throwable> error = new AtomicReference<>();
+                Thread reader = new Thread(() -> {
+                    try {
+                        readerEntered.countDown();
+                        // Spins here while the sentinel is held on the published slot.
+                        int pin = tier.acquireRead();
+                        observedValue.set(tier.getSlot(pin).getLong(0, 0));
+                        pinnedResult.set(pin);
+                        tier.releaseRead(pin);
+                    } catch (Throwable th) {
+                        error.set(th);
+                    }
+                }, "lv-tier-sentinel-reader");
+                reader.start();
 
-                // Now publish the swap; the new pin must observe the swapped slot.
-                tier.publishSwap(writeIdx);
-                int pinnedAfter = tier.acquireRead();
-                Assert.assertEquals(writeIdx, pinnedAfter);
-                Assert.assertEquals(22L, tier.getSlot(pinnedAfter).getLong(0, 0));
-                tier.releaseRead(pinnedAfter);
+                // While the sentinel is held, acquireRead cannot return - it sees rc < 0
+                // and spins. Confirm the reader stays blocked (no pin yet); the only way
+                // pinnedResult could be set here is a bug that lets a read observe a slot
+                // mid-write.
+                Assert.assertTrue(readerEntered.await(10, TimeUnit.SECONDS));
+                for (int i = 0; i < 10 && reader.isAlive(); i++) {
+                    Assert.assertEquals(
+                            "reader must spin while the writer sentinel is held",
+                            Integer.MIN_VALUE,
+                            pinnedResult.get()
+                    );
+                    Os.sleep(5);
+                }
+
+                // Append a row under the sentinel, then release without swapping. The
+                // reader's spin now completes and pins the (same) published slot.
+                write.putLong(1, 0, 22L);
+                write.setRowCount(2);
+                tier.releaseWriteWithoutPublish(published);
+
+                reader.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse("reader thread must terminate after the sentinel release", reader.isAlive());
+                if (error.get() != null) {
+                    throw new AssertionError("reader threw while spinning on the sentinel", error.get());
+                }
+                Assert.assertEquals("reader must pin the published slot", published, pinnedResult.get());
+                Assert.assertEquals("reader must observe the published slot's rows", 11L, observedValue.get());
             }
         });
     }
