@@ -110,11 +110,19 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     // While set, the next reenqueuePendingOnResume on the engine store models the impl-level
     // redelivery failure contract (facet retry flags recorded, then OOM). One-shot.
     private static final AtomicBoolean isResumeRedeliveryFailureArmed = new AtomicBoolean();
+    // One-shot: the next getWalWriter for the armed view token throws a generic critical error
+    // (non-suspended, non-auth), then self-disarms. Models an unexpected terminal rebuild
+    // failure. Reset to null before every test.
+    private static final AtomicReference<TableToken> walGenericFailureToken = new AtomicReference<>();
     // A test-controlled sticky writer refusal: while set, getWalWriter refuses this view's token with a
     // read-only authorization error even though isReadOnlyMode() stays false -- the enterprise TOCTOU
     // where a demote flips the writer chokepoint after invalidateView's top-of-method guard passed.
     // Reset to null before every test.
     private static final AtomicReference<TableToken> walRefusalToken = new AtomicReference<>();
+    // One-shot: the next getWalWriter for the armed view token throws the table-suspended
+    // refusal, then self-disarms. Models a suspension landing in the window between a path's
+    // up-front isViewWriteSuspended gate and its writer acquire. Reset to null before every test.
+    private static final AtomicReference<TableToken> walSuspendedRefusalToken = new AtomicReference<>();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -132,6 +140,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             public @NotNull WalWriter getWalWriter(TableToken tableToken) {
                 if (tableToken.equals(walRefusalToken.get())) {
                     throw CairoException.readOnlyAccess();
+                }
+                final TableToken suspendedToken = walSuspendedRefusalToken.get();
+                if (tableToken.equals(suspendedToken) && walSuspendedRefusalToken.compareAndSet(suspendedToken, null)) {
+                    throw CairoException.tableSuspended(tableToken);
+                }
+                final TableToken genericToken = walGenericFailureToken.get();
+                if (tableToken.equals(genericToken) && walGenericFailureToken.compareAndSet(genericToken, null)) {
+                    throw CairoException.critical(0).put("test generic wal writer failure [table=").put(tableToken.getTableName()).put(']');
                 }
                 return super.getWalWriter(tableToken);
             }
@@ -160,7 +176,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         isReadOnly.set(false);
         isRefreshSuspended.set(false);
         isResumeRedeliveryFailureArmed.set(false);
+        walGenericFailureToken.set(null);
         walRefusalToken.set(null);
+        walSuspendedRefusalToken.set(null);
     }
 
     @Test
@@ -1033,6 +1051,26 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshGenericFailureClearsOwnerAndFailsState() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // A generic (non-suspend, non-auth, non-rename) writer-acquire failure is terminal for
+            // this attempt: refreshFailState marks the view invalid and the finally must clear the
+            // owner -- a stranded owner sentinel would wake into the same failure forever.
+            walGenericFailureToken.set(viewToken);
+            engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            Assert.assertFalse("the terminal failure must clear the owner sentinel", state.hasPendingFullRefreshOwnerForTesting());
+            Assert.assertTrue("the terminal failure must fail the view state", state.isInvalid());
+        });
+    }
+
+    @Test
     public void testFullRefreshHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -1533,6 +1571,41 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshSuspendedBetweenGateAndAcquireDefersAndRedelivers() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The suspension lands in the window between fullRefresh's isViewWriteSuspended gate
+            // and its getWalWriter acquire (the engine is not actually suspended, so the top gate
+            // passes). The outer catch must treat it as a deferral: retain the owner, no fail
+            // state. The finalize wakes the retained owner once (the bounded one-extra-enqueue --
+            // deliberately no self-suppression on this branch); the woken redelivery finds the
+            // one-shot refusal consumed and rebuilds, consuming the owner.
+            walSuspendedRefusalToken.set(viewToken);
+            engineFullRefreshEnqueues.set(0);
+            engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            Assert.assertEquals(
+                    "the deferral's finalize must wake the retained owner exactly once",
+                    1,
+                    engineFullRefreshEnqueues.get()
+            );
+            Assert.assertFalse("the redelivered FULL must consume the owner", state.hasPendingFullRefreshOwnerForTesting());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testFullRefreshTerminalFailureClearsPendingFull() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
@@ -1603,6 +1676,31 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertTrue("the terminal-failure seam must publish a newer full request", hasFired.get());
             Assert.assertFalse("the newer full request must consume its own ownership", state.isPendingInvalidation());
             Assert.assertFalse("the newer full request must recover the view", state.isInvalid());
+        });
+    }
+
+    @Test
+    public void testInvalidateSuspendedBetweenGateAndAcquireRetainsMarker() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+
+            // The suspension lands between invalidateView's isViewWriteSuspended gate and the
+            // mint loop's getWalWriter acquire. The catch must return (marker retained) instead of
+            // letting the throw escape run(); the finally's finalize wakes the retained reason
+            // once, and the woken redelivery finds the one-shot refusal consumed and mints.
+            walSuspendedRefusalToken.set(viewToken);
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken, "suspend between gate and acquire");
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tsuspend between gate and acquire
+                            """);
         });
     }
 
@@ -2704,6 +2802,47 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
                             price_1h\tbase_price\tinvalid\tupdate operation
+                            """);
+        });
+    }
+
+    @Test
+    public void testStaleFullRefreshHandoffOwnerIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // A handoff task carries an owner that terminal cleanup already consumed by the time
+            // the task is delivered. The early !isPendingFullRefreshOwner return must make the
+            // delivery a no-op: no lock, no truncate, no rebuild.
+            state.markAsPendingFullRefreshForTesting();
+            final Object owner = state.getPendingFullRefreshOwnerForTesting();
+            Assert.assertNotNull(owner);
+            final MatViewRefreshTask handoff = new MatViewRefreshTask();
+            handoff.matViewToken = viewToken;
+            handoff.operation = MatViewRefreshTask.FULL_REFRESH;
+            handoff.fullRefreshOwner = owner;
+            engine.getMatViewStateStore().reenqueueRefreshTask(handoff);
+
+            // Consume the owner before the delivery (the file helper clears the whole marker).
+            clearPendingInvalidation(state);
+            Assert.assertFalse(state.hasPendingFullRefreshOwnerForTesting());
+
+            final AtomicBoolean hasPumped = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> hasPumped.set(true));
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+
+            Assert.assertFalse("a stale handoff owner must be a no-op (no pump)", hasPumped.get());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
                             """);
         });
     }
