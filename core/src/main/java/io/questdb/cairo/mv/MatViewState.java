@@ -792,21 +792,6 @@ public class MatViewState implements QuietCloseable {
         markAsPendingInvalidationAndGetMarker(invalidationReason);
     }
 
-    @TestOnly
-    public void markAsPendingInvalidationForTesting(
-            String invalidationReason,
-            TableToken invalidationBaseTableToken,
-            long invalidationBaseTxn,
-            boolean isInvalidationForced
-    ) {
-        markAsPendingInvalidationAndGetMarker(
-                invalidationReason,
-                invalidationBaseTableToken,
-                invalidationBaseTxn,
-                isInvalidationForced
-        );
-    }
-
     Object markAsPendingInvalidationAndGetMarker(String invalidationReason) {
         return markAsPendingInvalidationAndGetMarker(invalidationReason, null, Numbers.LONG_NULL, true);
     }
@@ -859,6 +844,21 @@ public class MatViewState implements QuietCloseable {
                 return replacement;
             }
         }
+    }
+
+    @TestOnly
+    public void markAsPendingInvalidationForTesting(
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
+        markAsPendingInvalidationAndGetMarker(
+                invalidationReason,
+                invalidationBaseTableToken,
+                invalidationBaseTxn,
+                isInvalidationForced
+        );
     }
 
     public void markAsValid() {

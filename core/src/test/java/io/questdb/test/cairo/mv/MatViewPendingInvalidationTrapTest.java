@@ -493,8 +493,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
             final TableToken viewToken = fixture.viewToken();
-            final MatViewStateStoreImpl stateStore =
-                    (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
+            final MatViewStateStoreImpl stateStore = resolveStateStoreImpl();
             final MatViewState state = fixture.state();
 
             final AtomicBoolean hasFailedEnqueue = new AtomicBoolean();
@@ -1153,7 +1152,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
-            final AtomicBoolean latchRescued = new AtomicBoolean();
+            final AtomicBoolean isLatchRescued = new AtomicBoolean();
 
             // Drive fullRefresh's losing branch deterministically. The task publishes the sentinel before
             // tryLock, loses to this holder, and returns without publishing N retries.
@@ -1179,7 +1178,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         drainMatViewQueue(job);
                     } finally {
                         if (state.isLocked()) {
-                            latchRescued.set(true);
+                            isLatchRescued.set(true);
                             state.clearPendingInvalidationForTesting();
                             state.unlock();
                         }
@@ -1193,7 +1192,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // The republished full refresh won the freed latch, cleared the sentinel and rebuilt the view.
-            Assert.assertFalse("the latch must not have needed a test-side rescue", latchRescued.get());
+            Assert.assertFalse("the latch must not have needed a test-side rescue", isLatchRescued.get());
             Assert.assertFalse("the re-queued full refresh must clear its reschedule sentinel", state.isPendingInvalidation());
             Assert.assertNull(state.getPendingInvalidationReason());
             assertPriceViewValid();
@@ -1256,7 +1255,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
-            final AtomicBoolean latchRescued = new AtomicBoolean();
+            final AtomicBoolean isLatchRescued = new AtomicBoolean();
 
             // A losing full refresh and a reason-bearing invalidation must retain independent ownership in
             // one atomic marker. Neither publication may demote or erase the other.
@@ -1285,7 +1284,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         drainMatViewQueue(job);
                     } finally {
                         if (state.isLocked()) {
-                            latchRescued.set(true);
+                            isLatchRescued.set(true);
                             state.clearPendingInvalidationForTesting();
                             state.unlock();
                         }
@@ -1300,7 +1299,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             // The handoff delivers both operations. INVALIDATE mints first, then the retained FULL refresh
             // rebuilds the view and consumes only its own ownership flag.
-            Assert.assertFalse("the latch must not have needed a test-side rescue", latchRescued.get());
+            Assert.assertFalse("the latch must not have needed a test-side rescue", isLatchRescued.get());
             Assert.assertFalse(state.isPendingInvalidation());
             assertPriceViewValid();
         });
@@ -1431,7 +1430,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
-            final AtomicBoolean latchRescued = new AtomicBoolean();
+            final AtomicBoolean isLatchRescued = new AtomicBoolean();
 
             // The finalize owner wake is the sole handoff that redelivers a FULL request that lost the
             // latch (the auth-refusal deferral no longer re-enqueues). Queue growth inside that wake can
@@ -1467,7 +1466,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         drainMatViewQueue(job);
                     } finally {
                         if (state.isLocked()) {
-                            latchRescued.set(true);
+                            isLatchRescued.set(true);
                             state.clearPendingInvalidationForTesting();
                             state.unlock();
                         }
@@ -1480,7 +1479,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
-            Assert.assertFalse("the latch must not have needed a test-side rescue", latchRescued.get());
+            Assert.assertFalse("the latch must not have needed a test-side rescue", isLatchRescued.get());
             Assert.assertFalse("the successful retry must consume the retained full-refresh owner", state.isPendingInvalidation());
             Assert.assertFalse("the recovered full refresh must leave the view valid", state.isInvalid());
         });
@@ -2040,8 +2039,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final MatViewState state = fixture.state();
 
-            final MatViewStateStoreImpl store =
-                    (MatViewStateStoreImpl) ((ForwardingMatViewStateStore) engine.getMatViewStateStore()).getDelegate();
+            final MatViewStateStoreImpl store = resolveStateStoreImpl();
             // Arm a claimable retry exactly as a failed finalize wake leaves it: a reason marker plus
             // the invalidation retry bit.
             Assert.assertTrue(state.tryLock());
@@ -3802,11 +3800,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
      * synchronously inside a test-driven RESUME WAL flow, so the theoretical read-tear is inert here.
      */
     private static final class InstrumentedStateStore extends ForwardingMatViewStateStore {
-        private final MatViewStateStore delegate;
-
         InstrumentedStateStore(MatViewStateStore delegate) {
             super(delegate);
-            this.delegate = delegate;
         }
 
         @Override
@@ -3838,13 +3833,13 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         @Override
         public void reenqueuePendingOnResume(TableToken matViewToken) {
             if (isResumeRedeliveryFailureArmed.compareAndSet(true, false)) {
-                final MatViewState state = delegate.getViewState(matViewToken);
+                final MatViewState state = getDelegate().getViewState(matViewToken);
                 if (state != null) {
                     if (state.getPendingInvalidationReason() != null) {
-                        delegate.requestPendingInvalidationReenqueue(state);
+                        getDelegate().requestPendingInvalidationReenqueue(state);
                     }
                     if (state.hasPendingFullRefreshOwnerForTesting()) {
-                        delegate.requestPendingFullRefreshReenqueue(state);
+                        getDelegate().requestPendingFullRefreshReenqueue(state);
                     }
                 }
                 throw new OutOfMemoryError("test resume redelivery failure");
@@ -3856,12 +3851,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         public void reenqueueRefreshTask(MatViewRefreshTask task) {
             if (isPutBackFailureArmed.compareAndSet(true, false)) {
                 if (task.matViewToken != null) {
-                    final MatViewState state = delegate.getViewState(task.matViewToken);
+                    final MatViewState state = getDelegate().getViewState(task.matViewToken);
                     if (state != null) {
                         if (task.operation == MatViewRefreshTask.FULL_REFRESH && task.fullRefreshOwner != null) {
-                            delegate.requestPendingFullRefreshReenqueue(state);
+                            getDelegate().requestPendingFullRefreshReenqueue(state);
                         } else if (task.operation == MatViewRefreshTask.INVALIDATE) {
-                            delegate.requestPendingInvalidationReenqueue(state);
+                            getDelegate().requestPendingInvalidationReenqueue(state);
                         }
                     }
                 }

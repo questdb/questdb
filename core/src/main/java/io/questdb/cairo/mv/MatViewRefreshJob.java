@@ -1041,20 +1041,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     runHoldingLockSeamForTesting();
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
-                    final boolean didRefresh = insertAsSelect(
+                    final boolean refreshed = insertAsSelect(
                             viewDefinition,
                             viewState,
                             walWriter,
                             refreshContext,
                             refreshTriggerTimestamp
                     );
-                    // A null interval iterator cannot leave didRefresh false here: the pump reset the
+                    // A null interval iterator cannot leave refreshed false here: the pump reset the
                     // watermark to -1 (resetInvalidState), findRefreshIntervals stamps toBaseTxn with the
                     // reader's seqTxn (>= 0 for a WAL table), so insertAsSelect's no-interval branch always
                     // advances the watermark and returns true, and the truncate barrier is unreachable in
                     // FULL (only the incremental WAL scan raises it). The assert pins that invariant.
-                    assert didRefresh || refreshContext.intervalIterator != null;
-                    if (didRefresh) {
+                    assert refreshed || refreshContext.intervalIterator != null;
+                    if (refreshed) {
                         assert !refreshContext.hasTruncateBarrier;
                         viewState.recordFullRefreshSuccess(baseTableToken, refreshContext.toBaseTxn);
                         if (!viewState.clearPendingInvalidationIfCoveredByLastFullRefresh()
