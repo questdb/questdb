@@ -146,8 +146,8 @@ public class BaseTableLiveViewStateTest extends AbstractCairoTest {
             // thread forever. On timeout or an error, fall through to the finally, which
             // stops and joins the refreshers so the real failure surfaces below.
             for (int i = 0;
-                    i < 120_000 && refreshNotification.get() != refreshNotificationProcessed.get() && errors.isEmpty();
-                    i++) {
+                 i < 120_000 && refreshNotification.get() != refreshNotificationProcessed.get() && errors.isEmpty();
+                 i++) {
                 Os.sleep(1);
             }
         } finally {

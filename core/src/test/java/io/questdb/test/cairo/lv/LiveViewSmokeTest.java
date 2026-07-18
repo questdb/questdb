@@ -6467,6 +6467,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // Truncates a live view's _lv.s below the BlockFile header so BlockFileReader.of
     // throws "block file too small" (errno 0) - a faithful torn-partial-write artifact
     // on the non-version branch.
+
     /**
      * Counts the {@code .cp} files in a live view's {@code _checkpoints/},
      * ignoring {@code _ring} and any {@code .cp.tmp} orphan.
