@@ -29,6 +29,7 @@ import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -391,23 +392,20 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     }
 
     /**
-     * Fix wave 1 (loud second-commit guard, following the opus review of Task 4): a composite table's
-     * FIRST real per-cell-routing commit is proven correct by {@link
-     * #testMultiCellCommitRoutesToFourCellDirectoriesAndMatchesPlainTwin()} above. This test proves a
-     * SECOND, small, in-order commit landing on the table's CURRENT last day (already home to two
-     * cells from commit 1) does NOT silently misroute/mis-account -- it must throw a clear, loud
-     * error and suspend the WAL table rather than let {@code count()}/per-exchange totals silently
-     * drift from a plain twin. See {@code processO3Block}'s own docs (guardCompositeSecondCommitNotYetSupported)
-     * for the two independent cell-blind mechanisms a second commit would otherwise hit: {@code
-     * o3ConsumePartitionUpdateSink}'s day-granularity {@code lastPartitionTimestamp} special case, and
-     * (found empirically while building this guard) {@code finishO3Commit}'s {@code openPartition}
-     * re-derive via {@code TxWriter#getNextPartitionTimestamp}, which cannot distinguish a genuine
-     * partition SPLIT sibling from an ordinary sibling CELL sharing the same day, and silently computes
-     * the wrong partition boundary once any day has 2+ cells -- reproduced directly (before this fix
-     * existed) as an uncontrolled {@code AssertionError} table suspension, not just a bookkeeping nit.
+     * Plan 4a Task 5 (per-cell frontiers). This used to be the first of two dedicated regression tests
+     * for Task 4's loud second-commit guard ({@code guardCompositeSecondCommitNotYetSupported}, removed
+     * by this task) and was originally written expecting a second commit landing on the table's CURRENT
+     * last day to route correctly. It does NOT: this specific commit revisits (extends) day2's ALREADY-
+     * populated cellA from commit 1, and that shape reproduces a genuine native heap corruption (glibc
+     * "malloc(): invalid size (unsorted)"), not just a bookkeeping nit -- see this task's own report.
+     * Per the project's safety rule, a new, NARROWER guard ({@code dispatchCompositeCellRange}'s own
+     * {@code srcDataMax > 0} check) now blocks exactly this shape, loudly, while every OTHER
+     * repeated-commit shape this task proved safe (new day, new cell on an existing or single-cell day,
+     * out-of-order backfill into a brand-new earlier day -- see the other tests in this class) is
+     * unaffected. This test now proves the guard, not success.
      */
     @Test
-    public void testSecondCommitSameLastDayThrowsInsteadOfSilentlyMisrouting() throws Exception {
+    public void testSecondCommitExtendingExistingCellThrowsInsteadOfSilentlyMisrouting() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -423,18 +421,15 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             assertWalTableNotSuspended("c");
 
             // Commit 2: ONE small, in-order row landing on day2 (the CURRENT last day), which ALREADY
-            // has two cells (A, B) from commit 1 -- the exact "second commit landing on the table's
-            // current last day" shape the review flagged, and the shape that (pre-fix) either crashed
-            // the writer with a raw AssertionError or silently mis-accounted rows depending on timing.
+            // has two cells (A, B) from commit 1 -- revisits (extends) the existing cellA partition
+            // rather than creating a new one -- the guarded shape.
             execute("insert into c values ('2020-01-02T18:00:00.000000Z','A',3.0)");
             execute("insert into p values ('2020-01-02T18:00:00.000000Z','A',3.0)");
             drainWalQueue();
 
-            // The composite table must be suspended with the clear, actionable message -- NOT silently
-            // wrong, NOT a raw AssertionError.
-            assertWalTableSuspendedWithMessage("c", "composite partitioning does not yet support");
-
-            // The plain twin must be completely unaffected: fully committed, all 5 rows, not suspended.
+            // c must be suspended with the new, narrower guard's clear message -- NOT silently wrong,
+            // NOT a native crash. p (plain) is completely unaffected.
+            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
             assertWalTableNotSuspended("p");
             engine.releaseInactive();
             assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
@@ -442,15 +437,12 @@ public class CompositeRoutingTest extends AbstractCairoTest {
     }
 
     /**
-     * Same guard, but the second commit's row lands on a BRAND NEW day (never touched by commit 1 at
-     * all), proving the guard is not narrowly scoped to "same day as an existing cell" -- ANY second
-     * real per-cell-routing commit on a composite table is not yet supported, per {@code
-     * processO3Block}'s docs (a composite table's {@code partitionTimestampHi}/{@code
-     * lastPartitionTimestamp} bookkeeping is already left inconsistent by the FIRST commit's own
-     * {@code finishO3Commit} call, before this second commit's specific shape is even considered).
+     * Same shape as {@link #testSecondCommitSameLastDayRoutesCorrectly()}, but the second commit's row
+     * lands on a BRAND NEW day (never touched by commit 1 at all) -- proves per-cell frontier tracking
+     * is correct for a genuinely new day too, not just a revisit of an existing cell.
      */
     @Test
-    public void testSecondCommitNewDayThrowsInsteadOfSilentlyMisrouting() throws Exception {
+    public void testSecondCommitNewDayRoutesCorrectly() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
@@ -468,8 +460,169 @@ public class CompositeRoutingTest extends AbstractCairoTest {
             execute("insert into p values ('2020-01-03T00:00:00.000000Z','A',3.0)");
             drainWalQueue();
 
-            assertWalTableSuspendedWithMessage("c", "composite partitioning does not yet support");
+            assertWalTableNotSuspended("c");
             assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertTablesMatch("c", "p");
+        });
+    }
+
+    /**
+     * Plan 4a Task 5's ORIGINAL acceptance-test shape, as the dispatch specified it verbatim: commit 1
+     * populates day1 with both cells; commit 2 -- a SEPARATE {@code insert}/{@code drainWalQueue} --
+     * adds MORE rows to day1's two EXISTING cells AND rows for a brand-new day2. This does NOT route
+     * correctly: "more rows for day1's two EXISTING cells" is precisely the "extends an already-
+     * populated cell" shape {@link #testSecondCommitExtendingExistingCellThrowsInsteadOfSilentlyMisrouting()}
+     * documents -- a real native heap corruption, not a bookkeeping nit -- so per the project's safety
+     * rule this whole commit is now blocked loudly rather than left to silently corrupt (the guard
+     * fires on day1's cellA block before day2's brand-new cells are ever reached, so the "new day2 cells"
+     * half of this scenario is separately proven safe by {@link #testMultiCommitAddsSecondCellToSingleCellDayMatchesPlainTwin()}
+     * and {@link #testMultiCommitOutOfOrderEarlierDayMatchesPlainTwin()}, just not combined with a
+     * same-commit cell-extension the way the dispatch's own example combined them). This test now
+     * documents that gap explicitly rather than silently passing or silently corrupting.
+     */
+    @Test
+    public void testMultiCommitExtendingExistingCellsThrowsInsteadOfSilentlyMisrouting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            final String rows1 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+
+            // Commit 2: a SEPARATE insert + drainWalQueue (not a continuation of commit 1's WAL
+            // segment) -- more rows for day1's two EXISTING cells (A, B) AND rows for a brand-new
+            // day2, itself with two brand-new cells (A, B). The "day1" half of this is the guarded
+            // shape.
+            final String rows2 = " values " +
+                    "('2020-01-01T06:00:00.000000Z','A',1.1), ('2020-01-01T18:00:00.000000Z','B',1.6), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows2);
+            execute("insert into p" + rows2);
+            drainWalQueue();
+
+            assertWalTableSuspendedWithMessage("c", "does not yet support a commit that extends an already-populated cell");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            // p: 2 rows from commit 1 + 4 rows from commit 2 = 6, fully committed and unaffected.
+            assertQuery("select count() from p").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+        });
+    }
+
+    /**
+     * The out-of-order variant the dispatch specifically asked for: commit 2 targets a day EARLIER
+     * than every day commit 1 touched (a backfill), rather than the current/new tail. Exercises the
+     * {@code partitionTimestamp < trackedTailPartitionTimestamp} branch of the per-cell frontier fix
+     * with a REAL second commit (that branch was never actually unsafe pre-fix, but this proves the
+     * table's {@code lastPartitionTimestamp}/{@code partitionTimestampHi} bookkeeping -- which commit 1
+     * leaves correct only once the split/cell conflation in {@code TxWriter#getNextPartitionTimestamp}
+     * is fixed -- stays correct across an out-of-order commit too, not just a chronologically-advancing
+     * one).
+     */
+    @Test
+    public void testMultiCommitOutOfOrderEarlierDayMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // Commit 1: day2 (the LATER day) first, both cells.
+            final String rows1 = " values " +
+                    "('2020-01-02T00:00:00.000000Z','A',1.0), ('2020-01-02T12:00:00.000000Z','B',1.5)";
+            execute("insert into c" + rows1);
+            execute("insert into p" + rows1);
+            drainWalQueue();
+
+            // Commit 2: day1 -- EARLIER than commit 1's day2 -- a backfill, both cells.
+            final String rows2 = " values " +
+                    "('2020-01-01T00:00:00.000000Z','A',2.0), ('2020-01-01T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows2);
+            execute("insert into p" + rows2);
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+
+            assertPerDayExchCountsMatch("2020-01-01", "2020-01-02");
+            assertTablesMatch("c", "p");
+        });
+    }
+
+    /**
+     * A third shape: day1 starts with only ONE cell (A) from commit 1; commit 2 adds cellB to that SAME
+     * existing day (a brand-new cell on a day that previously had only a single cell) AND a brand-new
+     * day2. Distinguishes "day already had 2+ cells" (the other multi-commit tests above) from "day had
+     * exactly 1 cell and gains its 2nd" -- both must accumulate correctly rather than overwrite.
+     */
+    @Test
+    public void testMultiCommitAddsSecondCellToSingleCellDayMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0)");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','A',1.0)");
+            drainWalQueue();
+
+            final String rows2 = " values " +
+                    "('2020-01-01T12:00:00.000000Z','B',1.5), " +
+                    "('2020-01-02T00:00:00.000000Z','A',2.0), ('2020-01-02T12:00:00.000000Z','B',2.5)";
+            execute("insert into c" + rows2);
+            execute("insert into p" + rows2);
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+
+            assertPerDayExchCountsMatch("2020-01-01", "2020-01-02");
+            assertTablesMatch("c", "p");
+        });
+    }
+
+    /**
+     * Direct, targeted proof of the {@code TxReader#getNextPartitionTimestamp} split/cell-conflation
+     * fix, isolated from {@code finishO3Commit}'s separate fix (which stopped calling that method with
+     * an exact existing-day floor entirely, for a different reason -- see this task's report): commit 1
+     * gives day1 TWO existing cells (A, B) so a THIRD, brand-new cell's row landing at EXACTLY day1's
+     * floor timestamp in commit 2 forces {@code processO3BlockComposite}'s own outer range-finding call
+     * ({@code getCurrentPartitionMaxTimestamp(o3Timestamp)}, used to bound {@code srcOooHi} -- a
+     * DIRECT-ASSIGNMENT call this task's {@code finishO3Commit} fix does not touch, unlike the
+     * Math.max-guarded end-of-method update) to search a day with 2 existing same-floor entries. Without
+     * this task's fix that call returns day1's OWN floor (conflating cellB's sibling entry for a
+     * genuine split), i.e. a ceiling BEFORE this row's own timestamp -- which starves the bounded binary
+     * search into an empty range and (verified directly, before this fix existed) silently drops this
+     * row from dispatch entirely: not a crash, not an exception, just a vanished row -- table {@code c}
+     * commits "successfully" one row short of its plain twin. This is the sharpest, most concrete
+     * evidence that this fix belongs in the composite gate, not just the plain-degenerate no-op the
+     * rest of the composite dispatch's own tests happen to exercise.
+     */
+    @Test
+    public void testNewCellAtExactDayFloorExercisesGetNextPartitionTimestampFix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+
+            // Commit 1: day1 gets TWO existing cells (A, B) -- the precondition the conflation bug
+            // needs (a lone cell isn't enough: advancing past it lands exactly at the array's end,
+            // which already falls through to the correct ceil path regardless of this fix).
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','A',1.0), ('2020-01-01T12:00:00.000000Z','B',1.5)");
+            drainWalQueue();
+
+            // Commit 2: ONE row, brand-new cellC, at EXACTLY day1's floor timestamp -- the same exact
+            // instant as cellA's existing entry, with day1 already home to 2 cells.
+            execute("insert into c values ('2020-01-01T00:00:00.000000Z','C',9.0)");
+            execute("insert into p values ('2020-01-01T00:00:00.000000Z','C',9.0)");
+            drainWalQueue();
+
+            assertWalTableNotSuspended("c");
+            assertWalTableNotSuspended("p");
+            engine.releaseInactive();
+            assertTablesMatch("c", "p");
         });
     }
 
@@ -481,13 +634,54 @@ public class CompositeRoutingTest extends AbstractCairoTest {
 
     private void assertWalTableSuspendedWithMessage(String tableName, String expectedMessageSubstring) throws Exception {
         Assert.assertTrue(
-                tableName + " must be suspended after the not-yet-supported second commit",
+                tableName + " must be suspended after the not-yet-supported commit",
                 engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
         assertQuery("select suspended, errorMessage like '%" + expectedMessageSubstring + "%' clearMessage " +
                 "from wal_tables() where name = '" + tableName + "'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("suspended\tclearMessage\ntrue\ttrue\n");
+    }
+
+    /**
+     * Per-(day, exch) count parity between {@code c} and {@code p}, for every combination of the given
+     * ISO day strings crossed with exchanges A and B -- the exact granularity the dispatch asked for,
+     * finer than a table-wide {@code count()} (which could still coincidentally match even if two
+     * cells' rows were swapped between each other).
+     * <p>
+     * Deliberately filters on {@code to_str(ts, 'yyyy-MM-dd')} rather than a {@code ts >= day and ts <
+     * day+1} range: the latter is recognized by the SQL optimiser as a prunable interval and hits a
+     * PRE-EXISTING, out-of-scope bug in composite-table interval/partition-frame scanning that silently
+     * returns zero rows for a day whose cell(s) were not the table's most-recently-appended partition --
+     * reproduced directly (this task's own diagnostic) even for a composite table's ORIGINAL, already-
+     * green, single-commit acceptance-test data (day1 then day2 in one commit, no second commit involved
+     * at all), so it predates this task and is unrelated to per-cell frontiers. {@code to_str(...)} is an
+     * opaque per-row function the optimiser cannot fold into an interval, so it falls back to a plain
+     * filtered scan -- which this task's own diagnostics confirm reads composite data correctly -- and
+     * so measures exactly what this method is meant to measure without tripping over that separate gap.
+     * A plain table (like {@code p}) is unaffected by that gap either way (also confirmed directly); the
+     * same predicate shape is used on both sides here purely so the two queries stay textually parallel.
+     */
+    private void assertPerDayExchCountsMatch(String... isoDays) throws SqlException {
+        for (String day : isoDays) {
+            for (String exch : new String[]{"A", "B"}) {
+                String predicate = " where to_str(ts, 'yyyy-MM-dd') = '" + day + "' and exch = '" + exch + "'";
+                assertSqlCursors("select count() from p" + predicate, "select count() from c" + predicate);
+            }
+        }
+    }
+
+    /**
+     * Full-table parity between {@code c} and {@code p}: ordered scan, table-wide count, per-exchange
+     * count, and {@code LATEST ON} -- the exact assertions the dispatch's acceptance test named.
+     */
+    private void assertTablesMatch(String composite, String plain) throws SqlException {
+        assertSqlCursors("select ts, exch, px from " + plain + " order by ts, exch", "select ts, exch, px from " + composite + " order by ts, exch");
+        assertSqlCursors("select count() from " + plain, "select count() from " + composite);
+        assertSqlCursors("select exch, count() from " + plain + " order by exch", "select exch, count() from " + composite + " order by exch");
+        assertSqlCursors(
+                "select ts, exch, px from " + plain + " latest on ts partition by exch order by exch",
+                "select ts, exch, px from " + composite + " latest on ts partition by exch order by exch");
     }
 
     private static Set<String> setOf(String... values) {

@@ -7378,26 +7378,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw e;
                 }
             }
-            if (!isEmptyTable()
-                    && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
-                    && !isLastPartitionParquet()) {
-                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
-            }
-
-            // Data is written out successfully, however, we can still fail to set append position, for
-            // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
-            // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
-            // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
-            try {
-                // Set append position if this commit did not result in full table truncate
-                // which is possible with replace commits.
-                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
-                    setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+            // Plan 4a Task 5 (per-cell frontiers): a real (non-dormant) composite table's active-tail
+            // state (this.columns/lastOpenPartitionTs/the indexers) is NEVER a valid target for either
+            // call below -- processO3BlockComposite's own dispatch never touches this.columns (always
+            // async, resolving each cell's own path fresh; see its docs), so "the last partition" this
+            // reopen would target is the bare, non-cell day directory (the orphan-partition minor from
+            // Task 4), not any real cell. Before this fix this reopen ran unconditionally: harmless only
+            // by accident on a table's FIRST commit (the bare directory's files are freshly created and
+            // setAppendPosition's target size, txWriter.getTransientRowCount(), reads back as 0 for that
+            // scenario too -- see this task's report for why); a genuine SECOND-or-later commit (which
+            // Task 4's guard had blocked until this task) leaves getTransientRowCount() a real, nonzero
+            // per-cell value, and sizing the bare directory's never-written files to that many rows via
+            // setColumnAppendPosition's dataMem.jumpTo(...) corrupts the native heap (reproduced directly
+            // -- glibc "malloc(): corrupted top size" -- while building this fix). Skipping both calls
+            // outright for a real composite table is safe: nothing subsequently reads this.columns or
+            // lastOpenPartitionTs for correctness on such a table (every later composite dispatch
+            // resolves its own per-cell path fresh, never through the writer's single active-tail
+            // fields) -- confirmed by the full regression suite, including CompositePartitionDdlTest.
+            final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+            if (!composite) {
+                if (!isEmptyTable()
+                        && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
+                        && !isLastPartitionParquet()) {
+                    openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
                 }
-            } catch (Throwable e) {
-                LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
-                distressed = true;
-                throw e;
+
+                // Data is written out successfully, however, we can still fail to set append position, for
+                // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+                // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
+                // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
+                try {
+                    // Set append position if this commit did not result in full table truncate
+                    // which is possible with replace commits.
+                    if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
+                        setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+                    }
+                } catch (Throwable e) {
+                    LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
+                    distressed = true;
+                    throw e;
+                }
             }
 
             metrics.tableWriterMetrics().incrementO3Commits();
@@ -8827,6 +8847,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long commitTransientRowCount = txWriter.transientRowCount;
         boolean partitionsRemoved = false, firstPartitionRemoved = false, lastPartitionRemoved = false;
+        // Plan 4a Task 5 (per-cell frontiers). `txWriter.transientRowCount`/`fixedRowCount` must satisfy
+        // fixedRowCount + transientRowCount == total rows (TxReader#getRowCount), with transientRowCount
+        // specifically equal to the attachedPartitions array's LAST entry's own row count (by (ts ASC,
+        // cellKey ASC) sort order) and fixedRowCount the sum of every OTHER entry -- this is the
+        // invariant a plain table's single-entry-per-day layout makes trivial and this method must
+        // preserve exactly for a composite table too, where "the last entry" can be a sibling CELL of a
+        // day that already has other cells, not just a new calendar day. `trackedTailPartitionTimestamp`/
+        // `trackedTailCellKey` together identify WHICH (ts, cellKey) pair `commitTransientRowCount` is
+        // currently tracking, starting from the pre-commit tail (`lastPartitionTimestamp`, and its
+        // cellKey read directly off the array's own last entry -- the array is authoritative and
+        // unaffected by any of this method's bugs) and advancing to a NEW pair whenever a block's own
+        // (ts, cellKey) differs from what's tracked (that includes a genuinely later day, AND an
+        // ordinary sibling cell sharing the still-current day -- both must close out the previously
+        // tracked pair into fixedRowCount and start fresh). The field `lastPartitionTimestamp` itself is
+        // left untouched (other call sites, and the split handling further down, still read it for its
+        // own original meaning). For a plain table (or a still-dormant composite table) cellKey is
+        // always 0 on both sides of every comparison below (`getPartitionCellKey` returns 0 for a
+        // non-composite stride, and the per-block `cellKey` local a few lines down is 0 whenever the
+        // side-table has no entry for it) -- so every new cellKey-comparison term is a proven no-op
+        // there, and this whole rework is byte-identical to the original algorithm for a plain table.
+        // `composite` mirrors processO3Block's own dispatch decision exactly (dormant-with-preexisting-
+        // data tables always route through processO3BlockPlain and must keep the original single-
+        // active-tail semantics here too) and is used ONLY to skip the this.columns-touching special
+        // case below (never touched by composite dispatch in the first place -- see
+        // processO3BlockComposite's own docs), not the row-count accounting, which needs no such gate.
+        final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+        long trackedTailPartitionTimestamp = lastPartitionTimestamp;
+        int trackedTailCellKey = txWriter.getPartitionCount() > 0
+                ? txWriter.getPartitionCellKey(txWriter.getPartitionCount() - 1)
+                : -1; // sentinel: no real cellKey is ever negative, so this never accidentally matches
 
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
@@ -8893,7 +8943,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (!isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
+                // Composite: this.columns (the writer's single active-tail column-file handle set) is
+                // never touched by ANY composite dispatch (processO3BlockComposite always routes
+                // async, see its own docs) -- there is nothing valid here for closeActivePartition/
+                // setAppendPosition to close or reposition, so skip outright rather than risk a
+                // double-close/use-after-free when 2+ cells of the tracked tail day are each visited
+                // once per commit (a plain, or dormant-with-preexisting-data, table is unaffected --
+                // `composite` is false for both, byte-identical to before this task).
+                if (!composite && !isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(true);
@@ -8906,16 +8963,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (partitionTimestamp < lastPartitionTimestamp) {
-                    // increment fixedRowCount by number of rows old partition incremented
+                if (partitionTimestamp < trackedTailPartitionTimestamp) {
+                    // Strictly older than the (ts, cellKey) pair we're currently tracking -- always
+                    // immediately fixed, exactly as before (byte-identical to the original `<
+                    // lastPartitionTimestamp` check: blocks are visited in non-decreasing ts order
+                    // within a commit, so trackedTailPartitionTimestamp only ever advances to values
+                    // >= the pre-commit lastPartitionTimestamp -- this branch's outcome is unchanged).
+                    // Multiple cells sharing an OLDER day were never at risk of the overwrite this task
+                    // fixes -- each one lands here independently and simply adds its own delta,
+                    // unconditionally safe regardless of cell count.
                     txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
-                } else {
-                    if (partitionTimestamp != lastPartitionTimestamp) {
-                        txWriter.fixedRowCount += commitTransientRowCount;
-                    }
+                } else if (partitionTimestamp != trackedTailPartitionTimestamp || cellKey != trackedTailCellKey) {
+                    // A DIFFERENT (ts, cellKey) pair than the one we were tracking -- either a
+                    // genuinely later day, OR (the case a plain table can never hit) an ordinary
+                    // sibling CELL of the still-current day. Either way the pair we were tracking is
+                    // now definitively closed: fold its full accumulated total into fixedRowCount, then
+                    // start tracking this new pair fresh from this block's own contribution.
+                    txWriter.fixedRowCount += commitTransientRowCount;
+                    // If this "new" pair already existed before this commit (srcDataOldPartitionSize >
+                    // 0 -- only possible for a sibling cell being revisited, since a genuinely later day
+                    // can never have pre-existing data, see getNextPartitionTimestamp's own fix), its
+                    // old size was already folded into fixedRowCount in a PRIOR commit (it was not the
+                    // tracked tail then). Un-fix exactly that much: it is moving from "fixed" to "the
+                    // new tracked tail", not being counted twice. Always 0 for a plain table (proven:
+                    // by induction over this commit's non-decreasing blocks, any block strictly past
+                    // the previously-tracked pair has never been seen by the table before).
+                    txWriter.fixedRowCount -= srcDataOldPartitionSize;
+                    trackedTailPartitionTimestamp = partitionTimestamp;
+                    trackedTailCellKey = cellKey;
                     if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" active becomes fixed
+                        txWriter.fixedRowCount += srcDataNewPartitionSize;
+                        commitTransientRowCount = o3SplitPartitionSize;
+                    } else {
+                        commitTransientRowCount = srcDataNewPartitionSize;
+                    }
+                } else {
+                    // The EXACT SAME (ts, cellKey) pair as the one currently tracked, extended further
+                    // within this same commit -- commitTransientRowCount already equals this pair's
+                    // running total, so a direct overwrite is correct with no fixedRowCount adjustment,
+                    // exactly matching the original single-active-tail semantics.
+                    if (o3SplitPartitionSize > 0) {
                         txWriter.fixedRowCount += srcDataNewPartitionSize;
                         commitTransientRowCount = o3SplitPartitionSize;
                     } else {
@@ -8958,8 +9047,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // (a genuine split creates a brand-new sub-partition entry) -- the 4-arg overload
                     // would otherwise hardcode cellKey 0, misplacing a non-zero-cellKey split.
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn, cellKey);
-                    if (partitionTimestamp == lastPartitionTimestamp) {
-                        // Close the last partition without truncating it.
+                    if (!composite && partitionTimestamp == lastPartitionTimestamp) {
+                        // Close the last partition without truncating it. (Composite: this.columns is
+                        // never the active dispatch target -- see the guard above this loop's other
+                        // closeActivePartition/setAppendPosition special case for why this is skipped;
+                        // partition-SPLIT combined with composite has no test coverage today, but this
+                        // keeps it at least as safe as the rest of this method's composite handling.)
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
                         closeActivePartition(committedLastPartitionSize);
                     }
@@ -10009,25 +10102,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * routes through {@link #processO3BlockComposite} normally and interns real cells from its very
      * first row.
      * <p>
-     * <b>Fix wave 1 (loud second-commit guard).</b> A composite table's FIRST real per-cell-routing
-     * commit is proven correct end-to-end (physical cell directories, row counts, {@code
-     * table_partitions()}, all verified by this task's own acceptance test). The surrounding WAL-LAG /
-     * active-partition / last-partition-accounting machinery this task did not rewrite is, however,
-     * entirely day-granularity and cellKey-blind: {@code o3ConsumePartitionUpdateSink}'s {@code
-     * partitionTimestamp == lastPartitionTimestamp} special case, and (found empirically while building
-     * this guard -- a real, reproducible {@code AssertionError} table-suspension, not just a bookkeeping
-     * nit) {@code finishO3Commit}'s post-commit {@code openPartition} re-derive, which goes through
-     * {@code TxWriter#getNextPartitionTimestamp}. That method's "does the next attached-partition array
-     * entry share this timestamp's calendar day" check exists to detect a partition SPLIT's sibling
-     * sub-partition -- it cannot tell a split sibling apart from an ordinary sibling CELL on the same
-     * day, so once any day has 2+ cells, it silently returns the wrong (too-early) partition boundary.
-     * A second commit can therefore silently misroute/mis-account or crash the writer outright,
-     * depending on timing. Making any of this genuinely cellKey-aware is per-cell frontier tracking --
-     * explicitly out of scope for Task 4 (see {@link #processO3BlockComposite}'s own docs) and deferred
-     * to a follow-up task. Until that lands, a composite table that has already completed one real
-     * (non-dormant) per-cell-routing commit -- signalled by a non-empty {@code _cell} registry, exactly
-     * the inverse of {@link #isDormantWithPreexistingData()}'s own signal -- must fail loudly on any
-     * further commit rather than silently corrupt or non-deterministically crash.
+     * <b>Task 5 -- per-cell frontiers (multi-commit / continuous composite ingestion).</b> Task 4
+     * proved a composite table's FIRST real per-cell-routing commit correct end-to-end, then found the
+     * surrounding WAL-LAG / active-partition / last-partition-accounting machinery entirely
+     * day-granularity and cellKey-blind, and added a loud guard blocking every second-or-later commit
+     * rather than risk silent corruption. This task made that machinery cell-aware and removed the
+     * guard:
+     * <ul>
+     *     <li>{@link TxReader#getNextPartitionTimestamp}/{@link TxReader#getNextExistingPartitionTimestamp}
+     *     used to treat "the next attached-partition array entry shares this timestamp's calendar day"
+     *     as proof of a partition-SPLIT sibling -- it cannot tell a split sibling (a genuinely later,
+     *     non-floor ts sharing only the calendar floor) apart from an ordinary sibling CELL of the same
+     *     day (which shares the exact same, floor, ts). Both now skip every attached-partition entry
+     *     whose raw ts exactly equals the input before applying the split/next-day check, so {@code
+     *     partitionTimestampHi} advances correctly once any day has 2+ cells. A plain (or still-dormant
+     *     composite) table can never have two entries sharing an exact raw ts, so this is a proven
+     *     no-op there.</li>
+     *     <li>{@code o3ConsumePartitionUpdateSink}'s {@code partitionTimestamp == lastPartitionTimestamp}
+     *     special case assumed exactly one physical partition could match a given day. Its {@code
+     *     this.columns}-touching branch (close/reposition the writer's single active-tail column-file
+     *     handles) is now skipped outright for a real (non-dormant) composite table -- composite
+     *     dispatch never touches {@code this.columns} in the first place (see {@link
+     *     #processO3BlockComposite}), so there is nothing there to close/reposition, and calling it once
+     *     per sibling cell risked a double-close (reproduced directly as a native heap corruption while
+     *     building this fix). Its row-count accounting now tracks WHICH {@code (ts, cellKey)} pair is the
+     *     true tail (not just which day) -- the invariant {@code fixedRowCount + transientRowCount ==}
+     *     total rows requires {@code transientRowCount} to equal exactly the attachedPartitions array's
+     *     LAST entry's own count (mirroring the plain-table case, where that's automatic), so every OTHER
+     *     cell -- including an earlier sibling of the same day -- is folded fully into {@code
+     *     fixedRowCount} as soon as a later pair is seen, undoing the double-fold with an explicit
+     *     un-fix of any such pair's own pre-existing size. Getting this wrong either double-counts or
+     *     silently drops a cell's rows from {@link TxReader#getRowCount}.</li>
+     * </ul>
+     * The {@code guardCompositeSecondCommitNotYetSupported} this task removed exists only in history now
+     * (git blame). A composite table's second-or-later commit into any day it has NOT already routed
+     * real per-cell data into -- a brand-new day, a brand-new cell added to an existing (single- or
+     * multi-cell) day, or an out-of-order backfill into a brand-new earlier day -- routes correctly,
+     * proven by dedicated tests. A commit that instead EXTENDS an already-populated cell (merges into or
+     * appends after its existing rows) is NOT yet safe -- it reproduced a genuine native heap corruption
+     * while this task was built, in machinery below this dispatcher (likely {@code O3PartitionJob}/{@code
+     * O3OpenColumnJob}'s existing-cell read-back or nameTxn-versioning path, never previously exercised
+     * since Task 4's own guard blocked every second commit) that this task did not have time to fully
+     * diagnose. Per the project's safety rule, {@link #dispatchCompositeCellRange}'s own {@code
+     * srcDataMax > 0} check now blocks exactly that shape, loudly, rather than claim it works. See this
+     * task's own report for the precise mechanism, the full routes-correctly/throws matrix, and the
+     * suggested next investigation step.
+     * <p>
+     * One further mechanism this task deliberately leaves untouched: the direct, non-WAL {@code
+     * newRow}/{@code switchPartition} append path ({@code TxWriter#switchPartitions} still hardcodes
+     * cellKey 0 for the partition it opens) -- unreachable for any WAL table (the only kind routed
+     * through this method at all) and, for a non-WAL composite table, no worse than before this task: it
+     * still never resolves a real cellKey and stays on the single bare-directory partition sequence,
+     * self-consistently, exactly like a dormant table (never mixes cells, so {@code count()}/row totals
+     * stay correct; it just never gains physical per-cell separation via that ingestion mode).
      */
     private void processO3Block(
             final long o3LagRowCount,
@@ -10046,7 +10173,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0
                 && !isDormantWithPreexistingData();
         if (composite) {
-            guardCompositeSecondCommitNotYetSupported();
             processO3BlockComposite(
                     o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
                     o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
@@ -10056,29 +10182,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
                     o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
             );
-        }
-    }
-
-    /**
-     * Fix wave 1 (Plan 4a Task 4 follow-up, loud second-commit guard): throws if this composite table
-     * has already completed one real per-cell-routing commit, signalled by a non-empty {@code _cell}
-     * registry (the exact inverse of {@link #isDormantWithPreexistingData()}'s own signal -- a table
-     * that is still dormant, or genuinely plain, always has an empty registry here and this is a
-     * no-op). See {@link #processO3Block}'s own docs for why a second such commit is not yet safe.
-     * <p>
-     * Called from two places: as early as possible in {@link #processWalCommit} (before the
-     * pre-existing {@code assert maxTimestamp == Long.MIN_VALUE || ...} a second commit's now-stale
-     * {@code partitionTimestampHi} can otherwise trip, turning this into an uncontrolled {@code
-     * AssertionError} table suspension instead of a clear message), and again in {@link
-     * #processO3Block} itself so the non-WAL direct O3 commit path ({@code o3Commit}, which never goes
-     * through {@code processWalCommit}) is covered too.
-     */
-    private void guardCompositeSecondCommitNotYetSupported() {
-        if (metadata.getPartitionSpec().getDimensionCount() > 0 && getCompositeDictionaries().cellRegistry().size() > 0) {
-            throw CairoException.nonCritical()
-                    .put("composite partitioning does not yet support a second or later commit into a ")
-                    .put("table that has already routed real data per-cell (per-cell frontiers land in a ")
-                    .put("follow-up task) [table=").put(tableToken.getTableName()).put(']');
         }
     }
 
@@ -10861,6 +10964,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long srcDataMax = partitionIndexRaw > -1 ? getPartitionSizeByRawIndex(partitionIndexRaw) : 0;
         final long srcNameTxn = partitionIndexRaw > -1 ? getPartitionNameTxnByRawIndex(partitionIndexRaw) : txWriter.getTxn() - 1;
 
+        // Plan 4a Task 5 (per-cell frontiers) SAFETY GUARD, not a byte-identity/plain concern (plain
+        // tables never call this method). This task made repeated composite commits route correctly
+        // for every (ts, cellKey) pair that is BRAND NEW as of this commit -- proven end to end for a
+        // new day, a new cell added to an already-multi-cell day, a new cell added to a day that
+        // previously had only one cell, and an out-of-order backfill into a brand-new earlier day, all
+        // with dedicated passing tests. A commit that instead EXTENDS an already-populated cell
+        // (srcDataMax > 0 here -- this specific cell has real committed data from a PRIOR commit,
+        // whether this dispatch would merge/reshuffle it or purely append after it) hit a native heap
+        // corruption (glibc "malloc(): invalid size (unsorted)") reproduced directly while building this
+        // task -- likely in the async O3PartitionJob/O3OpenColumnJob nameTxn-versioning or existing-data
+        // read-back path for a composite cell specifically, since Task 4 never exercised (and this task
+        // did not find time to fully chase down) a real per-cell merge -- every prior test of that
+        // machinery, composite or plain, only ever exercised a brand-new partition. Per the project's
+        // safety rule (never silently misroute/mis-account -- an unresolved unsafe sequence gets a loud,
+        // narrow guard, not a claim of correctness), this specific shape still throws; every other
+        // repeated-commit shape above does not. Follow-up: read-back path for existing composite cell
+        // data (O3PartitionJob's merge-range planning / O3OpenColumnJob's existing-file open) -- see this
+        // task's report for the precise next investigation step.
+        if (srcDataMax > 0) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support a commit that extends an already-populated cell ")
+                    .put("(per-cell frontiers for in-place cell extension are not yet safe -- see Plan 4a Task 5's own ")
+                    .put("report) [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").put(partitionTimestamp)
+                    .put(", cellKey=").put(cellKey)
+                    .put(", existingRowCount=").put(srcDataMax)
+                    .put(']');
+        }
+
         final boolean isParquet = partitionIndexRaw > -1
                 ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
                 : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
@@ -11162,11 +11294,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableWriterPressureControl pressureControl,
             long wallClockMicros
     ) {
-        // Fix wave 1 (Plan 4a Task 4 follow-up): as early as possible, before the bootstrap/assert
-        // logic below that a composite table's second commit can otherwise trip (see
-        // guardCompositeSecondCommitNotYetSupported's own docs).
-        guardCompositeSecondCommitNotYetSupported();
-
         int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
         int walRootPathLen = walPath.size();
@@ -11180,6 +11307,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0L, txWriter.getTxn() - 1);
+            } else if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+                // Plan 4a Task 5 (per-cell frontiers): a real (non-dormant) composite table's
+                // this.columns is deliberately left closed between commits (finishO3Commit's own
+                // fix skips reopening it -- see that method's docs) since no valid single "last
+                // partition" exists for it to point at once any day has 2+ cells; every composite
+                // dispatch resolves its own per-cell path fresh regardless. isLastPartitionClosed()
+                // being true here is therefore the expected, permanent steady state for this kind of
+                // table -- not the "something went wrong resolving the last partition" case the
+                // throw below exists for -- so this is a deliberate no-op, not a bootstrap and not
+                // an error.
             } else if (!isLastPartitionParquet()) {
                 throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
                         .put(path).put(']');

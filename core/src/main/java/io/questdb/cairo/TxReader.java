@@ -332,6 +332,7 @@ public class TxReader implements Closeable, Mutable {
         } else {
             index += longsPerAttachedPartition;
         }
+        index = skipCompositeCellSiblings(index, timestamp);
         int nextIndex = index + PARTITION_TS_OFFSET;
         if (nextIndex < attachedPartitions.size()) {
             return attachedPartitions.get(nextIndex);
@@ -358,6 +359,7 @@ public class TxReader implements Closeable, Mutable {
         } else {
             index += longsPerAttachedPartition;
         }
+        index = skipCompositeCellSiblings(index, timestamp);
         int nextIndex = index + PARTITION_TS_OFFSET;
         if (nextIndex < attachedPartitions.size()) {
             long nextPartitionTs = attachedPartitions.getQuick(nextIndex);
@@ -366,6 +368,38 @@ public class TxReader implements Closeable, Mutable {
             }
         }
         return partitionCeilMethod.ceil(timestamp);
+    }
+
+    /**
+     * Composite-partitioning frontier fix (Plan 4a Task 5). A composite table can attach MULTIPLE
+     * {@code (ts, cellKey)} records that share the exact same {@code ts} -- one per sibling CELL of
+     * the same logical (day/month/year) partition, sorted {@code (ts ASC, cellKey ASC)} (see {@link
+     * #findAttachedPartitionRawIndexBy}). A genuine partition-SPLIT sibling is different: it shares
+     * only the same calendar FLOOR, not the same raw {@code ts} (the split point is always a real,
+     * later-than-floor timestamp). {@link #getNextPartitionTimestamp}/{@link
+     * #getNextExistingPartitionTimestamp} both need "the next entry that is NOT just another cell of
+     * the same logical partition {@code timestamp} itself already denotes" -- so this skips every
+     * attached-partition run whose raw ts is EXACTLY EQUAL to {@code timestamp} before the caller's own
+     * split-vs-next-day (or existing-partition) logic runs. For a plain table (or a still-dormant
+     * composite table, stride 4) this is a guaranteed no-op: two attached-partition entries can never
+     * share the exact same raw ts there (a split's second sub-partition always has a distinct, later
+     * ts), so the loop below never executes an iteration and every plain-table caller sees byte-
+     * identical behaviour to before this method existed.
+     *
+     * @param index     a raw attached-partition index already advanced past any EXACT match for
+     *                  {@code timestamp} the caller's own binary search found (i.e. the first
+     *                  candidate "next" entry, which may itself be a same-ts cell sibling)
+     * @param timestamp the raw ts every skipped entry must exactly equal to be considered a sibling
+     * @return the first raw index whose ts differs from {@code timestamp} (or an out-of-bounds index
+     * if the array ends first)
+     */
+    private int skipCompositeCellSiblings(int index, long timestamp) {
+        if (longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE) {
+            while (index < attachedPartitions.size() && attachedPartitions.getQuick(index + PARTITION_TS_OFFSET) == timestamp) {
+                index += longsPerAttachedPartition;
+            }
+        }
+        return index;
     }
 
     /**
