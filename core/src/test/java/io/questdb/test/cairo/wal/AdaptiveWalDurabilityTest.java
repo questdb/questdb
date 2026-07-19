@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Files;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -559,6 +560,76 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched()));
     }
 
+    // ---------- Task 2: legacy sync() == master (revert S2 + gate append-only) ----------
+
+    /**
+     * SYNC: a WAL commit must NOT issue fdatasync on extend (S2 reverted) — the memory primitive's
+     * {@code sync()} must take its non-appendOnly {@code else} branch (full-range {@code msync} only,
+     * byte-identical to master) for legacy (non-ADAPTIVE) commit modes.
+     *
+     * <p>We do a warmup insert first (to pre-allocate all file pages so page-extension fdatasyncs from
+     * that insert don't pollute the measurement), then reset the counters and do the measurement insert.
+     *
+     * <p>This test asserts only the {@code fdatasync} revert. The {@code syncfs}-on-apply revert (S1) is
+     * Task 3's concern (its own {@code testSyncModeNoSyncfs}); we deliberately do NOT assert
+     * {@code syncfsCount == 0} here because the SYNC apply still routes through the batched
+     * {@code syncfs} path until Task 3 removes it.
+     *
+     * <p>DEVIATION FROM BRIEF (documented in the Task 2 report): the brief's literal single-warmup-row
+     * + single-measurement-row bodies never actually cross a page boundary at the default 1MB/16MB
+     * column page sizes, so {@code fdatasyncCount == 0} trivially even WITHOUT the S2 revert (verified
+     * empirically: pre-fix run showed {@code fdatasync=0}) — a vacuous, non-discriminating RED. To make
+     * this a genuine regression guard we (1) shrink both the WAL-segment and table-partition column
+     * page size to one OS page (4096 bytes) so a handful of 16-byte rows crosses an extend boundary,
+     * and (2) make the measurement insert 1000 rows (one WAL commit, via {@code long_sequence}) so at
+     * least one real {@code extend()} happens on both the WAL segment and the applied partition column
+     * files. This reproduced genuine RED (fdatasyncCount > 0) before the fix, below.
+     */
+    @Test
+    public void testSyncModeNoFdatasyncOnExtend() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        // Shrink column page sizes to one OS page so the 1000-row measurement insert below genuinely
+        // extends the mapped file (see DEVIATION note above) instead of fitting entirely inside the
+        // default 1MB/16MB initial allocation.
+        node1.setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(Files.PAGE_SIZE));
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(Files.PAGE_SIZE));
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)"); // warmup: allocate first page
+            drainWalQueue();
+            ff.reset();
+            // 1000 rows (16 bytes/row) comfortably cross the 4096-byte page in one commit, forcing a
+            // real mmap extend on both the WAL segment and the applied table-partition column files.
+            execute("insert into x select timestamp_sequence('2024-01-01T00:01:00.000000Z', 1000000L), x from long_sequence(1000)");
+            drainWalQueue();
+            Assert.assertEquals("SYNC must issue 0 fdatasync (S2 reverted)", 0, ff.fdatasyncCount);
+            Assert.assertTrue("SYNC must still msync(MS_SYNC) on the WAL commit", ff.msyncSync > 0);
+        });
+    }
+
+    /**
+     * ADAPTIVE: after the legacy-path revert above, adaptive's WAL-commit durability must remain intact.
+     * Adaptive's fdatasync comes from the explicit {@code ff.fdatasync(column.getFd())} loop in
+     * {@code WalWriter.syncIfRequired()} (Task A) — independent of the memory primitive's own
+     * fdatasync-on-extend (just reverted for legacy modes) — so this must still pass unchanged.
+     */
+    @Test
+    public void testAdaptiveStillFsyncsAfterLegacyRevert() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0); // epoch every batch
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            ff.reset();
+            execute("insert into x values ('2024-01-01T00:01:00.000000Z', 2)");
+            drainWalQueue(); // WAL commit + apply + epoch
+            Assert.assertTrue("adaptive WAL commit must still fdatasync columns", ff.fdatasyncCount > 0);
+        });
+    }
+
     private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(baseFileName).put(".epoch");
@@ -845,6 +916,47 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             if (fd > -1) {
                 fdToPath.put(fd, Utf8String.newInstance(name).toString());
             }
+        }
+    }
+
+    /**
+     * A FilesFacade that counts every {@code msync} (split sync/async), {@code fdatasync},
+     * {@code fsync}, and {@code syncfs} call, with no path filtering. Used by the Task 2/3 legacy
+     * vs. adaptive sync() revert tests, which only need raw syscall counts (not per-file attribution).
+     */
+    static class SyscallCountingFacade extends TestFilesFacadeImpl {
+        int fdatasyncCount, fsyncCount, msyncAsync, msyncSync, syncfsCount;
+
+        void reset() {
+            msyncSync = msyncAsync = fdatasyncCount = fsyncCount = syncfsCount = 0;
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            fdatasyncCount++;
+            super.fdatasync(fd);
+        }
+
+        @Override
+        public void fsync(long fd) {
+            fsyncCount++;
+            super.fsync(fd);
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            if (async) {
+                msyncAsync++;
+            } else {
+                msyncSync++;
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public void syncfs(long fd) {
+            syncfsCount++;
+            super.syncfs(fd);
         }
     }
 }

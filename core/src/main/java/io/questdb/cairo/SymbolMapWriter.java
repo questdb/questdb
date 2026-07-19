@@ -68,6 +68,12 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private int symbolCapacity;
     private int symbolIndexInTxWriter;
 
+    /**
+     * @param charMemAppendOnly true to narrow the symbol CHAR memory's SYNC msync to the appended
+     *                          range (safe only under {@link CommitMode#ADAPTIVE} table columns);
+     *                          false (legacy/default) keeps the full-extent msync, byte-identical
+     *                          to master.
+     */
     public SymbolMapWriter(
             CairoConfiguration configuration,
             Path path,
@@ -76,7 +82,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             int symbolCount,
             int symbolIndexInTxWriter,
             @NotNull SymbolValueCountCollector valueCountCollector,
-            int columnIndex
+            int columnIndex,
+            boolean charMemAppendOnly
     ) {
         final int plen = path.size();
         try {
@@ -128,10 +135,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             );
             // Symbol CHAR memory stores symbol string values strictly by appending (charMem.putStr)
             // and moving the cursor with jumpTo/truncate; it never does in-place put*(offset,..).
-            // Safe to narrow the SYNC msync to the written range. NOTE: only charMem is append-only;
-            // offsetMem stays full-extent (updateNullFlag does an in-place putBool at offset 0) and
-            // the bitmap index .k/.v stay full-extent (random-access writes below the high-water mark).
-            charMem.setAppendOnly(true);
+            // Safe to narrow the SYNC msync to the written range -- but ONLY under ADAPTIVE (see
+            // charMemAppendOnly javadoc on the ctor param); legacy modes pass false so charMem takes
+            // the full-extent msync path (byte-identical to master). NOTE: only charMem is ever
+            // append-only; offsetMem stays full-extent (updateNullFlag does an in-place putBool at
+            // offset 0) and the bitmap index .k/.v stay full-extent (random-access writes below the
+            // high-water mark).
+            charMem.setAppendOnly(charMemAppendOnly);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);

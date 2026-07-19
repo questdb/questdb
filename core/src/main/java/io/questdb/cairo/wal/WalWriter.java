@@ -1585,8 +1585,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             );
             // WAL column DATA vector is strictly append-only (row values appended via put*(value),
             // cursor moved only with jumpTo/truncate), so the SYNC msync can be narrowed to the
-            // written range. Re-set after every of() because WAL reuses the PMAR across segments.
-            dataMem.setAppendOnly(true);
+            // written range -- but ONLY under ADAPTIVE: legacy modes keep appendOnly=false so sync()
+            // takes its full-extent else branch, byte-identical to master. Re-set after every of()
+            // because WAL reuses the PMAR across segments.
+            final boolean columnAppendOnly = walCommitMode() == CommitMode.ADAPTIVE;
+            dataMem.setAppendOnly(columnAppendOnly);
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
             if (auxMem != null) {
@@ -1602,9 +1605,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         configuration.getWriterFileOpenOpts(),
                         columnsMadviseMode
                 );
-                // WAL column AUX vector is likewise strictly append-only (configureAuxMemMA re-opens
-                // it via of(), so set the flag afterwards).
-                auxMem.setAppendOnly(true);
+                // WAL column AUX vector is likewise strictly append-only under ADAPTIVE only
+                // (configureAuxMemMA re-opens it via of(), so set the flag afterwards).
+                auxMem.setAppendOnly(columnAppendOnly);
             }
         } finally {
             path.trimTo(pathTrimToLen);
