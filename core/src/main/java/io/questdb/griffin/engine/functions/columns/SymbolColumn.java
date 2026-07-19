@@ -120,13 +120,13 @@ public class SymbolColumn extends SymbolFunction implements ColumnFunction {
     }
 
     @Override
-    public boolean supportsParallelism() {
-        return true;
+    public boolean supportsKeyValueAccess() {
+        return symbolTable != null && symbolTable.supportsKeyValueAccess();
     }
 
     @Override
-    public boolean supportsKeyValueAccess() {
-        return symbolTable != null && symbolTable.supportsKeyValueAccess();
+    public boolean supportsParallelism() {
+        return true;
     }
 
     @Override

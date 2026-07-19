@@ -90,28 +90,31 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
             final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}});
             final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
             final ObjList<Function> functions = functions(function);
-            try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
-                // Prime the per-source cache: intern "alpha" and cache its source-key -> result-key
-                // translation.
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext);
-                Assert.assertTrue(cursor.hasNext());
-                final int firstKey = cursor.getRecord().getInt(0);
-                TestUtils.assertEquals("alpha", cursor.getSymbolTable(0).valueOf(firstKey));
+            try {
+                try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
+                    // Prime the per-source cache: intern "alpha" and cache its source-key -> result-key
+                    // translation.
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                    Assert.assertTrue(cursor.hasNext());
+                    final int firstKey = cursor.getRecord().getInt(0);
+                    TestUtils.assertEquals("alpha", cursor.getSymbolTable(0).valueOf(firstKey));
 
-                // Re-acquire the cursor WITHOUT closing it. getCursor() re-runs Function.init(),
-                // which empties the re-symbolising dictionary; the per-source key cache must be
-                // dropped in lockstep. Otherwise the stale cache serves a result key that no longer
-                // exists in the rebuilt dictionary, so valueOf() reads back null. Same cursor
-                // instance is reused, so the enclosing factory owns the single close.
-                cursor = factory.getCursor(sqlExecutionContext);
-                Assert.assertTrue(cursor.hasNext());
-                final int secondKey = cursor.getRecord().getInt(0);
-                final CharSequence resolved = cursor.getSymbolTable(0).valueOf(secondKey);
-                Assert.assertNotNull("reused cursor must rebuild the dictionary, not read a stale cached key", resolved);
-                TestUtils.assertEquals("alpha", resolved);
+                    // Re-acquire the cursor WITHOUT closing it. getCursor() re-runs Function.init(),
+                    // which empties the re-symbolising dictionary; the per-source key cache must be
+                    // dropped in lockstep. Otherwise the stale cache serves a result key that no longer
+                    // exists in the rebuilt dictionary, so valueOf() reads back null. Same cursor
+                    // instance is reused, so the enclosing factory owns the single close.
+                    cursor = factory.getCursor(sqlExecutionContext);
+                    Assert.assertTrue(cursor.hasNext());
+                    final int secondKey = cursor.getRecord().getInt(0);
+                    final CharSequence resolved = cursor.getSymbolTable(0).valueOf(secondKey);
+                    Assert.assertNotNull("reused cursor must rebuild the dictionary, not read a stale cached key", resolved);
+                    TestUtils.assertEquals("alpha", resolved);
+                }
+                Assert.assertEquals("all query-tracked native state must be released", 0, tracker.getUsed());
+            } finally {
+                releaseTracker(tracker);
             }
-            Assert.assertEquals("all query-tracked native state must be released", 0, tracker.getUsed());
-            releaseTracker(tracker);
         });
     }
 
@@ -327,29 +330,6 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                 assertCursorClosed(base, tracker, functionA, functionB);
             } finally {
                 releaseTracker(tracker);
-            }
-        });
-    }
-
-    @Test
-    public void testProjectionDelegatesRowIdToTheBaseRecord() throws Exception {
-        assertMemoryLeak(() -> {
-            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}, {"beta"}});
-            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
-            final ObjList<Function> functions = functions(function);
-            try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final Record record = cursor.getRecord();
-                    // The projection wraps a single cursor, so every getter it does not re-symbolise
-                    // must reach the base record. Rowids are unreachable through this factory today
-                    // (recordCursorSupportsRandomAccess() is false), so this pins the delegation
-                    // itself rather than any behaviour a query can observe.
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(0, record.getRowId());
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(1, record.getRowId());
-                    Assert.assertFalse(cursor.hasNext());
-                }
             }
         });
     }

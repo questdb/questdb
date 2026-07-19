@@ -532,11 +532,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    @Nullable
-    private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
+    @Nullable
+    private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -584,11 +584,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return expected;
-    }
-
-    @TestOnly
-    public void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
-        this.unionSymbolProjectionTestHook = hook;
     }
 
     public static int getUnionCastType(int typeA, int typeB) throws SqlException {
@@ -815,6 +810,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
         return recordComparatorCompiler;
+    }
+
+    @TestOnly
+    public void setUnionSymbolProjectionTestHook(@Nullable UnionSymbolProjectionTestHook hook) {
+        this.unionSymbolProjectionTestHook = hook;
     }
 
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
@@ -1738,16 +1738,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadataB,
             boolean symbolDisallowed,
             IntList symbolUnionColumns,
-            boolean seedSymbolUnionColumns
+            boolean isSeedRequired
     ) {
         int columnCount = metadataA.getColumnCount();
         assert columnCount == metadataB.getColumnCount();
-        assert !seedSymbolUnionColumns || symbolUnionColumns.size() == 0;
+        assert !isSeedRequired || symbolUnionColumns.size() == 0;
 
         boolean castIsRequired = false;
         int candidateIndex = 0;
         final int candidateCount = symbolUnionColumns.size();
-        int nextCandidate = !seedSymbolUnionColumns && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
+        int nextCandidate = !isSeedRequired && candidateCount > 0 ? symbolUnionColumns.getQuick(0) : -1;
         int retainedCandidateCount = 0;
         // This compatibility pass already has to read every column in a UNION segment. Seed the
         // sorted SYMBOL candidate list here, then compact it in place on later legs so tracking
@@ -1758,7 +1758,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (typeA != typeB || (typeA == SYMBOL && symbolDisallowed)) {
                 castIsRequired = true;
             }
-            if (seedSymbolUnionColumns) {
+            if (isSeedRequired) {
                 if (isSymbol(typeA) && isSymbol(typeB)) {
                     symbolUnionColumns.add(i);
                 }
@@ -1771,7 +1771,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         : -1;
             }
         }
-        if (!seedSymbolUnionColumns) {
+        if (!isSeedRequired) {
             symbolUnionColumns.setPos(retainedCandidateCount);
         }
         return castIsRequired;
@@ -10419,14 +10419,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             switch (setOperationType) {
                 case IQueryModel.SET_OPERATION_UNION: {
-                    final boolean seedSymbolUnionColumns = symbolUnionColumns == null;
-                    final IntList nextSymbolUnionColumns = seedSymbolUnionColumns ? new IntList(0) : symbolUnionColumns;
+                    final boolean isSeedRequired = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = isSeedRequired ? new IntList(0) : symbolUnionColumns;
                     final boolean castIsRequired = checkIfSetCastIsRequired(
                             metadataA,
                             metadataB,
                             true,
                             nextSymbolUnionColumns,
-                            seedSymbolUnionColumns
+                            isSeedRequired
                     );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
@@ -10447,14 +10447,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
                 case IQueryModel.SET_OPERATION_UNION_ALL: {
-                    final boolean seedSymbolUnionColumns = symbolUnionColumns == null;
-                    final IntList nextSymbolUnionColumns = seedSymbolUnionColumns ? new IntList(0) : symbolUnionColumns;
+                    final boolean isSeedRequired = symbolUnionColumns == null;
+                    final IntList nextSymbolUnionColumns = isSeedRequired ? new IntList(0) : symbolUnionColumns;
                     final boolean castIsRequired = checkIfSetCastIsRequired(
                             metadataA,
                             metadataB,
                             true,
                             nextSymbolUnionColumns,
-                            seedSymbolUnionColumns
+                            isSeedRequired
                     );
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {

@@ -8534,8 +8534,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Keep the input cardinality high enough to exercise dictionary growth without
             // making the regression depend on the test JVM's heap size.
-            execute("CREATE TABLE ta AS (SELECT x::symbol s FROM long_sequence(50_000))");
-            execute("CREATE TABLE tb AS (SELECT (x + 50_000)::symbol s FROM long_sequence(50_000))");
+            execute("CREATE TABLE ta AS (SELECT x::SYMBOL s FROM long_sequence(50_000))");
+            execute("CREATE TABLE tb AS (SELECT (x + 50_000)::SYMBOL s FROM long_sequence(50_000))");
 
             try (RecordCursorFactory factory = select("SELECT count(s) FROM (ta UNION ALL tb)")) {
                 final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
@@ -8643,8 +8643,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionOfSymbolColumnsDynamicEqualityDoesNotMaterializeKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE ta AS (SELECT x::symbol s, x::symbol expected FROM long_sequence(1000))");
-            execute("CREATE TABLE tb AS (SELECT (x + 1000)::symbol s, (x + 1001)::symbol expected FROM long_sequence(1000))");
+            execute("CREATE TABLE ta AS (SELECT x::SYMBOL s, x::SYMBOL expected FROM long_sequence(1000))");
+            execute("CREATE TABLE tb AS (SELECT (x + 1000)::SYMBOL s, (x + 1001)::SYMBOL expected FROM long_sequence(1000))");
 
             try (RecordCursorFactory factory = select("SELECT s FROM (ta UNION ALL tb) WHERE s = expected")) {
                 final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = findUnionSymbolCasts(factory);
@@ -8699,7 +8699,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL)");
             execute("CREATE TABLE tb (s SYMBOL)");
-            execute("INSERT INTO ta VALUES ('a'), (null)");
+            execute("INSERT INTO ta VALUES ('a'), (NULL)");
             execute("INSERT INTO tb VALUES ('b'), ('a')");
             execute("CREATE TABLE t_str (s STRING)");
             execute("CREATE TABLE t_varchar (s VARCHAR)");

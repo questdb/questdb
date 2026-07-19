@@ -47,7 +47,7 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
     // by key. This pins the contract: a value seen only through getSymbol consumes no
     // symbol key, so the first value routed through getInt is assigned key 0.
     @Test
-    public void testGetSymbolIsPassThroughAndConsumesNoSymbolKey() throws Exception {
+    public void testGetSymbolPassThroughAndDictionaryLifecycle() throws Exception {
         // The dictionary allocates native memory even without a query tracker, so wrap the body
         // in assertMemoryLeak: a missing free in releaseDictionary() must surface here too, not
         // only in the tracker-bound sibling tests.
