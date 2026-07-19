@@ -338,6 +338,34 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNotKeyedSharedCursorIsUnsupportedWithoutFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE tab AS (SELECT x v FROM long_sequence(10))", sqlExecutionContext);
+                        try (RecordCursorFactory factory = compiler.compile("SELECT sum(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
+                            RecordCursorFactory asyncFactory = factory;
+                            while (asyncFactory != null && !(asyncFactory instanceof AsyncGroupByNotKeyedRecordCursorFactory)) {
+                                asyncFactory = asyncFactory.getBaseFactory();
+                            }
+                            Assert.assertNotNull(asyncFactory);
+                            final RecordCursorFactory factoryWithoutSharedFunctions = asyncFactory;
+                            Assert.assertThrows(
+                                    UnsupportedOperationException.class,
+                                    () -> factoryWithoutSharedFunctions.getSharedCursor(sqlExecutionContext, 1)
+                            );
+                            Assert.assertFalse(factoryWithoutSharedFunctions.supportsSharedCursors());
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelShardedGroupByReleasesAllocations() throws Exception {
         // A moderate-cardinality keyed GROUP BY crosses the sharding threshold, so the
         // per-fragment shard maps and the destination shards are allocated under the

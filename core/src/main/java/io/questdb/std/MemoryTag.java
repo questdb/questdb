@@ -48,6 +48,8 @@ public final class MemoryTag {
     // All malloc calls should use NATIVE_* tags
     public static final int NATIVE_PATH = MMAP_PARQUET_METADATA_READER + 1;
     public static final int NATIVE_DEFAULT = NATIVE_PATH + 1;
+    // Keep the former circuit-breaker tags reserved so removing them does not renumber every later tag.
+    // Memory metrics and allocation error diagnostics expose these tag identities.
     public static final int NATIVE_CB2 = NATIVE_DEFAULT + 1;
     public static final int NATIVE_CB3 = NATIVE_CB2 + 1;
     public static final int NATIVE_CB4 = NATIVE_CB3 + 1;

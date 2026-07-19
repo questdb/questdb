@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -64,9 +65,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     private static final int VAL_MASTER_PREV = 0;
     private static final int VAL_SLAVE_NEXT = 3;
     private static final int VAL_SLAVE_PREV = 2;
-    private final SpliceJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private SpliceJoinLightRecordCursor cursor;
 
     public SpliceJoinLightRecordCursorFactory(
             CairoConfiguration cairoConfiguration,
@@ -155,10 +156,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
+        final SpliceJoinLightRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {

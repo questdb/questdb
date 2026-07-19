@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -125,9 +126,21 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(pageFrameCursor);
-        path = Misc.free(path);
-        Misc.freeObjListAndClear(this.pushdownFilterConditions);
+        final PageFrameRecordCursorImpl cursor = this.cursor;
+        this.cursor = null;
+        final ReadParquetPageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        final Path path = this.path;
+        this.path = null;
+        final ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = this.pushdownFilterConditions;
+        this.pushdownFilterConditions = null;
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, pageFrameCursor);
+        failure = Misc.freeBestEffort(failure, path);
+        failure = Misc.freeObjListBestEffort(failure, pushdownFilterConditions);
+        if (pushdownFilterConditions != null) {
+            pushdownFilterConditions.clear();
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

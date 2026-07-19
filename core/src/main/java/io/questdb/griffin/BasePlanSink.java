@@ -41,7 +41,6 @@ import org.jetbrains.annotations.TestOnly;
 public abstract class BasePlanSink implements PlanSink {
 
     protected final ObjStack<RecordCursorFactory> factoryStack;
-    protected final HtmlEscapingStringSink htmlSink;
     protected final EscapingStringSink textSink;
     protected int depth;
     protected SqlExecutionContext executionContext;
@@ -51,7 +50,6 @@ public abstract class BasePlanSink implements PlanSink {
     protected boolean useBaseMetadata;
 
     public BasePlanSink() {
-        this.htmlSink = new HtmlEscapingStringSink();
         this.textSink = new EscapingStringSink();
         this.sink = textSink;
         this.depth = 0;
@@ -126,10 +124,16 @@ public abstract class BasePlanSink implements PlanSink {
 
     @Override
     public PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata) {
+        // Save and restore instead of resetting to false: a rendered value can itself contain a
+        // nested factory plan (e.g. a cursor function rendering its sub-query), whose own optAttr
+        // calls must not clobber the flag for the remainder of the enclosing attribute.
+        final boolean wasUsingBaseMetadata = this.useBaseMetadata;
         this.useBaseMetadata = useBaseMetadata;
-        optAttr(name, value);
-        this.useBaseMetadata = false;
-        return this;
+        try {
+            return optAttr(name, value);
+        } finally {
+            this.useBaseMetadata = wasUsingBaseMetadata;
+        }
     }
 
     @Override
@@ -142,10 +146,16 @@ public abstract class BasePlanSink implements PlanSink {
 
     @Override
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata) {
+        // Save and restore instead of resetting to false: a list entry can itself contain a
+        // nested factory plan (e.g. a cursor function rendering its sub-query), whose own optAttr
+        // calls must not clobber the flag for the entries that follow it.
+        final boolean wasUsingBaseMetadata = this.useBaseMetadata;
         this.useBaseMetadata = useBaseMetadata;
-        optAttr(name, value);
-        this.useBaseMetadata = false;
-        return this;
+        try {
+            return optAttr(name, value);
+        } finally {
+            this.useBaseMetadata = wasUsingBaseMetadata;
+        }
     }
 
     @Override
@@ -305,15 +315,4 @@ public abstract class BasePlanSink implements PlanSink {
         }
     }
 
-    protected static class HtmlEscapingStringSink extends EscapingStringSink {
-        protected void escape(char c) {
-            if (c == '<') {
-                super.put("&lt;");
-            } else if (c == '>') {
-                super.put("&gt;");
-            } else {
-                super.escape(c);
-            }
-        }
-    }
 }

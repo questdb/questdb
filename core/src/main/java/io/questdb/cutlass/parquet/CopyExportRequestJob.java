@@ -181,7 +181,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             } catch (CopyExportException e) {
                 copyContext.updateStatus(
                         e.getPhase(),
-                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        CopyExportRequestTask.classifyFailureStatus(circuitBreaker),
                         null,
                         Numbers.INT_NULL,
                         e.getFlyweightMessage(),
@@ -192,7 +192,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             } catch (Throwable e) {
                 copyContext.updateStatus(
                         phase,
-                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        CopyExportRequestTask.classifyFailureStatus(circuitBreaker),
                         null,
                         Numbers.INT_NULL,
                         e.getMessage(),

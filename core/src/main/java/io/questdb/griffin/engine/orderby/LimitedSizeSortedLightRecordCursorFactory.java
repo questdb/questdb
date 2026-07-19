@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Function;
@@ -47,14 +48,14 @@ import org.jetbrains.annotations.Nullable;
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
     private final Function hiFunction;
     private final Function loFunction;
-    private final ListColumnFilter sortColumnFilter;
     private final ObjList<DirectIntList> rankMaps;
+    private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
     // factory does not own the chain, just keeps the reference to enable updating of the limits
     private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
@@ -264,7 +265,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final DelegatingRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }
