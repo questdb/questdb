@@ -3342,6 +3342,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // pick up the change. The WAL-commit path reads the tracker (republished here) on its next commit.
         this.effectiveCommitMode = CommitMode.effectiveCommitMode(commitMode, configuration.getCommitMode());
         publishEffectiveCommitMode();
+        // Re-apply the append-only narrowing to columns that are ALREADY open (see openColumnFiles()):
+        // it is only set at column-open time, so without this an ADAPTIVE<->legacy flip on a live writer
+        // would leave open columns with a stale appendOnly flag until their next reopen -- a transient
+        // violation of "legacy sync() == master" (design spec S2).
+        reapplyColumnAppendOnly(effectiveCommitMode == CommitMode.ADAPTIVE);
+    }
+
+    /**
+     * Re-applies {@link io.questdb.cairo.vm.api.MemoryMA#setAppendOnly(boolean)} to every currently-open
+     * data/aux column memory and dense symbol writer CHAR memory, enumerated exactly as
+     * {@link #syncColumns0} and {@link #syncColumnsBatchedSync} do. Needed because the flag is otherwise
+     * only (re)applied at column-open time ({@code openColumnFiles} / the {@code SymbolMapWriter} ctor),
+     * so {@link #setMetaCommitMode} must call this to keep already-open columns in sync with a commit-mode
+     * change instead of waiting for their next reopen.
+     */
+    private void reapplyColumnAppendOnly(boolean appendOnly) {
+        for (int i = 0; i < columnCount; i++) {
+            columns.getQuick(i * 2).setAppendOnly(appendOnly);
+            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
+            if (m2 != null) {
+                m2.setAppendOnly(appendOnly);
+            }
+        }
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            denseSymbolMapWriters.getQuick(i).setAppendOnly(appendOnly);
+        }
     }
 
     @Override

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Files;
+import io.questdb.std.LongList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -630,6 +631,123 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * ASYNC: a WAL commit must issue {@code msync(MS_ASYNC)} only — never a blocking
+     * {@code msync(MS_SYNC)}, never {@code fdatasync}, never {@code syncfs}. Spec Testing plan item 2
+     * (only the SYNC case was covered above, by {@code testSyncModeNoFdatasyncOnExtend} /
+     * {@code testSyncModeNoSyncfs}).
+     */
+    @Test
+    public void testAsyncModeMsyncAsyncOnly() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            ff.reset();
+            execute("insert into x values ('2024-01-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+            Assert.assertTrue("ASYNC must issue msync(MS_ASYNC)", ff.msyncAsync > 0);
+            Assert.assertEquals("ASYNC must not issue fdatasync", 0, ff.fdatasyncCount);
+            Assert.assertEquals("ASYNC must not issue syncfs", 0, ff.syncfsCount);
+        });
+    }
+
+    /**
+     * NOSYNC: a WAL commit + apply must issue zero device flushes — no {@code fdatasync}, no
+     * {@code syncfs}. Spec Testing plan item 3.
+     */
+    @Test
+    public void testNosyncModeNoSyncs() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            ff.reset();
+            execute("insert into x values ('2024-01-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+            Assert.assertEquals("NOSYNC must not issue fdatasync", 0, ff.fdatasyncCount);
+            Assert.assertEquals("NOSYNC must not issue syncfs", 0, ff.syncfsCount);
+        });
+    }
+
+    // ---------- Task 2b: ALTER commit_mode re-applies appendOnly to already-open columns ----------
+
+    /**
+     * ADAPTIVE -> SYNC via {@code ALTER TABLE ... SET PARAM commit_mode}: table-partition data
+     * columns opened while the table was ADAPTIVE have {@code appendOnly=true} (see
+     * {@code TableWriter.openColumnFiles}). {@code TableWriter.setMetaCommitMode} must re-apply
+     * {@code setAppendOnly(effectiveCommitMode == ADAPTIVE)} to those ALREADY-OPEN columns
+     * immediately, or a subsequent legacy commit keeps taking the ADAPTIVE-only narrowed
+     * {@code msync} (range = appended bytes) instead of master's full-extent one (range = the
+     * column's mapped size) until the column is next reopened — a transient violation of "legacy
+     * sync() == master" (design spec S2).
+     *
+     * <p>The table-partition column page size is shrunk to exactly one OS page
+     * ({@code Files.PAGE_SIZE}) so a column's full mapped extent is a small, exact, known constant,
+     * cleanly distinguishable from the tiny number of bytes appended by a single row.
+     * {@code SyscallCountingFacade.tableColumnMsyncLengths} isolates msync lengths to TABLE
+     * PARTITION COLUMN files only (excluding WAL-segment and {@code _txn}/{@code _cv}/{@code _meta}
+     * control-file syncs — see {@code isTablePartitionColumnFile}), so the assertion is unambiguous.
+     *
+     * <p>RED before the {@code setMetaCommitMode} fix (recorded length == appended bytes, far below
+     * the page size); GREEN after (recorded length == the full page size).
+     */
+    @Test
+    public void testAlterCommitModeToSyncReappliesAppendOnly() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        // Shrink the table-partition column page size to exactly one OS page so its full mapped
+        // extent is a small, exact, known constant (see javadoc above).
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(Files.PAGE_SIZE));
+
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table cm_alt (ts timestamp, v long) timestamp(ts) partition by day wal " +
+                    "with commit_mode='adaptive'");
+            // Warmup: materialize the partition and open its columns under ADAPTIVE (appendOnly=true).
+            execute("insert into cm_alt values ('2024-10-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Flip to SYNC on the ALREADY-OPEN writer. Before the fix, the open columns keep
+            // appendOnly=true (stale) until their next reopen.
+            execute("alter table cm_alt set param commit_mode='sync'");
+            drainWalQueue();
+
+            ff.reset();
+            // A tiny follow-up commit: 1 row, comfortably inside the already-mapped single page (no
+            // real extend()), so a legacy full-extent msync and a narrowed appended-bytes msync are
+            // sharply different lengths.
+            execute("insert into cm_alt values ('2024-10-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "expected at least one table-column msync; got none",
+                    ff.tableColumnMsyncLengths.size() > 0
+            );
+            long maxLen = 0;
+            for (int i = 0, n = ff.tableColumnMsyncLengths.size(); i < n; i++) {
+                maxLen = Math.max(maxLen, ff.tableColumnMsyncLengths.get(i));
+            }
+            Assert.assertEquals(
+                    "post-ALTER SYNC commit must msync the column's FULL mapped extent (one OS page), " +
+                            "not a narrowed appended-bytes range; got lengths: " + ff.tableColumnMsyncLengths,
+                    Files.PAGE_SIZE, maxLen
+            );
+
+            // Durability + correctness after the ALTER: both rows are present.
+            assertQuery("select * from cm_alt order by ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tv\n" +
+                            "2024-10-01T00:00:00.000000Z\t1\n" +
+                            "2024-10-01T00:01:00.000000Z\t2\n");
+        });
+    }
+
     // ---------- Task 3: S1 — remove SYNC batched-syncfs routing (SYNC apply == master msync) ----------
 
     /**
@@ -660,6 +778,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * only the per-commit SYNC apply path lost the batched routing above. The epoch's own call to
      * {@code syncColumnsBatchedSync()} (gated on {@code Os.isLinux() &&
      * isAdaptiveEpochColumnSyncBatched()}, independent of commit mode) is untouched by this task.
+     * The non-batched {@code else} branch of {@code fsyncMaterializedState()} also syncfs — via its
+     * own explicit {@code fsyncMaterializedStateSyncFs()} call (I1: the epoch flush must be
+     * filesystem-wide even off the batched path) — so this assertion holds regardless of which of
+     * the two epoch paths actually runs; this test (Linux, batched config at its default) exercises
+     * the batched path, while the non-batched path is exercised by disabling
+     * {@code isAdaptiveEpochColumnSyncBatched()} or running off-Linux.
      */
     @Test
     public void testAdaptiveEpochStillSyncfs() throws Exception {
@@ -970,12 +1094,30 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * A FilesFacade that counts every {@code msync} (split sync/async), {@code fdatasync},
      * {@code fsync}, and {@code syncfs} call, with no path filtering. Used by the Task 2/3 legacy
      * vs. adaptive sync() revert tests, which only need raw syscall counts (not per-file attribution).
+     *
+     * <p>Also tracks, in {@link #tableColumnMsyncLengths}, the {@code len} argument of every
+     * non-async {@code msync} against a TABLE PARTITION COLUMN file (per
+     * {@link #isTablePartitionColumnFile}, reusing the same fd/path/addr tracking as
+     * {@link TableSyncTrackingFacade}) — used by the Task 2b ALTER commit_mode re-apply test to
+     * distinguish a narrowed (appended-bytes-only) msync from a full-extent (mapped-size) one
+     * without being confused by WAL-segment or table control-file ({@code _txn}/{@code _cv}/
+     * {@code _meta}) msyncs.
      */
     static class SyscallCountingFacade extends TestFilesFacadeImpl {
+        final LongList tableColumnMsyncLengths = new LongList();
         int fdatasyncCount, fsyncCount, msyncAsync, msyncSync, syncfsCount;
+        private final Map<Long, Long> addrToFd = new HashMap<>();
+        private final Map<Long, String> fdToPath = new HashMap<>();
 
         void reset() {
             msyncSync = msyncAsync = fdatasyncCount = fsyncCount = syncfsCount = 0;
+            tableColumnMsyncLengths.clear();
+        }
+
+        @Override
+        public boolean close(long fd) {
+            fdToPath.remove(fd);
+            return super.close(fd);
         }
 
         @Override
@@ -991,19 +1133,84 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
 
         @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1L && addr != 0L) {
+                addrToFd.put(addr, fd);
+            }
+            return addr;
+        }
+
+        @Override
+        public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+            long addr = super.mmapNoCache(fd, len, offset, flags, memoryTag);
+            if (addr != -1L && addr != 0L) {
+                addrToFd.put(addr, fd);
+            }
+            return addr;
+        }
+
+        @Override
         public void msync(long addr, long len, boolean async) {
             if (async) {
                 msyncAsync++;
             } else {
                 msyncSync++;
+                Long fd = addrToFd.get(addr);
+                if (fd != null) {
+                    String p = fdToPath.get(fd);
+                    if (p != null && isTablePartitionColumnFile(p)) {
+                        tableColumnMsyncLengths.add(len);
+                    }
+                }
             }
             super.msync(addr, len, async);
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            addrToFd.remove(address);
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public long openAppend(LPSZ name) {
+            long fd = super.openAppend(name);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        @Override
+        public long openCleanRW(LPSZ name, long size) {
+            long fd = super.openCleanRW(name, size);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            long fd = super.openRO(name);
+            trackFd(fd, name);
+            return fd;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            long fd = super.openRW(name, opts);
+            trackFd(fd, name);
+            return fd;
         }
 
         @Override
         public void syncfs(long fd) {
             syncfsCount++;
             super.syncfs(fd);
+        }
+
+        private void trackFd(long fd, LPSZ name) {
+            if (fd > -1) {
+                fdToPath.put(fd, Utf8String.newInstance(name).toString());
+            }
         }
     }
 }

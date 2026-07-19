@@ -96,6 +96,16 @@ public interface MapWriter extends SymbolCountProvider {
 
     void rollback(int symbolCount);
 
+    /**
+     * Marks this symbol writer's CHAR memory as strictly append-only, mirroring
+     * {@link io.questdb.cairo.vm.api.MemoryMA#setAppendOnly(boolean)} on the table's data/aux column
+     * memories: only safe under {@link io.questdb.cairo.CommitMode#ADAPTIVE}; legacy modes pass
+     * false so {@code sync()} stays full-extent, byte-identical to master. Default is a no-op so
+     * writers with no such memory (e.g. {@link io.questdb.cairo.vm.NullMapWriter}) are unaffected.
+     */
+    default void setAppendOnly(boolean appendOnly) {
+    }
+
     void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);
 
     void sync(boolean async);
