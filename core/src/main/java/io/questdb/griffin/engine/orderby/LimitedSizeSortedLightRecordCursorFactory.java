@@ -105,6 +105,17 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        if (loFunction != null && !loFunction.isStableWithinExecution()) {
+            return false;
+        }
+        if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {

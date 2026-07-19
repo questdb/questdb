@@ -65,6 +65,11 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
+    }
+
+    @Override
     public String getBaseColumnName(int idx) {
         if (idx < factoryA.getMetadata().getColumnCount()) {
             return factoryA.getMetadata().getColumnName(idx);

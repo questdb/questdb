@@ -108,6 +108,16 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // The base cursor is shared with getSharedCursor and opened by whichever runs first, so
         // close the cursor on a breach only when this call opened it.

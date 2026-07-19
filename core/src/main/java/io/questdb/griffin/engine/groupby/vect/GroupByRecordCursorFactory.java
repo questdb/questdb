@@ -218,6 +218,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         oomCounter.set(0);
         // clear maps

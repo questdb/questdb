@@ -187,7 +187,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     }
 
     // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
-    // max(rnd_timestamp(...))) and the base are stable.
+    // max(rnd_timestamp(...))), the fused filter (held by the atom, not the base) and the base
+    // are stable. Per-worker filters are clones of the owner filter, so checking it suffices.
     @Override
     public boolean isNonDeterministic() {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
@@ -195,7 +196,25 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 return true;
             }
         }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && filter.isNonDeterministic()) {
+            return true;
+        }
         return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
     }
 
     @Override

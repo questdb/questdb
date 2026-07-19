@@ -157,4 +157,63 @@ public class ScalarSubqueryNonDeterministicPruningTest extends AbstractCairoTest
                     .assertsPlanNotContaining("Interval forward scan on: t");
         });
     }
+
+    // A bind variable is non-deterministic across executions yet stable within one. Wrapping it
+    // in an expression (dateadd) must not lose that stability: the wrapper interfaces compose
+    // isStableWithinExecution() from their args, so the bound still prunes.
+    @Test
+    public void testExpressionWrappedBindVariableBoundStillPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            bindVariableService.clear();
+            // $1 = 2020-06-02T01:00:00Z; dateadd('h',-1,$1) = 2020-06-02T00:00:00Z
+            bindVariableService.setTimestamp(0, 1_591_059_600_000_000L);
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= (SELECT dateadd('h', -1, $1::timestamp))")
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: t")
+                    .returns("ts\tv\n" +
+                            "2020-06-02T00:00:00.000000Z\t2\n" +
+                            "2020-06-03T00:00:00.000000Z\t3\n");
+        });
+    }
+
+    // now() is frozen per execution, so an expression over it is stable within the execution
+    // and must prune, exactly like a wrapped bind variable.
+    @Test
+    public void testExpressionWrappedNowBoundStillPrunes() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) <= (SELECT dateadd('h', 1, now()))")
+                    .assertsPlanContaining("Interval forward scan on: t");
+        });
+    }
+
+    // An rnd_* source hidden inside a nested cursor predicate (between(NCC) over CursorFunctions)
+    // MUST NOT prune: CursorFunction stability delegates to the wrapped factory and the wrapper
+    // interfaces and the async group-by factory (fused filter included) compose it through.
+    @Test
+    public void testNestedCursorPredicateRndBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT max(lo) FROM b WHERE lo BETWEEN " +
+                    "(SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0)) " +
+                    "AND (SELECT rnd_timestamp('2020-06-05T00:00:00.000000Z'::timestamp, '2020-06-08T00:00:00.000000Z'::timestamp, 0)))")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
+
+    // An rnd_* GROUP BY key under LIMIT 1 keeps scalar cardinality at one while the selected key
+    // changes across opens. The serial keyed group-by factory (forced by the UNION ALL base) must
+    // classify its key functions, so this MUST NOT prune.
+    @Test
+    public void testRndGroupByKeyBoundNotPruned() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
+                    "(SELECT k FROM (SELECT rnd_timestamp('2020-06-01T00:00:00.000000Z'::timestamp, '2020-06-03T00:00:00.000000Z'::timestamp, 0) k, count() c " +
+                    "FROM (SELECT lo FROM b UNION ALL SELECT lo FROM b)) LIMIT 1)")
+                    .assertsPlanNotContaining("Interval forward scan on: t");
+        });
+    }
 }

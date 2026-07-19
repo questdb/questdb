@@ -78,6 +78,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isStableWithinExecution() {
+        return filter.isStableWithinExecution() && base.isStableWithinExecution();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);
         try {
