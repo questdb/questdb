@@ -14227,7 +14227,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             final MemoryMA m1 = columns.getQuick(i * 2);
             m1.syncFlushKick();
-            if (syncfsFd == -1) {
+            // A deleted (or not-yet-open) column slot is NullMemory, whose getFd() throws
+            // UnsupportedOperationException; skip it when probing for a filesystem fd (any real column fd
+            // identifies the fs). Without this guard the epoch's batched flush throws for tables with a
+            // deleted column or a parquet partition, and the durable epoch silently never advances.
+            if (syncfsFd == -1 && !(m1 instanceof NullMemory)) {
                 final long fd = m1.getFd();
                 if (fd != -1) {
                     syncfsFd = fd;
@@ -14420,7 +14424,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long syncfsFd = -1;
         for (int i = 0, n = columns.size(); i < n; i++) {
             final MemoryMA m = columns.getQuick(i);
-            if (m != null) {
+            // NullMemory (a deleted / not-yet-open column slot) is non-null but its getFd() throws
+            // UnsupportedOperationException; skip it (mirrors the batched syncColumnsBatchedSync guard).
+            if (m != null && !(m instanceof NullMemory)) {
                 final long fd = m.getFd();
                 if (fd != -1) {
                     syncfsFd = fd;
