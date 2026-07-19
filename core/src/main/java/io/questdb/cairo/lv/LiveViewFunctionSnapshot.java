@@ -118,12 +118,31 @@ public final class LiveViewFunctionSnapshot {
         }
         final long partitionCount = source.getLong(offset);
         offset += Long.BYTES;
+        // Reject a negative count BEFORE any state mutation: the map path would clear state
+        // then zero-iterate, and a header-only payload crafted to match payloadLength would
+        // pass the final length check - silently restoring empty state from a corrupt (but
+        // CRC-valid) checkpoint. Guard before onSnapshotRestoreBegin so the running state is
+        // untouched on rejection.
+        if (partitionCount < 0) {
+            throw CairoException.critical(0)
+                    .put("live view function snapshot negative partition count [count=")
+                    .put(partitionCount)
+                    .put(']');
+        }
 
         f.onSnapshotRestoreBegin();
 
         final Map map = f.getPartitionMap();
         if (map == null) {
-            // Scalar no-map function: a single keyless partition.
+            // Scalar no-map function: the writer always emits exactly one keyless partition
+            // (see write()), so anything else is corruption the count-agnostic restore below
+            // would otherwise ignore.
+            if (partitionCount != 1) {
+                throw CairoException.critical(0)
+                        .put("live view function snapshot scalar partition count must be 1 [count=")
+                        .put(partitionCount)
+                        .put(']');
+            }
             offset = f.restorePartitionState(source, offset, null, formatVersion);
         } else {
             for (long p = 0; p < partitionCount; p++) {

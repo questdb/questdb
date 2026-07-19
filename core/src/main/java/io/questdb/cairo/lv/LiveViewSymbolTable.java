@@ -54,6 +54,11 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
     private StaticSymbolTable base;
     private LiveViewSymbolCache cache;
     private int column;
+    // True when the pinned slot's lead carries a NULL SYMBOL for this column, captured at
+    // bind (like maxNewIdExclusive). ORed into containsNullValue() so a RAM-only lead NULL
+    // is visible to the interpreted symbol comparator even when the committed disk table -
+    // which has never seen a NULL - reports false. See LiveViewInMemoryBuffer.symbolHasNull.
+    private boolean leadContainsNull;
     // Exclusive upper bound of the lead's new-symbol id band - the pinned slot's
     // symbol horizon, captured at the slot's publish. Bounds keyOf's cache scan and
     // sizes getSymbolCount() so a reader never resolves or indexes past the ids its
@@ -69,11 +74,12 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
             base = null;
         }
         cache = null;
+        leadContainsNull = false;
     }
 
     @Override
     public boolean containsNullValue() {
-        return base.containsNullValue();
+        return base.containsNullValue() || leadContainsNull;
     }
 
     @Override
@@ -94,16 +100,19 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
      * Binds this overlay to a disk symbol table for {@code column}.
      * {@code maxNewIdExclusive} is the pinned slot's symbol horizon
      * ({@link LiveViewInMemoryBuffer#newSymbolMaxId}), which bounds the cache scan
-     * and the symbol count. {@code ownsBase} is {@code true} when {@code base} is a
+     * and the symbol count. {@code leadContainsNull} is the slot's per-column lead-NULL
+     * flag ({@link LiveViewInMemoryBuffer#symbolHasNull}), ORed into
+     * {@code containsNullValue()}. {@code ownsBase} is {@code true} when {@code base} is a
      * freshly cloned table this overlay must close (the {@code newSymbolTable}
      * path), {@code false} when it is borrowed from a live cursor (the
      * {@code getSymbolTable} path).
      */
-    public LiveViewSymbolTable of(StaticSymbolTable base, LiveViewSymbolCache cache, int column, int maxNewIdExclusive, boolean ownsBase) {
+    public LiveViewSymbolTable of(StaticSymbolTable base, LiveViewSymbolCache cache, int column, int maxNewIdExclusive, boolean leadContainsNull, boolean ownsBase) {
         this.base = base;
         this.cache = cache;
         this.column = column;
         this.maxNewIdExclusive = maxNewIdExclusive;
+        this.leadContainsNull = leadContainsNull;
         this.ownsBase = ownsBase;
         return this;
     }

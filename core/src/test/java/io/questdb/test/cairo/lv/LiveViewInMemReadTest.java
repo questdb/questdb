@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
@@ -1451,6 +1452,46 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             }
             // The read itself: 5 applied rows plus the 2-row lead, each row once.
             assertLvQuery("SELECT x FROM lv", "x\n1\n2\n3\n4\n5\n6\n7\n");
+        });
+    }
+
+    @Test
+    public void testLeadNullSymbolEqualityAcrossOverlayColumns() throws Exception {
+        // A SYMBOL value that is NULL only in the un-flushed lead - the committed disk
+        // symbol table has never seen a NULL, so its containsNullValue() is false. The
+        // interpreted symbol comparator (EqSymFunctionFactory) short-circuits a NULL left
+        // key on the RIGHT table's containsNullValue(): if the overlay reports the disk
+        // table's false, a RAM-only (NULL,NULL) row is wrongly rejected by g = h and
+        // wrongly admitted by g != h. The overlay must OR the pinned slot's lead-NULL
+        // flag into containsNullValue() so the RAM-only NULL is visible to the comparator.
+        //
+        // JIT compares raw int keys (-1 == -1 matches) and so hides the defect; force the
+        // interpreted path the finding targets.
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
+        assertMemoryLeak(() -> {
+            buildTwoSymbolFlushedPlusNullLead();
+
+            // The plain read routes through the tier and serves the 2-row lead, so a
+            // filter failure below is the comparator's NULL handling, not lost routing.
+            InnerRead plain = readInner("SELECT ts, g, h FROM lv");
+            Assert.assertTrue("read must route through the tier", plain.routingEligible);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, plain.leadRowsServed);
+            assertLvMatchesOracle("SELECT ts, g, h FROM lv", "SELECT ts, g, h FROM base");
+
+            // g = h: only the RAM-only (NULL,NULL) lead row matches; every disk row and
+            // the non-NULL lead row have g != h. The oracle reads the fully-applied base,
+            // whose committed symbol table DOES contain the NULL, so it is the reference.
+            assertLvMatchesOracle("SELECT ts FROM lv WHERE g = h", "SELECT ts FROM base WHERE g = h");
+            assertLvQuery("SELECT ts FROM lv WHERE g = h", "ts\n2026-05-12T00:00:04.000000Z\n");
+
+            // g != h: the (NULL,NULL) row must be excluded (NULL != NULL is false).
+            assertLvMatchesOracle("SELECT ts FROM lv WHERE g != h", "SELECT ts FROM base WHERE g != h");
+            assertLvQuery("SELECT ts FROM lv WHERE g != h",
+                    "ts\n" +
+                            "2026-05-12T00:00:01.000000Z\n" +
+                            "2026-05-12T00:00:02.000000Z\n" +
+                            "2026-05-12T00:00:03.000000Z\n" +
+                            "2026-05-12T00:00:05.000000Z\n");
         });
     }
 
@@ -4827,6 +4868,32 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "('2026-05-12T00:00:05.000000Z', 'bb')");
             drainWalQueue();
             drainJob(job); // clock still 0: refresh the lead (cc new, bb committed), no flush
+        }
+    }
+
+    // Two-SYMBOL variant: 3 flushed rows (all g != h, no NULLs, so both committed symbol
+    // tables report containsNullValue() == false) on disk, then a 2-row un-flushed lead
+    // whose first row is (NULL, NULL) - a value that exists as a symbol NULL only in RAM -
+    // and whose second row is a non-NULL g != h pair. Exercises the interpreted symbol
+    // comparator against a lead-only NULL that the disk table cannot know about.
+    private void buildTwoSymbolFlushedPlusNullLead() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, h SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
+                "SELECT ts, g, h, row_number() OVER () AS rn FROM base");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, g, h) VALUES " +
+                    "('2026-05-12T00:00:01.000000Z', 'aa', 'xx'), " +
+                    "('2026-05-12T00:00:02.000000Z', 'bb', 'yy'), " +
+                    "('2026-05-12T00:00:03.000000Z', 'aa', 'xx')");
+            drainWalQueue();
+            drainJob(job); // clock 0: first tick flushes the batch to disk (no NULLs committed)
+
+            execute("INSERT INTO base (ts, g, h) VALUES " +
+                    "('2026-05-12T00:00:04.000000Z', NULL, NULL), " +
+                    "('2026-05-12T00:00:05.000000Z', 'cc', 'dd')");
+            drainWalQueue();
+            drainJob(job); // clock still 0: refresh the lead (NULL,NULL new to RAM), no flush
         }
     }
 

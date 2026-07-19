@@ -133,6 +133,15 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // value at row << shift for a fixed-width / SYMBOL column, or the appended
     // payload bytes for a var-size column.
     private final ObjList<MemoryCARWImpl> dataMem;
+    // Per output column, true once a SYMBOL cell of this buffer was written NULL
+    // (VALUE_IS_NULL). A committed disk symbol table that has never seen a NULL reports
+    // containsNullValue() == false, so the read overlay ORs this flag in to make a
+    // RAM-only lead NULL visible to the interpreted symbol comparator (see
+    // LiveViewSymbolTable.containsNullValue). A safe over-approximation: it may stay true
+    // for an evicted / flushed NULL, but such a NULL is then on disk, where
+    // base.containsNullValue() already reports it. 0/false for non-SYMBOL columns.
+    // Written by the refresh worker before publish; reset in reset().
+    private final boolean[] leadSymbolHasNull;
     // Per output column, the exclusive upper bound of the lead's new-symbol id band
     // as of this slot's publish - the slot's "symbol horizon". A reader bounds its
     // LiveViewSymbolCache key scan to [committedCount, newSymbolMaxIds[col]) so it
@@ -199,6 +208,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         // entries stay null. Sized up front to avoid a grow on first bind.
         this.arrayBuffers = new ObjList<>(columnTypes.size());
         this.newSymbolMaxIds = new int[columnTypes.size()];
+        this.leadSymbolHasNull = new boolean[columnTypes.size()];
         this.varAppendSavepoint = new long[columnTypes.size() * 2];
         // A native allocation below (a var-size aux buffer, or the aux page that
         // seedAuxLeadingOffset touches for a STRING / BINARY column) can fail
@@ -620,6 +630,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public void copyRowFrom(LiveViewInMemoryBuffer src, long srcRow, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            // Carry the source's lead-NULL SYMBOL flag; see copyRowsFrom for why the
+            // whole-buffer OR is safe.
+            if (src.leadSymbolHasNull[c]) {
+                leadSymbolHasNull[c] = true;
+            }
             int type = ColumnType.tagOf(columnTypes.getQuick(c));
             switch (type) {
                 case ColumnType.LONG:
@@ -847,6 +862,13 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             return;
         }
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            // Carry the source's lead-NULL SYMBOL flag across the publish / compaction
+            // copy. A whole-buffer OR (not row-range scoped) is a safe over-approximation:
+            // it can only turn containsNullValue() true, and a stray true is harmless (the
+            // comparator still gates on the per-record key). Non-SYMBOL columns never set it.
+            if (src.leadSymbolHasNull[c]) {
+                leadSymbolHasNull[c] = true;
+            }
             final int size = columnTypeSizes.getQuick(c);
             if (size > 0) {
                 // Fixed-width / SYMBOL column: one memcpy over the contiguous byte range.
@@ -1196,6 +1218,17 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
+     * Records that a SYMBOL cell of {@code col} was written NULL. The refresh worker
+     * calls this at the eager-intern site whenever {@link LiveViewSymbolCache#intern}
+     * returns {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL}, so the read
+     * overlay can report the RAM-only NULL through {@code containsNullValue()}. See
+     * {@link #symbolHasNull}.
+     */
+    public void markSymbolNull(int col) {
+        leadSymbolHasNull[col] = true;
+    }
+
+    /**
      * Exclusive upper bound of the lead's new-symbol id band for {@code col} as of
      * this slot's publish - the slot's symbol horizon. A reader bounds its
      * {@link LiveViewSymbolCache} key scan to {@code [committedCount, horizon)} so
@@ -1292,6 +1325,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             // publish re-stamps it before a reader can pin the slot), but a reset
             // buffer should not carry the previous fill's band.
             newSymbolMaxIds[c] = 0;
+            // Unlike the horizon this is NOT re-stamped at publish - it accumulates
+            // across the fill - so a recycled buffer must start clean.
+            leadSymbolHasNull[c] = false;
             if (ColumnType.isVarSize(columnTypes.getQuick(c))) {
                 dataMem.getQuick(c).jumpTo(0);
                 auxMem.getQuick(c).jumpTo(0);
@@ -1342,5 +1378,15 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // to a disk-only scan that ignores the seam and is always correct.
     public void setSeamTs(long seamTs) {
         this.seamTs = seamTs;
+    }
+
+    /**
+     * True when a SYMBOL cell of {@code col} was written NULL into this slot (see
+     * {@link #markSymbolNull}). The read overlay ORs this into {@code containsNullValue()}
+     * so a lead NULL the committed disk table cannot know about is still visible to the
+     * interpreted symbol comparator. A safe over-approximation - see the field doc.
+     */
+    public boolean symbolHasNull(int col) {
+        return leadSymbolHasNull[col];
     }
 }

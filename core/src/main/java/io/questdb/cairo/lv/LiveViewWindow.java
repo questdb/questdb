@@ -530,6 +530,16 @@ public class LiveViewWindow implements QuietCloseable {
         }
         final long partitionCount = source.getLong(offset);
         offset += Long.BYTES;
+        // Reject a negative count BEFORE clearing the anchor map: a negative count would wipe
+        // the frontier and zero-iterate, and a header-only payload crafted to match
+        // payloadLength would then pass the final length check - silently restoring empty
+        // anchor state from a corrupt (but CRC-valid) checkpoint.
+        if (partitionCount < 0) {
+            throw CairoException.nonCritical()
+                    .put("live view checkpoint anchor block negative partition count [count=")
+                    .put(partitionCount)
+                    .put(']');
+        }
 
         anchorMap.clear();
         tombstoneCount = 0;

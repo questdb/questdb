@@ -115,6 +115,7 @@ public class LiveViewSymbolTableSource implements SymbolTableSource, QuietClosea
                     cache,
                     tierColumn,
                     slot.newSymbolMaxId(tierColumn),
+                    slot.symbolHasNull(tierColumn),
                     false
             );
             overlays.extendAndSet(columnIndex, overlay);
@@ -140,6 +141,7 @@ public class LiveViewSymbolTableSource implements SymbolTableSource, QuietClosea
                 cache,
                 tierColumn,
                 slot.newSymbolMaxId(tierColumn),
+                slot.symbolHasNull(tierColumn),
                 true
         );
     }

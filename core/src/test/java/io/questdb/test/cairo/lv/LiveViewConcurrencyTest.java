@@ -370,6 +370,46 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRetryPendingApplyFreesRuntimeStateOfInvalidatedView() throws Exception {
+        // Invalidation frees a view's runtime state (factory, maps, tier, tracker) through a
+        // refresh-latch CAS. If that CAS loses because retryPendingLiveViewApply holds the latch,
+        // the invalidator relies on the latch holder's finally to free instead - exactly as the
+        // main refresh finally does. Without that mirror the invalid view's runtime state strands
+        // until DROP or shutdown. Here the view is invalid while its installed tier is still
+        // present (the leftover the losing CAS could not reclaim); retryPendingLiveViewApply's
+        // finally must free it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("the created view must be registered", instance);
+
+            // Install a native-memory-backed tier as the runtime state that must be reclaimed.
+            Assert.assertNull("a never-refreshed view has no tier yet", instance.getInMemoryTier());
+            final IntList types = new IntList(1);
+            types.add(ColumnType.LONG);
+            instance.setInMemoryTier(new LiveViewInMemoryTier(types, 0, 4096L));
+
+            // Invalidate the view but leave its runtime state in place - the leftover a concurrent
+            // invalidator's own tryFreeRuntimeStateIfInvalid could not free because the refresh
+            // latch was held by this helper.
+            instance.markInvalid("injected", 0);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                job.retryPendingLiveViewApplyForTest(instance);
+            }
+            Assert.assertNull(
+                    "retryPendingLiveViewApply's finally must free the invalid view's runtime tier",
+                    instance.getInMemoryTier()
+            );
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testDemoteRefusedMintDoesNotInvalidateView() throws Exception {
         // Deterministic regression for the live-view commit demote fence (17a1f40e08).
         // Every LV commit family routes through fencedLiveViewCommit, which fires the
@@ -976,12 +1016,19 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     // Waits for the refresh driver to complete one more tick than it had when called.
-    // Bounded: on a driver that has stopped ticking this returns and lets the writer run
-    // on, so the run fails on its own assertions rather than in a hang.
+    // Bounded: a driver that has stopped ticking must fail the run loudly rather than
+    // silently drop the paced writer's intended refresh/writer overlap. The caller runs on
+    // a writer thread whose try/catch routes any throw into the shared errors queue, so a
+    // timeout surfaces as a test failure instead of a vacuous pass (or a hang).
     private static void awaitRefreshTick(AtomicLong refreshTicks) {
         final long seen = refreshTicks.get();
         final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
-        while (refreshTicks.get() == seen && System.nanoTime() < deadlineNanos) {
+        while (refreshTicks.get() == seen) {
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new AssertionError("refresh driver did not tick within "
+                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L)
+                        + "s; the paced writer lost its intended refresh/writer overlap");
+            }
             Os.pause();
         }
     }

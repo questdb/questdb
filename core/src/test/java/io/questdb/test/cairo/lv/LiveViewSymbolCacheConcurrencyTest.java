@@ -447,7 +447,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
         Assert.assertEquals(3, slotHorizon);
 
         final LiveViewSymbolTable overlay = new LiveViewSymbolTable()
-                .of(NOT_FOUND_READER, cache, COL, slotHorizon, false);
+                .of(NOT_FOUND_READER, cache, COL, slotHorizon, false, false);
 
         // In-band lead values resolve, and the count covers the horizon.
         Assert.assertEquals(0, overlay.keyOf("v0"));

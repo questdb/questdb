@@ -56,6 +56,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Page frame cursor over a single {@code [rowLo, rowHi)} slice of one WAL segment.
@@ -79,6 +80,12 @@ import org.jetbrains.annotations.Nullable;
  * larger-than-page-frame row ranges is not supported yet.
  */
 public class WalSegmentPageFrameCursor implements PageFrameCursor {
+    // Retained-capacity cap for the extracted-timestamp scratch. Above it, computeFrame shrinks
+    // the buffer back to its base page instead of only rewinding the append cursor, so a single
+    // outlier transaction (up to 8 bytes per row) does not pin its peak for the whole refresh
+    // worker's lifetime. 8 MiB = 1M rows: a steady sub-cap load never shrinks; only a genuinely
+    // large transaction pays a one-off reallocation on the next frame.
+    private static final long MAX_RETAINED_EXTRACTED_TS_BYTES = 8L * 1024 * 1024;
     private static final long TIMESTAMP_PAIR_BYTES = 16L;
     private final IntList columnIndexes = new IntList();
     private final ColumnMapping columnMapping = new ColumnMapping();
@@ -118,6 +125,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     // symbolTables) grow lazily to match.
     private int columnCount;
     private boolean consumed;
+    // Retained-capacity cap for extractedTimestampMem, defaulting to
+    // MAX_RETAINED_EXTRACTED_TS_BYTES. A test lowers it so a modest transaction triggers the
+    // shrink deterministically.
+    private long maxRetainedExtractedTsBytes = MAX_RETAINED_EXTRACTED_TS_BYTES;
     private WalReader reader;
     private long rowHi;
     private long rowLo;
@@ -145,6 +156,15 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         reader = Misc.free(reader);
         Misc.free(extractedTimestampMem);
         Misc.freeObjList(txnSymbolDiffs);
+    }
+
+    /**
+     * Test-only: the current allocated capacity (bytes) of the extracted-timestamp scratch, so a
+     * test can assert an outlier transaction's peak is released rather than retained.
+     */
+    @TestOnly
+    public long extractedTimestampMemCapacity() {
+        return extractedTimestampMem.size();
     }
 
     @Override
@@ -265,6 +285,15 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         return this;
     }
 
+    /**
+     * Test-only: lowers the extracted-timestamp scratch retention cap so a modest transaction
+     * deterministically triggers the shrink path. See {@link #MAX_RETAINED_EXTRACTED_TS_BYTES}.
+     */
+    @TestOnly
+    public void setMaxRetainedExtractedTsBytes(long maxRetainedExtractedTsBytes) {
+        this.maxRetainedExtractedTsBytes = maxRetainedExtractedTsBytes;
+    }
+
     @Override
     public long size() {
         return rowHi - rowLo;
@@ -340,7 +369,16 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         if (symbolTables.size() < columnCount) {
             symbolTables.setPos(columnCount);
         }
-        extractedTimestampMem.jumpTo(0);
+        // Rewind the scratch for this frame. jumpTo(0) keeps the allocation, which is what a
+        // steady load wants (no re-grow), but it would also pin an outlier transaction's peak
+        // (8 bytes per row) until the worker shuts down. Once the buffer grew past the retained
+        // cap, shrink it back to its base page instead; the next frame re-grows only if it is
+        // itself an outlier.
+        if (extractedTimestampMem.size() > maxRetainedExtractedTsBytes) {
+            extractedTimestampMem.truncate();
+        } else {
+            extractedTimestampMem.jumpTo(0);
+        }
 
         for (int i = 0; i < columnCount; i++) {
             final int walColumnIndex = columnIndexes.getQuick(i);

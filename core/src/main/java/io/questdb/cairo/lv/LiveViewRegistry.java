@@ -83,6 +83,24 @@ public class LiveViewRegistry implements QuietCloseable {
         }
     }
 
+    /**
+     * Collects only the live view instances this worker owns in the idle-scan shard into
+     * {@code sink}. Each worker still walks the registry, but copies (and hence has
+     * {@code scanForLaggingViews} process) only its own shard, so per sweep the pool copies and
+     * scans each view once in total (O(views)) instead of every worker copying every view and
+     * discarding the non-owned ones afterwards (O(workers * views) copies). The shard predicate
+     * mirrors {@link LiveViewRefreshJob#ownsViewShard(int)}: a pool of one ({@code workerCount <= 1})
+     * owns every view. Table ids are stable per view, so ownership never drifts between sweeps.
+     */
+    public void getShardedViews(ObjList<LiveViewInstance> sink, int workerId, int workerCount) {
+        sink.clear();
+        for (LiveViewInstance instance : viewsByName.values()) {
+            if (workerCount <= 1 || Math.floorMod(instance.getLiveViewToken().getTableId(), workerCount) == workerId) {
+                sink.add(instance);
+            }
+        }
+    }
+
     public LiveViewInstance getViewInstance(CharSequence name) {
         return viewsByName.get(name);
     }

@@ -147,6 +147,52 @@ public class LiveViewSymbolTableSourceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOverlayReportsLeadNullThroughContainsNullValue() throws Exception {
+        // The committed disk symbol table has never seen a NULL (containsNullValue == false),
+        // but the un-flushed lead does carry one. The overlay must OR the pinned slot's
+        // per-column lead-NULL flag into containsNullValue() so the interpreted symbol
+        // comparator (EqSymFunctionFactory) sees the RAM-only NULL; reporting the disk
+        // table's false would make a = b reject a (NULL,NULL) row and a != b admit it.
+        assertMemoryLeak(() -> {
+            final IntList tierTypes = tierSchema();
+            try (
+                    LiveViewSymbolCache cache = new LiveViewSymbolCache(tierTypes);
+                    LiveViewInMemoryBuffer slot = new LiveViewInMemoryBuffer(tierTypes, TIER_TS_COL, PAGE_SIZE);
+                    LiveViewSymbolTableSource source = new LiveViewSymbolTableSource()
+            ) {
+                final TestSymbolTableSource base = new TestSymbolTableSource(2);
+                base.shared.getQuick(OUT_SYM_COL).values.add("committed");
+                internLead(cache, slot, base, "lead-only");
+
+                // No lead NULL yet: the overlay mirrors the disk table's false.
+                source.of(base, cache, slot, tierColumns());
+                Assert.assertFalse(((StaticSymbolTable) source.getSymbolTable(OUT_SYM_COL)).containsNullValue());
+
+                // The refresh worker writes a NULL SYMBOL into the lead and stamps the slot.
+                // Rebind so the read builds a fresh overlay that captures the flag at bind,
+                // the same way a query pins a freshly published slot.
+                slot.markSymbolNull(TIER_SYM_COL);
+                source.of(base, cache, slot, tierColumns());
+
+                Assert.assertTrue(
+                        "the shared overlay must report the lead NULL",
+                        ((StaticSymbolTable) source.getSymbolTable(OUT_SYM_COL)).containsNullValue()
+                );
+                final SymbolTable clone = source.newSymbolTable(OUT_SYM_COL);
+                Assert.assertTrue(
+                        "a per-worker clone must report it too",
+                        ((StaticSymbolTable) clone).containsNullValue()
+                );
+                Misc.freeIfCloseable(clone);
+
+                // The disk table still owns the count and value resolution; only the NULL
+                // predicate changed.
+                Assert.assertFalse("the committed disk table itself is unchanged", base.shared.getQuick(OUT_SYM_COL).containsNullValue());
+            }
+        });
+    }
+
+    @Test
     public void testOverlayResolvesLeadKeyedByTierColumn() throws Exception {
         // The projection reads the SYMBOL at OUTPUT column 0 but TIER column 2. The
         // cache and the slot's horizon key off the tier column, so the source must

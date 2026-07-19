@@ -52,6 +52,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalEventCursor;
@@ -150,6 +151,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Bounds the retry rate without perceptibly delaying convergence (LV cadences are
     // >=100ms); the transient lag clears within a few apply-job ticks.
     private static final long APPLY_LAG_DEFER_BACKOFF_US = 5_000;
+    // Upper bound on refresh tasks a single Job.run() drains from the notification queue
+    // before yielding. A base table under sustained ingestion re-enqueues its task as soon
+    // as the refresh finishes, so an unbounded drain would let one base table monopolize the
+    // shared refresh pool and starve materialized-view jobs and timers. Leftover / re-enqueued
+    // tasks are picked up on the next scheduler turn (run() still reports work, so the worker
+    // is re-scheduled promptly), which bounds per-run latency without lowering throughput.
+    private static final int MAX_REFRESH_TASKS_PER_RUN = 32;
     // Sentinel returned by replayToApplied when it detected an out-of-order base
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
@@ -320,6 +328,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test-only: the per-{@code Job.run()} notification-drain bound. See
+     * {@link #MAX_REFRESH_TASKS_PER_RUN}.
+     */
+    @TestOnly
+    public int maxRefreshTasksPerRun() {
+        return MAX_REFRESH_TASKS_PER_RUN;
+    }
+
+    /**
      * Whether this worker owns the given live view in the idle-scan registry shard.
      * Views are sharded across the pool by table id so each is scanned by exactly one
      * worker per sweep. A single-worker pool ({@code workerCount <= 1}) owns every
@@ -328,6 +345,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     public boolean ownsViewShard(int tableId) {
         return workerCount <= 1 || Math.floorMod(tableId, workerCount) == workerId;
+    }
+
+    /**
+     * Test-only: runs one {@link #processNotifications()} pass (one {@code Job.run()} worth of
+     * work) so a test can assert the per-run drain bound without constructing a WorkerContext or
+     * looping like {@code drainJob}.
+     */
+    @TestOnly
+    public boolean processNotificationsForTest() {
+        return processNotifications();
+    }
+
+    /**
+     * Test-only: drives {@link #retryPendingLiveViewApply(LiveViewInstance)} directly so a test can
+     * assert its {@code finally} frees the runtime state of a view invalidated while the helper held
+     * the refresh latch (the invalidator's own free lost the CAS). Production reaches the helper only
+     * through {@link #scanForLaggingViews()}, which skips already-invalid views.
+     */
+    @TestOnly
+    public boolean retryPendingLiveViewApplyForTest(LiveViewInstance instance) {
+        return retryPendingLiveViewApply(instance);
     }
 
     @Override
@@ -349,6 +387,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setCheckpointTrailingFunctionSnapshotBlocksToOmit(int count) {
         this.checkpointTrailingFunctionSnapshotBlocksToOmit = count;
+    }
+
+    /**
+     * Test-only: the worker's WAL page-frame cursor, so a test can assert its extracted-timestamp
+     * scratch releases an outlier transaction's peak rather than retaining it for the worker's life.
+     */
+    @TestOnly
+    public WalSegmentPageFrameCursor walFrameCursorForTest() {
+        return walFrameCursor;
     }
 
     // Read-only-replica lead-reconstruction seam. The primary refresh loop maintains an un-flushed
@@ -1523,8 +1570,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         final boolean windowMapAuthoritative = !isLeadReconstruction();
                                         for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                                             final int c = stagingSymbolColumnIndexes.getQuick(si);
-                                            stagingBuffer.putInt(appendedRows, c,
-                                                    symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative));
+                                            final int symId = symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative);
+                                            stagingBuffer.putInt(appendedRows, c, symId);
+                                            if (symId == SymbolTable.VALUE_IS_NULL) {
+                                                // The committed disk table may not know this NULL yet;
+                                                // flag it so the read overlay reports containsNullValue().
+                                                stagingBuffer.markSymbolNull(c);
+                                            }
                                         }
                                     }
                                     if (stagingMinTs == Numbers.LONG_NULL) {
@@ -1912,8 +1964,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 final boolean windowMapAuthoritative = !isLeadReconstruction();
                                 for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                                     final int c = stagingSymbolColumnIndexes.getQuick(si);
-                                    stagingBuffer.putInt(appendedRows, c,
-                                            symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative));
+                                    final int symId = symbolCache.intern(c, outRecord.getSymA(c), committedSymbolReader.getSymbolMapReader(c), windowMapAuthoritative);
+                                    stagingBuffer.putInt(appendedRows, c, symId);
+                                    if (symId == SymbolTable.VALUE_IS_NULL) {
+                                        // The committed disk table may not know this NULL yet;
+                                        // flag it so the read overlay reports containsNullValue().
+                                        stagingBuffer.markSymbolNull(c);
+                                    }
                                 }
                             }
                             if (stagingMinTs == Numbers.LONG_NULL) {
@@ -2383,8 +2440,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Writer-side resolver: the refresh worker builds this while flushing,
                 // not interning, so the live horizon is exact and the whole lead band
                 // is the correct bound (the flush re-serialises every lead id).
+                // leadContainsNull is false here: the flush path only turns stored lead
+                // ids back into strings and never calls containsNullValue().
                 resolvers.add(new LiveViewSymbolTable().of(
-                        symbolReader.getSymbolTable(c), cache, c, cache.newSymbolMaxIdExclusive(c), false));
+                        symbolReader.getSymbolTable(c), cache, c, cache.newSymbolMaxIdExclusive(c), false, false));
             } else {
                 resolvers.add(null);
             }
@@ -6368,10 +6427,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         boolean didWork = false;
-        while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+        // Bounded drain: leave any leftover / re-enqueued tasks for the next scheduler turn so
+        // one busy base table cannot starve the pool. See MAX_REFRESH_TASKS_PER_RUN.
+        int drained = 0;
+        while (drained < MAX_REFRESH_TASKS_PER_RUN && stateStore.tryDequeueRefreshTask(refreshTask)) {
             refreshViewsForBaseTable(refreshTask.baseTableToken, refreshTask.seqTxn);
             stateStore.notifyBaseRefreshed(refreshTask, refreshTask.seqTxn);
             didWork = true;
+            drained++;
         }
         if (!didWork) {
             // Notification queue empty: scan all registered views and refresh any whose
@@ -6398,19 +6461,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // head and reopens when new base commits land.
         final boolean leadOnly = isLeadReconstruction();
         LiveViewRegistry registry = engine.getLiveViewRegistry();
-        registry.getViews(viewInstanceSink);
+        // Registry sharding: each worker copies (and scans) ONLY the views it owns (by table id),
+        // so the idle fallback scan copies and processes each view once across the pool (O(views))
+        // rather than copying every view on every worker and discarding the non-owned ones
+        // afterwards (O(workers x views) copies). The notification-driven path is unaffected (any
+        // worker handles any base-table task); this only splits the periodic catch-up scan. A
+        // single-worker pool owns everything, so behavior there is unchanged.
+        registry.getShardedViews(viewInstanceSink, workerId, workerCount);
         boolean didWork = false;
         for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
-            // Registry sharding: each worker only scans the views it owns (by table id),
-            // so the idle fallback scan costs O(views) across the pool rather than
-            // O(workers x views) with every worker re-scanning every view each tick. The
-            // notification-driven path is unaffected (any worker handles any base-table
-            // task); this only splits the periodic catch-up scan. A single-worker pool
-            // owns everything, so behavior there is unchanged.
-            if (!ownsViewShard(instance.getLiveViewToken().getTableId())) {
-                continue;
-            }
             // A definition-less stub (torn / too-new _lv or _lv.s, registered by
             // buildViewGraphs so DROP LIVE VIEW can still remove it) lives in the
             // registry that getViews iterates, so it reaches this scan even though it
@@ -6621,6 +6681,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } finally {
             instance.unlockAfterRefresh();
             instance.tryCloseIfDropped();
+            // Mirror the main refresh finally: if the view was invalidated concurrently while
+            // this helper held the refresh latch, the invalidator's own free lost the CAS and
+            // relies on the latch holder to free the runtime state (factory, maps, tier,
+            // tracker) once the latch is released. Without this, an invalid view strands that
+            // state until DROP or shutdown.
+            instance.tryFreeRuntimeStateIfInvalid();
         }
     }
 

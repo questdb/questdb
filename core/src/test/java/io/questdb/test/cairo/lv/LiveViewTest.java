@@ -35,6 +35,10 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshTask;
+import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.lv.WalSegmentPageFrameCursor;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
@@ -45,6 +49,7 @@ import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -732,6 +737,140 @@ public class LiveViewTest extends AbstractLiveViewTest {
                 for (int tableId = 1; tableId <= 200; tableId++) {
                     Assert.assertTrue("single-worker pool owns every view", solo.ownsViewShard(tableId));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testIdleScanEnumerationIsSharded() throws Exception {
+        // The fallback scan ENUMERATES only each worker's shard via getShardedViews(), so the
+        // pool copies each view once per sweep (O(views)) instead of every worker copying every
+        // view and discarding the non-owned ones (O(workers x views)). Assert the sharded
+        // enumeration is a disjoint cover of the whole registry and that, whenever the views
+        // span more than one shard, no single worker enumerates all of them.
+        assertMemoryLeak(() -> {
+            final int viewCount = 12;
+            for (int i = 0; i < viewCount; i++) {
+                execute("CREATE TABLE base" + i + " (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE LIVE VIEW lv" + i + " FLUSH EVERY 1s START FROM NOW AS "
+                        + "SELECT ts, x, row_number() OVER () AS rn FROM base" + i);
+            }
+            final LiveViewRegistry registry = engine.getLiveViewRegistry();
+            final ObjList<LiveViewInstance> all = new ObjList<>();
+            registry.getViews(all);
+            Assert.assertTrue("the created live views must be registered", all.size() >= viewCount);
+
+            final int workerCount = 4;
+            final IntHashSet residues = new IntHashSet();
+            for (int i = 0, n = all.size(); i < n; i++) {
+                residues.add(Math.floorMod(all.getQuick(i).getLiveViewToken().getTableId(), workerCount));
+            }
+
+            final ObjList<LiveViewInstance> shard = new ObjList<>();
+            final IntHashSet seenTableIds = new IntHashSet();
+            int total = 0;
+            int maxShardSize = 0;
+            int nonEmptyShards = 0;
+            for (int w = 0; w < workerCount; w++) {
+                registry.getShardedViews(shard, w, workerCount);
+                if (shard.size() > 0) {
+                    nonEmptyShards++;
+                }
+                maxShardSize = Math.max(maxShardSize, shard.size());
+                total += shard.size();
+                for (int i = 0, n = shard.size(); i < n; i++) {
+                    final int tableId = shard.getQuick(i).getLiveViewToken().getTableId();
+                    Assert.assertEquals("a view lands only in its floorMod shard", w, Math.floorMod(tableId, workerCount));
+                    Assert.assertTrue("a view must appear in exactly one shard", seenTableIds.add(tableId));
+                }
+            }
+            // Disjoint cover: every registered view appears in exactly one worker's enumeration.
+            Assert.assertEquals("shards must cover every registered view exactly once", all.size(), total);
+            Assert.assertEquals("one non-empty shard per distinct residue", residues.size(), nonEmptyShards);
+            // Sharded, not full copy: whenever the views span multiple shards, no worker sees all.
+            if (residues.size() > 1) {
+                Assert.assertTrue("no worker may enumerate the whole registry", maxShardSize < all.size());
+            }
+
+            // A single-worker pool enumerates everything - unchanged behavior.
+            registry.getShardedViews(shard, 0, 1);
+            Assert.assertEquals("single-worker pool enumerates every view", all.size(), shard.size());
+        });
+    }
+
+    @Test
+    public void testNotificationDrainIsBoundedPerRun() throws Exception {
+        // A base table under sustained ingestion re-enqueues its refresh task as soon as it is
+        // processed, so an unbounded notification drain would let one base table monopolize the
+        // shared refresh pool and starve materialized-view jobs and timers. processNotifications()
+        // must drain at most MAX_REFRESH_TASKS_PER_RUN tasks per Job.run() and leave the rest for
+        // the next scheduler turn. Base tables with no live view make each task a side-effect-free
+        // registry fan-out, isolating the drain bound.
+        assertMemoryLeak(() -> {
+            final LiveViewStateStore store = engine.getLiveViewStateStore();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final int bound = job.maxRefreshTasksPerRun();
+                final int overflow = 3;
+                final int taskCount = bound + overflow;
+                for (int i = 0; i < taskCount; i++) {
+                    final String name = "m3base" + i;
+                    store.registerBaseTable(name);
+                    final TableToken token = new TableToken(name, name, null, 1_000 + i, false, false, false);
+                    store.notifyBaseTableCommit(token, 1);
+                }
+
+                Assert.assertTrue("the bounded drain still made progress", job.processNotificationsForTest());
+
+                // A single run drained only the bound; the overflow stays queued for the next turn.
+                final LiveViewRefreshTask task = new LiveViewRefreshTask();
+                int remaining = 0;
+                while (store.tryDequeueRefreshTask(task)) {
+                    remaining++;
+                }
+                Assert.assertEquals("one run must drain at most MAX_REFRESH_TASKS_PER_RUN tasks", overflow, remaining);
+            }
+            store.clear();
+        });
+    }
+
+    @Test
+    public void testLargeTransactionScratchIsNotRetainedAtPeak() throws Exception {
+        // drainBaseWal hands a whole base transaction to the worker-owned WalSegmentPageFrameCursor,
+        // whose extractTimestamps() grows a reusable 8-bytes-per-row scratch. jumpTo(0) only rewinds
+        // the append cursor, so a single outlier transaction would pin its peak for the refresh
+        // worker's lifetime. The cursor must release that peak once it exceeds the retained cap. The
+        // cap is lowered here so a modest transaction is enough to drive the shrink deterministically.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final WalSegmentPageFrameCursor cursor = job.walFrameCursorForTest();
+                final long cap = 128L * 1024;
+                cursor.setMaxRetainedExtractedTsBytes(cap);
+
+                // One large transaction: 50k rows -> ~400 KiB of timestamp scratch, well past the cap.
+                execute("INSERT INTO base SELECT timestamp_sequence('2026-05-12T00:00:00.000000Z', 1000000), x " +
+                        "FROM long_sequence(50000)");
+                drainWalQueue();
+                drainJob(job);
+                final long afterLarge = cursor.extractedTimestampMemCapacity();
+                Assert.assertTrue(
+                        "the outlier transaction must grow the scratch past the cap [cap=" + cap + ", capacity=" + afterLarge + "]",
+                        afterLarge > cap
+                );
+
+                // A subsequent small transaction must release the retained peak, not pin it.
+                execute("INSERT INTO base VALUES ('2026-06-12T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                final long afterSmall = cursor.extractedTimestampMemCapacity();
+                Assert.assertTrue(
+                        "the retained peak must be released on the next frame [afterSmall=" + afterSmall + ", cap=" + cap + "]",
+                        afterSmall <= cap
+                );
+                Assert.assertTrue("the scratch must actually shrink after the outlier", afterSmall < afterLarge);
             }
         });
     }

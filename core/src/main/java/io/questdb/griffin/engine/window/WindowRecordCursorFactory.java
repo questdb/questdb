@@ -360,7 +360,19 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                 for (int i = 0; i < windowFunctionsCount; i++) {
                     windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
-                reopen(functions);
+                try {
+                    reopen(functions);
+                } catch (Throwable th) {
+                    // Same transactional first-open guarantee as ofIncremental(): a partial
+                    // reopen must not leave a half-open cursor whose next getIncrementalCursor()
+                    // takes the else-branch, skips reopen, and drives computeNext over a
+                    // never-reopened (closed) map. The restore failed, so there is no restored
+                    // state to preserve - force the full non-incremental teardown so the caller's
+                    // rebuild re-bootstraps from a clean slate.
+                    isIncremental = false;
+                    close();
+                    throw th;
+                }
             }
         }
 
@@ -390,8 +402,22 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                 for (int i = 0; i < windowFunctionsCount; i++) {
                     windowFunctions.getQuick(i).setMemoryTracker(memoryTracker);
                 }
-                reopen(functions);
-                Function.init(functions, baseCursor, executionContext, null);
+                try {
+                    reopen(functions);
+                    Function.init(functions, baseCursor, executionContext, null);
+                } catch (Throwable th) {
+                    // First open doubles as the bootstrap: there is no accumulated window
+                    // state to preserve. A partial reopen left some window maps allocated and
+                    // later ones closed, and isOpen is already set - so the incremental close()
+                    // would keep this half-open state and the next ofIncremental() would take
+                    // the else-branch, skip reopen, and drive computeNext over a never-reopened
+                    // (closed) native map. Force the full non-incremental teardown - free the
+                    // base cursor and reset (free) every window function's map, clearing isOpen -
+                    // so a retry re-bootstraps from a clean slate.
+                    isIncremental = false;
+                    close();
+                    throw th;
+                }
             } else {
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     Function f = functions.getQuick(i);
