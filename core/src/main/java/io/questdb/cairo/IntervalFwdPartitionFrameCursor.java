@@ -119,6 +119,13 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         // whole partition, will need to skip to next one
                         partitionLimit1 = -1;
                         partitionLo1++;
+                    } else if (partitionLo1 + 1 < partitionHi1
+                            && reader.getPartitionTimestampByIndex(partitionLo1 + 1) == reader.getPartitionTimestampByIndex(partitionLo1)) {
+                        // Fragment, but a sibling cell of the same day (composite table) still needs
+                        // its own chance to be checked against this SAME interval -- mirrors next()'s
+                        // own fix (Task 6c finding), see this class's javadoc.
+                        partitionLimit1 = -1;
+                        partitionLo1++;
                     } else {
                         // only fragment, need to skip to next interval
                         partitionLimit1 = hi;
@@ -236,8 +243,31 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         // whole partition, will need to skip to next one
                         partitionLimit = 0;
                         partitionLo++;
+                    } else if (partitionLo + 1 < partitionHi
+                            && reader.getPartitionTimestampByIndex(partitionLo + 1) == reader.getPartitionTimestampByIndex(partitionLo)) {
+                        // Fragment (interval's HIGH bound reached mid-partition), but a SIBLING cell of
+                        // the SAME day (composite table, higher cellKey, not yet visited in this forward
+                        // scan) still needs its own chance to be checked against this SAME interval --
+                        // do NOT retire the interval yet. Task 6c (read-side differential capstone)
+                        // finding: this branch previously always advanced intervalsLo unconditionally,
+                        // silently never visiting any sibling cell of a multi-cell day whenever the
+                        // FIRST-visited (lowest cellKey) sibling's own data extended past the interval's
+                        // hi bound -- e.g. a query entirely within one day, or whose hi bound falls
+                        // mid-day, over a composite table with 2+ cells that day, silently dropped every
+                        // cell but the lowest cellKey. cullPartitions' own high-boundary fix (commit
+                        // 233532984f) correctly widens [partitionLo, partitionHi) to include every
+                        // sibling, but this loop never reached the later siblings because it gave up on
+                        // the interval (and therefore the whole scan, since composite queries typically
+                        // have exactly one interval) as soon as the FIRST cell yielded a fragment.
+                        // Provably byte-identical to the prior behaviour for a plain table (a plain
+                        // table's partitionLo+1 is always the NEXT DAY, never a same-timestamp sibling,
+                        // so this branch is unreachable there) -- kept unconditional rather than gated on
+                        // composite detection, mirroring 233532984f's own precedent.
+                        partitionLimit = 0;
+                        partitionLo++;
                     } else {
-                        // only fragment, need to skip to next interval
+                        // only fragment, no sibling cell left to check -- this interval is now fully
+                        // satisfied, exactly as before this fix.
                         partitionLimit = hi;
                         intervalsLo++;
                     }

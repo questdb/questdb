@@ -122,6 +122,13 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     // whole partition, skip to next one
                     partitionHi1 = currentPartition;
                     partitionLimit1 = -1;
+                } else if (currentPartition - 1 >= partitionLo1
+                        && reader.getPartitionTimestampByIndex(currentPartition - 1) == reader.getPartitionTimestampByIndex(currentPartition)) {
+                    // Fragment, but a sibling cell of the same day (composite table) still needs its
+                    // own chance to be checked against this SAME interval -- mirrors next()'s own fix
+                    // (Task 6c finding), see this class's javadoc.
+                    partitionHi1 = currentPartition;
+                    partitionLimit1 = -1;
                 } else {
                     // only fragment, skip to next interval
                     partitionLimit1 = lo;
@@ -218,8 +225,23 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 if (lo == 0) {
                     // interval yielded empty partition frame, skip partition
                     skipPartition(currentPartition);
+                } else if (currentPartition - 1 >= partitionLo
+                        && reader.getPartitionTimestampByIndex(currentPartition - 1) == reader.getPartitionTimestampByIndex(currentPartition)) {
+                    // Fragment (interval's LOW bound reached mid-partition), but a SIBLING cell of the
+                    // SAME day (composite table, lower cellKey, not yet visited in this backward scan)
+                    // still needs its own chance to be checked against this SAME interval -- do NOT
+                    // retire the interval yet. Task 6c (read-side differential capstone) finding:
+                    // symmetric counterpart of IntervalFwdPartitionFrameCursor#next()'s own fix -- see
+                    // that class's javadoc for the full mechanism (here it is the LOW bound / lower
+                    // cellKey side of the same underlying defect, since backward scan visits a day's
+                    // cells highest-cellKey-first). Provably byte-identical to the prior behaviour for a
+                    // plain table (currentPartition - 1 is always the PREVIOUS DAY there, never a
+                    // same-timestamp sibling) -- kept unconditional, mirroring 233532984f's own
+                    // precedent.
+                    skipPartition(currentPartition);
                 } else {
-                    // only fragment, need to skip to next interval
+                    // only fragment, no sibling cell left to check -- this interval is now fully
+                    // satisfied, exactly as before this fix.
                     skipInterval(currentInterval, lo);
                 }
 
