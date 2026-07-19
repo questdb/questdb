@@ -337,6 +337,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public void sync(boolean async) {
+        if (pageAddress == 0) {
+            // Closed / unmapped memory has no dirty mmap pages to flush. A partition column freed by a
+            // parquet conversion can still be visited by the adaptive column-sync loop; close() nulls ff,
+            // so touching it here would NPE - and there is genuinely nothing to sync.
+            return;
+        }
         if (appendOnly) {
             // Append-only memory: the only durable-relevant dirty bytes are those between the last
             // synced append offset and the current append offset. Narrow the msync to the written
@@ -359,6 +365,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void syncFlushKick() {
+        if (pageAddress == 0) {
+            return; // closed/unmapped (e.g. a parquet-converted column): nothing to flush, ff is null
+        }
         // Batched SYNC stage 1: msync(MS_ASYNC) the dirty range to push mmap-dirty pages into the page
         // cache so the following sync_file_range can see them. Mirrors sync()'s msync-range selection
         // (append-only narrows to [0, appendOffset); else full [0, size)) but is always ASYNC and issues
@@ -376,6 +385,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void syncFlushDrain() {
+        if (pageAddress == 0) {
+            return; // closed/unmapped (e.g. a parquet-converted column): nothing to drain, fd is -1
+        }
         // Batched SYNC stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the (now page-cache-dirty) range
         // back to the device cache and WAITS. NO device flush, NO watermark mutation. The mapping is rooted
         // at file offset 0, so the fd-relative dirty range equals the in-mapping range: append-only ->
