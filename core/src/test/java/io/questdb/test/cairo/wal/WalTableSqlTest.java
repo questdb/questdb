@@ -1355,6 +1355,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyTruncate() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (" +

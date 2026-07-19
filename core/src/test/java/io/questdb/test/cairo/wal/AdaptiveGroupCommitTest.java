@@ -73,10 +73,10 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     private static final long WINDOW_US = 1_000_000L; // 1s window, driven by the test microsecond clock
 
     @Test
-    public void testGroupWindowDefaultsToZero() throws Exception {
+    public void testGroupWindowDefaultsTo50Ms() throws Exception {
         assertMemoryLeak(() -> Assert.assertEquals(
-                "cairo.adaptive.commit.group.window default must be 0 (synchronous, zero-loss)",
-                0L, engine.getConfiguration().getAdaptiveCommitGroupWindowUs()
+                "cairo.adaptive.commit.group.window default must be 50ms (50000us) — RPO<=50ms out of the box",
+                50_000L, engine.getConfiguration().getAdaptiveCommitGroupWindowUs()
         ));
     }
 

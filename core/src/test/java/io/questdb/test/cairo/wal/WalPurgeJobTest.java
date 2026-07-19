@@ -1081,6 +1081,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentDirnamePattern() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         // We create a directory called "stuff" inside the wal1 and ensure it's not deleted.
         // This tests that non-numeric directories aren't matched.
         assertMemoryLeak(() -> {
@@ -1131,6 +1132,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentLockedWhenSweeping() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
@@ -1212,6 +1214,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentsCreatedWhenSweeping() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
 
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {

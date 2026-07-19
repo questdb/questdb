@@ -113,6 +113,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNotInitialized() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             createTable("B", true);
             createTable("C", true);
@@ -129,6 +130,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesQueryCache() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             createTable("A", false);
             createTable("B", true);
@@ -153,6 +155,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSelectAll() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
@@ -217,6 +220,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSuspendedWithErrorCode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 112 : 28) + ", 'Out of disk space'", DISK_FULL, "Out of disk space");
         testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 8 : 12) + ", 'Out of memory'", OUT_OF_MMAP_AREAS, "Out of memory");
         testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 4 : 24) + ", 'Too many open file handlers'", TOO_MANY_OPEN_FILES, "Too many open file handlers");
@@ -224,6 +228,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSuspendedWithErrorTag() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         testWalTablesSuspendedWithError("alter table B suspend wal with 'DISK FULL', 'test error message 1'", DISK_FULL, "test error message 1");
         testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MMAP AREAS', 'test error message 2'", OUT_OF_MMAP_AREAS, "test error message 2");
         testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MEMORY', 'test error message 3'", OUT_OF_MEMORY, "test error message 3");
@@ -247,20 +252,22 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
      */
     @Test
     public void testAdaptiveObservabilityColumns() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1); // disable auto-epoch so durableEpochSeqTxn stays 0 until driven explicitly below
         assertMemoryLeak(() -> {
-            // Default commit mode for AbstractCairoTest is NOSYNC.
+            // Default commit mode for AbstractCairoTest is now ADAPTIVE; this test pins it explicitly.
             createTable("T1", true);
             drainWalQueue();
 
             final TableToken token = engine.verifyTableName("T1");
 
-            // --- commitMode = nosync (default) ---
+            // --- commitMode = adaptive ---
             assertQuery("select name, commitMode from wal_tables() where name = 'T1'")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
                             name\tcommitMode
-                            T1\tnosync
+                            T1\tadaptive
                             """);
 
             // --- durableEpochSeqTxn / walRetentionTxn: 0 by default ---
