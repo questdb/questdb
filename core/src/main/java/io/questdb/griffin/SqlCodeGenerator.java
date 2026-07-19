@@ -10364,6 +10364,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new EmptyTableRecordCursorFactory(queryMeta);
             }
 
+            // Task 6b fix (composite LATEST ON + residual WHERE): for a composite table the compiled
+            // residual filter is carried here to be pushed INTO the merged per-key scan below, rather
+            // than freed and re-applied by the OUTER generateFilter AFTER LATEST BY (see the composite
+            // scan branch). Stays null for plain tables (byte-identical: never read on a plain path) and
+            // for composite queries with no residual filter; freed by this method's catch on any throw
+            // between here and the point ownership transfers to the FilteredRecordCursorFactory.
+            Function compositeLatestByFilter = null;
             if (latestByColumnCount > 0) {
                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
@@ -10413,7 +10420,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             hasInterval
                     );
                 }
-                Misc.free(filter);
+                // Composite: do NOT free-and-recompile. Carry the already-compiled residual filter to
+                // wrap the merged scan below as latestBy(filter(scan)); the OUTER generateFilter is then
+                // suppressed for that case so the predicate is not re-applied AFTER LATEST BY (which
+                // silently drops a key whose true-latest row fails it). May be null (no residual filter).
+                compositeLatestByFilter = filter;
             }
 
             // below code block generates index-based filter
@@ -10891,6 +10902,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // Task 6b: latestBy.size() > 0 here only when the generateLatestByTableQuery guard
                     // above declined (composite); apply LATEST BY directly over the merged scan.
                     if (latestBy.size() > 0) {
+                        if (compositeLatestByFilter != null) {
+                            // Correctness fix: compose latestBy(filter(scan)), matching what
+                            // generateLatestByTableQuery does for a plain table by pushing the filter into
+                            // its per-key scan. Wrap the merged scan with the already-compiled residual
+                            // filter so LATEST BY only ever sees rows that pass the predicate, and clear
+                            // the where clause set just above so the OUTER generateFilter does NOT re-run
+                            // the predicate AFTER LATEST BY -- that ordering, filter(latestBy(scan)),
+                            // silently drops a key whose true-latest row fails the filter instead of
+                            // falling back to its latest surviving row. FilteredRecordCursorFactory takes
+                            // ownership of both compositeScan and the filter (frees both on close, and we
+                            // free both here if its own construction throws); once it owns them we null
+                            // the carrier so this method's catch does not double-free.
+                            model.setWhereClause(null);
+                            final RecordCursorFactory filteredScan;
+                            try {
+                                filteredScan = new FilteredRecordCursorFactory(compositeScan, compositeLatestByFilter);
+                            } catch (Throwable e) {
+                                Misc.free(compositeScan);
+                                Misc.free(compositeLatestByFilter);
+                                throw e;
+                            }
+                            compositeLatestByFilter = null;
+                            return wrapCompositeLatestBy(filteredScan, model, latestBy, queryMeta);
+                        }
                         return wrapCompositeLatestBy(compositeScan, model, latestBy, queryMeta);
                     }
                     return compositeScan;
@@ -10914,6 +10949,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return plainScan;
             } catch (Throwable e) {
                 Misc.free(dfcFactory);
+                // Free the carried composite residual filter if we threw before ownership passed to the
+                // FilteredRecordCursorFactory (e.g. the composite indexed-predicate loud gate above).
+                // Nulled once transferred, so this never double-frees.
+                Misc.free(compositeLatestByFilter);
                 throw e;
             }
         }

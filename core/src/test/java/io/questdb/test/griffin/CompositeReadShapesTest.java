@@ -167,6 +167,50 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Critical: {@code LATEST ON} combined with a RESIDUAL {@code WHERE} filter must compose as
+     * {@code latestBy(filter(scan))} -- the filter has to be pushed INTO the per-key scan (exactly as
+     * {@code generateLatestByTableQuery} does for a plain table) so LATEST BY only ever sees rows that
+     * pass the predicate. The pre-fix composite path instead applied LATEST BY over the merged scan and
+     * left the residual filter for the OUTER {@code generateFilter} -- i.e. {@code filter(latestBy(scan))}
+     * -- so a key whose TRUE latest row fails the predicate had that row picked by LATEST BY and THEN
+     * dropped by the filter, silently vanishing instead of falling back to its latest row that passes.
+     * <p>
+     * {@code px} is a plain (non-key, non-symbol) column, so {@code px > 10} is a residual filter: it
+     * neither sets {@code intrinsicModel.keyColumn} (the indexed-predicate loud gate) nor collapses to a
+     * ts interval baked into the scan. {@code px} is deliberately NON-monotonic with ts within a sym so
+     * the filtered-out row is sym A's true latest (px 5) -- must equal the plain twin: A 15, B 25.
+     */
+    @Test
+    public void testLatestOnWithResidualRangeFilterEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createResidualFilterTwins();
+            assertSqlCursors(
+                    "select * from p where px > 10 latest on ts partition by sym order by sym",
+                    "select * from c where px > 10 latest on ts partition by sym order by sym"
+            );
+        });
+    }
+
+    /**
+     * Same {@code latestBy(filter(scan))} requirement as {@link #testLatestOnWithResidualRangeFilterEqualsPlainTwin},
+     * reached via an equality predicate on a NON-indexed symbol column ({@code exch2}). WhereClauseParser
+     * only promotes an INDEXED symbol equality to {@code intrinsicModel.keyColumn} (which hits the loud
+     * gate); a non-indexed one stays a residual filter over the merged scan. sym A's true latest row
+     * carries {@code exch2='Z'}, so filtering first keeps A's earlier {@code exch2='Q'} row (px 15)
+     * rather than dropping A entirely -- must equal the plain twin: A 15, B 25.
+     */
+    @Test
+    public void testLatestOnWithResidualNonIndexedSymEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createResidualFilterTwins();
+            assertSqlCursors(
+                    "select * from p where exch2 = 'Q' latest on ts partition by sym order by sym",
+                    "select * from c where exch2 = 'Q' latest on ts partition by sym order by sym"
+            );
+        });
+    }
+
     // ==========================================================================================
     // Step 1: time-series joins, composite on MASTER, SLAVE, and BOTH sides
     // ==========================================================================================
@@ -461,6 +505,31 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
                         "from long_sequence(288) order by x desc";
         execute("insert into c " + select);
         execute("insert into p " + select);
+        drainWalQueue();
+    }
+
+    /**
+     * Builds composite table {@code c} ({@code partition by day, exch}) and its plain twin {@code p}
+     * ({@code partition by day}) for the LATEST-ON-plus-residual-WHERE differential. Both hold the same
+     * four rows (the read-review repro), all on one day so the composite splits them across two
+     * {@code exch} cells (X: 00:00 A, 07:00 B; Y: 06:00 A, 01:00 B) that the cross-cell merge must
+     * interleave by ts. {@code sym} is an ORDINARY (non-dimension) column and the LATEST BY key;
+     * {@code exch2} is an ORDINARY, NON-indexed symbol used for the residual-equality variant. Crucially
+     * {@code px} is NON-monotonic with ts within a sym (A: 15@00:00 then 5@06:00), so a residual filter
+     * removes a key's TRUE latest row -- the shape that makes {@code filter(latestBy(scan))} drop the key
+     * while {@code latestBy(filter(scan))} correctly falls back to its latest surviving row. Inserted
+     * scrambled so each cell is O3-sorted by the WAL write path.
+     */
+    private void createResidualFilterTwins() throws SqlException {
+        execute("create table c (ts timestamp, exch symbol, sym symbol, exch2 symbol, px double) timestamp(ts) partition by day, exch wal");
+        execute("create table p (ts timestamp, exch symbol, sym symbol, exch2 symbol, px double) timestamp(ts) partition by day wal");
+        final String rows = " values " +
+                "('2020-02-01T07:00:00.000000Z','X','B','Q',25.0)," +
+                "('2020-02-01T00:00:00.000000Z','X','A','Q',15.0)," +
+                "('2020-02-01T06:00:00.000000Z','Y','A','Z',5.0)," +
+                "('2020-02-01T01:00:00.000000Z','Y','B','Q',20.0)";
+        execute("insert into c" + rows);
+        execute("insert into p" + rows);
         drainWalQueue();
     }
 
