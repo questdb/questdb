@@ -126,6 +126,12 @@ that cell's own day (`ts IN '<day>'`, `ts >= <day>`) → the whole cell is dropp
   `FilterOnValuesRecordCursorFactory:10616`): detect when `keyColumn` (or an ANDed dimension predicate) is a
   PARTITIONING DIMENSION source column of a composite table, and pass the resolved allowed-cellKey set down to the
   partition-frame cursor factory.
+  **CRITICAL ordering vs Task 6b:** 6b LOUD-GATES an indexed-symbol WHERE `=`/`IN` on composite (the `intrinsicModel.keyColumn != null`
+  block throws `CairoException` unless `NO_INDEX`). A DIMENSION predicate (`WHERE exch='BTC'` — the feature's PRIMARY use case)
+  must be intercepted and routed to CELL-PRUNING (+ the merged general scan) BEFORE that 6b gate fires — i.e. the composite
+  dimension-pruning branch precedes/short-circuits the indexed-WHERE gate. After 5b, `WHERE exch='BTC'` prunes to BTC cells
+  and works fast; the 6b gate then only remains for NON-dimension indexed symbols (Plan-7). Verify `WHERE exch='BTC'` no longer
+  throws (was gated by 6b) and equals the plain twin.
 - Modify: `core/src/main/java/io/questdb/cairo/AbstractIntervalPartitionFrameCursor.java` +
   `FullPartitionFrameCursor` (or a shared cell-filter mixin) — skip partition slots whose `getPartitionCellKey`
   is not in the allowed set, composing with the existing ts culling.
