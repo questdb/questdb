@@ -29,6 +29,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -100,6 +101,21 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions);
 
     boolean supportsTableRowId(TableToken tableToken);
+
+    /**
+     * Task 5b (composite-partitioning dimension cell pruning): attaches the set of cellKeys a
+     * composite table's partitioning-dimension equality/IN predicate (e.g. {@code WHERE exch = 'BTC'})
+     * could possibly match, so the concrete partition-frame cursor can SKIP every OTHER cell instead of
+     * scanning it and relying on the row-level filter alone. {@code null} (the default here, and the
+     * only value ever seen by a non-composite table) means "no pruning" -- a plain table's factory
+     * never gets a non-null set at all (the resolution in {@code SqlCodeGenerator} is gated on
+     * {@code PartitionSpec.isComposite()}), so this default no-op keeps every OTHER implementor of this
+     * interface (there is none today besides the {@code Interval}/{@code FullPartitionFrameCursorFactory}
+     * pair, both routed through {@code AbstractPartitionFrameCursorFactory}) unaffected.
+     */
+    default void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
+        // no-op: only a composite-aware partition-frame cursor factory acts on this
+    }
 
     /**
      * @param sink to print partition frame cursor to

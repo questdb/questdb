@@ -32,8 +32,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
@@ -45,6 +47,10 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
+    // Task 5b: set by the owning factory (see PartitionFrameCursorFactory#setAllowedCellKeys) right
+    // before this cursor is handed out; null means "no pruning" (every plain table, and every composite
+    // query whose predicate was not resolved to a dimension cellKey set).
+    protected @Nullable IntHashSet allowedCellKeys;
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
@@ -122,6 +128,18 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         return true;
     }
 
+    /**
+     * Task 5b: {@code true} unless a composite dimension predicate was resolved to an allowed-cellKey
+     * set AND this slot's cell is not in it. Every concrete {@code next()}/{@code calculateSize()} in
+     * both {@link IntervalFwdPartitionFrameCursor} and {@link IntervalBwdPartitionFrameCursor} composes
+     * this with their existing ts culling -- never replaces it. {@code allowedCellKeys == null} (no
+     * pruning attempted, or a plain table) short-circuits to {@code true} unconditionally, so this is a
+     * zero-cost no-op for every case this task does not touch.
+     */
+    protected boolean isCellAllowed(int partitionIndex) {
+        return allowedCellKeys == null || allowedCellKeys.contains(reader.getPartitionCellKey(partitionIndex));
+    }
+
     @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndex);
@@ -132,6 +150,15 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         calculateRanges(reader, intervals);
         this.reader = reader;
         return this;
+    }
+
+    /**
+     * Task 5b: see {@link io.questdb.cairo.sql.PartitionFrameCursorFactory#setAllowedCellKeys}'s own doc.
+     * Called by the owning factory on every {@code getCursor()}, not just once, since this cursor
+     * instance is cached and reused across executions of the same compiled factory.
+     */
+    public void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
+        this.allowedCellKeys = allowedCellKeys;
     }
 
     @TestOnly

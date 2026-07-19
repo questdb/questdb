@@ -68,6 +68,9 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
                 if (fwdCursor == null) {
                     fwdCursor = new FullFwdPartitionFrameCursor();
                 }
+                // Task 5b: propagate on every getCursor() call -- see the identical comment in
+                // IntervalPartitionFrameCursorFactory#getCursor().
+                fwdCursor.setAllowedCellKeys(allowedCellKeys);
                 return fwdCursor.of(reader);
             }
 
@@ -76,6 +79,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             if (bwdCursor == null) {
                 bwdCursor = new FullBwdPartitionFrameCursor();
             }
+            bwdCursor.setAllowedCellKeys(allowedCellKeys);
             return bwdCursor.of(reader);
         } catch (Throwable th) {
             Misc.free(reader);
@@ -100,5 +104,9 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             sink.type("Frame forward scan");
         }
         super.toPlan(sink);
+        if (allowedCellKeys != null) {
+            // Task 5b observability -- see IntervalPartitionFrameCursorFactory#toPlan's identical comment.
+            sink.attr("cellsPruned").val(allowedCellKeys.size());
+        }
     }
 }

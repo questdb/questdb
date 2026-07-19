@@ -44,6 +44,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -852,6 +853,38 @@ public class TableReader implements Closeable, SymbolTableSource {
             default:
                 throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
         }
+    }
+
+    /**
+     * Task 5b read-side counterpart of {@link #keyOfDimensionValue}: given a set of already-resolved
+     * per-dimension ordinals for dimension {@code dimIndex} (each produced by {@link
+     * #keyOfDimensionValue}, one call per predicate value), returns the set of cellKeys whose
+     * registered dimension-tuple carries one of those ordinals at position {@code dimIndex} -- i.e.
+     * every cell a {@code WHERE <dimension> = 'v'} / {@code IN (...)} predicate could possibly match.
+     * Enumerates the full {@code _cell} registry (there is no reverse tuple-component index), mirroring
+     * {@link #renderCellSegment}'s existing tuple-decode idiom.
+     * <p>
+     * An empty {@code allowedOrdinals} (every predicate value resolved to
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND}, i.e. never interned) correctly yields an
+     * EMPTY result -- 0 matching cells, not "every cell" -- so a never-seen predicate value prunes to a
+     * genuinely empty scan rather than falling back to "no pruning".
+     * <p>
+     * Caller ({@code SqlCodeGenerator}) is responsible for verifying {@code dimIndex} actually
+     * corresponds to the predicate's own column and that every value function was safe to evaluate
+     * right now (not a still-unbound runtime constant) before calling this; this method itself performs
+     * no such validation, and does not need to -- it operates purely on already-resolved ordinals.
+     */
+    public IntHashSet resolveDimensionCellKeys(int dimIndex, IntHashSet allowedOrdinals) {
+        final CellRegistry cellRegistry = getCompositeDictionaries().cellRegistry();
+        final int[] tuple = new int[metadata.getPartitionSpec().getDimensionCount()];
+        final IntHashSet allowedCellKeys = new IntHashSet();
+        for (int ck = 0, n = cellRegistry.size(); ck < n; ck++) {
+            cellRegistry.getTuple(ck, tuple);
+            if (allowedOrdinals.contains(tuple[dimIndex])) {
+                allowedCellKeys.add(ck);
+            }
+        }
+        return allowedCellKeys;
     }
 
     @Override

@@ -58,16 +58,19 @@ import org.junit.Test;
  * ts}, since ts is not a total order, but OBSERVABLE to ASOF/LT join semantics per the 6a review) never
  * arises here -- every comparison against the plain twin is unambiguous.
  * <p>
- * <b>Task 6b's loud gates</b>: an indexed WHERE predicate against a composite table (on the DIMENSION
- * column itself here, not just an ordinary indexed symbol column as 6b's own tests used -- see {@link
- * #testIndexedDimensionWhereIsLoudGatedThenNoIndexFallsThrough}) and WINDOW/HORIZON JOIN with a
- * composite table on the SLAVE side (a pre-existing, non-composite-specific hard requirement -- see
- * {@link #testWindowJoinCompositeSlaveThrowsClearError}/{@link #testHorizonJoinCompositeSlaveThrowsClearError})
- * both still throw a CLEAR, documented exception -- never silently wrong, never silently dropped -- so
- * this capstone documents the current boundary rather than papering over it. The dimension-equality
- * filter used throughout the rest of this class ({@code where exch = 'X'} / {@code where upper(region) =
- * 'US'}) deliberately does NOT hit this gate (the dimension source column is a plain, non-indexed
- * {@code symbol}), matching the brief's own note that Plan 5b will eventually lift the gate.
+ * <b>Task 6b's loud gates, UPDATED by Task 5b</b>: an indexed WHERE predicate against a composite table
+ * on an ORDINARY (non-dimension) indexed symbol column (6b's own {@code CompositeReadShapesTest} tests)
+ * and WINDOW/HORIZON JOIN with a composite table on the SLAVE side (a pre-existing, non-composite-specific
+ * hard requirement -- see {@link #testWindowJoinCompositeSlaveThrowsClearError}/{@link
+ * #testHorizonJoinCompositeSlaveThrowsClearError}) both still throw a CLEAR, documented exception --
+ * never silently wrong, never silently dropped -- so this capstone documents the current boundary rather
+ * than papering over it. An indexed WHERE predicate on the DIMENSION column ITSELF, previously gated the
+ * same way, is Task 5b's whole point: it now resolves to CELL PRUNING and succeeds instead -- see {@link
+ * #testIndexedDimensionWherePrunesAndMatchesPlainTwin}, updated alongside 5b (it used to assert the
+ * throw for exactly this shape). The dimension-equality filter used throughout the rest of this class
+ * ({@code where exch = 'X'} / {@code where upper(region) = 'US'}) deliberately does NOT hit the
+ * indexed-WHERE mechanism at all (the dimension source column there is a plain, non-indexed
+ * {@code symbol}) -- unaffected by 5b either way, it was always a residual filter over the merged scan.
  * <p>
  * Every table pair is built via the PRE-EXISTING write-side capabilities only (multi-commit WAL inserts,
  * generated/scrambled SELECTs forcing O3 sort, explicit VALUES lists for out-of-order backfills).
@@ -189,9 +192,9 @@ public class CompositeReadEndToEndTest extends AbstractCairoTest {
     public void testDimensionEqualityFilterMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createIdentityLifecycleTwins();
-            // exch is a plain (non-indexed) symbol column here, so this does NOT hit the Task 6b
-            // indexed-WHERE gate at all -- see testIndexedDimensionWhereIsLoudGatedThenNoIndexFallsThrough
-            // below for the indexed variant of this same shape.
+            // exch is a plain (non-indexed) symbol column here, so this does NOT hit the Task
+            // 6b/5b indexed-WHERE machinery at all -- see testIndexedDimensionWherePrunesAndMatchesPlainTwin
+            // below for the indexed variant of this same shape (Task 5b: prunes and succeeds).
             assertSqlCursors(
                     "select * from p where exch = 'X' order by ts",
                     "select * from c where exch = 'X' order by ts");
@@ -294,14 +297,21 @@ public class CompositeReadEndToEndTest extends AbstractCairoTest {
     // ------------------------------------------------------------------------------------------
 
     /**
-     * Task 6b's indexed-WHERE gate, confirmed here for the DIMENSION column itself ({@code exch}), not
-     * just an ordinary indexed symbol column (which is what 6b's own {@code CompositeReadShapesTest}
-     * tests used). The gate condition ({@code reader.getMetadata().getPartitionSpec().isComposite()}) is
-     * table-level, not column-specific, so it must fire here too -- confirmed empirically, not assumed
-     * from reading the guard.
+     * <b>UPDATE (Task 5b):</b> Task 6b's indexed-WHERE gate fired unconditionally here for the DIMENSION
+     * column itself ({@code exch}), not just an ordinary indexed symbol column (which is what 6b's own
+     * {@code CompositeReadShapesTest} tests used) -- the gate condition
+     * ({@code reader.getMetadata().getPartitionSpec().isComposite()}) was table-level, not
+     * column-specific. Task 5b intercepts exactly this shape (an equality/IN predicate on the
+     * partitioning dimension's own source column) BEFORE that gate fires and resolves it to CELL
+     * PRUNING instead: {@code exch = 'X'} now prunes to the single cell matching {@code 'X'} (X is
+     * first-seen below, so cellKey 0) and succeeds, matching the plain twin exactly, rather than
+     * throwing. This test previously asserted the throw for this exact query; it now asserts the new,
+     * correct, pruned behavior -- see {@code CompositeCellPruningTest} for the dedicated differential +
+     * observability (EXPLAIN {@code cellsPruned}) coverage of this task, including the safety boundary
+     * (a genuine multi-cell match is still declined/gated, unchanged) found while implementing it.
      */
     @Test
-    public void testIndexedDimensionWhereIsLoudGatedThenNoIndexFallsThrough() throws Exception {
+    public void testIndexedDimensionWherePrunesAndMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table ci (ts timestamp, exch symbol index, sym symbol, px double) timestamp(ts) partition by day, exch wal");
             execute("create table pi (ts timestamp, exch symbol index, sym symbol, px double) timestamp(ts) partition by day wal");
@@ -317,11 +327,13 @@ public class CompositeReadEndToEndTest extends AbstractCairoTest {
                     "select * from pi where exch = 'X' order by ts",
                     "select * from pi where exch = 'X' order by ts");
 
-            assertQuery("select * from ci where exch = 'X' order by ts")
-                    .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+            // Task 5b: no longer throws -- prunes to cellKey 0 (X) and matches the plain twin exactly.
+            assertSqlCursors(
+                    "select * from pi where exch = 'X' order by ts",
+                    "select * from ci where exch = 'X' order by ts");
 
-            // NO_INDEX escape hatch falls through correctly, matching the plain twin.
+            // NO_INDEX escape hatch still falls through correctly, matching the plain twin (unaffected by
+            // 5b -- it never reaches intrinsicModel.keyColumn at all).
             assertSqlCursors(
                     "select * from pi where exch = 'X' order by ts",
                     "select /*+ NO_INDEX(exch) */ * from ci where exch = 'X' order by ts");

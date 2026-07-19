@@ -208,6 +208,13 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
             // NO_INDEX hint (documented in the gate's own exception text) routes around the index path
             // entirely, keeping this assertion's original intent -- discriminate rows by value, matching
             // the plain twin -- proven over the general (6a-merged) scan instead.
+            //
+            // Task 5b UPDATE: 'A' resolves to exactly ONE registered cell (cellKey 0, first-seen on
+            // day1) -- WHERE exchange = 'A' is now resolved to CELL PRUNING before Task 6b's gate fires,
+            // so the un-hinted query below no longer throws either; it prunes and matches the plain twin
+            // directly. The NO_INDEX-hinted variant is kept alongside it (still correct, unaffected --
+            // an orthogonal mechanism that never reaches intrinsicModel.keyColumn at all) to prove both
+            // paths agree.
             execute("create table ci (ts timestamp, exchange symbol index, px double) timestamp(ts) partition by day, exchange wal");
             execute("create table pi (ts timestamp, exchange symbol index, px double) timestamp(ts) partition by day");
             final String indexedRows = " values " +
@@ -219,9 +226,11 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
             assertSqlCursors(
                     "select ts, exchange, px from pi where exchange = 'A' order by ts",
                     "select /*+ NO_INDEX(exchange) */ ts, exchange, px from ci where exchange = 'A' order by ts");
+            assertSqlCursors(
+                    "select ts, exchange, px from pi where exchange = 'A' order by ts",
+                    "select ts, exchange, px from ci where exchange = 'A' order by ts");
             assertQuery("select count() from ci where exchange = 'A'")
-                    .noLeakCheck().failsWith(
-                            "composite partitioning does not yet support an indexed WHERE predicate");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
             assertQuery("select /*+ NO_INDEX(exchange) */ count() from ci where exchange = 'A'")
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 

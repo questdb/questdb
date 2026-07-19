@@ -62,6 +62,17 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
             final int currentInterval = intervalsHi1 - 1;
             final int currentPartition = partitionHi1 - 1;
+            // Task 5b: a cell excluded by a composite dimension predicate is skipped WITHOUT consuming
+            // the current interval -- mirrors the "whole partition"/"sibling cell" resets below (both
+            // reset partitionLimit1 to -1, this method's own "no residual limit" sentinel, and retreat
+            // partitionHi1 alone), so an earlier (lower-cellKey) sibling cell of the SAME day still gets
+            // its own chance against this interval on the next iteration. isCellAllowed() short-circuits
+            // true (zero cost) when no pruning is in effect.
+            if (!isCellAllowed(currentPartition)) {
+                partitionHi1 = currentPartition;
+                partitionLimit1 = -1;
+                continue;
+            }
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
@@ -164,6 +175,14 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final int currentInterval = intervalsHi - 1;
             final int currentPartition = partitionHi - 1;
+            // Task 5b: see calculateSize()'s identical comment. Reuses the existing skipPartition()
+            // helper -- exactly the "whole partition"/"sibling cell" reset shape below (partitionHi
+            // retreats, partitionLimit resets to -1), so an earlier sibling cell of the same day still
+            // gets its own chance against this interval, and the interval itself is not consumed.
+            if (!isCellAllowed(currentPartition)) {
+                skipPartition(currentPartition);
+                continue;
+            }
             long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);

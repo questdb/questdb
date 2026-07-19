@@ -57,6 +57,17 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         long size = this.sizeSoFar;
 
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
+            // Task 5b: a cell excluded by a composite dimension predicate is skipped WITHOUT consuming
+            // the current interval -- mirrors the "whole partition"/"sibling cell" resets below (both
+            // reset partitionLimit1 to -1, this method's own "no residual limit" sentinel, and advance
+            // partitionLo1 alone), so a later sibling cell of the SAME day still gets its own chance
+            // against this interval. isCellAllowed() short-circuits true (zero cost) when no pruning is
+            // in effect, so this is a no-op for a plain table or an un-pruned composite query.
+            if (!isCellAllowed(partitionLo1)) {
+                partitionLimit1 = -1;
+                partitionLo1++;
+                continue;
+            }
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo1);
@@ -157,6 +168,14 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
+            // Task 5b: see calculateSize()'s identical comment -- this method's own "no residual limit"
+            // sentinel is 0 (not -1; see toTop()), matching every other advance-partitionLo-alone branch
+            // below.
+            if (!isCellAllowed(partitionLo)) {
+                partitionLimit = 0;
+                partitionLo++;
+                continue;
+            }
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo);

@@ -28,7 +28,9 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -36,6 +38,10 @@ import org.jetbrains.annotations.TestOnly;
  */
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
+    // Task 5b: set by the owning factory (see PartitionFrameCursorFactory#setAllowedCellKeys) right
+    // before this cursor is handed out; null means "no pruning" (every plain table, and every composite
+    // query whose predicate was not resolved to a dimension cellKey set).
+    protected @Nullable IntHashSet allowedCellKeys;
     // Partition high boundary.
     protected int partitionHi;
     // Current partition index.
@@ -64,6 +70,18 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         return reader;
     }
 
+    /**
+     * Task 5b: {@code true} unless a composite dimension predicate was resolved to an allowed-cellKey
+     * set AND this slot's cell is not in it. Both {@link FullFwdPartitionFrameCursor} and
+     * {@link FullBwdPartitionFrameCursor} compose this with their existing empty-partition check --
+     * never replace it. {@code allowedCellKeys == null} (no pruning attempted, or a plain table)
+     * short-circuits to {@code true} unconditionally, so this is a zero-cost no-op for every case this
+     * task does not touch.
+     */
+    protected boolean isCellAllowed(int partitionIndex) {
+        return allowedCellKeys == null || allowedCellKeys.contains(reader.getPartitionCellKey(partitionIndex));
+    }
+
     @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndex);
@@ -90,6 +108,15 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         partitionHi = reader.getPartitionCount();
         toTop();
         return moreData;
+    }
+
+    /**
+     * Task 5b: see {@link io.questdb.cairo.sql.PartitionFrameCursorFactory#setAllowedCellKeys}'s own doc.
+     * Called by the owning factory on every {@code getCursor()}, not just once, since this cursor
+     * instance is cached and reused across executions of the same compiled factory.
+     */
+    public void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
+        this.allowedCellKeys = allowedCellKeys;
     }
 
     @Override

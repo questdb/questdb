@@ -31,6 +31,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
@@ -47,6 +48,9 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    // Task 5b: set only for a composite table whose dimension equality/IN predicate was resolved by
+    // SqlCodeGenerator; null (default) means "no pruning" -- see setAllowedCellKeys's own doc.
+    protected @Nullable IntHashSet allowedCellKeys;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     AbstractPartitionFrameCursorFactory(
@@ -96,6 +100,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             CairoTable table = metadataRO.getTable(tableToken);
             return table != null && table.hasParquetPartitions();
         }
+    }
+
+    @Override
+    public void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
+        this.allowedCellKeys = allowedCellKeys;
     }
 
     @Override

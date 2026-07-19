@@ -39,6 +39,8 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDimension;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -10219,6 +10221,107 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Task 5b: attempts to resolve a composite table's equality/IN predicate on a partitioning
+     * dimension (e.g. {@code WHERE exch = 'BTC'} / {@code WHERE exch IN ('BTC','ETH')}) to the set of
+     * cellKeys it could possibly match, so {@code dfcFactory}'s partition-frame cursor can SKIP every
+     * other cell instead of relying solely on the row-level filter/index the rest of the
+     * {@code intrinsicModel.keyColumn != null} block still builds, unchanged, around this call. This is
+     * a pure ADDITIVE optimization -- dfcFactory sits underneath every downstream wrapper that block can
+     * choose (single-value symbol index, IN-list, covering index, sub-query, ...), so narrowing the
+     * cells it walks changes nothing about which rows those wrappers correctly select, only how many
+     * cells they have to look at to find them.
+     * <p>
+     * Returns {@code null} -- "do not prune, leave dfcFactory and the gate below untouched" -- whenever
+     * resolution is not safely possible right now:
+     * <ul>
+     *     <li>{@code keyColumn} is not a partitioning dimension's own source column (an ordinary
+     *     indexed symbol -- Task 6b's gate still applies to it, unchanged; Scope decision 3).</li>
+     *     <li>the matched dimension is {@code KIND_EXPRESSION} ({@link TableReader#keyOfDimensionValue}
+     *     does not support it -- Scope decision 4).</li>
+     *     <li>any predicate value function is a {@link Function#isRuntimeConstant() runtime constant}
+     *     (a bind variable, or otherwise not yet bound): baking a value bound at THIS compile/first
+     *     execution into a cellKey set cached on the factory would go silently wrong were this same
+     *     compiled factory later re-executed with a DIFFERENT bound value -- any such value aborts
+     *     pruning for the WHOLE predicate, not just that one value.</li>
+     *     <li>the resolved allowed-cellKey set has size &gt; 1 -- see below. This is the one restriction
+     *     found empirically while grounding this task, not anticipated in the original design.</li>
+     * </ul>
+     * A value that resolves to {@link SymbolTable#VALUE_NOT_FOUND} (never interned) contributes no
+     * ordinal -- an all-not-found predicate still returns a non-null EMPTY set (correctly prunes to a
+     * 0-row scan), which is why "not resolvable" (null) and "resolvable but matches nothing" (empty)
+     * must stay distinguishable, never conflated.
+     * <p>
+     * <b>Why size &gt; 1 is declined (a deliberate scope narrowing, not an oversight):</b> once pruning
+     * is applied, the UNCHANGED code below hands dfcFactory to one of {@code FilterOnValuesRecordCursorFactory}
+     * / {@code SymbolIndexRowCursorFactory} / {@code CoveringIndexRecordCursorFactory} / {@code
+     * FilterOnSubQueryRecordCursorFactory} -- Task 6b's own comment on the gate below documents that this
+     * WHOLE family was never audited for composite: it merges per-VALUE row cursors within one frame
+     * (e.g. {@code HeapRowCursorFactory}, confirmed by reading {@code FilterOnValuesRecordCursorFactory}),
+     * never across cells. Concretely, {@code FilterOnValuesRecordCursorFactory#getScanDirection()}
+     * (confirmed by reading it) returns {@code SCAN_DIRECTION_FORWARD} purely from {@code
+     * partitionFrameCursorFactory.getOrder() == ORDER_ASC && heapCursorUsed}, with ZERO cell-interleaving
+     * awareness -- the exact "lying getScanDirection" defect Task 6a fixed for the general scan via
+     * {@code CompositePageFrameRecordCursorFactory}, but this is a SEPARATE class hierarchy 6a never
+     * touched. {@code SqlCodeGenerator}'s own single-column {@code ORDER BY <ts>} sort-skip (a few
+     * hundred lines up, guarding {@code return recordCursorFactory} raw) trusts exactly that flag. When
+     * the allowed-cellKey set has size &lt;= 1, this can never matter -- at most one cell is ever visited
+     * per day, so there is nothing to interleave and the physical scan order is trivially, genuinely
+     * ts-ordered (degenerates to the plain-table case). When size &gt; 1 (a genuine multi-value
+     * equality/IN-list spanning 2+ distinct cells), enabling this path could silently misorder rows (or
+     * mislead a join/SAMPLE BY/LATEST ON the same way 6a/6b/6c found and fixed for the general scan) --
+     * auditing this whole separate family the way 6a/6b/6c audited the general-scan path is out of this
+     * task's scope; left as a follow-up (mirrors the gate's own "Plan-7 follow-up" framing). A multi-value
+     * predicate that happens to resolve to &lt;= 1 real cell (e.g. one value never interned) still prunes.
+     */
+    private static @Nullable IntHashSet resolveDimensionCellPruneSet(
+            TableReader reader,
+            RecordMetadata metadata,
+            CharSequence keyColumn,
+            ObjList<Function> keyValueFuncs
+    ) {
+        final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
+        // Deliberately resolved against `metadata` (the reader-native TableRecordMetadata passed into
+        // generateTableQuery0, dense-index-aligned 1:1 with the physical table and its real writer
+        // indices) rather than `queryMeta` (a query-shaped GenericRecordMetadata built by
+        // buildQueryMetadata purely to describe OUTPUT columns): confirmed empirically that queryMeta's
+        // per-column writer index is NOT populated (getWriterIndex returns -1 there), so looking the
+        // writer index up via metadata's own dense index for this column name -- self-consistently, not
+        // mixing queryMeta's dense numbering with metadata's accessor -- is required, not merely tidier.
+        final int metaKeyColumnIndex = SqlUtil.getColumnIndexQuiet(metadata, keyColumn);
+        final int keyWriterIndex = metadata.getWriterIndex(metaKeyColumnIndex);
+        int dimIndex = -1;
+        for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+            if (partitionSpec.getDimension(i).getColumnIndex() == keyWriterIndex) {
+                dimIndex = i;
+                break;
+            }
+        }
+        if (dimIndex == -1 || partitionSpec.getDimension(dimIndex).getKind() == PartitionDimension.KIND_EXPRESSION) {
+            return null;
+        }
+
+        final IntHashSet allowedOrdinals = new IntHashSet();
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final Function f = keyValueFuncs.getQuick(i);
+            if (f.isRuntimeConstant()) {
+                return null;
+            }
+            final int ord = reader.keyOfDimensionValue(dimIndex, f.getStrA(null));
+            if (ord != SymbolTable.VALUE_NOT_FOUND) {
+                allowedOrdinals.add(ord);
+            }
+        }
+        final IntHashSet allowedCellKeys = reader.resolveDimensionCellKeys(dimIndex, allowedOrdinals);
+        if (allowedCellKeys.size() > 1) {
+            // See this method's own doc for why: a genuine multi-cell prune is not safe through the
+            // UNCHANGED row-cursor factory family the code below still builds (unaudited for composite
+            // cross-cell ordering -- confirmed by reading FilterOnValuesRecordCursorFactory).
+            return null;
+        }
+        return allowedCellKeys;
+    }
+
     private RecordCursorFactory generateTableQuery0(
             @Transient IQueryModel model,
             @Transient SqlExecutionContext executionContext,
@@ -10477,6 +10580,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                     final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
 
+                    final boolean compositeTable = reader.getMetadata().getPartitionSpec().isComposite();
+                    // Task 5b: WHERE <partitioning dimension> = 'v' / IN ('v1','v2') (equality/IN only --
+                    // nKeyExcludedValues == 0 -- Scope decision 1/2) is the feature's PRIMARY use case and
+                    // must be resolved to cell pruning BEFORE Task 6b's loud gate below fires, not after --
+                    // this is a pure ADDITIVE narrowing of dfcFactory's own cells, so the unchanged code
+                    // below (single-value/IN-list/covering-index/sub-query) still selects exactly the same
+                    // rows, just out of fewer cells. resolveDimensionCellPruneSet returns null (do not
+                    // prune) for every case it cannot safely resolve -- an ordinary (non-dimension) indexed
+                    // symbol, an EXPRESSION dimension, a runtime-constant (bind variable) value, or an
+                    // IN-list that resolves to 2+ distinct cells (see that method's own doc: the row-cursor
+                    // family below is not audited for composite cross-cell ORDER, only for correct rows) --
+                    // and those cases fall through to 6b's gate below completely UNCHANGED.
+                    boolean dimensionPruned = false;
+                    if (compositeTable && nKeyValues > 0 && nKeyExcludedValues == 0) {
+                        IntHashSet allowedCellKeys = resolveDimensionCellPruneSet(reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs);
+                        if (allowedCellKeys != null) {
+                            dfcFactory.setAllowedCellKeys(allowedCellKeys);
+                            dimensionPruned = true;
+                        }
+                    }
+
                     // Task 6b: every row-cursor factory this family can return (single-value, IN-list,
                     // NOT-IN, key sub-query, and the covering-index / sorted-symbol-index shortcuts
                     // below) is a framingSupported=false PageFrameRecordCursorFactory driven by a
@@ -10498,8 +10622,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // dropped predicate or a leak/double-free; see task-6b-report.md (Plan-7 follow-up).
                     // A NO_INDEX hint on the column (or on the whole query) avoids this gate entirely: it
                     // stops WhereClauseParser from ever setting intrinsicModel.keyColumn, so the predicate
-                    // stays a normal residual filter over the already-correct merged scan.
-                    if (reader.getMetadata().getPartitionSpec().isComposite()) {
+                    // stays a normal residual filter over the already-correct merged scan. Task 5b: a
+                    // successfully cell-pruned DIMENSION predicate (dimensionPruned) also bypasses this
+                    // gate -- see this method's own resolveDimensionCellPruneSet doc for exactly which
+                    // cases that covers; every other composite keyColumn shape still throws, unchanged.
+                    if (compositeTable && !dimensionPruned) {
                         throw CairoException.critical(0)
                                 .put("composite partitioning does not yet support an indexed WHERE predicate [table=")
                                 .put(tableToken.getTableName()).put(", column=").put(intrinsicModel.keyColumn).put(']');

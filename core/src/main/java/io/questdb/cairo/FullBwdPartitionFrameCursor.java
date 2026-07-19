@@ -36,8 +36,9 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
             // Skip empty partitions without opening them, exactly as next() and the interval cursors
             // do. A size-0 partition (e.g. one a backup left out of the restore) has no directory on
             // disk, so openPartition() would throw "partition does not exist" instead of contributing
-            // 0 rows.
-            if (reader.getPartitionRowCountFromMetadata(partitionIndex) > 0) {
+            // 0 rows. Task 5b: a cell excluded by a composite dimension predicate is skipped the same
+            // way -- isCellAllowed() short-circuits true (zero cost) when no pruning is in effect.
+            if (isCellAllowed(partitionIndex) && reader.getPartitionRowCountFromMetadata(partitionIndex) > 0) {
                 final long hi = reader.openPartition(partitionIndex);
                 if (hi > 0) {
                     counter.add(hi);
@@ -51,8 +52,9 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     public PartitionFrame next(long skipTarget) {
         while (partitionIndex > -1) {
             final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
-            if (hi < 1) {
-                // this partition is missing, skip
+            if (hi < 1 || !isCellAllowed(partitionIndex)) {
+                // this partition is missing, or (Task 5b) its cell doesn't match a composite dimension
+                // predicate -- skip either way
                 partitionIndex--;
             } else {
                 frame.partitionIndex = partitionIndex;
