@@ -2234,7 +2234,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);
-                    if (column != null && !(column instanceof NullMemory)) {
+                    // A closed column (dropped / parquet-converted / rolled back mid-commit) is non-null,
+                    // non-NullMemory, yet has fd == -1 — no WAL segment file to flush. Guard fdatasync(-1).
+                    if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
                         ff.fdatasync(column.getFd());
                     }
                 }
@@ -2302,7 +2304,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // data -> events -> seq, the same ordering the synchronous ADAPTIVE path holds.
         for (int i = 0, n = columns.size(); i < n; i++) {
             final MemoryMA column = columns.getQuick(i);
-            if (column != null && !(column instanceof NullMemory)) {
+            // A closed column (dropped / parquet-converted / rolled back mid-commit) is non-null,
+            // non-NullMemory, yet has fd == -1 — no WAL segment file to flush. Guard fdatasync(-1).
+            if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
                 ff.fdatasync(column.getFd());
             }
         }
