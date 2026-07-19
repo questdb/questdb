@@ -121,24 +121,26 @@ that cell's own day (`ts IN '<day>'`, `ts >= <day>`) → the whole cell is dropp
 > Lands AFTER all of Plan 6. Pure performance; correctness is unaffected if this task is descoped.
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` — where a symbol/dimension equality/IN
-  predicate is turned into row-level cursors (`~:10375+`, `intrinsicModel.keyColumn`, `DeferredSymbolIndexRowCursorFactory:10511`,
-  `FilterOnValuesRecordCursorFactory:10616`): detect when `keyColumn` (or an ANDed dimension predicate) is a
-  PARTITIONING DIMENSION source column of a composite table, and pass the resolved allowed-cellKey set down to the
-  partition-frame cursor factory.
+- Modify: `core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java` — intercept a DIMENSION equality/IN predicate
+  AFTER `dfcFactory` is built (Interval `@:10443` / Full `@:10456`) and BEFORE the 6b loud gate (`@:10502-10505`, top of the
+  `intrinsicModel.keyColumn != null` block `@:10474`): detect when `keyColumn` matches a partitioning dimension
+  (`metadata.getWriterIndex(keyDenseIdx) == dim.getColumnIndex()`), resolve the allowed-cellKey set, and pass it into the
+  partition-frame cursor factory. (Mind the sibling distinct-key build `@:8662/:8674` and the ORDER-BY composite gate `@:10847`.)
   **CRITICAL ordering vs Task 6b:** 6b LOUD-GATES an indexed-symbol WHERE `=`/`IN` on composite (the `intrinsicModel.keyColumn != null`
   block throws `CairoException` unless `NO_INDEX`). A DIMENSION predicate (`WHERE exch='BTC'` — the feature's PRIMARY use case)
   must be intercepted and routed to CELL-PRUNING (+ the merged general scan) BEFORE that 6b gate fires — i.e. the composite
   dimension-pruning branch precedes/short-circuits the indexed-WHERE gate. After 5b, `WHERE exch='BTC'` prunes to BTC cells
   and works fast; the 6b gate then only remains for NON-dimension indexed symbols (Plan-7). Verify `WHERE exch='BTC'` no longer
   throws (was gated by 6b) and equals the plain twin.
-- Modify: `core/src/main/java/io/questdb/cairo/AbstractIntervalPartitionFrameCursor.java` +
-  `FullPartitionFrameCursor` (or a shared cell-filter mixin) — skip partition slots whose `getPartitionCellKey`
-  is not in the allowed set, composing with the existing ts culling.
-- New/Modify: a reader/registry API to resolve `(dimensionIndex, value|values)` → set of cellKeys — enumerate the
-  `_cell` registry tuples (Plan 2 `CellRegistry`) and select those whose `dimensionIndex` ordinal matches the
-  resolved dimension ordinal(s). Ground the exact `CellRegistry`/interner read API before coding (search
-  `CellRegistry`, `internCell`, `CompositeInternerLayout`, and the reader-side cell methods).
+- Modify: the FOUR concrete partition-frame cursors (`IntervalFwd/BwdPartitionFrameCursor`, `FullFwd/BwdPartitionFrameCursor`)
+  — BOTH `next()` AND `calculateSize()` in EACH (no shared base to hook; **8 sites**): skip a slot whose `getPartitionCellKey`
+  is not in the allowed-cellKey set, composing with the existing ts culling. Exact per-site anchors in
+  `.superpowers/sdd/plan56-research.md` §"5b cell-pruning map".
+- Reader/registry resolution (read APIs already EXIST — no new writer code): `TableReader.keyOfDimensionValue(dimIndex, value)@:841`
+  → per-dim ordinal (IDENTITY = source symbol key, HASH = computed, TRUNCATE = dedicated dict, EXPRESSION = throws → SKIP pruning);
+  then ENUMERATE `CellRegistry.getTuple(ck, out)@:74` over `0..size()@:115` selecting `ck` where `out[dimPos]==ord` (union over
+  IN-values). Match the predicate column to a dimension via `metadata.getWriterIndex(keyDenseIdx) == dim.getColumnIndex()`. A value
+  that returns `VALUE_NOT_FOUND` → 0 matching cells (empty scan). See the map for all anchors.
 - Test: `core/src/test/java/io/questdb/test/griffin/CompositeCellPruningTest.java` (new).
 
 **Interfaces:**
