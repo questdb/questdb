@@ -11234,6 +11234,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *     fixed-size, per Plan 1 Task 2 -- so this can never affect cellKey resolution itself, only
      *     OTHER table columns). The overwhelmingly common single-cellKey-per-range case is unaffected
      *     regardless of column types, since it needs no reordering at all.</li>
+     *     <li>Task 6c discovery: within the multi-cellKey regrouping path, a single cellKey GROUP that
+     *     both carries 2+ rows and merges into a cell with already-committed data (a genuine
+     *     O3_BLOCK_MERGE) throws rather than silently corrupting that group's non-timestamp column
+     *     values (root cause is deeper in the {@link O3PartitionJob} merge path, not yet fixed -- see
+     *     the throw site's own comment for the four minimal repros that isolated this exact
+     *     combination). A group with exactly 1 row, or a group merging into a genuinely brand-new cell
+     *     (no existing data), is unaffected and dispatches normally -- both were empirically confirmed
+     *     correct.</li>
      * </ul>
      * <p>
      * Also note (residual, non-blocking risk, flagged for a follow-up task): {@code
@@ -11394,6 +11402,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 groupEnd++;
                             }
                             final int groupLen = groupEnd - groupStart + 1;
+
+                            // Task 6c (read-side differential capstone) discovery, NOT a read-side
+                            // regression: this scratch-buffer regrouping path silently corrupts
+                            // non-timestamp column data when a single group both (a) carries 2+ rows
+                            // AND (b) merges into a cell that already has committed data (a genuine
+                            // O3_BLOCK_MERGE, not a pure append into a brand-new cell). Empirically
+                            // isolated to exactly this combination via four minimal repros: a single-
+                            // cellKey (non-multiCell) range extending an existing cell with 2+ OOO rows
+                            // is fine (does not use this scratch path at all); a multiCell range where
+                            // every group has exactly 1 row is fine; a multiCell range where a group has
+                            // 2+ rows but targets a genuinely brand-new cell (no existing data) is fine;
+                            // only "2+ rows AND existing data, inside a multiCell regroup" reproduces --
+                            // confirmed the 2nd (or later) row of such a group silently loses its own
+                            // non-timestamp column values, gaining a duplicate of a LATER row's values
+                            // instead (timestamps themselves stay correct). Root cause is deeper in the
+                            // O3PartitionJob merge path than this method; not fixed here -- loud gate per
+                            // this class's own established "explicit, loud (not silent) scope boundaries"
+                            // precedent (REPLACE mode / FORMAT PARQUET / var-size columns above) rather
+                            // than risk an unsafe fix to the async merge internals. NO_INDEX-style
+                            // workaround: issue the out-of-order rows for each already-populated cell in
+                            // its OWN separate commit instead of one combined multi-cell commit (proven
+                            // safe -- see CompositeRoutingTest's existing single-cell extend coverage).
+                            if (groupLen > 1) {
+                                final int gatePartitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, groupCellKey);
+                                final long gateSrcDataMax = gatePartitionIndexRaw > -1 ? getPartitionSizeByRawIndex(gatePartitionIndexRaw) : 0;
+                                if (gateSrcDataMax > 0) {
+                                    throw CairoException.critical(0)
+                                            .put("composite partitioning does not yet support 2 or more out-of-order rows landing in the same already-populated cell within one interleaved multi-cell commit [table=")
+                                            .put(tableToken.getTableName())
+                                            .put(", cellKey=").put(groupCellKey)
+                                            .put(", groupLen=").put(groupLen)
+                                            .put(']');
+                                }
+                            }
 
                             if (compositeScratchColumnsToFree == null) {
                                 compositeScratchColumnsToFree = new ObjList<>();
