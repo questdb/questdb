@@ -1015,15 +1015,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
         int commitMode = walCommitMode();
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
+            // A fixed-size column (or the designated timestamp) has no aux file, so its dest aux fd is -1;
+            // a dropped / not-rolled column can likewise leave a -1 dest fd in the sink. fsyncAndClose(-1)
+            // would throw "could not fsync [fd=-1]"; route the sentinel to plain close (a no-op on -1),
+            // exactly as the NOSYNC branch already does.
             final long primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
-            if (commitMode != CommitMode.NOSYNC) {
+            if (commitMode != CommitMode.NOSYNC && primaryFd != -1) {
                 ff.fsyncAndClose(primaryFd);
             } else {
                 ff.close(primaryFd);
             }
 
             final long secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
-            if (commitMode != CommitMode.NOSYNC) {
+            if (commitMode != CommitMode.NOSYNC && secondaryFd != -1) {
                 ff.fsyncAndClose(secondaryFd);
             } else {
                 ff.close(secondaryFd);
