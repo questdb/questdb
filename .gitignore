@@ -4,6 +4,8 @@
 .idea
 .ignore
 out
+# Internal planning artifacts (brainstorming specs / implementation plans) — kept out of the repo
+docs/superpowers/
 benchmarks/target
 benchmarks/*.png
 core/target
