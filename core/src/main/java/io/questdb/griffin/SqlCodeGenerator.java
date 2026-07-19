@@ -10920,7 +10920,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filteredScan = new FilteredRecordCursorFactory(compositeScan, compositeLatestByFilter);
                             } catch (Throwable e) {
                                 Misc.free(compositeScan);
-                                Misc.free(compositeLatestByFilter);
+                                // Free AND null so the outer catch's Misc.free(compositeLatestByFilter)
+                                // is a no-op (free(null)) rather than a second close of the same Function.
+                                compositeLatestByFilter = Misc.free(compositeLatestByFilter);
                                 throw e;
                             }
                             compositeLatestByFilter = null;
