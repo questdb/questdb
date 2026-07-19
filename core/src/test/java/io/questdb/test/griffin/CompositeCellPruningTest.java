@@ -70,10 +70,9 @@ import org.junit.Test;
  * residual-filter siblings are the strong order-correctness oracle -- their dataset is deliberately
  * TIME-INTERLEAVED across cells (unlike this class's original BTC-mornings/ETH-afternoons dataset, where
  * naive per-cell concatenation happens to already agree with ts order), so a regression back to
- * concatenation instead of a genuine merge would visibly misorder rows. HASH and TRUNCATE dimensions are
- * NOT bijective (distinct raw values can collide into one bucket/prefix), so they are explicitly OUT of
- * this task's scope and remain declined, unchanged -- {@link
- * #testHashAndTruncateDimensionMultiCellInListStillLoudGated()} is the regression lock for that boundary.
+ * concatenation instead of a genuine merge would visibly misorder rows. HASH and TRUNCATE dimensions were
+ * NOT bijective (distinct raw values can collide into one bucket/prefix), so Task #26 left them declined
+ * -- Task #28 (below) closes that gap.
  * <p>
  * <b>Task #27 composes the dimension prune with LATEST ON</b> instead of leaving that combination
  * unconditionally LOUD-GATED: {@code WHERE <IDENTITY-dim>='v' LATEST ON ts PARTITION BY <that same dim>}
@@ -83,9 +82,33 @@ import org.junit.Test;
  * #testLatestOnDimensionColumnWithDimensionEqualityPrunesAndMatchesPlainTwin()}, {@link
  * #testLatestOnDimensionColumnWithGenuineMultiCellInListPrunesAndMatchesPlainTwin()}, and {@link
  * #testLatestOnDimensionColumnWithResidualPushedBeforeLatestByMatchesPlainTwin()} are the un-gating
- * proofs (each EXPLAIN-verified that LATEST BY is genuinely applied, never silently dropped). HASH/
- * TRUNCATE dimensions stay loud-gated even for a single-cell match when a latest-by is present -- {@link
- * #testHashAndTruncateDimensionSingleCellLatestOnStillLoudGated()} is the regression lock.
+ * proofs (each EXPLAIN-verified that LATEST BY is genuinely applied, never silently dropped). Task #27
+ * left HASH/TRUNCATE dimensions loud-gated even for a single-cell match when a latest-by is present --
+ * Task #28 (below) closes that gap too.
+ * <p>
+ * <b>Task #28 extends both #26 and #27 to HASH/TRUNCATE, via a reconstructed residual:</b> a HASH/
+ * TRUNCATE dimension's value&harr;cellKey map is NOT bijective -- distinct raw values can collide into
+ * the same bucket/prefix -- so pruning to the matching bucket cell(s) alone is not enough: that cell can
+ * also hold OTHER, non-matching raw values. Task #28 prunes to the bucket cell(s) exactly as 5b/#26 did
+ * AND additionally rebuilds a {@code col IN (<original values>)} row filter (from the SAME {@code
+ * keyValueFuncs} the WHERE predicate already produced) applied over the merged pruned scan, BEFORE any
+ * LATEST ON -- see {@code SqlCodeGenerator}'s {@code buildDimensionResidualFilter} / {@code
+ * DimensionCellPrune#needsResidual}. {@link
+ * #testHashAndTruncateDimensionMultiCellInListPrunesToBucketsWithResidualAndMatchesPlainTwin()} and
+ * {@link #testHashAndTruncateDimensionSingleCellLatestOnPrunesWithResidualAndMatchesPlainTwin()} are the
+ * un-gating proofs for the two shapes Tasks #26/#27 left declined for HASH/TRUNCATE (both EXPLAIN-verified
+ * that the residual filter, and where applicable LATEST BY, are genuinely applied over the pruned merge --
+ * never silently dropped, never a raw unfiltered prune). The CRITICAL correctness proof is the residual
+ * being LOAD-BEARING, not cosmetic: {@link #testHashDimensionCollidingValueResidualExcludesNonSelectedTwin()}
+ * and {@link #testTruncateDimensionCollidingValueResidualExcludesNonSelectedTwin()} engineer a genuine
+ * bucket/prefix COLLISION between a selected and a non-selected raw value and prove the residual excludes
+ * the non-selected value's rows -- == the plain twin, NOT the whole (larger) bucket -- exactly the
+ * silent-wrong shape a missing or broken residual would produce. IDENTITY is unaffected throughout (no
+ * residual built or needed, {@code needsResidual=false}); a single-cell HASH/TRUNCATE equality WITHOUT a
+ * latest-by also stays on the pre-#28 route (5b's original single-cell case, cheaper: no residual needed
+ * since the row-cursor family's own per-value bitmap index already matches the exact raw value, buckets
+ * notwithstanding) -- {@link #testDimensionEqualityWithoutLatestOnStillPrunesUnaffected()} and the
+ * existing IDENTITY tests above remain byte-for-byte unaffected regression locks for that.
  * <p>
  * Dataset ({@link #createAndPopulateTwins()}): composite {@code c} ({@code partition by day, exch},
  * {@code exch} SYMBOL INDEX) and plain twin {@code p} ({@code partition by day}), 3 days
@@ -260,12 +283,43 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
                     "select ts, exch, px from p where exch in ('BTC','ETH') order by ts desc",
                     "select ts, exch, px from c where exch in ('BTC','ETH') order by ts desc");
 
+            // Task #28 regression: an IDENTITY dimension's multi-cell prune is bijective and stays
+            // ROW-EXACT with no residual filter (DimensionCellPrune#needsResidual == false for IDENTITY,
+            // see resolveDimensionCellPruneSet's doc) -- confirmed here directly (not just inferred) by
+            // asserting NO Filter node wraps the merge scan, alongside the existing cellsPruned/merge-scan
+            // positive check.
+            assertQuery("select ts, exch, px from c where exch in ('BTC','ETH') order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Composite cross-cell merge scan", "cellsPruned: 2")
+                    .withPlanNotContaining("Filter")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-01T00:00:00.000000Z\tBTC\t1.0
+                            2020-01-01T06:00:00.000000Z\tBTC\t1.1
+                            2020-01-01T12:00:00.000000Z\tETH\t1.2
+                            2020-01-01T18:00:00.000000Z\tETH\t1.3
+                            2020-01-02T00:00:00.000000Z\tBTC\t2.0
+                            2020-01-02T06:00:00.000000Z\tBTC\t2.1
+                            2020-01-02T12:00:00.000000Z\tETH\t2.2
+                            2020-01-02T18:00:00.000000Z\tETH\t2.3
+                            2020-01-03T00:00:00.000000Z\tBTC\t3.0
+                            2020-01-03T06:00:00.000000Z\tBTC\t3.1
+                            2020-01-03T12:00:00.000000Z\tETH\t3.2
+                            2020-01-03T18:00:00.000000Z\tETH\t3.3
+                            """);
+
             // count() takes a SEPARATE, order-indifferent frame-counting fast path (never the record-level
-            // "Composite cross-cell merge scan" factory -- see the row-returning ASC/DESC siblings below
-            // for that), but cellsPruned is emitted by the underlying dfcFactory either way.
+            // "Composite cross-cell merge scan" factory -- see the row-returning ASC/DESC siblings above
+            // for that), but cellsPruned is emitted by the underlying dfcFactory either way. Also confirmed
+            // Filter-free here (Task #28): this exact frame-counting fallback site is what caught a real
+            // bug for HASH/TRUNCATE while writing this task's tests (see
+            // testHashDimensionCollidingValueResidualExcludesNonSelectedTwin's doc) -- IDENTITY needs no
+            // residual there either, so it stays unaffected.
             assertQuery("select count() from c where exch in ('BTC','ETH')")
                     .noLeakCheck().noRandomAccess().expectSize()
                     .withPlanContaining("cellsPruned: 2")
+                    .withPlanNotContaining("Filter")
                     .returns("count\n12\n");
         });
     }
@@ -428,17 +482,23 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     }
 
     /**
-     * REGRESSION (Task #26 boundary): HASH and TRUNCATE dimensions are explicitly OUT of this task's
-     * scope (see {@code resolveDimensionCellPruneSet}'s "Task #26 update" doc) -- their raw-value-to-
-     * cellKey map is NOT bijective (distinct raw values can collide into the same bucket/prefix), so a
-     * residual-free multi-cell prune would silently include rows for OTHER, non-matching raw values. An
-     * IN-list spanning 2 genuinely different buckets (HASH) / prefixes (TRUNCATE) must still hit Task 6b's
-     * gate, byte-for-byte unchanged. The two {@code exch} values are found by an explicit runtime search
-     * for two DIFFERENT {@code hash(exch,4)} buckets (not assumed/hardcoded), so this test cannot pass by
-     * accidentally taking the harmless same-bucket path instead of the genuine 2-cell one.
+     * Task #28 un-gating proof (was the Task #26 boundary regression lock, {@code
+     * testHashAndTruncateDimensionMultiCellInListStillLoudGated} -- HASH/TRUNCATE were explicitly OUT of
+     * that task's scope, see {@code resolveDimensionCellPruneSet}'s doc): a genuine multi-bucket (HASH) /
+     * multi-prefix (TRUNCATE) IN-list now PRUNES to the matching bucket/prefix cells AND applies a
+     * reconstructed {@code col IN (...)} residual filter over the merged scan, instead of hitting Task
+     * 6b's gate -- matching the plain twin exactly, in BOTH scan directions. EXPLAIN proves the residual
+     * is genuinely applied (a {@code Filter} node wrapping the {@code Composite cross-cell merge scan},
+     * observable alongside {@code cellsPruned: 2}), never silently dropped. The two {@code exch} values
+     * are found by an explicit runtime search for two DIFFERENT {@code hash(exch,4)} buckets (not
+     * assumed/hardcoded), so this test cannot pass by accidentally taking the harmless same-bucket path
+     * instead of the genuine 2-cell one. (The residual being LOAD-BEARING -- i.e. actually excluding a
+     * colliding non-selected value sharing a bucket, not just cosmetically present -- is separately proven
+     * by {@link #testHashDimensionCollidingValueResidualExcludesNonSelectedTwin()}; this test's two values
+     * are deliberately in DIFFERENT buckets, so nothing here would collide even without a residual.)
      */
     @Test
-    public void testHashAndTruncateDimensionMultiCellInListStillLoudGated() throws Exception {
+    public void testHashAndTruncateDimensionMultiCellInListPrunesToBucketsWithResidualAndMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             final int buckets = 4;
             String exchA = null;
@@ -459,24 +519,323 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             execute("create table p (ts timestamp, exch symbol index, sku symbol index, px double) timestamp(ts) partition by day wal");
             final String rows = " values " +
                     "('2020-01-01T00:00:00.000000Z','" + exchA + "','BTCUSDT',1.0), " +
-                    "('2020-01-01T01:00:00.000000Z','" + exchB + "','ETHUSDT',1.1)";
+                    "('2020-01-01T01:00:00.000000Z','" + exchB + "','ETHUSDT',1.1), " +
+                    "('2020-01-02T00:00:00.000000Z','" + exchA + "','BTCUSDT',2.0), " +
+                    "('2020-01-02T01:00:00.000000Z','" + exchB + "','ETHUSDT',2.1)";
             execute("insert into c" + rows);
             execute("insert into p" + rows);
             drainWalQueue();
             engine.releaseInactive();
 
+            // HASH dimension (exch): a genuine 2-bucket IN-list, both scan directions.
+            final String exchPredicate = " where exch in ('" + exchA + "','" + exchB + "')";
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p" + exchPredicate + " order by ts",
+                    "select ts, exch, sku, px from c" + exchPredicate + " order by ts");
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p" + exchPredicate + " order by ts desc",
+                    "select ts, exch, sku, px from c" + exchPredicate + " order by ts desc");
+            assertQuery("select ts, exch, sku, px from c" + exchPredicate + " order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Filter", "Composite cross-cell merge scan", "cellsPruned: 2")
+                    .returns("""
+                            ts\texch\tsku\tpx
+                            2020-01-01T00:00:00.000000Z\t""" + exchA + """
+                            \tBTCUSDT\t1.0
+                            2020-01-01T01:00:00.000000Z\t""" + exchB + """
+                            \tETHUSDT\t1.1
+                            2020-01-02T00:00:00.000000Z\t""" + exchA + """
+                            \tBTCUSDT\t2.0
+                            2020-01-02T01:00:00.000000Z\t""" + exchB + """
+                            \tETHUSDT\t2.1
+                            """);
+
+            // TRUNCATE dimension (sku): a genuine 2-prefix IN-list, both scan directions.
+            final String skuPredicate = " where sku in ('BTCUSDT','ETHUSDT')";
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p" + skuPredicate + " order by ts",
+                    "select ts, exch, sku, px from c" + skuPredicate + " order by ts");
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p" + skuPredicate + " order by ts desc",
+                    "select ts, exch, sku, px from c" + skuPredicate + " order by ts desc");
+            assertQuery("select count() from c" + skuPredicate)
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("cellsPruned: 2")
+                    .returns("count\n4\n");
+
+            // plain twin sanity
+            assertQuery("select count() from p" + exchPredicate)
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n4\n");
+        });
+    }
+
+    /**
+     * Task #28 CRITICAL correctness proof: the residual is LOAD-BEARING, not cosmetic. {@code exchA} and
+     * {@code exchB} are found by an explicit runtime search ({@link #findHashCollisionPair}) for two
+     * DIFFERENT raw values that hash to the SAME {@code hash(exch,4)} bucket -- a genuine collision, not
+     * assumed/hardcoded -- so pruning to that one shared bucket cell WITHOUT the reconstructed residual
+     * would silently include {@code exchB}'s rows when only {@code exchA} was requested (or vice-versa).
+     * {@code exchC} hashes to a DIFFERENT bucket (its own, separate cell).
+     * <p>
+     * Two INDEPENDENT proof shapes, both against the plain twin:
+     * <ul>
+     *     <li>A single equality alone (e.g. {@code exch = exchA}) does NOT exercise Task #28's residual at
+     *     all -- it stays on the pre-#28 5b route (allowed-cellKey set size == 1, no latest-by), whose
+     *     PRE-EXISTING per-value symbol INDEX already matches the exact raw value regardless of bucket
+     *     (EXPLAIN: {@code DeferredSingleSymbolFilterPageFrame}, confirmed empirically -- NOT a {@code
+     *     Filter} node). Included as a baseline oracle-consistency check, not a Task #28 proof.</li>
+     *     <li>Adding {@code LATEST ON} to that SAME single equality forces the merge-convergence route
+     *     regardless of cell count ({@code latestByDimensionPrune}), so it DOES build and apply the
+     *     residual -- genuinely isolating a single colliding value through Task #28's new code, proven by
+     *     EXPLAIN showing {@code LatestBy}+{@code Filter}+{@code cellsPruned: 1}. Proven in BOTH directions
+     *     (exchA alone, then exchB alone) so neither half of the collision pair could accidentally be the
+     *     one silently over-admitted.</li>
+     * </ul>
+     * A combined IN-list ({@code exchA,exchC}) additionally proves cross-cell pruning and intra-cell
+     * collision-exclusion compose correctly together (this shape -- a genuine multi-cell prune -- is what
+     * originally caught a REAL bug while writing this test: a bare {@code count()} took a separate
+     * order-indifferent frame-counting path in {@code generateTableQuery0} that this task's residual wrap
+     * had not yet reached, silently counting the whole shared bucket; fixed by applying the SAME wrap to
+     * that fallback site).
+     */
+    @Test
+    public void testHashDimensionCollidingValueResidualExcludesNonSelectedTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            final int buckets = 4;
+            final String[] pair = findHashCollisionPair(buckets);
+            final String exchA = pair[0];
+            final String exchB = pair[1];
+            final int bucketA = CompositeDimensionTransform.hashBucket(exchA, buckets);
+            String exchC = null;
+            for (int i = 0; i < buckets * 32; i++) {
+                String candidate = "HZ" + i;
+                if (CompositeDimensionTransform.hashBucket(candidate, buckets) != bucketA) {
+                    exchC = candidate;
+                    break;
+                }
+            }
+            Assert.assertNotNull("expected to find an exch value hashing to a different bucket", exchC);
+
+            execute("create table c (ts timestamp, exch symbol index, px double) timestamp(ts) " +
+                    "partition by day, hash(exch, " + buckets + ") wal");
+            execute("create table p (ts timestamp, exch symbol index, px double) timestamp(ts) partition by day wal");
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','" + exchA + "',1.0), " +
+                    "('2020-01-01T01:00:00.000000Z','" + exchB + "',1.1), " +
+                    "('2020-01-01T02:00:00.000000Z','" + exchC + "',1.2), " +
+                    "('2020-01-02T00:00:00.000000Z','" + exchA + "',2.0), " +
+                    "('2020-01-02T01:00:00.000000Z','" + exchB + "',2.1)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // exchA alone (plain equality, pre-#28 5b route -- baseline, see doc above): must exclude the
+            // colliding exchB rows sharing its bucket cell, and exclude exchC's entirely different cell.
+            final String exchAPredicate = " where exch = '" + exchA + "'";
+            assertSqlCursors(
+                    "select ts, exch, px from p" + exchAPredicate + " order by ts",
+                    "select ts, exch, px from c" + exchAPredicate + " order by ts");
+            assertQuery("select ts, exch, px from c" + exchAPredicate + " order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("cellsPruned: 1")
+                    .returns("ts\texch\tpx\n" +
+                            "2020-01-01T00:00:00.000000Z\t" + exchA + "\t1.0\n" +
+                            "2020-01-02T00:00:00.000000Z\t" + exchA + "\t2.0\n");
+
+            // exchB alone: mirror check -- the same shared cell, opposite value selected.
+            final String exchBPredicate = " where exch = '" + exchB + "'";
+            assertSqlCursors(
+                    "select ts, exch, px from p" + exchBPredicate + " order by ts",
+                    "select ts, exch, px from c" + exchBPredicate + " order by ts");
+            assertQuery("select ts, exch, px from c" + exchBPredicate + " order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("cellsPruned: 1")
+                    .returns("ts\texch\tpx\n" +
+                            "2020-01-01T01:00:00.000000Z\t" + exchB + "\t1.1\n" +
+                            "2020-01-02T01:00:00.000000Z\t" + exchB + "\t2.1\n");
+
+            // exchA alone + LATEST ON: forces the Task #28 merge-convergence + residual route even for a
+            // single value (see doc above) -- the true isolated-residual proof. Oracle: the plain twin
+            // collapses exchA's 2 rows to its single latest (day 2, px 2.0).
+            assertSqlCursors(
+                    "select ts, exch, px from p" + exchAPredicate + " order by ts desc limit 1",
+                    "select ts, exch, px from p" + exchAPredicate + " latest on ts partition by exch");
+            assertQuery("select ts, exch, px from c" + exchAPredicate + " latest on ts partition by exch")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\texch\tpx\n2020-01-02T00:00:00.000000Z\t" + exchA + "\t2.0\n");
+            assertSqlCursors(
+                    "select ts, exch, px from p" + exchAPredicate + " latest on ts partition by exch",
+                    "select ts, exch, px from c" + exchAPredicate + " latest on ts partition by exch");
+
+            // exchB alone + LATEST ON: mirror check, opposite value of the same colliding pair.
+            assertSqlCursors(
+                    "select ts, exch, px from p" + exchBPredicate + " order by ts desc limit 1",
+                    "select ts, exch, px from p" + exchBPredicate + " latest on ts partition by exch");
+            assertQuery("select ts, exch, px from c" + exchBPredicate + " latest on ts partition by exch")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\texch\tpx\n2020-01-02T01:00:00.000000Z\t" + exchB + "\t2.1\n");
+            assertSqlCursors(
+                    "select ts, exch, px from p" + exchBPredicate + " latest on ts partition by exch",
+                    "select ts, exch, px from c" + exchBPredicate + " latest on ts partition by exch");
+
+            // combined IN-list spanning the shared cell AND the separate exchC cell: cross-cell pruning
+            // and intra-cell collision-exclusion must compose correctly together. Exercises BOTH the
+            // record-cursor route (assertSqlCursors) and the frame-counting count() route (see class doc).
+            final String combinedPredicate = " where exch in ('" + exchA + "','" + exchC + "')";
+            assertSqlCursors(
+                    "select ts, exch, px from p" + combinedPredicate + " order by ts",
+                    "select ts, exch, px from c" + combinedPredicate + " order by ts");
+            assertQuery("select count() from c" + combinedPredicate)
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("cellsPruned: 2")
+                    .returns("count\n3\n");
+        });
+    }
+
+    /**
+     * TRUNCATE analog of {@link #testHashDimensionCollidingValueResidualExcludesNonSelectedTwin()} (see
+     * its doc for the full two-shape rationale: a plain equality alone does NOT exercise Task #28's
+     * residual, only adding LATEST ON to it does): {@code skuA} ({@code BTCUSDT}) and {@code skuB} ({@code
+     * BTCEUR}) share the {@code truncate(sku,3)} prefix {@code BTC} (a genuine collision, directly
+     * constructed -- no search needed for a shared PREFIX, unlike a hash bucket), while {@code skuC}
+     * ({@code ETHUSDT}) has a different prefix and its own cell.
+     */
+    @Test
+    public void testTruncateDimensionCollidingValueResidualExcludesNonSelectedTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String skuA = "BTCUSDT";
+            final String skuB = "BTCEUR";
+            final String skuC = "ETHUSDT";
+            Assert.assertNotEquals("fixture sanity: skuA/skuB must be genuinely different values", skuA, skuB);
+
+            execute("create table c (ts timestamp, sku symbol index, px double) timestamp(ts) " +
+                    "partition by day, truncate(sku, 3) wal");
+            execute("create table p (ts timestamp, sku symbol index, px double) timestamp(ts) partition by day wal");
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','" + skuA + "',1.0), " +
+                    "('2020-01-01T01:00:00.000000Z','" + skuB + "',1.1), " +
+                    "('2020-01-01T02:00:00.000000Z','" + skuC + "',1.2), " +
+                    "('2020-01-02T00:00:00.000000Z','" + skuA + "',2.0), " +
+                    "('2020-01-02T01:00:00.000000Z','" + skuB + "',2.1)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // skuA alone (plain equality, pre-#28 5b route -- baseline, see doc above).
+            final String skuAPredicate = " where sku = '" + skuA + "'";
+            assertSqlCursors(
+                    "select ts, sku, px from p" + skuAPredicate + " order by ts",
+                    "select ts, sku, px from c" + skuAPredicate + " order by ts");
+            assertQuery("select ts, sku, px from c" + skuAPredicate + " order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("cellsPruned: 1")
+                    .returns("ts\tsku\tpx\n" +
+                            "2020-01-01T00:00:00.000000Z\tBTCUSDT\t1.0\n" +
+                            "2020-01-02T00:00:00.000000Z\tBTCUSDT\t2.0\n");
+
+            // skuB alone: mirror check -- the same shared prefix cell, opposite value selected.
+            final String skuBPredicate = " where sku = '" + skuB + "'";
+            assertSqlCursors(
+                    "select ts, sku, px from p" + skuBPredicate + " order by ts",
+                    "select ts, sku, px from c" + skuBPredicate + " order by ts");
+            assertQuery("select ts, sku, px from c" + skuBPredicate + " order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("cellsPruned: 1")
+                    .returns("ts\tsku\tpx\n" +
+                            "2020-01-01T01:00:00.000000Z\tBTCEUR\t1.1\n" +
+                            "2020-01-02T01:00:00.000000Z\tBTCEUR\t2.1\n");
+
+            // skuA alone + LATEST ON: forces the Task #28 merge-convergence + residual route even for a
+            // single value -- the true isolated-residual proof (see the HASH analog's doc).
+            assertSqlCursors(
+                    "select ts, sku, px from p" + skuAPredicate + " order by ts desc limit 1",
+                    "select ts, sku, px from p" + skuAPredicate + " latest on ts partition by sku");
+            assertQuery("select ts, sku, px from c" + skuAPredicate + " latest on ts partition by sku")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\tsku\tpx\n2020-01-02T00:00:00.000000Z\tBTCUSDT\t2.0\n");
+            assertSqlCursors(
+                    "select ts, sku, px from p" + skuAPredicate + " latest on ts partition by sku",
+                    "select ts, sku, px from c" + skuAPredicate + " latest on ts partition by sku");
+
+            // skuB alone + LATEST ON: mirror check, opposite value of the same colliding pair.
+            assertSqlCursors(
+                    "select ts, sku, px from p" + skuBPredicate + " order by ts desc limit 1",
+                    "select ts, sku, px from p" + skuBPredicate + " latest on ts partition by sku");
+            assertQuery("select ts, sku, px from c" + skuBPredicate + " latest on ts partition by sku")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\tsku\tpx\n2020-01-02T01:00:00.000000Z\tBTCEUR\t2.1\n");
+            assertSqlCursors(
+                    "select ts, sku, px from p" + skuBPredicate + " latest on ts partition by sku",
+                    "select ts, sku, px from c" + skuBPredicate + " latest on ts partition by sku");
+
+            // combined IN-list spanning the shared cell AND the separate skuC cell: cross-cell pruning and
+            // intra-cell collision-exclusion must compose correctly together (record route + count() route).
+            final String combinedPredicate = " where sku in ('" + skuA + "','" + skuC + "')";
+            assertSqlCursors(
+                    "select ts, sku, px from p" + combinedPredicate + " order by ts",
+                    "select ts, sku, px from c" + combinedPredicate + " order by ts");
+            assertQuery("select count() from c" + combinedPredicate)
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("cellsPruned: 2")
+                    .returns("count\n3\n");
+        });
+    }
+
+    /**
+     * REGRESSION: a bind-variable value in the dimension predicate must still hit Task 6b's loud gate,
+     * unaffected by Task #28 -- {@code resolveDimensionCellPruneSet} declines on {@link
+     * io.questdb.cairo.sql.Function#isRuntimeConstant()} for EVERY value BEFORE any prune/residual
+     * decision is made (see its doc): baking a value bound at compile/first-execution time into a cached
+     * cellKey set (or a residual built from it) would go silently wrong were the same compiled factory
+     * later re-executed with a DIFFERENT bound value -- so the WHOLE predicate aborts pruning, unchanged
+     * from 5b. Proven for both a lone bind variable and a mixed literal+bind-variable IN-list.
+     */
+    @Test
+    public void testBindVariableOnDimensionColumnStillLoudGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
             final String msg = "composite partitioning does not yet support an indexed WHERE predicate";
-            // HASH dimension (exch): a genuine 2-bucket IN-list.
-            assertQuery("select ts, exch, sku, px from c where exch in ('" + exchA + "','" + exchB + "') order by ts")
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "BTC");
+            assertQuery("select ts, exch, px from c where exch = :v order by ts")
                     .noLeakCheck().failsWith(msg);
-            // TRUNCATE dimension (sku): a genuine 2-prefix IN-list.
-            assertQuery("select ts, exch, sku, px from c where sku in ('BTCUSDT','ETHUSDT') order by ts")
+
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "ETH");
+            assertQuery("select ts, exch, px from c where exch in ('BTC', :v) order by ts")
                     .noLeakCheck().failsWith(msg);
 
             // plain twin is of course unaffected
-            assertQuery("select count() from p where exch in ('" + exchA + "','" + exchB + "')")
-                    .noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\n2\n");
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "BTC");
+            assertQuery("select ts, exch, px from p where exch = :v order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\texch\tpx\n" +
+                            "2020-01-01T00:00:00.000000Z\tBTC\t1.0\n" +
+                            "2020-01-01T06:00:00.000000Z\tBTC\t1.1\n" +
+                            "2020-01-02T00:00:00.000000Z\tBTC\t2.0\n" +
+                            "2020-01-02T06:00:00.000000Z\tBTC\t2.1\n" +
+                            "2020-01-03T00:00:00.000000Z\tBTC\t3.0\n" +
+                            "2020-01-03T06:00:00.000000Z\tBTC\t3.1\n");
         });
     }
 
@@ -515,11 +874,20 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     // IDENTITY prune (single- OR multi-cell) now routes to Task 6a's cross-cell merge convergence, which
     // DOES apply LATEST BY via wrapCompositeLatestBy (see SqlCodeGenerator's latestByDimensionPrune) --
     // tests (a) and (a2) below are the un-gating proofs, EXPLAIN-verified to show LATEST BY genuinely
-    // applied (not silently dropped) over the pruned merge scan, never just a raw pruned scan. HASH/
-    // TRUNCATE dimensions remain OUT of scope (not bijective, so a residual-free prune is not safe for
-    // them) and stay loud-gated unchanged -- test (c2) below is the regression lock, extending
+    // applied (not silently dropped) over the pruned merge scan, never just a raw pruned scan. Task #27
+    // itself left HASH/TRUNCATE dimensions OUT of scope (not bijective, so a residual-free prune was not
+    // safe for them) and loud-gated, unchanged -- test (c2) extended
     // testHashAndTruncateDimensionMultiCellInListStillLoudGated's boundary to LATEST ON and to a
-    // single-cell match (not just a genuine multi-bucket one). NOTE (empirically verified): NO_INDEX(exch)
+    // single-cell match (not just a genuine multi-bucket one).
+    //
+    // Task #28 closes that remaining gap: HASH/TRUNCATE now compose with LATEST ON exactly like IDENTITY
+    // does, via the SAME merge convergence PLUS a reconstructed residual filter (DimensionCellPrune#
+    // needsResidual / buildDimensionResidualFilter) applied ahead of LATEST BY -- latestBy(residual(prune
+    // (scan))) -- so the bucket/prefix cell's OTHER, non-matching raw values are excluded before LATEST BY
+    // ever sees them. Test (c2), {@code
+    // testHashAndTruncateDimensionSingleCellLatestOnPrunesWithResidualAndMatchesPlainTwin}, is now the
+    // un-gating proof instead of a regression lock -- EXPLAIN-verified to show BOTH the residual filter
+    // and LATEST BY genuinely applied over the pruned merge. NOTE (empirically verified): NO_INDEX(exch)
     // does NOT escape any of this -- when the LATEST ON PARTITION BY column IS exch, exch is the latest-by
     // key regardless of the WHERE hint, so keyColumn stays set. The correct route that was NEVER gated is
     // LATEST ON over a NON-dimension column (see test (b) below). The dimension prune WITHOUT a latest-on
@@ -662,19 +1030,22 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     }
 
     /**
-     * (c2) Task #27 boundary (NEW): a HASH dimension's LATEST ON, filtered by an equality that resolves
-     * to a SINGLE cell, must STILL hit Task 6b's loud gate -- {@code resolveDimensionCellPruneSet}'s
-     * {@code requireIdentity} check (Task #27) declines any non-IDENTITY dimension whenever a latest-by is
-     * present, regardless of how many cells the predicate would otherwise resolve to. This is a stricter
-     * boundary than {@link #testHashAndTruncateDimensionMultiCellInListStillLoudGated()}'s (which only
-     * ever exercises a GENUINE multi-bucket/prefix IN-list without a latest-by): a single {@code exch}
-     * value hashes to exactly ONE bucket, so had {@code requireIdentity} gated on allowed-cellKey set size
-     * instead of on dimension kind, this single-cell case would have slipped through and silently
-     * mis-applied LATEST BY over a cell that can also hold OTHER, non-matching raw values (HASH/TRUNCATE
-     * are not bijective). TRUNCATE is proven identically via the {@code sku} column.
+     * (c2) Task #28 un-gating proof (was the Task #27 boundary regression lock, {@code
+     * testHashAndTruncateDimensionSingleCellLatestOnStillLoudGated}): a HASH dimension's LATEST ON,
+     * filtered by an equality that resolves to a SINGLE cell, now PRUNES to that one bucket/prefix cell,
+     * applies the reconstructed residual filter, AND correctly applies LATEST BY over the result --
+     * matching the plain twin -- instead of hitting Task 6b's gate. This is the shape Task #27 could not
+     * safely un-gate (see the class javadoc / {@code resolveDimensionCellPruneSet}'s doc): a single
+     * {@code exch} value hashes to exactly ONE bucket, and without a residual that bucket's OTHER,
+     * non-matching raw values would be silently mis-included in the LATEST BY answer -- Task #28's
+     * residual (built and applied ahead of LATEST BY -- {@code latestBy(residual(prune(scan)))}) is what
+     * makes this safe now. EXPLAIN proves both are genuinely applied: {@code LatestBy} wrapping a {@code
+     * Filter} wrapping the {@code Composite cross-cell merge scan}, with {@code cellsPruned: 1} -- never a
+     * raw pruned scan with LATEST BY silently dropped, never a residual-free admit. TRUNCATE is proven
+     * identically via the {@code sku} column.
      */
     @Test
-    public void testHashAndTruncateDimensionSingleCellLatestOnStillLoudGated() throws Exception {
+    public void testHashAndTruncateDimensionSingleCellLatestOnPrunesWithResidualAndMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             final int buckets = 4;
             final String exchA = "HX0";
@@ -695,13 +1066,25 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
                     "select ts, exch, sku, px from p where exch = '" + exchA + "' order by ts desc limit 1",
                     "select ts, exch, sku, px from p where exch = '" + exchA + "' latest on ts partition by exch");
 
-            final String msg = "composite partitioning does not yet support an indexed WHERE predicate";
             // HASH dimension (exch): single-value equality, resolves to exactly one bucket/cell.
             assertQuery("select ts, exch, sku, px from c where exch = '" + exchA + "' latest on ts partition by exch")
-                    .noLeakCheck().failsWith(msg);
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\texch\tsku\tpx\n2020-01-01T01:00:00.000000Z\t" + exchA + "\tBTCUSDT\t1.1\n");
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p where exch = '" + exchA + "' latest on ts partition by exch",
+                    "select ts, exch, sku, px from c where exch = '" + exchA + "' latest on ts partition by exch");
+
             // TRUNCATE dimension (sku): single-value equality, resolves to exactly one prefix/cell.
             assertQuery("select ts, exch, sku, px from c where sku = 'BTCUSDT' latest on ts partition by sku")
-                    .noLeakCheck().failsWith(msg);
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\texch\tsku\tpx\n2020-01-01T01:00:00.000000Z\t" + exchA + "\tBTCUSDT\t1.1\n");
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p where sku = 'BTCUSDT' latest on ts partition by sku",
+                    "select ts, exch, sku, px from c where sku = 'BTCUSDT' latest on ts partition by sku");
         });
     }
 
@@ -724,6 +1107,28 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
                     .withPlanContaining("cellsPruned: 1")
                     .returns("count\n6\n");
         });
+    }
+
+    /**
+     * Task #28: searches (never assumes/hardcodes) for two DISTINCT candidate values of the form
+     * {@code "HX" + i} that hash to the SAME bucket under {@code hash(col, buckets)} -- a genuine
+     * collision -- used by {@link #testHashDimensionCollidingValueResidualExcludesNonSelectedTwin()} to
+     * prove the reconstructed residual actually excludes a colliding, non-selected raw value rather than
+     * silently admitting the whole shared bucket cell. With only {@code buckets} distinct buckets,
+     * pigeonhole guarantees a collision well within the search bound.
+     */
+    private static String[] findHashCollisionPair(int buckets) {
+        final java.util.HashMap<Integer, String> seenByBucket = new java.util.HashMap<>();
+        for (int i = 0; i < buckets * 64; i++) {
+            final String candidate = "HX" + i;
+            final int bucket = CompositeDimensionTransform.hashBucket(candidate, buckets);
+            final String prior = seenByBucket.putIfAbsent(bucket, candidate);
+            if (prior != null) {
+                return new String[]{prior, candidate};
+            }
+        }
+        Assert.fail("expected to find two values hashing to the same bucket within the search bound");
+        return null; // unreachable
     }
 
     /**

@@ -78,6 +78,7 @@ import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -10222,10 +10223,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Task 5b: attempts to resolve a composite table's equality/IN predicate on a partitioning
-     * dimension (e.g. {@code WHERE exch = 'BTC'} / {@code WHERE exch IN ('BTC','ETH')}) to the set of
-     * cellKeys it could possibly match, so {@code dfcFactory}'s partition-frame cursor can SKIP every
-     * other cell instead of relying solely on the row-level filter/index the rest of the
+     * Task 5b (extended by Task #28): attempts to resolve a composite table's equality/IN predicate on a
+     * partitioning dimension (e.g. {@code WHERE exch = 'BTC'} / {@code WHERE exch IN ('BTC','ETH')}) to
+     * the set of cellKeys it could possibly match, so {@code dfcFactory}'s partition-frame cursor can SKIP
+     * every other cell instead of relying solely on the row-level filter/index the rest of the
      * {@code intrinsicModel.keyColumn != null} block still builds, unchanged, around this call. This is
      * a pure ADDITIVE optimization -- dfcFactory sits underneath every downstream wrapper that block can
      * choose (single-value symbol index, IN-list, covering index, sub-query, ...), so narrowing the
@@ -10243,65 +10244,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      *     (a bind variable, or otherwise not yet bound): baking a value bound at THIS compile/first
      *     execution into a cellKey set cached on the factory would go silently wrong were this same
      *     compiled factory later re-executed with a DIFFERENT bound value -- any such value aborts
-     *     pruning for the WHOLE predicate, not just that one value.</li>
-     *     <li>{@code requireIdentity} is {@code true} (the caller passes {@code latestByColumnCount > 0})
-     *     AND the dimension is NOT IDENTITY -- Task #27. A LATEST BY over this same dimension needs the
-     *     prune to be ROW-EXACT with no residual filter at all (see {@code latestByDimensionPrune} at the
-     *     call site): true for IDENTITY (bijective value&harr;cellKey) regardless of set size, never true
-     *     for HASH/TRUNCATE (collapse distinct raw values into a shared bucket/prefix) even for a
-     *     single-value equality that resolves to exactly one cell.</li>
-     *     <li>the resolved allowed-cellKey set has size &gt; 1 AND the dimension is NOT IDENTITY -- see
-     *     below. Found empirically while grounding this task, not anticipated in the original design;
-     *     narrowed again (IDENTITY exempted) by Task #26, also grounded empirically -- see the "Task #26
-     *     update" paragraph below.</li>
+     *     pruning for the WHOLE predicate, not just that one value. This also means every value that
+     *     DOES reach {@link DimensionCellPrune#needsResidual}'s residual (built by {@code
+     *     buildDimensionResidualFilter}) is guaranteed non-runtime-constant -- i.e. an ordinary constant
+     *     (a {@code StrConstant} in practice, since {@code keyValueFuncs} only ever holds symbol-column
+     *     equality values).</li>
      * </ul>
      * A value that resolves to {@link SymbolTable#VALUE_NOT_FOUND} (never interned) contributes no
-     * ordinal -- an all-not-found predicate still returns a non-null EMPTY set (correctly prunes to a
-     * 0-row scan), which is why "not resolvable" (null) and "resolvable but matches nothing" (empty)
-     * must stay distinguishable, never conflated.
+     * ordinal -- an all-not-found predicate still returns a non-null result with an EMPTY {@code
+     * cellKeys} set (correctly prunes to a 0-row scan), which is why "not resolvable" (null) and
+     * "resolvable but matches nothing" (empty) must stay distinguishable, never conflated.
      * <p>
-     * <b>Why size &gt; 1 is declined (a deliberate scope narrowing, not an oversight):</b> once pruning
-     * is applied, the UNCHANGED code below hands dfcFactory to one of {@code FilterOnValuesRecordCursorFactory}
-     * / {@code SymbolIndexRowCursorFactory} / {@code CoveringIndexRecordCursorFactory} / {@code
-     * FilterOnSubQueryRecordCursorFactory} -- Task 6b's own comment on the gate below documents that this
-     * WHOLE family was never audited for composite: it merges per-VALUE row cursors within one frame
-     * (e.g. {@code HeapRowCursorFactory}, confirmed by reading {@code FilterOnValuesRecordCursorFactory}),
-     * never across cells. Concretely, {@code FilterOnValuesRecordCursorFactory#getScanDirection()}
-     * (confirmed by reading it) returns {@code SCAN_DIRECTION_FORWARD} purely from {@code
-     * partitionFrameCursorFactory.getOrder() == ORDER_ASC && heapCursorUsed}, with ZERO cell-interleaving
-     * awareness -- the exact "lying getScanDirection" defect Task 6a fixed for the general scan via
-     * {@code CompositePageFrameRecordCursorFactory}, but this is a SEPARATE class hierarchy 6a never
-     * touched. {@code SqlCodeGenerator}'s own single-column {@code ORDER BY <ts>} sort-skip (a few
-     * hundred lines up, guarding {@code return recordCursorFactory} raw) trusts exactly that flag. When
-     * the allowed-cellKey set has size &lt;= 1, this can never matter -- at most one cell is ever visited
-     * per day, so there is nothing to interleave and the physical scan order is trivially, genuinely
-     * ts-ordered (degenerates to the plain-table case). When size &gt; 1 (a genuine multi-value
-     * equality/IN-list spanning 2+ distinct cells), enabling this path could silently misorder rows (or
-     * mislead a join/SAMPLE BY/LATEST ON the same way 6a/6b/6c found and fixed for the general scan) --
-     * auditing this whole separate family the way 6a/6b/6c audited the general-scan path is out of this
-     * task's scope; left as a follow-up (mirrors the gate's own "Plan-7 follow-up" framing). A multi-value
-     * predicate that happens to resolve to &lt;= 1 real cell (e.g. one value never interned) still prunes.
-     * <p>
-     * <b>Task #26 update:</b> the size &gt; 1 decline above now applies ONLY when the matched dimension's
-     * {@link PartitionDimension#getKind()} is NOT {@link PartitionDimension#KIND_IDENTITY}. An IDENTITY
-     * dimension's value&harr;cellKey map is bijective -- a cell can only ever hold rows for the ONE raw
-     * value that produced its ordinal (unlike HASH/TRUNCATE, which collapse multiple distinct raw values
-     * into a shared bucket/prefix) -- so a multi-cell IDENTITY set is ROW-EXACT with no residual filter
-     * needed at all. The caller ({@code generateTableQuery0}'s {@code keyColumn != null} block) does NOT
-     * hand a multi-cell IDENTITY prune to this unaudited row-cursor family in the first place -- it
-     * routes through Task 6a's own {@code CompositePageFrameRecordCursorFactory} merge instead (see
-     * {@code dimensionPrunedMultiCell} there), sidestepping the FilterOnValues cell-order hazard entirely
-     * rather than auditing it. HASH/TRUNCATE dimensions still decline size &gt; 1 exactly as before: ROW
-     * pruning is only safe as an ADDITIVE narrowing when the real row-level filter still applies on top
-     * (5b's original design), so a HASH/TRUNCATE multi-cell prune would need a RECONSTRUCTED residual IN
-     * filter to remain correct through a residual-free merge route -- DEFERRED, unimplemented.
+     * <b>Task #28 -- HASH/TRUNCATE join the multi-cell / latest-by routes via a residual:</b> Tasks
+     * #26/#27 lifted this method's original size-&gt;1 and latest-by declines ONLY for {@code
+     * KIND_IDENTITY} dimensions: an IDENTITY value&harr;cellKey map is bijective (a cell can only ever
+     * hold rows for the ONE raw value that produced its ordinal), so a multi-cell IDENTITY prune is
+     * ROW-EXACT with no residual filter needed, and the caller routes it straight through Task 6a's
+     * {@code CompositePageFrameRecordCursorFactory} merge (see {@code dimensionPrunedMultiCell} /
+     * {@code latestByDimensionPrune} at the call site), bypassing the {@code FilterOnValuesRecordCursorFactory}
+     * row-cursor family -- never audited for composite cross-cell order -- entirely. {@code KIND_HASH}/
+     * {@code KIND_TRUNCATE} are NOT bijective (distinct raw values can collide into the same bucket/
+     * prefix), so a residual-free prune through that same bypass would silently ADMIT rows for OTHER,
+     * non-matching raw values sharing the resolved cell(s) -- Tasks #26/#27 therefore left them declined.
+     * This task closes that gap instead of leaving it declined: {@link DimensionCellPrune#needsResidual}
+     * signals back to the caller whenever the matched dimension is NOT {@code KIND_IDENTITY} --
+     * independent of how many cells the predicate resolves to, since even a SINGLE-value HASH/TRUNCATE
+     * equality routed here via a latest-by (whose own row-cursor family never applies LATEST BY, so it
+     * cannot rely on that family's exact-value bitmap match) still needs one: its one bucket/prefix can
+     * still hold OTHER, colliding raw values. The caller reconstructs a {@code col IN (<original values>)}
+     * row filter over the merged pruned scan from {@code keyValueFuncs} (see {@code
+     * buildDimensionResidualFilter}) whenever {@code needsResidual} is set AND the prune is actually
+     * routed through the merge convergence -- == a plain {@code FilterOnValuesRecordCursorFactory} twin,
+     * never a bucket-wide admit. IDENTITY keeps {@code needsResidual=false} (unchanged, still row-exact,
+     * no filter built). A single-value HASH/TRUNCATE equality WITHOUT a latest-by does not reach the
+     * merge convergence at all (the caller only takes that route when the resolved set has size &gt; 1
+     * or a latest-by is present) -- it stays on the pre-#28 route instead, the unchanged row-cursor
+     * family below, whose per-value bitmap index already matches the exact raw value, buckets
+     * notwithstanding (5b's original single-cell case, still correct, still cheaper: no residual to
+     * build or evaluate).
      */
-    private static @Nullable IntHashSet resolveDimensionCellPruneSet(
+    private static @Nullable DimensionCellPrune resolveDimensionCellPruneSet(
             TableReader reader,
             RecordMetadata metadata,
             CharSequence keyColumn,
-            ObjList<Function> keyValueFuncs,
-            boolean requireIdentity
+            ObjList<Function> keyValueFuncs
     ) {
         final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
         // Deliberately resolved against `metadata` (the reader-native TableRecordMetadata passed into
@@ -10327,20 +10313,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (dimension.getKind() == PartitionDimension.KIND_EXPRESSION) {
             return null;
         }
-        // Task #27: a LATEST BY over this same dimension (requireIdentity, set by the caller from
-        // latestByColumnCount > 0) additionally requires the dimension to be IDENTITY, regardless of how
-        // many cells the predicate resolves to -- even a single-cell HASH/TRUNCATE match declines. HASH
-        // and TRUNCATE collapse multiple distinct raw values into a shared bucket/prefix, so pruning to
-        // "the" cell for one predicate value is not enough on its own to make that cell's LATEST BY answer
-        // correct -- the merge convergence this prune then routes to (see latestByDimensionPrune at the
-        // call site) has no residual filter to exclude a colliding OTHER raw value sharing the same cell.
-        // IDENTITY's value<->cellKey map IS bijective, so it alone stays eligible; declining here (return
-        // null) keeps dimensionPruned false, which keeps Task 6b's loud gate firing for HASH/TRUNCATE +
-        // LATEST ON, unchanged from before this task.
-        if (requireIdentity && dimension.getKind() != PartitionDimension.KIND_IDENTITY) {
-            return null;
-        }
-
         final IntHashSet allowedOrdinals = new IntHashSet();
         for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
             final Function f = keyValueFuncs.getQuick(i);
@@ -10353,16 +10325,90 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         final IntHashSet allowedCellKeys = reader.resolveDimensionCellKeys(dimIndex, allowedOrdinals);
-        // Task #26: a genuine multi-cell prune is only safe to hand back here when the dimension is
-        // IDENTITY -- see this method's own "Task #26 update" doc. HASH/TRUNCATE dimensions collapse
-        // distinct raw values into shared buckets/prefixes, so neither the unaudited FilterOnValues
-        // family (5b's original finding) nor a residual-free merge (would silently include OTHER
-        // colliding raw values' rows) is safe for them -- they keep declining, unchanged, pending a
-        // reconstructed residual IN filter (DEFERRED).
-        if (allowedCellKeys.size() > 1 && dimension.getKind() != PartitionDimension.KIND_IDENTITY) {
-            return null;
+        // Task #28: HASH/TRUNCATE no longer decline a size > 1 (or latest-by-routed) prune outright --
+        // see this method's own Task #28 doc -- they signal needsResidual instead, so the caller
+        // reconstructs the exact-value row filter that the (bypassed) row-cursor family would otherwise
+        // have provided. IDENTITY keeps needsResidual=false: its value<->cellKey map is bijective, so the
+        // prune alone is already row-exact and no filter is built.
+        final boolean needsResidual = dimension.getKind() != PartitionDimension.KIND_IDENTITY;
+        return new DimensionCellPrune(allowedCellKeys, needsResidual);
+    }
+
+    /**
+     * Paired result of {@link #resolveDimensionCellPruneSet}: the resolved allowed-cellKey set (never
+     * null when this carrier itself is non-null; may be EMPTY -- see that method's doc), and whether the
+     * caller must additionally apply a reconstructed {@code col IN (<original values>)} residual row
+     * filter over the merged pruned scan (Task #28) because the matched dimension's value&harr;cellKey
+     * map is not bijective (HASH/TRUNCATE).
+     */
+    private static final class DimensionCellPrune {
+        final IntHashSet cellKeys;
+        final boolean needsResidual;
+
+        DimensionCellPrune(IntHashSet cellKeys, boolean needsResidual) {
+            this.cellKeys = cellKeys;
+            this.needsResidual = needsResidual;
         }
-        return allowedCellKeys;
+    }
+
+    /**
+     * Task #28: reconstructs a {@code col IN (<original values>)} residual {@link Function} for a
+     * successfully cell-pruned HASH/TRUNCATE dimension predicate ({@link DimensionCellPrune#needsResidual}),
+     * applied as a row filter over the merged pruned scan at the merge-convergence call site. Needed
+     * because a HASH/TRUNCATE bucket/prefix is NOT bijective: the pruned cell(s) can also hold OTHER,
+     * non-matching raw values, and the row-cursor family that would normally exclude them (per-value
+     * bitmap matching) is bypassed once the prune routes through the merge convergence (see {@code
+     * dimensionPrunedMultiCell} / {@code latestByDimensionPrune} at the call site).
+     * <p>
+     * Mirrors {@link io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory}'s own handling of
+     * {@code intrinsicModel.keyValueFuncs} (see its constructor, ~line 144): builds a FRESH {@link ObjList}
+     * around the SAME {@link Function} instances rather than retaining/aliasing {@code keyValueFuncs}
+     * itself (a pooled list owned by the compiler's {@code WhereClauseParser}). Unlike CoveringIndex --
+     * which keeps its copy as a field, re-read at a LATER {@code getCursor()} -- this list is used ONLY
+     * synchronously, right here, to build {@code args} for {@link InSymbolFunctionFactory#newInstance};
+     * it is never stored or read again, so there is no window for a later/concurrent pooled-model
+     * {@code clear()} to corrupt it.
+     * <p>
+     * <b>Ownership:</b> every {@code keyValueFuncs} entry reaching here is guaranteed a non-runtime-constant
+     * (see {@code resolveDimensionCellPruneSet}'s doc) -- in practice always a {@code StrConstant} (or
+     * similarly inert constant), since {@code keyValueFuncs} only ever holds symbol-column equality
+     * values. Confirmed by reading {@code InSymbolFunctionFactory.newInstance}: for each constant value
+     * arg it reads the string once ({@code getStrA} -&gt; {@code Chars.toString}) into an internal {@code
+     * CharSequenceHashSet} and does NOT retain the {@link Function} instance itself -- only a genuine
+     * bind-variable/runtime-constant value (impossible here, {@code resolveDimensionCellPruneSet} already
+     * declined those) would be retained, into {@code deferredValues}, freed by the returned function's
+     * own {@code close()}. So the returned filter's {@code close()} (mirrors {@code UnaryFunction}'s
+     * default: frees {@code arg} only, plus the always-null {@code deferredValues} here) never touches
+     * {@code keyValueFuncs}' Function objects -- exactly like the pre-existing IDENTITY multi-cell route
+     * (Task #26), which also never frees them once it bypasses the row-cursor family: safe because a
+     * constant with no native resources is harmless whether closed zero, one, or (were it ever aliased)
+     * two times. The one thing this method DOES own outright is the freshly-built {@code SymbolColumn}
+     * (arg[0]): normally consumed into the returned function's {@code arg} field, but freed here directly
+     * if {@code newInstance} throws before reaching that assignment (its type-validation loop over the
+     * value args runs BEFORE it reads arg[0], so a throw there never transfers the SymbolColumn's
+     * ownership).
+     */
+    private Function buildDimensionResidualFilter(
+            int keyColumnIndex,
+            ObjList<Function> keyValueFuncs,
+            RecordMetadata queryMeta,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final SymbolColumn keyColumnArg = new SymbolColumn(keyColumnIndex, queryMeta.isSymbolTableStatic(keyColumnIndex));
+        final ObjList<Function> args = new ObjList<>(keyValueFuncs.size() + 1);
+        final IntList argPositions = new IntList(keyValueFuncs.size() + 1);
+        args.add(keyColumnArg);
+        argPositions.add(0);
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            args.add(keyValueFuncs.getQuick(i));
+            argPositions.add(0);
+        }
+        try {
+            return new InSymbolFunctionFactory().newInstance(0, args, argPositions, configuration, executionContext);
+        } catch (Throwable e) {
+            Misc.free(keyColumnArg);
+            throw e;
+        }
     }
 
     private RecordCursorFactory generateTableQuery0(
@@ -10517,6 +10563,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // for composite queries with no residual filter; freed by this method's catch on any throw
             // between here and the point ownership transfers to the FilteredRecordCursorFactory.
             Function compositeLatestByFilter = null;
+            // Task #28: carries a reconstructed `col IN (<original values>)` residual filter for a
+            // successfully cell-pruned HASH/TRUNCATE dimension predicate that needs one (see
+            // DimensionCellPrune#needsResidual / buildDimensionResidualFilter), built once the
+            // dimension-prune decision below is known and consumed at the merge-convergence site --
+            // wrapped around the scan ahead of any LATEST BY, mirroring compositeLatestByFilter's own
+            // hand-off just below. Stays null for IDENTITY prunes (no residual needed), non-composite
+            // queries, and every shape that never reaches the merge convergence at all (e.g. a
+            // single-cell HASH/TRUNCATE equality without a latest-by, still routed through the unchanged
+            // row-cursor family); freed by this method's catch on any throw between here and the point
+            // ownership transfers to the FilteredRecordCursorFactory.
+            Function compositeDimensionResidualFilter = null;
             if (latestByColumnCount > 0) {
                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
@@ -10636,12 +10693,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // family below is not audited for composite cross-cell ORDER, only for correct rows) --
                     // and those cases fall through to 6b's gate below completely UNCHANGED.
                     boolean dimensionPruned = false;
-                    // Task #26: true only when the prune below succeeded with an allowed-cellKey set of
-                    // size > 1 -- which resolveDimensionCellPruneSet only ever returns for an IDENTITY
-                    // dimension (see its doc: HASH/TRUNCATE still decline and return null for size > 1,
-                    // unchanged from 5b). Steers control away from the row-cursor family below (see its
-                    // use just after the 6b gate).
+                    // Task #26 (extended by Task #28): true only when the prune below succeeded with an
+                    // allowed-cellKey set of size > 1. Originally (5b/#26) resolveDimensionCellPruneSet
+                    // only ever returned a size > 1 set for an IDENTITY dimension; Task #28 lifts that so
+                    // HASH/TRUNCATE can resolve a genuine multi-bucket/prefix set too (paired with
+                    // dimensionPruneNeedsResidual below). Either way, this steers control away from the
+                    // row-cursor family below (see its use just after the 6b gate) and towards the Task 6a
+                    // merge convergence.
                     boolean dimensionPrunedMultiCell = false;
+                    // Task #28: true when the prune below succeeded AND the matched dimension is NOT
+                    // IDENTITY (DimensionCellPrune#needsResidual -- HASH/TRUNCATE's bucket/prefix is not
+                    // bijective, so the merge convergence this routes to needs a reconstructed residual
+                    // filter; see buildDimensionResidualFilter). Independent of dimensionPrunedMultiCell's
+                    // cell count -- consumed together with dimensionPrunedMultiCell/latestByDimensionPrune
+                    // just below to decide whether a residual is actually built (only when the prune is
+                    // ALSO routed through the merge convergence; a single-cell HASH/TRUNCATE equality
+                    // without a latest-by stays on the pre-#28 route and never needs one).
+                    boolean dimensionPruneNeedsResidual = false;
                     // Whole-branch review CRITICAL (Task 6b) / Task #27 follow-up: a LATEST BY present
                     // (latestByColumnCount > 0) reaches keyColumn != null only when the LATEST ON
                     // PARTITION BY column IS this indexed dimension and the WHERE is an equality/IN on it.
@@ -10653,42 +10721,63 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // -ea, a raw NPE at nested.getOrderHash() in production (assertions off), i.e. a hard
                     // failure / dropped latest-by, never a correct answer. 6b's original fix required
                     // latestByColumnCount == 0 here, unconditionally declining every latest-by prune (loud
-                    // gate below). Task #27 replaces that blanket decline with two narrower guards instead
-                    // of removing safety: (1) resolveDimensionCellPruneSet's requireIdentity parameter
-                    // (passed as latestByColumnCount > 0 below) declines HASH/TRUNCATE dimensions outright
-                    // whenever latest-by is present -- they stay exactly as unsafe as 6b found, and still
-                    // hit the loud gate; (2) an IDENTITY dimension's successful prune -- bijective, so
-                    // ROW-EXACT with no residual filter needed -- instead routes to the SAME merge
-                    // convergence Task 6a/#26 already use (dimensionPrunedMultiCell below), which DOES apply
-                    // LATEST BY via wrapCompositeLatestBy; see latestByDimensionPrune just below. The
-                    // gate-throw path (still reached for any decline) frees the carried
-                    // compositeLatestByFilter via this method's catch (see there). NOTE: NO_INDEX(<dim>)
-                    // does NOT escape this shape -- when the latest-by key IS the dimension it is indexed
-                    // regardless of the WHERE hint, so keyColumn stays set. The correct route the gate does
-                    // NOT block (independent of this task) is LATEST ON over a NON-dimension column: there
-                    // the dimension WHERE stays a residual filter over the 6a-merged scan and LATEST BY
-                    // applies as latestBy(filter(scan)). A prune WITHOUT latest-on is unaffected (5b's win).
+                    // gate below). Task #27 replaced that blanket decline for IDENTITY dimensions: a
+                    // successful IDENTITY prune -- bijective, so ROW-EXACT with no residual filter needed --
+                    // routes to the SAME merge convergence Task 6a/#26 already use (dimensionPrunedMultiCell
+                    // below), which DOES apply LATEST BY via wrapCompositeLatestBy; see latestByDimensionPrune
+                    // just below. Task #27 still declined HASH/TRUNCATE outright whenever latest-by was
+                    // present (regardless of cell count), because that same merge convergence had no
+                    // residual filter to exclude a colliding OTHER raw value sharing the resolved cell.
+                    // Task #28 removes that remaining decline: resolveDimensionCellPruneSet no longer
+                    // special-cases latest-by at all, and dimensionPruneNeedsResidual (above) instead
+                    // signals the caller to build the missing residual, so HASH/TRUNCATE now takes the
+                    // identical route IDENTITY already did. The gate-throw path (still reached for any
+                    // decline -- e.g. a bind-variable value, an EXPRESSION dimension, or a non-dimension
+                    // keyColumn) frees the carried compositeLatestByFilter/compositeDimensionResidualFilter
+                    // via this method's catch (see there). NOTE: NO_INDEX(<dim>) does NOT escape this shape
+                    // -- when the latest-by key IS the dimension it is indexed regardless of the WHERE hint,
+                    // so keyColumn stays set. The correct route the gate does NOT block (independent of
+                    // this task) is LATEST ON over a NON-dimension column: there the dimension WHERE stays
+                    // a residual filter over the 6a-merged scan and LATEST BY applies as
+                    // latestBy(filter(scan)). A prune WITHOUT latest-on is unaffected (5b's win).
                     if (compositeTable && nKeyValues > 0 && nKeyExcludedValues == 0) {
-                        IntHashSet allowedCellKeys = resolveDimensionCellPruneSet(
-                                reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs, latestByColumnCount > 0);
-                        if (allowedCellKeys != null) {
-                            dfcFactory.setAllowedCellKeys(allowedCellKeys);
+                        DimensionCellPrune prune = resolveDimensionCellPruneSet(
+                                reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs);
+                        if (prune != null) {
+                            dfcFactory.setAllowedCellKeys(prune.cellKeys);
                             dimensionPruned = true;
-                            dimensionPrunedMultiCell = allowedCellKeys.size() > 1;
+                            dimensionPrunedMultiCell = prune.cellKeys.size() > 1;
+                            dimensionPruneNeedsResidual = prune.needsResidual;
                         }
                     }
-                    // Task #27: a successful prune (dimensionPruned) that ALSO has a LATEST BY present --
-                    // only possible now for an IDENTITY dimension, see resolveDimensionCellPruneSet's
-                    // requireIdentity check just above -- must route to the merge convergence (Task 6a's
-                    // CompositePageFrameRecordCursorFactory + wrapCompositeLatestBy) exactly like
-                    // dimensionPrunedMultiCell already does, rather than fall into the row-cursor family
-                    // below (which never applies LATEST BY). Deliberately covers BOTH single- and
-                    // multi-cell IDENTITY prunes -- dimensionPrunedMultiCell alone is not enough here, since
-                    // a single-cell IDENTITY equality (allowedCellKeys.size() == 1) also needs this routing
-                    // whenever latest-by is present; see its use just below.
+                    // Task #27 (broadened by Task #28): a successful prune (dimensionPruned) that ALSO has
+                    // a LATEST BY present -- for ANY dimension kind now, IDENTITY or HASH/TRUNCATE alike --
+                    // must route to the merge convergence (Task 6a's CompositePageFrameRecordCursorFactory
+                    // + wrapCompositeLatestBy) exactly like dimensionPrunedMultiCell already does, rather
+                    // than fall into the row-cursor family below (which never applies LATEST BY).
+                    // Deliberately covers BOTH single- and multi-cell prunes -- dimensionPrunedMultiCell
+                    // alone is not enough here, since a single-cell equality (allowedCellKeys.size() == 1,
+                    // e.g. a single HASH bucket) also needs this routing whenever latest-by is present; see
+                    // its use just below.
                     boolean latestByDimensionPrune = dimensionPruned && latestByColumnCount > 0;
+                    // Task #28: build the reconstructed residual HERE, synchronously, while keyColumnIndex
+                    // and intrinsicModel.keyValueFuncs are in scope -- see buildDimensionResidualFilter's
+                    // own ownership doc. Guarded on the EXACT predicate the merge-convergence call site
+                    // below uses to decide whether to route through it at all (dimensionPrunedMultiCell ||
+                    // latestByDimensionPrune): a single-cell HASH/TRUNCATE equality without a latest-by
+                    // stays on the pre-#28 row-cursor route below instead, which never consumes this filter
+                    // -- building it unconditionally on dimensionPruneNeedsResidual alone would construct
+                    // (and then never free) an orphaned Function for that shape. Carried in the outer
+                    // compositeDimensionResidualFilter (declared near compositeLatestByFilter above) so it
+                    // survives to the merge-convergence site below and is freed by this method's catch on
+                    // any throw in between.
+                    if (dimensionPruneNeedsResidual && (dimensionPrunedMultiCell || latestByDimensionPrune)) {
+                        compositeDimensionResidualFilter = buildDimensionResidualFilter(
+                                keyColumnIndex, intrinsicModel.keyValueFuncs, queryMeta, executionContext);
+                    }
 
-                    // Task 6b: every row-cursor factory this family can return (single-value, IN-list,
+                    // Task 6b (narrowed by Task #28 for the dimension-prune case specifically -- see just
+                    // below): every row-cursor factory this family can return (single-value, IN-list,
                     // NOT-IN, key sub-query, and the covering-index / sorted-symbol-index shortcuts
                     // below) is a framingSupported=false PageFrameRecordCursorFactory driven by a
                     // per-partition bitmap-index RowCursorFactory. 6a's CompositeMergePartitionRecordCursor
@@ -10696,17 +10785,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // (it has no hook for a RowCursorFactory's row-level index selection), so swapping it
                     // in here would silently DROP the key predicate -- returning rows for symbol values
                     // outside the WHERE list, not just in the wrong order. A predicate-preserving
-                    // fallback (fold the key predicate back into a residual filter and use the plain
-                    // merged full-scan, mirroring the NOT-IN-too-many-values restore below) is possible
-                    // in principle, but reconstructing it safely -- either re-quoting keyValueFuncs'
-                    // values into a fresh AST node (escaping risk: unverified whether the round trip
-                    // through GenericLexer.unquote()/the literal parser is lossless for values containing
-                    // quotes) or hand-building a Function tree outside FunctionParser.parseFunction
-                    // (ownership risk: keyValueFuncs' constant-vs-deferred split changes which entries a
-                    // hand-built InSymbolFunctionFactory.Func would retain vs discard, so a generic
-                    // caller cannot safely free the leftovers without risking a leak or a double-free) --
-                    // was not implemented here. Composite is loud-gated rather than risking either a
-                    // dropped predicate or a leak/double-free; see task-6b-report.md (Plan-7 follow-up).
+                    // fallback for a keyColumn shape this row-cursor family would otherwise have to serve
+                    // (fold the key predicate back into a residual filter and use the plain merged
+                    // full-scan, mirroring the NOT-IN-too-many-values restore below) needs to reconstruct
+                    // keyValueFuncs safely -- either re-quoting its values into a fresh AST node (escaping
+                    // risk: unverified whether the round trip through GenericLexer.unquote()/the literal
+                    // parser is lossless for values containing quotes) or hand-building a Function tree
+                    // outside FunctionParser.parseFunction (ownership risk in the GENERAL case: an
+                    // arbitrary keyColumn's keyValueFuncs can hold a runtime-constant/bind-variable entry,
+                    // whose constant-vs-deferred split changes which entries a hand-built
+                    // InSymbolFunctionFactory.Func would retain vs discard, so a generic caller cannot
+                    // safely free the leftovers without risking a leak or a double-free). That general
+                    // reconstruction remains unimplemented here for the row-cursor family's own gate below
+                    // -- composite still loud-gates any OTHER keyColumn shape this family alone would have
+                    // to serve; see task-6b-report.md (Plan-7 follow-up). Task #28 instead solves a
+                    // strictly NARROWER, provably-safe instance of the same idea for the DIMENSION-prune
+                    // case only (buildDimensionResidualFilter above): resolveDimensionCellPruneSet already
+                    // declines every runtime-constant value before a residual is ever built, so the
+                    // ownership risk above cannot arise for it (see that helper's own ownership doc) --
+                    // this does not relax the row-cursor family's gate for any OTHER shape.
                     // A NO_INDEX hint on the column (or on the whole query) avoids this gate entirely: it
                     // stops WhereClauseParser from ever setting intrinsicModel.keyColumn, so the predicate
                     // stays a normal residual filter over the already-correct merged scan. Task 5b: a
@@ -10719,23 +10816,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(tableToken.getTableName()).put(", column=").put(intrinsicModel.keyColumn).put(']');
                     }
 
-                    // Task #26: a successfully-pruned multi-cell IDENTITY set (dimensionPrunedMultiCell)
-                    // skips this ENTIRE row-cursor-family block (key sub-query / single-value / IN-list
-                    // via FilterOnValuesRecordCursorFactory / NOT-IN) -- none of it is needed, because the
-                    // cell prune above is already ROW-EXACT for IDENTITY (see resolveDimensionCellPruneSet's
-                    // doc), and FilterOnValues specifically is cell-order-UNSAFE for a genuine multi-cell
-                    // match (this method's own doc). intrinsicModel.filter (any OTHER, non-key residual
-                    // predicate, e.g. an AND'd `px > 2.05`) is left completely untouched here -- mirrors the
+                    // Task #26 (broadened by Task #28): a successfully-pruned multi-cell set
+                    // (dimensionPrunedMultiCell -- IDENTITY, or now HASH/TRUNCATE paired with
+                    // dimensionPruneNeedsResidual/compositeDimensionResidualFilter above) skips this
+                    // ENTIRE row-cursor-family block (key sub-query / single-value / IN-list via
+                    // FilterOnValuesRecordCursorFactory / NOT-IN) -- none of it is needed: for IDENTITY the
+                    // cell prune above is already ROW-EXACT (see resolveDimensionCellPruneSet's doc), and
+                    // for HASH/TRUNCATE the reconstructed residual (applied at the merge-convergence call
+                    // site) now does the same exact-value job this row-cursor family would have; either
+                    // way FilterOnValues itself is cell-order-UNSAFE for a genuine multi-cell match (this
+                    // method's own doc). intrinsicModel.filter (any OTHER, non-key residual predicate, e.g.
+                    // an AND'd `px > 2.05`) is left completely untouched here -- mirrors the
                     // NOT-IN-too-many-values restore idiom below (fall through without returning), so
                     // control reaches the general Task 6a merged-scan routing at the bottom of this method,
                     // where model.setWhereClause(intrinsicModel.filter) applies it over the already-pruned
                     // dfcFactory.
-                    // Task #27: latestByDimensionPrune (a successful IDENTITY prune WITH a latest-by
-                    // present, single- or multi-cell alike -- see its own doc just above) skips this block
-                    // for the same reason plus one more: even the single-cell case must not reach this
-                    // family, because none of its factories apply LATEST BY (see the "Whole-branch review
-                    // CRITICAL" doc above) -- only the Task 6a convergence below does, via
-                    // wrapCompositeLatestBy.
+                    // Task #27 (broadened by Task #28): latestByDimensionPrune (a successful prune WITH a
+                    // latest-by present, single- or multi-cell, IDENTITY or HASH/TRUNCATE alike -- see its
+                    // own doc just above) skips this block for the same reason plus one more: even the
+                    // single-cell case must not reach this family, because none of its factories apply
+                    // LATEST BY (see the "Whole-branch review CRITICAL" doc above) -- only the Task 6a
+                    // convergence below does, via wrapCompositeLatestBy.
                     if (!dimensionPrunedMultiCell && !latestByDimensionPrune) {
                         if (intrinsicModel.keySubQuery != null) {
                             RecordCursorFactory rcf = null;
@@ -11132,6 +11233,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             supportsRandomAccess,
                             false
                     );
+                    // Task #28: wrap the merged pruned scan with the reconstructed dimension residual
+                    // filter (HASH/TRUNCATE bucket/prefix disambiguation -- see buildDimensionResidualFilter)
+                    // BEFORE any latest-by wrap below, so LATEST ON composes as
+                    // latestBy(residual(prune(scan))), matching generateLatestByTableQuery's own
+                    // filter-then-latestBy order for a plain table. Mirrors the compositeLatestByFilter
+                    // hand-off just below: FilteredRecordCursorFactory takes ownership of both compositeScan
+                    // and the filter (frees both on close, and we free both here if its own construction
+                    // throws); once it owns them we null the carrier so this method's catch does not
+                    // double-free. When compositeLatestByFilter is ALSO non-null (an extra AND'd residual
+                    // predicate present together with a dimension prune), the SECOND FilteredRecordCursorFactory
+                    // constructed just below auto-detects wrapping another one (see its own constructor) and
+                    // collapses both filters into one ChainedAndFilter over the TRUE base scan, rather than
+                    // nesting two cursor layers. Stays a no-op (null) for IDENTITY prunes and every
+                    // non-dimension shape, unchanged from #26/#27.
+                    if (compositeDimensionResidualFilter != null) {
+                        final RecordCursorFactory residualScan;
+                        try {
+                            residualScan = new FilteredRecordCursorFactory(compositeScan, compositeDimensionResidualFilter);
+                        } catch (Throwable e) {
+                            Misc.free(compositeScan);
+                            compositeDimensionResidualFilter = Misc.free(compositeDimensionResidualFilter);
+                            throw e;
+                        }
+                        compositeDimensionResidualFilter = null;
+                        compositeScan = residualScan;
+                    }
                     // Task 6b: latestBy.size() > 0 here only when the generateLatestByTableQuery guard
                     // above declined (composite); apply LATEST BY directly over the merged scan.
                     if (latestBy.size() > 0) {
@@ -11178,16 +11305,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         supportsRandomAccess,
                         false
                 );
+                // Task #28: a composite table's dimension-prune residual can reach HERE too, not just the
+                // composite-merge branch above -- discovered empirically via a bare `count()` (no ORDER
+                // BY/LATEST ON referencing ts): queryMeta.getTimestampIndex() == -1 (ts not needed in the
+                // projection, order-indifferent) skips the `isComposite() && timestampIndex != -1` branch
+                // above entirely, landing here instead, on the SAME already-cell-pruned dfcFactory --
+                // "the frame-counting fast path" the class javadoc of CompositeCellPruningTest's
+                // multi-cell-IN test refers to. That plain per-cell PageFrameRecordCursorFactory has NO
+                // row-level filtering of its own here (filter arg is null, unconditionally, a few lines
+                // up) -- fine for IDENTITY (row-exact prune, no residual ever built) but WRONG for
+                // HASH/TRUNCATE without this wrap: it would silently include a pruned bucket/prefix
+                // cell's OTHER, non-matching raw values. Mirrors the identical wrap above verbatim
+                // (ownership/free-once notes there apply here too); wrapping in FilteredRecordCursorFactory
+                // also correctly forces row-based (not frame-vectorized) counting for this shape -- the
+                // same unavoidable cost any OTHER residual filter already imposes on count() elsewhere in
+                // the engine, required for correctness, not a new trade-off. Stays null (no-op) for
+                // IDENTITY prunes, plain (non-composite) tables, and every non-dimension shape.
+                if (compositeDimensionResidualFilter != null) {
+                    final RecordCursorFactory residualScan;
+                    try {
+                        residualScan = new FilteredRecordCursorFactory(plainScan, compositeDimensionResidualFilter);
+                    } catch (Throwable e) {
+                        Misc.free(plainScan);
+                        compositeDimensionResidualFilter = Misc.free(compositeDimensionResidualFilter);
+                        throw e;
+                    }
+                    compositeDimensionResidualFilter = null;
+                    plainScan = residualScan;
+                }
                 if (latestBy.size() > 0) {
                     return wrapCompositeLatestBy(plainScan, model, latestBy, queryMeta);
                 }
                 return plainScan;
             } catch (Throwable e) {
                 Misc.free(dfcFactory);
-                // Free the carried composite residual filter if we threw before ownership passed to the
-                // FilteredRecordCursorFactory (e.g. the composite indexed-predicate loud gate above).
-                // Nulled once transferred, so this never double-frees.
+                // Free the carried composite residual filter(s) if we threw before ownership passed to the
+                // FilteredRecordCursorFactory (e.g. the composite indexed-predicate loud gate above, or a
+                // throw from buildDimensionResidualFilter itself). Both nulled once transferred, so this
+                // never double-frees.
                 Misc.free(compositeLatestByFilter);
+                Misc.free(compositeDimensionResidualFilter);
                 throw e;
             }
         }
