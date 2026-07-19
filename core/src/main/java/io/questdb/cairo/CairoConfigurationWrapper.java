@@ -1589,8 +1589,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isBatchedColumnSyncEnabled() {
-        return getDelegate().isBatchedColumnSyncEnabled();
+    public boolean isAdaptiveEpochColumnSyncBatched() {
+        return getDelegate().isAdaptiveEpochColumnSyncBatched();
     }
 
     @Override

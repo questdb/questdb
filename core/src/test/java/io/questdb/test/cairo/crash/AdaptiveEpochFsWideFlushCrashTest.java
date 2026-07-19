@@ -42,7 +42,7 @@ import java.util.List;
  *
  * <p>{@code TableWriter.fsyncMaterializedState()} makes the durable cut. On the default Linux/batched
  * path it ends with a single fs-wide {@code syncfs()} (inside {@code syncColumnsBatchedSync}). But when
- * {@code isBatchedColumnSyncEnabled()} is false (ext4 fast_commit mounts) — or on non-Linux — it fell to
+ * {@code isAdaptiveEpochColumnSyncBatched()} is false (ext4 fast_commit mounts) — or on non-Linux — it fell to
  * {@code syncColumns0()}, which msyncs ONLY the currently-OPEN partition's columns. Under ADAPTIVE the
  * apply is lazy, so CLOSED / O3-merged partition columns are non-durable; an epoch taken via that path
  * records {@code _txn}/{@code _cv} that reference rows in closed partitions whose data was never flushed.
@@ -76,11 +76,11 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
         // Drive the epoch explicitly so we can probe syncfs right around it; auto-epoch must not fire.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
         // FORCE the non-batched path: this is the ext4-fast_commit / non-Linux case I1 targets.
-        setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "false");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "false");
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             Assert.assertFalse("the non-batched path must be active for this test",
-                    engine.getConfiguration().isBatchedColumnSyncEnabled());
+                    engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
 
             runWithCrashFacade(() -> {
                 // Per-inode journaling: nothing journals the closed partition's columns for free — only the
@@ -156,7 +156,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
-            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         }
     }
 

@@ -553,6 +553,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAdaptiveEpochColumnSyncBatchedConfigRename() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, false);
+        assertMemoryLeak(() -> Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched()));
+    }
+
     private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(baseFileName).put(".epoch");

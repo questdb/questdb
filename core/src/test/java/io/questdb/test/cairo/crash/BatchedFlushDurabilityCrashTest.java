@@ -48,11 +48,11 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
         Assume.assumeTrue("batched SYNC flush is Linux-only", Os.isLinux());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         // FORCE the batched path on regardless of this CI machine's filesystem. The TableWriter gate is
-        // `... && configuration.isBatchedColumnSyncEnabled()`; if CI happened to run on an ext4 fast_commit
+        // `... && configuration.isAdaptiveEpochColumnSyncBatched()`; if CI happened to run on an ext4 fast_commit
         // mount the production config would disable batching and this test would silently stop exercising
         // the batched path. The test harness builds its config with detection OFF, so this property is the
         // raw, deterministic enable.
-        setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         // Tiny append page so the (many, wide) column files extend repeatedly during the run, exercising the
         // extend path (now journaled by the single syncfs; syncFlushFinishIfExtended() only advances watermarks).
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(MIN_PAGE));
@@ -60,7 +60,7 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
             Assert.assertEquals("test requires SYNC commit mode",
                     CommitMode.SYNC, engine.getConfiguration().getCommitMode());
             Assert.assertTrue("test must exercise the BATCHED SYNC path",
-                    engine.getConfiguration().isBatchedColumnSyncEnabled());
+                    engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
             runWithCrashFacade(() -> {
                 // A WIDE table: a fixed-width spread, two strings, a varchar, and TWO indexed symbols.
                 // That mix drives every batched mem family through the 3-phase flush: column data (.d)
@@ -105,7 +105,7 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(2097152L));
         }
     }

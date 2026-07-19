@@ -552,13 +552,13 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testBatchedColumnSyncForceDisable() throws Exception {
-        // cairo.commit.sync.column.batched=false must disable the batched SYNC flush deterministically:
+        // cairo.adaptive.epoch.column.sync.batched=false must disable the batched SYNC flush deterministically:
         // the production getter short-circuits on the raw property BEFORE any fast_commit detection, so this
         // holds regardless of the host filesystem (this config is built with detection ENABLED, like prod).
         Properties properties = new Properties();
-        properties.setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertFalse(configuration.getCairoConfiguration().isBatchedColumnSyncEnabled());
+        Assert.assertFalse(configuration.getCairoConfiguration().isAdaptiveEpochColumnSyncBatched());
     }
 
     @Test

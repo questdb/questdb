@@ -30,8 +30,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Verifies the {@code cairo.commit.sync.column.batched} operator override drives
- * {@link io.questdb.cairo.CairoConfiguration#isBatchedColumnSyncEnabled()} — the gate
+ * Verifies the {@code cairo.adaptive.epoch.column.sync.batched} operator override drives
+ * {@link io.questdb.cairo.CairoConfiguration#isAdaptiveEpochColumnSyncBatched()} — the gate
  * {@code TableWriter.syncColumns} consults to choose the batched SYNC flush vs the proven per-file
  * {@code msync(MS_SYNC)} fallback.
  *
@@ -47,16 +47,16 @@ public class BatchedColumnSyncConfigTest extends AbstractCairoTest {
     @Test
     public void testDefaultIsEnabled() {
         // No property set -> default true.
-        Assert.assertTrue(engine.getConfiguration().isBatchedColumnSyncEnabled());
+        Assert.assertTrue(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
     }
 
     @Test
     public void testExplicitTrue() {
         try {
-            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
-            Assert.assertTrue(engine.getConfiguration().isBatchedColumnSyncEnabled());
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
+            Assert.assertTrue(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
         } finally {
-            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         }
     }
 
@@ -64,10 +64,10 @@ public class BatchedColumnSyncConfigTest extends AbstractCairoTest {
     public void testOperatorCanForceDisable() {
         // The safety valve: an operator can force the batched path OFF even when detection is UNKNOWN.
         try {
-            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "false");
-            Assert.assertFalse(engine.getConfiguration().isBatchedColumnSyncEnabled());
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "false");
+            Assert.assertFalse(engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
         } finally {
-            setProperty(PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, "true");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         }
     }
 }

@@ -161,7 +161,7 @@ public class CrashIngestWriter {
             }
 
             @Override
-            public boolean isBatchedColumnSyncEnabled() {
+            public boolean isAdaptiveEpochColumnSyncBatched() {
                 return batchedSync;
             }
 

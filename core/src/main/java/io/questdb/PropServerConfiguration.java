@@ -179,9 +179,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     // Effective (property AND not-fast_commit) batched-SYNC enable, computed lazily ONCE and cached:
     // -1 = not yet computed, 0 = disabled, 1 = enabled. fast_commit status is static per mount, so
-    // detection runs at most once. Guarded by batchedColumnSyncLock.
-    private final Object batchedColumnSyncLock = new Object();
-    private int batchedColumnSyncEffective = -1;
+    // detection runs at most once. Guarded by adaptiveEpochColumnSyncLock.
+    private final Object adaptiveEpochColumnSyncLock = new Object();
+    private int adaptiveEpochColumnSyncEffective = -1;
     private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
@@ -238,12 +238,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     // Whether the adaptive durable-epoch recovery roll-forward runs at startup; default true.
     // See CairoConfiguration.isAdaptiveRecoveryRollForwardEnabled / RecoveryCoordinator.
     private final boolean adaptiveRecoveryRollForwardEnabled;
-    // Raw value of cairo.commit.sync.column.batched (operator override / safety valve), default true.
-    private final boolean commitSyncColumnBatchedProp;
+    // Raw value of cairo.adaptive.epoch.column.sync.batched (operator override / safety valve), default true.
+    private final boolean adaptiveEpochColumnSyncBatchedProp;
     private final String confRoot;
     // Whether to run the live ext4 fast_commit detection (production only). Mirrors
     // loadAdditionalConfigurations: true for the real server, false for the test harness, so unit
-    // tests are deterministic and just see the raw commitSyncColumnBatchedProp value (no detection).
+    // tests are deterministic and just see the raw adaptiveEpochColumnSyncBatchedProp value (no detection).
     private final boolean detectFastCommit;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
@@ -1573,7 +1573,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // value is clamped to 0 (synchronous) so a misconfiguration never silently weakens durability.
             this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, 0));
             this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
-            this.commitSyncColumnBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_COMMIT_SYNC_COLUMN_BATCHED, true);
+            this.adaptiveEpochColumnSyncBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
             this.detectFastCommit = loadAdditionalConfigurations;
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
@@ -5272,28 +5272,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isBatchedColumnSyncEnabled() {
+        public boolean isAdaptiveEpochColumnSyncBatched() {
             // Effective = property AND (DB-root ext4 fast_commit is NOT enabled). The property is the
             // operator override (also the reliable control when detection is UNKNOWN). fast_commit is
             // static per mount, so detect once and cache. In the test harness detectFastCommit is
             // false, so this returns the raw property without touching the real filesystem.
-            if (!commitSyncColumnBatchedProp) {
+            if (!adaptiveEpochColumnSyncBatchedProp) {
                 return false;
             }
             if (!detectFastCommit) {
                 return true;
             }
-            int cached = batchedColumnSyncEffective;
+            int cached = adaptiveEpochColumnSyncEffective;
             if (cached >= 0) {
                 return cached == 1;
             }
-            synchronized (batchedColumnSyncLock) {
-                cached = batchedColumnSyncEffective;
+            synchronized (adaptiveEpochColumnSyncLock) {
+                cached = adaptiveEpochColumnSyncEffective;
                 if (cached < 0) {
                     // Only FAST_COMMIT_ENABLED disables the optimization; UNKNOWN / NOT_DETECTED keep it on.
                     final boolean enabled = FastCommitCheck.classifyDbRoot(getFilesFacade(), dbRoot) != FastCommitCheck.FAST_COMMIT_ENABLED;
                     cached = enabled ? 1 : 0;
-                    batchedColumnSyncEffective = cached;
+                    adaptiveEpochColumnSyncEffective = cached;
                 }
                 return cached == 1;
             }

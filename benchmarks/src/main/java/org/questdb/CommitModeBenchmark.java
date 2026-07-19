@@ -146,7 +146,7 @@ public class CommitModeBenchmark {
             }
 
             @Override
-            public boolean isBatchedColumnSyncEnabled() {
+            public boolean isAdaptiveEpochColumnSyncBatched() {
                 return Boolean.parseBoolean(batched);
             }
         };

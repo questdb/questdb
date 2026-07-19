@@ -14124,7 +14124,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // ADAPTIVE skips this block: the WAL is durable (Task A fdatasync), so the table partition
         // columns are a rebuildable cache — no apply-side flush needed. See appliesColumnSync().
         if (appliesColumnSync(commitMode)) {
-            if (commitMode == CommitMode.SYNC && Os.isLinux() && configuration.isBatchedColumnSyncEnabled()) {
+            if (commitMode == CommitMode.SYNC && Os.isLinux() && configuration.isAdaptiveEpochColumnSyncBatched()) {
                 // Linux SYNC: BATCH the per-file device flushes into ~one. Instead of N blocking
                 // msync(MS_SYNC) (each carrying a device flush), every dirty column/symbol mem is
                 // msync(MS_ASYNC)'d then sync_file_range'd (WAIT_AFTER) so its content lands in the
@@ -14141,7 +14141,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Fall back to the original per-file sync(async) — byte-identical to before — for:
                 //   - ASYNC commits;
                 //   - non-Linux SYNC (sync_file_range unavailable -> Files.syncFileRange is a no-op);
-                //   - SYNC where the batched path is disabled (configuration.isBatchedColumnSyncEnabled()
+                //   - SYNC where the batched path is disabled (configuration.isAdaptiveEpochColumnSyncBatched()
                 //     == false), i.e. the DB-root fs has ext4 fast_commit (per-inode journaling, where the
                 //     batched within-page durability is not guaranteed) or an operator force-disabled it.
                 // For SYNC this is the proven-durable per-file msync(MS_SYNC) baseline. See FastCommitCheck.
@@ -14355,11 +14355,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Under ADAPTIVE the apply is lazy, so CLOSED / O3-merged partition columns are non-durable; the
         // epoch records _txn/_cv that reference rows in those closed partitions. syncColumns0() only
         // msyncs the columns of the OPEN partition, so on the non-batched path (non-Linux, or ext4
-        // fast_commit where isBatchedColumnSyncEnabled()==false) it would leave the closed partitions'
+        // fast_commit where isAdaptiveEpochColumnSyncBatched()==false) it would leave the closed partitions'
         // tail non-durable -> recovery restores an epoch whose data was never flushed -> silent row loss.
         // The batched path already finishes with a single fs-wide syncfs(); the non-batched path must do
         // the same for the EPOCH (this is NOT the per-commit apply path, which stays lazy by design).
-        if (Os.isLinux() && configuration.isBatchedColumnSyncEnabled()) {
+        if (Os.isLinux() && configuration.isAdaptiveEpochColumnSyncBatched()) {
             syncColumnsBatchedSync(); // 3-pass KICK/DRAIN/syncfs; also syncs symbol writers (fs-wide)
         } else {
             // Push the OPEN partition's dirty mmap pages to the page cache + device (msync MS_SYNC), and
