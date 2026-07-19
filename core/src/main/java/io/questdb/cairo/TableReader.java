@@ -644,6 +644,17 @@ public class TableReader implements Closeable, SymbolTableSource {
      * 2. We can access the next partition - great, we get its min timestamp but, next gotcha - there could be a gap,
      * so we take a min between the ceil value and the next timestamp value.
      * <p>
+     * Composite-partitioning gotcha (Task 5a-2): a composite table can attach MULTIPLE partition slots
+     * sharing the exact same raw timestamp -- one per sibling CELL of the same logical (day/month/year)
+     * partition, sorted (ts ASC, cellKey ASC). "The next partition" above is only guaranteed to start a
+     * genuinely LATER day for the day's LAST cell; for any other (non-last) cell, the physically-next slot
+     * is that SAME day's next cellKey, not a later day. We therefore skip past every such sibling (same
+     * timestamp as this partition's own) before treating "the next partition" as the next-day candidate.
+     * For a plain table (or an already-last cell of a day) this is a guaranteed no-op: no two entries ever
+     * share a raw timestamp there, so the skip loop never executes and behaviour is byte-identical to
+     * before this gotcha was handled. Mirrors {@link TxReader}'s own private {@code skipCompositeCellSiblings}
+     * helper (used by {@link TxReader#getNextPartitionTimestamp} / {@link TxReader#getNextExistingPartitionTimestamp}),
+     * which independently established the same "skip same-timestamp siblings" idiom for the write path.
      * <p>
      * Clear?
      *
@@ -651,8 +662,12 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @return upper bound of the timestamp that can possibly be stored in this partition, which is an inclusive value.
      */
     public long getPartitionMaxTimestampFromMetadata(int partitionIndex) {
+        final long ownTimestamp = getPartitionMinTimestampFromMetadata(partitionIndex);
         int next = partitionIndex + 1;
-        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(getPartitionMinTimestampFromMetadata(partitionIndex));
+        while (next < getPartitionCount() && getPartitionMinTimestampFromMetadata(next) == ownTimestamp) {
+            next++;
+        }
+        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(ownTimestamp);
         return next < getPartitionCount() ? Math.min(getPartitionMinTimestampFromMetadata(next), minTimestampCeil) - 1 : minTimestampCeil;
     }
 

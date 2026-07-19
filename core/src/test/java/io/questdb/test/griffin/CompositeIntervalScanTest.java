@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -94,6 +95,16 @@ import org.junit.Test;
  * single bulk insert per table (one WAL commit) is already sufficient to reproduce the high-boundary bug,
  * matching {@code CompositeRoutingTest}'s own diagnostic note that this predates, and is unrelated to,
  * multi-commit per-cell routing.
+ * <p>
+ * <b>UPDATE (Task 5a-2):</b> the separate bug documented above is now FIXED --
+ * {@link io.questdb.cairo.TableReader#getPartitionMaxTimestampFromMetadata(int)} advances past sibling
+ * cells (same raw timestamp) to the next DISTINCT day before reading its min timestamp for the ceiling,
+ * falling back to {@code ceil(own min)} exactly as before when no later distinct day exists (the
+ * last-partition-in-table edge, preserved for a composite table's non-last cell too). See
+ * {@code testIntervalInMultiCellMiddleDayIncludesAllCells} onward below for direct coverage of the
+ * previously-avoided {@code ts IN '<multi-cell day>'} shape (now green), including the table's own last
+ * day, plus a direct-method proof ({@code testApproxMaxTimestampAgreesAcrossSiblingCells}) that every
+ * sibling cell of the same day now reports an identical approx-max timestamp.
  */
 public class CompositeIntervalScanTest extends AbstractCairoTest {
 
@@ -279,6 +290,181 @@ public class CompositeIntervalScanTest extends AbstractCairoTest {
                 // scan-down + 1 lands exactly on the next day's own first (cellKey 0) partition.
                 Assert.assertEquals(0, r.getPartitionCellKey(scanDownIdx + 1));
                 Assert.assertTrue(r.getPartitionTimestampByIndex(scanDownIdx + 1) > midTs);
+            }
+        });
+    }
+
+    /**
+     * Task 5a-2. The SEPARATE, pre-existing bug documented in the class javadoc above: {@code ts IN
+     * '<day>'}'s low bound unavoidably lands exactly on that day's own start. d2 (2020-01-02) is a
+     * genuine MIDDLE day (d1 precedes it, d3 follows it) with 2 cells -- its cellKey-0 ('A') partition is
+     * the one whose {@code partitionIndex + 1} (cellKey-1, 'B', the SAME day) was wrongly used as the
+     * "next day" for the approx-max ceiling, computing a ceiling ONE MICROSECOND BEFORE its own data.
+     * RED (pre-fix): d2's 2 'A' rows (cellKey-0) are silently dropped; only the 2 'B' rows (cellKey-1,
+     * never buggy since ITS next slot is genuinely d3) survive -- 2 rows instead of 4.
+     */
+    @Test
+    public void testIntervalInMultiCellMiddleDayIncludesAllCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
+            String predicate = " where ts in '2020-01-02'";
+            assertCompositeMatchesPlain(predicate);
+            assertQuery("select ts, exch, px from c" + predicate + " order by ts, exch")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Interval")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-02T00:00:00.000000Z\tA\t2.0
+                            2020-01-02T06:00:00.000000Z\tA\t2.1
+                            2020-01-02T12:00:00.000000Z\tB\t2.2
+                            2020-01-02T18:00:00.000000Z\tB\t2.3
+                            """);
+        });
+    }
+
+    /**
+     * Task 5a-2. Same underlying bug and day as {@link #testIntervalInMultiCellMiddleDayIncludesAllCells()},
+     * but the explicit {@code >=}/{@code <} range shape instead of {@code IN} -- both forms resolve to the
+     * identical low-bound-lands-on-the-day intrinsic interval, so both must independently be fixed by (and
+     * regression-guarded against) the same change.
+     */
+    @Test
+    public void testRangeLowBoundOnMultiCellMiddleDayIncludesAllCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
+            String predicate = " where ts >= '2020-01-02' and ts < '2020-01-03'";
+            assertCompositeMatchesPlain(predicate);
+            assertQuery("select ts, exch, px from c" + predicate + " order by ts, exch")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Interval")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-02T00:00:00.000000Z\tA\t2.0
+                            2020-01-02T06:00:00.000000Z\tA\t2.1
+                            2020-01-02T12:00:00.000000Z\tB\t2.2
+                            2020-01-02T18:00:00.000000Z\tB\t2.3
+                            """);
+        });
+    }
+
+    /**
+     * Task 5a-2. The last-partition-in-table EDGE case for a NON-LAST cell: d3 (2020-01-03) is both a
+     * 2-cell day AND the table's own last day -- there is no later distinct day at all. The fix must still
+     * advance d3's cellKey-0 past its cellKey-1 sibling (same day), find no further distinct day, and fall
+     * back to {@code ceil(own min)} exactly like the pre-existing (and correct) handling of a genuine last
+     * partition -- NOT treat "no more distinct days" as "no more partitions at all" and either loop off
+     * the end of the partition array or silently return the wrong (sibling-derived) value. RED (pre-fix):
+     * same failure mode as the middle-day case -- d3's 2 'A' rows vanish, leaving only the 2 'B' rows.
+     */
+    @Test
+    public void testIntervalInMultiCellLastDayIncludesAllCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
+            String predicate = " where ts in '2020-01-03'";
+            assertCompositeMatchesPlain(predicate);
+            assertQuery("select ts, exch, px from c" + predicate + " order by ts, exch")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Interval")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-03T00:00:00.000000Z\tA\t3.0
+                            2020-01-03T06:00:00.000000Z\tA\t3.1
+                            2020-01-03T12:00:00.000000Z\tB\t3.2
+                            2020-01-03T18:00:00.000000Z\tB\t3.3
+                            """);
+        });
+    }
+
+    /**
+     * Task 5a-2. Same last-partition-in-table edge as {@link #testIntervalInMultiCellLastDayIncludesAllCells()},
+     * but the explicit {@code >=}/{@code <} range shape; the upper bound ({@code 2020-01-04}) is a day that
+     * does not exist in the dataset at all, purely a syntactic bound -- proving the fix's fallback does not
+     * depend on there being a real row anywhere near the searched-for "next day".
+     */
+    @Test
+    public void testRangeLowBoundOnMultiCellLastDayIncludesAllCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
+            String predicate = " where ts >= '2020-01-03' and ts < '2020-01-04'";
+            assertCompositeMatchesPlain(predicate);
+            assertQuery("select ts, exch, px from c" + predicate + " order by ts, exch")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Interval")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-03T00:00:00.000000Z\tA\t3.0
+                            2020-01-03T06:00:00.000000Z\tA\t3.1
+                            2020-01-03T12:00:00.000000Z\tB\t3.2
+                            2020-01-03T18:00:00.000000Z\tB\t3.3
+                            """);
+        });
+    }
+
+    /**
+     * Task 5a-2. Direct-method proof, independent of SQL/the interval cursor: for every day (single- or
+     * multi-cell), every sibling cell of that day must report the IDENTICAL
+     * {@code getPartitionMaxTimestampFromMetadata} value -- the ceiling describes the whole DAY, not any
+     * one cell of it. Ground truth for each day is taken from that day's LAST cell (highest cellKey),
+     * which was never affected by this bug (its own "next slot" is always either a genuinely later day or
+     * physically past the end of the table), and is independently cross-checked: against
+     * {@code next distinct day's own min - 1} when a later day exists (d0, d1, d2), and against
+     * {@code ceil(own min)} (day start + 24h, since DAY partitioning's ceiling is a fixed calendar step)
+     * when it does not (d3, the table's own last day). RED (pre-fix): d1/d2/d3's cellKey-0 (non-last cell
+     * of a multi-cell day) each disagree with their own day's last cell.
+     */
+    @Test
+    public void testApproxMaxTimestampAgreesAcrossSiblingCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
+            try (TableReader r = getReader("c")) {
+                int partitionCount = r.getPartitionCount();
+                Assert.assertEquals("d0 (1 cell) + d1/d2/d3 (2 cells each)", 7, partitionCount);
+
+                int i = 0;
+                while (i < partitionCount) {
+                    long dayTs = r.getPartitionTimestampByIndex(i);
+                    int lastCellIndex = i;
+                    while (lastCellIndex + 1 < partitionCount && r.getPartitionTimestampByIndex(lastCellIndex + 1) == dayTs) {
+                        lastCellIndex++;
+                    }
+                    // The day's LAST cell was never affected by this bug -- ground truth for the whole day.
+                    long groundTruth = r.getPartitionMaxTimestampFromMetadata(lastCellIndex);
+                    boolean hasLaterDay = lastCellIndex + 1 < partitionCount;
+                    if (hasLaterDay) {
+                        Assert.assertEquals(
+                                "day " + dayTs + "'s last cell must use the next DISTINCT day's own min - 1 as its ceiling",
+                                r.getPartitionMinTimestampFromMetadata(lastCellIndex + 1) - 1,
+                                groundTruth);
+                    } else {
+                        Assert.assertEquals(
+                                "table's last day (" + dayTs + ") falls back to ceil(own min) = day start + 24h",
+                                dayTs + Micros.DAY_MICROS,
+                                groundTruth);
+                    }
+                    for (int j = i; j <= lastCellIndex; j++) {
+                        Assert.assertEquals(
+                                "partition " + j + " (cellKey=" + r.getPartitionCellKey(j) + ", day=" + dayTs
+                                        + ") must agree with its day's last cell (index " + lastCellIndex
+                                        + ") on the approx-max timestamp",
+                                groundTruth,
+                                r.getPartitionMaxTimestampFromMetadata(j));
+                    }
+                    i = lastCellIndex + 1;
+                }
             }
         });
     }
