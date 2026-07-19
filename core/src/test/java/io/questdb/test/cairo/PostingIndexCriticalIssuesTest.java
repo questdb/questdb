@@ -172,18 +172,20 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
                     // Grow the published head past staleWriter's mapping on every
                     // supported OS page size, including 64 KiB Windows pages.
-                    int expectedGenCount = 1;
+                    int commitCount = 1;
                     while (PostingIndexUtils.KEY_FILE_RESERVED
-                            + PostingIndexChainEntry.entrySize(expectedGenCount, 0) <= staleMapSize) {
-                        expectedGenCount++;
+                            + PostingIndexChainEntry.entrySize(commitCount, 0) <= staleMapSize) {
+                        commitCount++;
                     }
+                    final int expectedHeadGenCount;
                     try (PostingIndexWriter appendWriter = new PostingIndexWriter(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                        for (int i = 0; i < expectedGenCount; i++) {
+                        for (int i = 0; i < commitCount; i++) {
                             appendWriter.add(1, i);
                             appendWriter.setMaxValue(i);
                             appendWriter.commit();
                         }
+                        expectedHeadGenCount = appendWriter.getGenCount();
                     }
 
                     final long publishedFileSize = rawFf.length(
@@ -222,8 +224,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
                     try (PostingIndexWriter reopenedWriter = new PostingIndexWriter(configuration)) {
                         reopenedWriter.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                        Assert.assertEquals(expectedGenCount - 1L, reopenedWriter.getMaxValue());
-                        Assert.assertEquals(expectedGenCount, reopenedWriter.getGenCount());
+                        Assert.assertEquals(commitCount - 1L, reopenedWriter.getMaxValue());
+                        Assert.assertEquals(expectedHeadGenCount, reopenedWriter.getGenCount());
                     }
                 } finally {
                     allocateFail.disarm();
