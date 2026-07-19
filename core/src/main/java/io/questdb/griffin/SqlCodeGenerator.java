@@ -282,6 +282,7 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.CompositePageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -10741,6 +10742,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC);
 
                 model.setWhereClause(intrinsicModel.filter);
+                // Task 6a: route a composite table's WHERE/interval frame scan through the cross-cell merge
+                // as well (see the no-where full-scan site below for the rationale and the timestamp-index
+                // guard). The residual (post-scan) filter is applied by generateFilter around the merged
+                // getCursor(), so ordering is preserved through it.
+                if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
+                    return new CompositePageFrameRecordCursorFactory(
+                            configuration,
+                            queryMeta,
+                            dfcFactory,
+                            rowFactory,
+                            false,
+                            null,
+                            true,
+                            columnIndexes,
+                            columnSizeShifts,
+                            supportsRandomAccess,
+                            false
+                    );
+                }
                 return new PageFrameRecordCursorFactory(
                         configuration,
                         queryMeta,
@@ -10777,6 +10797,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.isUpdate()
             );
             RowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(order);
+
+            // Task 6a: a composite table stores rows in per-cell partition subdirs within each time
+            // partition, so a plain page-frame scan emits per day cell0 ++ cell1 ++ ... = globally
+            // ts-MISORDERED. Route it through the cross-cell merge factory whose getCursor() is genuinely
+            // ts-ordered (and whose getScanDirection() is therefore truthful). Only when the designated
+            // timestamp is in the scan's column set: otherwise there is nothing to merge on (an
+            // order-indifferent bare projection of non-ts columns), and the plain factory's storage order
+            // is the pre-existing, acceptable behaviour for such a query.
+            if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
+                return new CompositePageFrameRecordCursorFactory(
+                        configuration,
+                        queryMeta,
+                        cursorFactory,
+                        rowCursorFactory,
+                        model.isOrderDescendingByDesignatedTimestampOnly(),
+                        null,
+                        true,
+                        columnIndexes,
+                        columnSizeShifts,
+                        supportsRandomAccess,
+                        false
+                );
+            }
 
             return new PageFrameRecordCursorFactory(
                     configuration,
