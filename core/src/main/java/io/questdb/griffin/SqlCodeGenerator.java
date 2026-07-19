@@ -10593,7 +10593,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // family below is not audited for composite cross-cell ORDER, only for correct rows) --
                     // and those cases fall through to 6b's gate below completely UNCHANGED.
                     boolean dimensionPruned = false;
-                    if (compositeTable && nKeyValues > 0 && nKeyExcludedValues == 0) {
+                    // Whole-branch review CRITICAL: never prune (never bypass 6b's gate) when a LATEST BY
+                    // is present (latestByColumnCount > 0). This reaches keyColumn != null only when the
+                    // LATEST ON PARTITION BY column IS this indexed dimension and the WHERE is an
+                    // equality/IN on it. The pruned scan is then handed to the single-value/IN-list/
+                    // covering row-cursor family below, which NEVER applies LATEST BY (that lives in
+                    // generateLatestByTableQuery, which composite deliberately declined at the top of this
+                    // method); the un-applied latest-by reaches the generic post-scan generateLatestBy(),
+                    // whose `assert nested != null` then trips -- an AssertionError under -ea, a raw NPE at
+                    // nested.getOrderHash() in production (assertions off), i.e. a hard failure / dropped
+                    // latest-by, never a correct answer. Requiring latestByColumnCount == 0 here keeps
+                    // dimensionPruned false for that shape, so 6b's gate FIRES and the query stays LOUD;
+                    // the gate-throw path frees the carried compositeLatestByFilter via this method's catch
+                    // (see there). NOTE: NO_INDEX(<dim>) does NOT escape this shape -- when the latest-by
+                    // key IS the dimension it is indexed regardless of the WHERE hint, so keyColumn stays
+                    // set. The correct route the gate does NOT block is LATEST ON over a NON-dimension
+                    // column: there the dimension WHERE stays a residual filter over the 6a-merged scan and
+                    // LATEST BY applies as latestBy(filter(scan)). A prune WITHOUT latest-on is unchanged
+                    // (5b's win).
+                    if (compositeTable && latestByColumnCount == 0 && nKeyValues > 0 && nKeyExcludedValues == 0) {
                         IntHashSet allowedCellKeys = resolveDimensionCellPruneSet(reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs);
                         if (allowedCellKeys != null) {
                             dfcFactory.setAllowedCellKeys(allowedCellKeys);
