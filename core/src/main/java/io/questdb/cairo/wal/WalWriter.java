@@ -1631,13 +1631,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         boolean refreshed = refreshSymbolWatermarks();
         final int newSegmentId = segmentId + 1;
         final long oldLastSegmentTxn = lastSegmentTxn;
+        // Declared out here (not inside the try) so the finally can release it: under non-NOSYNC the
+        // segment-dir fd is opened below for a durability fsync, and a column/event file open between
+        // that open and the success fsyncAndClose can fault - which would otherwise leak the fd.
+        long dirFd = -1;
         try {
             totalSegmentsRowCount += Math.max(0, segmentRowCount);
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
-            final long dirFd;
             final int commitMode = walCommitMode();
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
@@ -1677,11 +1680,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
 
             if (dirFd != -1) {
-                ff.fsyncAndClose(dirFd);
+                final long fd = dirFd;
+                dirFd = -1; // clear before fsyncAndClose so the finally never double-closes (it closes even if the fsync fails)
+                ff.fsyncAndClose(fd);
             }
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
+            if (dirFd != -1) {
+                // A column/event file open above faulted before the success fsyncAndClose; release the
+                // segment-dir fd (opened under non-NOSYNC) so it does not leak. No fsync - the segment is
+                // being abandoned - and no throw, so the in-flight exception is not masked.
+                ff.close(dirFd);
+            }
             int oldMinSegmentLocked = minSegmentLocked;
             if (moveMinSegmentLock(newSegmentId)) {
                 notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
