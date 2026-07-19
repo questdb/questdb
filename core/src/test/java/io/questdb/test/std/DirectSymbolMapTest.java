@@ -212,6 +212,63 @@ public class DirectSymbolMapTest {
     }
 
     @Test
+    public void testExplicitReverseIndexIncrementalAfterBuild() throws Exception {
+        // Once the explicit reverse index has been built by a bounded keyOf, later put()s must keep
+        // it correct without a full rebuild: new keys extend it incrementally, and an overwrite falls
+        // back to a rebuild so the stale mapping is dropped.
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                map.put(0, "a");
+                map.put(1, "b");
+                // Build the explicit reverse index.
+                Assert.assertEquals(0, map.keyOf("a", 0, 2));
+                Assert.assertEquals(1, map.keyOf("b", 0, 2));
+
+                // New keys added after the index is built must be found (incremental maintenance).
+                map.put(2, "c");
+                map.put(3, "a"); // duplicate value "a" under a fresh key -> both keys must be retained
+                Assert.assertEquals(2, map.keyOf("c", 0, 4));
+                Assert.assertEquals(0, map.keyOf("a", 0, 1));
+                Assert.assertEquals(3, map.keyOf("a", 3, 4));
+                Assert.assertEquals(-1, map.keyOf("a", 1, 3));
+
+                // Overwriting an existing key must be reflected: the stale (oldOffset, key) entry is
+                // dropped by the rebuild fallback.
+                map.put(1, "z");
+                Assert.assertEquals(-1, map.keyOf("b", 0, 4));
+                Assert.assertEquals(1, map.keyOf("z", 0, 4));
+                // "a" at key 3 survives the overwrite rebuild (single in-band match, deterministic).
+                Assert.assertEquals(3, map.keyOf("a", 3, 4));
+            }
+        });
+    }
+
+    @Test
+    public void testExplicitReverseIndexIncrementalMaintenanceStaysLinear() throws Exception {
+        // Regression for the quadratic reverse-index rebuild: WAL replay put()s one transaction's
+        // symbols then a bounded keyOf runs per transaction (filter init). If every keyOf triggered
+        // a full clear+rescan of the cumulative map, total scan work would be 1+2+...+N = O(N^2).
+        // Incremental maintenance keeps it linear: the index is rebuilt at most once (the first
+        // lookup), and every later put() extends it in O(1).
+        assertMemoryLeak(() -> {
+            final int n = 2000;
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                for (int t = 0; t < n; t++) {
+                    map.put(t, "sym" + t);
+                    // filter init resolves the just-added symbol within the transaction's key band
+                    Assert.assertEquals(t, map.keyOf("sym" + t, 0, t + 1));
+                }
+                final long scanned = map.getExplicitRebuildScannedEntries();
+                Assert.assertTrue(
+                        "reverse-index rebuild scan work must stay near-linear across " + n
+                                + " transactions, but scanned " + scanned + " entries",
+                        scanned <= 8L * n
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPutNullStoresNullSentinel() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {

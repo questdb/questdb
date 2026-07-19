@@ -69,6 +69,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     private long bufCapacity;
     private long bufPtr;
     private long bufSize;
+    private long explicitRebuildScannedEntries;
     private boolean explicitValueToKeyDirty;
     private ValueToKeyMap valueToKey;
 
@@ -153,6 +154,16 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     }
 
     /**
+     * Cumulative number of {@code keyToOffset} slots scanned by full rebuilds of the
+     * explicit (put-mode) reverse index over this instance's lifetime. Diagnostic hook
+     * for tests: a bounded {@link #keyOf(CharSequence, int, int)} that no longer triggers
+     * a rebuild leaves this unchanged, so interleaved put/lookup work stays linear.
+     */
+    public long getExplicitRebuildScannedEntries() {
+        return explicitRebuildScannedEntries;
+    }
+
+    /**
      * Returns an existing key if {@code value} has already been interned on this
      * map, otherwise appends a new entry with a sequentially assigned key and
      * returns it. Must not be mixed with {@link #put(int, CharSequence)} on the
@@ -212,9 +223,30 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
      */
     public void put(int key, CharSequence value) {
         long idx = keyToOffset.keyIndex(key);
+        // keyIndex >= 0 marks an empty slot (a brand-new key); < 0 marks an existing key.
+        final boolean isNewKey = idx >= 0;
         long offset = append(value);
         keyToOffset.putAt(idx, key, toIntOffset(offset));
-        explicitValueToKeyDirty = true;
+        if (explicitValueToKey == null || explicitValueToKeyDirty) {
+            // The reverse index is not built yet, or a rebuild is already pending: keep
+            // deferring. The first bounded keyOf() builds it in one O(size) pass.
+            explicitValueToKeyDirty = true;
+            return;
+        }
+        if (isNewKey) {
+            // Extend the already-built index in O(1): a brand-new key adds exactly one
+            // (offset, key) pair. This keeps a WAL replay (put then bounded keyOf per
+            // transaction) linear instead of rebuilding the whole map on every lookup.
+            // Null symbols are deliberately absent, matching the rebuild's len >= 0 guard.
+            if (value != null) {
+                explicitValueToKey.insertExplicit(toIntOffset(offset), key);
+            }
+        } else {
+            // Overwriting a key strands its previous (oldOffset, key) entry in the reverse
+            // index, and only a full rebuild can drop it. Overwrites do not occur on the WAL
+            // symbol-diff hot path (segment keys are immutable), so this fallback stays cold.
+            explicitValueToKeyDirty = true;
+        }
     }
 
     @Override
@@ -295,7 +327,13 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         }
 
         explicitValueToKey.clear();
-        for (int i = 0, n = keyToOffset.capacity(); i < n; i++) {
+        final int n = keyToOffset.capacity();
+        // Count the slots this full rebuild scans. put() keeps the built index up to date
+        // incrementally, so a steady WAL replay (put then bounded keyOf per transaction)
+        // rebuilds at most once instead of on every lookup; the counter lets a test prove
+        // the total scan work stays linear rather than quadratic in the transaction count.
+        explicitRebuildScannedEntries += n;
+        for (int i = 0; i < n; i++) {
             final int key = keyToOffset.keyAt(i);
             if (key != NO_ENTRY_KEY) {
                 final int offset = keyToOffset.get(key);

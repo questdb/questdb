@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -341,6 +342,66 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue("the name must still resolve to a live view",
                     engine.getTableTokenIfExists("lv").isLiveView());
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDropLiveViewAfterDisabledRestart() throws Exception {
+        // A live view created while the feature is enabled must stay droppable after a restart
+        // with the feature turned off. On such a restart buildViewGraphs loads the LV token (and
+        // its _lv definition stays on disk) but deliberately registers NO instance - an
+        // unattended one would pin the base WAL floor forever. executeDropLiveView used to key
+        // existence off the registry instance, so a plain DROP LIVE VIEW then failed with "live
+        // view does not exist" and the on-disk view was undroppable. Existence must come from the
+        // durable token instead; engine.dropLiveView is null-instance-safe and tears the view down.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            // Restart with the feature disabled: no instance is registered, but the token and
+            // _lv definition survive on disk.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, "false");
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            Assert.assertNull("feature disabled -> no registered instance",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+            final TableToken token = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull("the LV token must survive a disabled restart", token);
+            Assert.assertTrue("the surviving token must still be a live view", token.isLiveView());
+
+            // Pre-fix: throws "live view does not exist" (no registry instance).
+            execute("DROP LIVE VIEW lv");
+            drainWalQueue();
+            Assert.assertNull("DROP LIVE VIEW must remove the on-disk view even with the feature off",
+                    engine.getTableTokenIfExists("lv"));
+        });
+    }
+
+    @Test
+    public void testDropLiveViewIfExistsAfterDisabledRestart() throws Exception {
+        // Same disabled-restart shape as testDropLiveViewAfterDisabledRestart, but via DROP LIVE
+        // VIEW IF EXISTS. Keying existence off the (absent) registry instance made IF EXISTS a
+        // silent no-op that returned false while leaving the on-disk view in place - the more
+        // dangerous arm, since it reports success to the operator. The token is the source of truth.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, "false");
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertTrue(engine.getTableTokenIfExists("lv").isLiveView());
+
+            // Pre-fix: a silent no-op (returns false), leaving the view on disk.
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            drainWalQueue();
+            Assert.assertNull("DROP LIVE VIEW IF EXISTS must actually drop the on-disk view",
+                    engine.getTableTokenIfExists("lv"));
         });
     }
 

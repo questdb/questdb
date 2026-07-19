@@ -82,6 +82,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1635,6 +1636,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // below viewLowerBoundTimestamp. Tallied per commit off the reused
         // tsLowerBoundCursor, folded into below_lower_bound_count after the walk.
         long belowLowerBoundSkipped = 0;
+        // Base rows the skip-prefix cursor physically visited this walk. Counts VISITS (work),
+        // not DROPS: a wholly sub-floor commit is dropped in O(1) above and contributes nothing,
+        // a straddling commit contributes only its sub-floor prefix. Folded into
+        // lowerBoundRowsScanned after the walk so a test can prove the O(1) skip.
+        long lowerBoundRowsScanned = 0;
         boolean o3Detected = false;
         long o3LateRowTs = Numbers.LONG_NULL;
         long o3SeqTxn = Numbers.LONG_NULL;
@@ -1807,6 +1813,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (endRow <= startRow) {
                     continue;
                 }
+                // Fully sub-floor in-order commit: every row sits below the view's lower bound, so
+                // the window would see nothing and TimestampLowerBoundCursor would linearly skip the
+                // whole commit. dataInfo already carries the commit's max ts (event-file metadata,
+                // independent of the column projection, so reliable even under schema drift), so drop
+                // it in O(1) here - mirroring the O3 branch's sub-floor short-circuit above - instead
+                // of opening the frame and walking every row. No row would pass the bound, so
+                // setLatestSeenTs, the tier staging and the LV WAL writes are all no-ops for such a
+                // commit anyway; only the below-lower-bound drop tally needs its rows, taken from the
+                // frame row range. lowerBoundRowsScanned is deliberately NOT bumped: nothing is visited.
+                if (dataInfo.getMaxTimestamp() < viewLowerBoundTimestamp) {
+                    belowLowerBoundSkipped += endRow - startRow;
+                    continue;
+                }
 
                 walNameSink.clear();
                 walNameSink.put(WAL_NAME_BASE).put(walId);
@@ -1911,13 +1930,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // the lower-bound cursor. The O3 path counts its own drops via
                     // bumpO3RejectedCount and breaks before reaching the cursor,
                     // so the two accounts never overlap.
-                    belowLowerBoundSkipped += tsLowerBoundCursor.getSkippedCount();
+                    final long visited = tsLowerBoundCursor.getSkippedCount();
+                    belowLowerBoundSkipped += visited;
+                    // These rows were physically visited by the cursor's skip loop (a straddling
+                    // commit's sub-floor prefix). A wholly sub-floor commit never reaches here - it
+                    // was dropped in O(1) above - so it does not inflate this visit count.
+                    lowerBoundRowsScanned += visited;
                 } finally {
                     windowCursor.close();
                 }
             }
         }
 
+        if (lowerBoundRowsScanned > 0) {
+            instance.bumpLowerBoundRowsScanned(lowerBoundRowsScanned);
+        }
         if (belowLowerBoundSkipped > 0) {
             instance.bumpBelowLowerBoundCount(belowLowerBoundSkipped);
             if (!instance.hasWarnedBelowLowerBoundDrop()) {
@@ -5500,16 +5527,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         long pageSize = engine.getConfiguration().getLiveViewInMemoryBufferInitialBytes();
+        // The view's refresh tracker charges the tier's data-scaled native memory against
+        // cairo.live.view.refresh.memory.limit.bytes. Acquired by ensureCompiledFactory before
+        // this runs; null only on a defensive path, which degrades to global-only accounting.
+        final MemoryTracker viewTracker = instance.getMemoryTracker();
         if (stagingBuffer == null || !stagingColumnTypes.equals(tierColumnTypes)) {
-            // Shape changed (or first use on this worker) — reshape the
-            // staging buffer. The previous buffer's allocations are released
-            // by Misc.free before the new one is constructed.
+            // Shape changed, or first use this cycle. The staging buffer is bound to the view's refresh
+            // tracker so a large drain's staged output is capped by cairo.live.view.refresh.memory.limit
+            // .bytes like the rest of the cycle's query state (one base commit is staged in a single
+            // batch, so an unbounded commit would otherwise balloon it). refreshInstance's finally frees
+            // it at the end of EVERY cycle, so it is normally null here and is never retained across a
+            // cycle boundary: that cycle-scoped ownership is what makes the tracker binding safe, since
+            // the buffer is worker-owned and keeping its tracker-charged pages past the cycle would let
+            // an async invalidation (e.g. a base recreate on the DDL thread) free the tracker dirty.
             stagingBuffer = Misc.free(stagingBuffer);
             stagingColumnTypes.clear();
             for (int i = 0, n = tierColumnTypes.size(); i < n; i++) {
                 stagingColumnTypes.add(tierColumnTypes.getQuick(i));
             }
-            stagingBuffer = new LiveViewInMemoryBuffer(stagingColumnTypes, tsColIdx, pageSize);
+            stagingBuffer = new LiveViewInMemoryBuffer(stagingColumnTypes, tsColIdx, pageSize, viewTracker);
             stagingTimestampColumnIndex = tsColIdx;
         }
         stagingBuffer.reset();
@@ -5518,7 +5554,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // changes the LV's _meta (reserved for ALTER LIVE VIEW later) the tier
         // would need to be reshaped too. Today _meta is immutable post-CREATE.
         if (instance.getInMemoryTier() == null) {
-            instance.setInMemoryTier(new LiveViewInMemoryTier(tierColumnTypes, tsColIdx, pageSize));
+            instance.setInMemoryTier(new LiveViewInMemoryTier(tierColumnTypes, tsColIdx, pageSize, viewTracker));
         }
         // Capture the SYMBOL output-column indexes so the lead drain can
         // eager-intern them into the tier's symbol cache.
@@ -6868,29 +6904,66 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // accumulators and durably flush wrong cumulative aggregates.
                 // Single-shot per LV lifetime - the flag flips true whether the
                 // restore succeeded, missed, or failed.
+                // An in-process promote keeps the same LiveViewInstance but flips it from replica
+                // lead reconstruction (which already burned checkpointRestoreAttempted) to a writable
+                // primary, so the single-shot restart block below would otherwise be skipped on the
+                // first primary cycle. Detect that role edge here, at the same gate the flag is managed
+                // (both mutate only after the early-return checks above), so a replica cycle that burned
+                // the flag also recorded leadReconstruction=true; the edge survives an intervening early
+                // return because the previous role is not updated until a cycle reaches this point.
+                final boolean promotedSinceLastRefresh =
+                        instance.isLastRefreshLeadReconstruction() && !leadReconstruction;
+                instance.setLastRefreshLeadReconstruction(leadReconstruction);
+                // On that promote edge, re-arm the single-shot restart recovery WHEN (and only when) the
+                // applied floor lags the LV table's applied state -- i.e. the replica's last _lv.s persist
+                // failed and ApplyWal2TableJob swallowed it. The recovery then reconciles the floor to disk
+                // truth AND rebuilds the window accumulators / lead frontier from the applied tier (a
+                // head-miss replay that REPLACE_RANGE-rewrites the tier), so the promoted primary does not
+                // resume from the stale floor/frontier and re-derive (forward-append duplicating) an
+                // already-materialised base range. A clean promote has a consistent floor, so this is a
+                // no-op and never forces a replay.
+                if (promotedSinceLastRefresh
+                        && engine.readLiveViewAppliedMaxBaseSeqTxn(instance.getLiveViewToken())
+                        > instance.getStateReader().getLastProcessedSeqTxn()) {
+                    instance.resetCheckpointRestoreAttempted();
+                }
                 if (!instance.isCheckpointRestoreAttempted()) {
                     instance.setCheckpointRestoreAttempted();
-                    // Reconcile a durable floor left behind by a crash between the
-                    // inline apply and the trailing _lv.s persist, before the head
-                    // .cp restore reads appliedWatermark as disk truth.
-                    reconcileAppliedFloorAfterRestart(instance);
-                    if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
-                            || needsHeadlessRestartRecovery(instance, leadReconstruction)) {
-                        tryRestoreFromHead(instance, getWindowFactory(instance));
-                        if (instance.hasPendingInvalidationReason()) {
-                            // The restore could not rebuild a consistent window
-                            // state (replay-to-applied failed mid-gap leaving the
-                            // accumulators a partial advance over disk, a dedup
-                            // replay failed, or the head .cp was a version-too-old
-                            // snapshot). Do NOT run the incremental refresh + flush
-                            // below: they would advance and flush the inconsistent
-                            // accumulators, leaving the (about-to-be-invalidated)
-                            // view serving corrupted content off its own on-disk
-                            // tier - an invalid view stays queryable. Break to the
-                            // out-of-latch invalidation, which drains the stashed
-                            // reason and marks the view invalid without a partial
-                            // advance ever reaching disk.
-                            break refreshBody;
+                    // Durable restart recovery is PRIMARY-ONLY. A read-only replica reconstructs its lead
+                    // purely in RAM from replicated disk (the leadReconstruction branches below) and must
+                    // never do durable recovery here: reconcileAppliedFloorAfterRestart would rewrite
+                    // _lv.s -- which the global apply job owns on a replica, so it would race that write --
+                    // and tryRestoreFromHead's replay REPLACE_RANGE-rewrites the on-disk tier and writes a
+                    // fresh head .cp. A node that has only ever been a replica has no local .cp (.cp does
+                    // not replicate), but one restarted read-only over an ex-primary's files does, so
+                    // without this role gate its first cycle would reach tryRestoreFromHead. The asserts in
+                    // publishCheckpointRing / maybeWriteHeadCheckpoint catch it under -ea; with assertions
+                    // disabled the writes proceed and invalidate the replica's view. The flag is still
+                    // burned above, so a later in-process promote re-arms this recovery through the
+                    // promote-edge branch just above (which runs it once the node is primary).
+                    if (!leadReconstruction) {
+                        // Reconcile a durable floor left behind by a crash between the
+                        // inline apply and the trailing _lv.s persist, before the head
+                        // .cp restore reads appliedWatermark as disk truth.
+                        reconcileAppliedFloorAfterRestart(instance);
+                        if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
+                                || needsHeadlessRestartRecovery(instance, leadReconstruction)) {
+                            tryRestoreFromHead(instance, getWindowFactory(instance));
+                            if (instance.hasPendingInvalidationReason()) {
+                                // The restore could not rebuild a consistent window
+                                // state (replay-to-applied failed mid-gap leaving the
+                                // accumulators a partial advance over disk, a dedup
+                                // replay failed, or the head .cp was a version-too-old
+                                // snapshot). Do NOT run the incremental refresh + flush
+                                // below: they would advance and flush the inconsistent
+                                // accumulators, leaving the (about-to-be-invalidated)
+                                // view serving corrupted content off its own on-disk
+                                // tier - an invalid view stays queryable. Break to the
+                                // out-of-latch invalidation, which drains the stashed
+                                // reason and marks the view invalid without a partial
+                                // advance ever reaching disk.
+                                break refreshBody;
+                            }
                         }
                     }
                 }
@@ -7087,6 +7160,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 invalidationReason = handleRefreshFailure(instance, t, leadReconstruction);
             }
         } finally {
+            // Release the worker's staging buffer under the refresh latch (before unlockAfterRefresh),
+            // so its per-view-tracker-charged pages are freed while THIS view's tracker is still alive
+            // and before tryCloseIfDropped / tryFreeRuntimeStateIfInvalid (below) can recycle it. The
+            // buffer is worker-owned and reused across views, so scoping its charge to the cycle is what
+            // keeps the tracker binding safe; the next populate-the-tier cycle rebuilds it.
+            stagingBuffer = Misc.free(stagingBuffer);
             executionContext.ofRefreshingInstance(null);
             instance.unlockAfterRefresh();
             instance.tryCloseIfDropped();

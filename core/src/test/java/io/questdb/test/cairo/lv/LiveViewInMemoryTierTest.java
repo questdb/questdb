@@ -35,6 +35,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.BinarySequence;
@@ -44,6 +45,10 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Misc;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -1723,6 +1728,55 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         for (double v : vals) {
             m.putDouble(v);
         }
+    }
+
+    @Test
+    public void testTierTrackerRecyclesCleanWhenReaderPinsAcrossClose() throws Exception {
+        // A reader pin defers the tier's native free (and its per-view-tracker decrement) to the last
+        // releaseRead, which can outlive the tracker -- a query cursor may stay open across a DROP /
+        // invalidate. The tier's close() must reconcile the slots' charge off the tracker
+        // (detachMemoryTracker -> the tracker's covered-bytes ledger) so the pooled tracker recycles
+        // clean; otherwise the next acquire trips PerQueryMemoryTracker.init()'s used==0 assert. Proven
+        // RED before the fix: the re-acquire below fails with "tracker recycled with used=...".
+        assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(configuration)) {
+                final MemoryTracker tracker = provider.acquire(
+                        AllowAllSecurityContext.INSTANCE, 1, MemoryTrackerWorkload.LIVE_VIEW_REFRESH);
+                final LiveViewInMemoryTier tier = new LiveViewInMemoryTier(singleLongCol(), 0, PAGE_SIZE, tracker);
+
+                // Fill the non-published slot so its arena allocates pages charged to the tracker, then
+                // publish it.
+                final int writeIdx = 1 - tier.getPublishedIdx();
+                final LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                for (long r = 0; r < 4096; r++) {
+                    slot.putLong(r, 0, r);
+                }
+                slot.setRowCount(4096);
+                tier.publishSwap(writeIdx);
+                Assert.assertTrue("the tier's arena must charge the tracker", tracker.getUsed() > 0);
+
+                // Pin the published slot, then close the tier: the native free defers to releaseRead.
+                final int pin = tier.acquireRead();
+                Assert.assertTrue(pin >= 0);
+                tier.close();
+
+                // Release the tracker. With the fix, close() detached the slots' charge to the covered
+                // ledger, so reconcileCovered() at release clears used and the pooled block recycles clean.
+                Misc.free(tracker);
+
+                // Re-acquire: the LIFO pool pops the just-released tracker. Without the fix its used != 0
+                // and init() asserts here; with the fix it is clean.
+                final MemoryTracker reacquired = provider.acquire(
+                        AllowAllSecurityContext.INSTANCE, 2, MemoryTrackerWorkload.LIVE_VIEW_REFRESH);
+                Assert.assertEquals("re-acquired tracker must recycle clean", 0, reacquired.getUsed());
+                Misc.free(reacquired);
+
+                // Drain the deferred free (global-only): the last releaseRead frees the tier's native
+                // memory without debiting any tracker.
+                tier.releaseRead(pin);
+            }
+        });
     }
 
     private static IntList singleLongCol() {

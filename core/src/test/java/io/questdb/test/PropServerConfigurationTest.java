@@ -962,6 +962,35 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewInMemoryBufferGrowthBytesAcceptsZero() throws Exception {
+        // Zero (and negative) growth budget is a supported "compact on every publish" sentinel
+        // (LiveViewRefreshJob.isCompactionWorthwhile treats growthBudget <= 0 that way), so it must
+        // parse cleanly rather than being rejected. Locks the contract so the initial-bytes minimum
+        // is never mistakenly extended to the growth budget.
+        final Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "0");
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(0, cairo.getLiveViewInMemoryBufferGrowthBytes());
+    }
+
+    @Test
+    public void testLiveViewInMemoryBufferInitialBytesRejectsNonPositive() throws Exception {
+        // A zero or negative in-memory buffer initial size reaches MemoryCARWImpl.setPageSize as
+        // Numbers.msb(ceilPow2(size)) -- a negative shift -- corrupting the first refresh instead of
+        // failing the server start. Reject it at config parse time with a message naming the key.
+        for (String value : new String[]{"0", "-1"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected rejection for initial.bytes=" + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.live.view.in.memory.buffer.initial.bytes");
+            }
+        }
+    }
+
+    @Test
     public void testLiveViewMalformedDurationRejected() throws Exception {
         // A duration key that cannot be parsed must fail the server start with a message
         // naming the offending key, not fall back to the default.

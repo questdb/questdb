@@ -54,7 +54,6 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
@@ -4840,17 +4839,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tableToken != null && !tableToken.isLiveView()) {
             throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
         }
-        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(name);
-        if (instance == null) {
+        // Determine existence from the durable LV token, NOT the registry instance. When the
+        // live-view feature is disabled at restart, buildViewGraphs loads the token (and _lv stays
+        // on disk) but deliberately registers no instance - an unattended one would pin the base
+        // WAL floor forever. Gating the drop on a non-null instance would leave such a view
+        // undroppable: a plain DROP threw "does not exist" and DROP ... IF EXISTS silently no-opped.
+        if (tableToken == null) {
             if (op.ifExists()) {
                 return false;
             }
             throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
         }
-        // Authorize against the registry's non-null token: getTableTokenIfExists
-        // can transiently return null during a concurrent create/drop, and an
-        // enterprise per-object ACL dereferences the token.
-        executionContext.getSecurityContext().authorizeLiveViewDrop(instance.getLiveViewToken());
+        // Authorize against the token resolved above (already null-checked, so the enterprise
+        // per-object ACL dereference is safe). engine.dropLiveView is null-instance-safe: it
+        // re-authorizes, stamps the _lv.drop sentinel, and performs the full on-disk teardown
+        // whether or not a refresh instance is registered.
+        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
         engine.dropLiveView(name, executionContext.getSecurityContext());
         return true;
     }

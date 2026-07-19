@@ -16113,6 +16113,96 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testInMemoryTierRespectsRefreshMemoryLimit() throws Exception {
+        // The IN MEMORY tier's (data, aux) arenas scale with the retained row count. They must be
+        // charged to the view's refresh tracker so cairo.live.view.refresh.memory.limit.bytes caps
+        // them; before the fix the tier (and the worker's staging buffer that feeds it) were built
+        // with no tracker and grew unbounded past the limit. This view is row_number() OVER () -- a
+        // single running counter -- so the query-side window state is a few bytes (a 4 KiB store
+        // page below) and cannot itself breach the 256 KiB limit. The ONLY data-scaled allocation
+        // is the tier and its staging buffer, so an invalidation here proves they are now capped.
+        //
+        // Proven RED before the fix: untracked, nothing charges the tracker, no breach is possible,
+        // and the view stays valid while the tier grows ~1.4 MiB past the 256 KiB limit.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            // ~60k rows spanning 60s (< the 1h IN MEMORY horizon, so all retained) of (ts, x, rn)
+            // fixed-width = ~60k * 24B ~ 1.4 MiB of tier data, far above the 256 KiB limit.
+            execute("""
+                    INSERT INTO base (ts, x)
+                    SELECT timestamp_sequence('2026-06-01', 1_000), x
+                    FROM long_sequence(60_000)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue(
+                    "the IN MEMORY tier above the refresh memory limit must invalidate the view",
+                    instance.isInvalid()
+            );
+            final CharSequence reason = instance.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "the invalidation reason must name the memory limit [reason=" + reason + ']',
+                    Chars.contains(reason, "query memory limit exceeded")
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInMemoryVarWidthTierRespectsRefreshMemoryLimit() throws Exception {
+        // Variant of testInMemoryTierRespectsRefreshMemoryLimit for a variable-width output column:
+        // a VARCHAR is stored in the tier as a (data payload, 16-byte aux header) pair, and BOTH
+        // arenas must be charged to the view tracker. row_number() keeps the query state O(1), so the
+        // only data-scaled allocation is the VARCHAR tier data + its aux vector. Proven RED before the
+        // fix: the untracked var arenas grow past the limit and the view stays valid.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 256 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
+                    "SELECT ts, s, row_number() OVER () AS rn FROM base");
+            // ~20k rows of 40-60 char VARCHAR ~ 1 MiB of tier data + aux, far above the 256 KiB limit.
+            execute("""
+                    INSERT INTO base (ts, s)
+                    SELECT timestamp_sequence('2026-06-01', 1_000), rnd_varchar(40, 60, 0)
+                    FROM long_sequence(20_000)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue(
+                    "the variable-width IN MEMORY tier above the refresh memory limit must invalidate the view",
+                    instance.isInvalid()
+            );
+            final CharSequence reason = instance.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "the invalidation reason must name the memory limit [reason=" + reason + ']',
+                    Chars.contains(reason, "query memory limit exceeded")
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMemoryLimitInvalidatesNonCompactableView() throws Exception {
         // The worst case for live-view state growth: a LONG ANCHOR. Frontier compaction
         // only runs for an anchor provably monotone with the base scan order, and that

@@ -300,6 +300,20 @@ public class LiveViewInstance implements QuietCloseable {
     // worker-private and non-volatile so it cannot be read directly. Same write
     // discipline as lastPublishedRingGeneration.
     private volatile long lastPublishedRingNewestBaseSeqTxn = Numbers.LONG_NULL;
+    // The isLeadReconstruction() value the refresh worker observed on this view's
+    // previous cycle, read and updated together with checkpointRestoreAttempted so it
+    // is set exactly when a cycle actually reached the restore/reconcile block. A
+    // true -> false transition marks an in-process promote: a demoted primary, or a
+    // read-only replica that ran lead reconstruction (which burns
+    // checkpointRestoreAttempted), has just become a writable primary on the SAME
+    // instance, so the single-shot first-cycle restart recovery was already spent. The
+    // first primary cycle uses that edge to re-arm that recovery (only when the applied
+    // floor actually lags), which reconciles the floor up to disk truth AND rebuilds the
+    // window accumulators / lead frontier from the applied tier, so it does not re-derive
+    // (and forward-append duplicate) a base range the replica already materialised when
+    // its trailing _lv.s persist failed. Mutated only under the refresh latch; volatile
+    // for the catalogue thread.
+    private volatile boolean lastRefreshLeadReconstruction;
     // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Maximum base-row timestamp the refresh worker has observed so far, across
@@ -370,6 +384,14 @@ public class LiveViewInstance implements QuietCloseable {
     private long leadRowCount;
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
+    // Cumulative count of base rows the in-order drain physically visited while skipping the
+    // sub-floor prefix through TimestampLowerBoundCursor. A wholly sub-floor commit is dropped
+    // in O(1) (its max ts is below the boundary) without visiting any row, so this stays 0 for
+    // it; a straddling commit contributes only its sub-floor prefix length. Diagnostic hook that
+    // lets a test prove the O(1) skip: it counts row VISITS, unlike below_lower_bound_count which
+    // counts row DROPS. Bumped only on the refresh worker at the in-order drain; volatile so a
+    // reader off the worker thread sees a current value. In-memory only - resets to 0 on restart.
+    private volatile long lowerBoundRowsScanned;
     // Cumulative count of live-view rows produced over the LV's lifetime,
     // matching the MANIFEST.lvRowPosition field on every head checkpoint.
     // Initialised to 0 on construction. tryRestoreFromHead and the O3 head-hit
@@ -650,6 +672,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Accumulates {@code n} base rows the in-order drain physically visited while skipping the
+     * sub-floor prefix through {@code TimestampLowerBoundCursor}. A wholly sub-floor commit is
+     * dropped in O(1) and contributes 0; a straddling commit contributes its sub-floor prefix
+     * length. Counts row VISITS (work done), unlike {@link #bumpBelowLowerBoundCount(long)} which
+     * counts row DROPS. Called from the refresh worker at the in-order drain.
+     */
+    public void bumpLowerBoundRowsScanned(long n) {
+        lowerBoundRowsScanned += n;
+    }
+
+    /**
      * Accumulates {@code n} live-view rows re-emitted by a boundary-rebuild O3
      * replay (the full recompute from {@code viewLowerBoundTimestamp}). Called
      * from the refresh worker at replay completion; the value is exposed via
@@ -688,7 +721,6 @@ public class LiveViewInstance implements QuietCloseable {
             isClosed = true;
             freeSeedBaseReader();
             freeCachedRefreshState();
-            inMemoryTier = Misc.free(inMemoryTier);
         }
     }
 
@@ -1063,6 +1095,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return cumulative base rows the in-order drain physically visited while skipping the
+     * sub-floor prefix (row VISITS, not DROPS). Stays 0 for wholly sub-floor commits, which are
+     * dropped in O(1). Diagnostic hook for tests; resets to 0 on restart.
+     */
+    public long getLowerBoundRowsScanned() {
+        return lowerBoundRowsScanned;
+    }
+
+    /**
      * @return cumulative LV row count, matching the value persisted as
      * {@code MANIFEST.lvRowPosition} on the most recent head checkpoint.
      */
@@ -1325,6 +1366,14 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return the {@code isLeadReconstruction()} value the refresh worker observed on
+     * this view's previous cycle. See {@link #lastRefreshLeadReconstruction}.
+     */
+    public boolean isLastRefreshLeadReconstruction() {
+        return lastRefreshLeadReconstruction;
+    }
+
+    /**
      * @return the cached lead eligibility (every output column is a type the in-mem
      * tier can store - fixed-width, SYMBOL, STRING, BINARY, VARCHAR or ARRAY - so the
      * tier may serve an un-flushed lead ahead of disk). Meaningful only when
@@ -1448,7 +1497,11 @@ public class LiveViewInstance implements QuietCloseable {
      * Must be called on the refresh worker under the refresh latch.
      */
     public void prepareForBaseSchemaRecompile() {
-        freeCachedRefreshState();
+        // Frees only the compiled artifacts, keeping the in-memory tier AND the per-view tracker:
+        // the tier stays queryable and stays charged to the tracker across the recompile, and the
+        // rebuilt factory recharges the same tracker (so the refresh memory limit still accounts
+        // the surviving tier). Freeing the tracker here would strand the still-charged tier.
+        freeCompiledArtifacts();
         // Drop the cached row copier with the factory it was built for. Its cache key is
         // the LV's own WAL metadata version, which a base-side schema change never moves,
         // so it would otherwise survive the recompile and copy the new factory's records
@@ -1649,6 +1702,17 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Clears the single-shot restart-restore flag so the refresh worker re-runs the
+     * first-cycle recovery. Used only on an in-process promote whose applied floor lags
+     * the LV table (a swallowed replica {@code _lv.s} persist): the recovery reconciles
+     * the floor to disk truth and rebuilds the window state from the applied tier.
+     * Mutated under the refresh latch only.
+     */
+    public void resetCheckpointRestoreAttempted() {
+        checkpointRestoreAttempted = false;
+    }
+
+    /**
      * Re-arms the seed sweep's single-shot resume setup (see
      * {@link #isSeedResumeAttempted()}). Called by the refresh worker after
      * {@link #prepareForBaseSchemaRecompile()} on a SEEDING view so the next
@@ -1767,6 +1831,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setLastProcessedSeqTxn(long seqTxn) {
         stateReader.setLastProcessedSeqTxn(seqTxn);
+    }
+
+    public void setLastRefreshLeadReconstruction(boolean leadReconstruction) {
+        this.lastRefreshLeadReconstruction = leadReconstruction;
     }
 
     public void setLastRefreshTimeUs(long lastRefreshTimeUs) {
@@ -2016,7 +2084,6 @@ public class LiveViewInstance implements QuietCloseable {
                 isClosed = true;
                 freeSeedBaseReader();
                 freeCachedRefreshState();
-                inMemoryTier = Misc.free(inMemoryTier);
             }
         } finally {
             refreshLatch.set(false);
@@ -2055,7 +2122,6 @@ public class LiveViewInstance implements QuietCloseable {
         try {
             freeSeedBaseReader();
             freeCachedRefreshState();
-            inMemoryTier = Misc.free(inMemoryTier);
         } finally {
             refreshLatch.set(false);
         }
@@ -2103,19 +2169,31 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Frees the cached refresh state in the one order {@link #memoryTracker} tolerates.
-     * compiledFactory owns the functions' partition maps and anchorWindow owns the anchor
-     * map; both charge the tracker, so it can only be closed once they have released their
-     * memory. Closing it early returns it to the pool with a non-zero balance, and
-     * PerQueryMemoryTracker.init() then trips its recycle assert in whichever unrelated
-     * query next acquires it. Every teardown path routes through here, so the order is
-     * stated once.
+     * Full-teardown free in the one order {@link #memoryTracker} tolerates. The in-memory tier
+     * AND the compiled artifacts (the factory's per-partition function maps, the anchor map) all
+     * charge the tracker, so all must release before it is closed. Closing the tracker with a
+     * non-zero balance returns it to the pool dirty, and PerQueryMemoryTracker.init() then trips
+     * its recycle assert in whichever unrelated query next acquires it. Every FULL teardown path
+     * (drop, invalidate, runtime-state free) routes through here, so the order is stated once; a
+     * base-schema recompile frees only the artifacts (see {@link #freeCompiledArtifacts}).
      */
     private void freeCachedRefreshState() {
+        inMemoryTier = Misc.free(inMemoryTier);
+        freeCompiledArtifacts();
+        memoryTracker = Misc.free(memoryTracker);
+    }
+
+    /**
+     * Frees the compiled-SQL artifacts that charge the per-view {@link #memoryTracker}: the
+     * factory's per-partition function maps and the anchor window's anchor map. Does NOT free the
+     * tracker or the in-memory tier, so {@link #prepareForBaseSchemaRecompile} can drop and
+     * rebuild the factory while the tier keeps serving and the tracker keeps accounting the tier's
+     * retained footprint (the next factory recharges the same tracker).
+     */
+    private void freeCompiledArtifacts() {
         compiledFactory = Misc.free(compiledFactory);
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
-        memoryTracker = Misc.free(memoryTracker);
     }
 
     /**

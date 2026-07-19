@@ -26,10 +26,12 @@ package io.questdb.cairo.lv;
 
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -115,11 +117,24 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     private long refCountsAddr;
 
     public LiveViewInMemoryTier(IntList columnTypes, int timestampColumnIndex, long pageSize) {
+        this(columnTypes, timestampColumnIndex, pageSize, null);
+    }
+
+    /**
+     * As {@link #LiveViewInMemoryTier(IntList, int, long)}, but charges each slot's
+     * column arenas to {@code memoryTracker} so the tier's data-scaled footprint counts
+     * against the live view's refresh memory limit. The fixed 16-byte {@code refCountsAddr}
+     * stays on global-only accounting - it does not scale with data. A {@code null} tracker
+     * is the unit-test path.
+     *
+     * @param memoryTracker per-view refresh tracker, or {@code null} for no per-view cap
+     */
+    public LiveViewInMemoryTier(IntList columnTypes, int timestampColumnIndex, long pageSize, @Nullable MemoryTracker memoryTracker) {
         this.slots = new LiveViewInMemoryBuffer[2];
         this.symbolCache = new LiveViewSymbolCache(columnTypes);
         try {
-            this.slots[0] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize);
-            this.slots[1] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize);
+            this.slots[0] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize, memoryTracker);
+            this.slots[1] = new LiveViewInMemoryBuffer(columnTypes, timestampColumnIndex, pageSize, memoryTracker);
             this.refCountsAddr = Unsafe.malloc(REFCOUNTS_BYTES, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
             Unsafe.getUnsafe().putLong(refCountsAddr, 0L);
             Unsafe.getUnsafe().putLong(refCountsAddr + Long.BYTES, 0L);
@@ -194,9 +209,29 @@ public class LiveViewInMemoryTier implements QuietCloseable {
                 // releaseRead.
                 return;
             }
+            if ((s & ~CLOSED_BIT) != 0) {
+                // Read pins are outstanding: the native free (and its per-view-tracker decrement) is
+                // deferred to the last releaseRead, on a reader thread that can outlive the tracker -- a
+                // query cursor may stay open across a DROP / invalidate. Hand each slot's outstanding
+                // tracker charge to the tracker's covered-bytes ledger (reconcileCovered() clears it
+                // from the pooled tracker's used at release, so it recycles clean) and switch the slots
+                // to global-only accounting, so the deferred free debits no recycled block. Detach
+                // BEFORE publishing CLOSED_BIT via the CAS below: the CAS's release semantics make this
+                // detach visible to any reader that later observes CLOSED_BIT through its own atomic
+                // decrement, so the deferred free reads a null tracker. detachMemoryTracker is
+                // idempotent, so a CAS-retry (a concurrent pin/unpin changed state) re-running it is a
+                // no-op.
+                for (int i = 0; i < slots.length; i++) {
+                    if (slots[i] != null) {
+                        slots[i].detachMemoryTracker();
+                    }
+                }
+            }
             if (state.compareAndSet(s, s | CLOSED_BIT)) {
                 if ((s & ~CLOSED_BIT) == 0) {
-                    // No active read pins: safe to free native memory here.
+                    // No active read pins: free synchronously (and decrement the per-view tracker now,
+                    // unless a pin arrived-then-drained mid-close, in which case the slots are already
+                    // detached and reconcileCovered() settles the charge at the tracker's release).
                     freeNativeMemory();
                 }
                 return;

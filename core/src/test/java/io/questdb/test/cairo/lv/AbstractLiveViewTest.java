@@ -88,26 +88,24 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
-     * Spins until {@code thread} is observed inside a frame for {@code methodName}, and fails if it
-     * is not within {@code timeoutMs}.
-     * <p>
-     * For threads that block by busy-spinning rather than parking - {@code fenceRefresh} spins on
-     * {@link Os#pause()} - the thread stays RUNNABLE, so {@link Thread#getState()} is no use as a
-     * fence and neither is a fixed sleep: a test that just sleeps and then asserts the thread has not
-     * finished passes trivially if the thread had not started yet.
+     * Waits until {@code instance} has been marked dropped, then returns. This is the deterministic
+     * fence a concurrent {@code engine.dropLiveView} crosses: {@code markDroppedAndAwaitCheckpoint}
+     * publishes {@code dropped = true} (a volatile) BEFORE it commits to its blocking branch - the
+     * {@code waitForUnfrozen} park under a checkpoint freeze, or the {@code fenceRefresh} spin behind
+     * a held refresh latch. Keying off the view's own published drop state - rather than probing the
+     * dropper thread's stack for a private method name - makes the fence immune to method renames,
+     * JIT frame materialization and scheduling; the {@code deadlineNanos} guard is only a safety net,
+     * never the load-bearing timing. Once this returns the dropper cannot complete the drop until the
+     * blocker (freeze / latch) is released, so callers may assert the drop is still in progress.
      */
-    protected static void awaitThreadInMethod(Thread thread, String methodName, long timeoutMs) {
+    protected static void awaitDropped(LiveViewInstance instance, long timeoutMs) {
         final long deadlineNanos = System.nanoTime() + timeoutMs * 1_000_000L;
-        do {
-            for (StackTraceElement frame : thread.getStackTrace()) {
-                if (methodName.equals(frame.getMethodName())) {
-                    return;
-                }
+        while (!instance.isDropped()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                Assert.fail("live view was never marked dropped within " + timeoutMs + "ms");
             }
             Os.pause();
-        } while (System.nanoTime() < deadlineNanos);
-        Assert.fail("thread '" + thread.getName() + "' was never observed inside " + methodName
-                + "() within " + timeoutMs + "ms");
+        }
     }
 
     /**

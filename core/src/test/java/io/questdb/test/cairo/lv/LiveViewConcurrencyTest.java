@@ -463,8 +463,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 dropper.start();
                 dropStarted.await();
                 // The dropper must park in the checkpoint handshake, not race the teardown.
-                // waitForUnfrozen parks on the instance monitor; the frame stays on its stack.
-                awaitThreadInMethod(dropper, "waitForUnfrozen", 60_000);
+                // markDroppedAndAwaitCheckpoint publishes dropped=true, then parks in waitForUnfrozen
+                // under the freeze; awaiting that published drop state fences deterministically without
+                // probing the dropper's stack for a private frame.
+                awaitDropped(instance, 60_000);
                 Assert.assertFalse(
                         "dropLiveView must block while a checkpoint freeze is in progress",
                         dropReturned.get()
@@ -557,8 +559,11 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // would hold trivially on a machine where the dropper had not got going yet - a test that
             // passes without the fence ever being exercised. fenceRefresh busy-spins on Os.pause
             // instead of parking, so the dropper stays RUNNABLE and Thread.State is no fence either.
+            // Instead await the drop's own published state: markDroppedAndAwaitCheckpoint sets
+            // dropped=true before dropLiveView commits to the fenceRefresh spin, so once the view reads
+            // dropped the dropper is at the fence and, with the latch held, cannot return.
             dropStarted.await();
-            awaitThreadInMethod(dropper, "fenceRefresh", 60_000);
+            awaitDropped(instance, 60_000);
             Assert.assertFalse("dropLiveView must block in fenceRefresh while the refresh latch is held",
                     dropReturned.get());
             Assert.assertTrue("dropper thread must still be running (spinning in the fence)", dropper.isAlive());
@@ -647,7 +652,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             latchHeld.await();
             dropper.start();
             dropStarted.await();
-            awaitThreadInMethod(dropper, "fenceRefresh", 60_000);
+            // markDroppedAndAwaitCheckpoint publishes dropped=true before dropLiveView commits to the
+            // fenceRefresh spin, so awaiting that published state parks the test at the fence
+            // deterministically - no stack-frame probe, and with the latch held the drop cannot return.
+            awaitDropped(instance, 60_000);
 
             // The observation: while the drop is parked in the fence (refresh still in flight), what
             // does the checkpoint agent's freeze-lookup see? Capture it all now, before releasing the

@@ -42,6 +42,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -51,6 +52,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * One slot of the N=2 live-view in-memory tier.
@@ -175,6 +177,20 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * @param pageSize             initial page size for each column buffer; grows on demand
      */
     public LiveViewInMemoryBuffer(IntList columnTypes, int timestampColumnIndex, long pageSize) {
+        this(columnTypes, timestampColumnIndex, pageSize, null);
+    }
+
+    /**
+     * As {@link #LiveViewInMemoryBuffer(IntList, int, long)}, but charges every column
+     * arena's native allocation to {@code memoryTracker} so the tier's data-scaled
+     * footprint counts against the live view's refresh memory limit. The tracker is bound
+     * before the first allocation (the STRING / BINARY aux seed below), so nothing escapes
+     * the cap. A {@code null} tracker leaves the arenas on global-only accounting - the
+     * unit-test path.
+     *
+     * @param memoryTracker per-view refresh tracker, or {@code null} for no per-view cap
+     */
+    public LiveViewInMemoryBuffer(IntList columnTypes, int timestampColumnIndex, long pageSize, @Nullable MemoryTracker memoryTracker) {
         this.columnTypes = new IntList(columnTypes.size());
         this.columnTypeSizes = new IntList(columnTypes.size());
         this.dataMem = new ObjList<>(columnTypes.size());
@@ -198,14 +214,20 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                 // stride but is tracked by the dataMem / auxMem append cursors instead.
                 int sz = ColumnType.isVarSize(type) ? 0 : ColumnType.sizeOf(type);
                 this.columnTypeSizes.add(sz);
-                this.dataMem.add(new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+                // Bind the tracker before the first put so the seed page (STRING / BINARY)
+                // and every later data-scaled grow are charged to the view's refresh limit.
+                final MemoryCARWImpl data = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                data.setMemoryTracker(memoryTracker);
+                this.dataMem.add(data);
                 // Var-size columns get a real aux buffer for the offset/header vector;
                 // fixed-width / SYMBOL columns park the secondary at the shared stub.
-                this.auxMem.add(
-                        ColumnType.isVarSize(type)
-                                ? new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
-                                : NullMemory.INSTANCE
-                );
+                if (ColumnType.isVarSize(type)) {
+                    final MemoryCARWImpl aux = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                    aux.setMemoryTracker(memoryTracker);
+                    this.auxMem.add(aux);
+                } else {
+                    this.auxMem.add(NullMemory.INSTANCE);
+                }
                 seedAuxLeadingOffset(i);
             }
         } catch (Throwable th) {
@@ -235,6 +257,22 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         arrayBuffers.clear();
         columnTypes.clear();
         columnTypeSizes.clear();
+    }
+
+    /**
+     * Detaches every column arena from its per-view tracker, handing the outstanding charge to the
+     * tracker's covered-bytes ledger (see {@link MemoryCARWImpl#detachMemoryTracker()}). Called by
+     * {@link LiveViewInMemoryTier#close()} when a reader pin defers this slot's native free past the
+     * tracker's release, so the pooled tracker recycles clean and the deferred free is global-only.
+     */
+    public void detachMemoryTracker() {
+        for (int i = 0, n = dataMem.size(); i < n; i++) {
+            dataMem.getQuick(i).detachMemoryTracker();
+            final MemoryCARW aux = auxMem.getQuick(i);
+            if (aux instanceof MemoryCARWImpl auxImpl) {
+                auxImpl.detachMemoryTracker();
+            }
+        }
     }
 
     /**

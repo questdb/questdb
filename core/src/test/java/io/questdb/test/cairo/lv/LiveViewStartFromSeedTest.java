@@ -487,4 +487,85 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
             execute("DROP LIVE VIEW lv");
         });
     }
+
+    @Test
+    public void testStraddlingCommitScansOnlySubFloorPrefix() throws Exception {
+        // A commit straddling the boundary (min ts below, max ts at/above) cannot be skipped in
+        // O(1): the skip-prefix cursor must walk its sub-floor prefix. This guards that the O(1)
+        // short-circuit does NOT over-skip a straddling commit - the above-boundary rows still
+        // land in the view, and the visit counter reflects exactly the sub-floor prefix length.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            // Future boundary: the seed qualifies nothing, so latestSeenTs stays unset and the next
+            // in-order commit reaches the incremental drain (a cross-commit O3 would divert instead).
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2027-01-01T00:00:00.000000Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                // One in-order commit: 3 rows below the boundary, then 2 at/above it.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-12-31T23:59:57.000000Z', 1)," +
+                        "('2026-12-31T23:59:58.000000Z', 2)," +
+                        "('2026-12-31T23:59:59.000000Z', 3)," +
+                        "('2027-01-01T00:00:01.000000Z', 4)," +
+                        "('2027-01-01T00:00:02.000000Z', 5)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals("3 sub-floor rows dropped", 3, inst.getBelowLowerBoundCount());
+                Assert.assertEquals("straddling commit: the cursor visits exactly the sub-floor prefix",
+                        3, inst.getLowerBoundRowsScanned());
+                assertNoRefreshFaults("lv");
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2027-01-01T00:00:01.000000Z\t4\t1\n" +
+                            "2027-01-01T00:00:02.000000Z\t5\t2\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testWhollySubFloorInOrderCommitSkippedInConstantTime() throws Exception {
+        // Regression for the linear sub-boundary walk: an in-order commit whose every row sits
+        // below the view's lower bound must be dropped in O(1) using the commit's max ts, not by
+        // visiting each row through TimestampLowerBoundCursor. A future boundary with an empty seed
+        // keeps latestSeenTs unset, so the commit reaches the incremental in-order drain (not O3).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2027-01-01T00:00:00.000000Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+
+                // One in-order commit of 5_000 rows, every one well below the 2027 boundary.
+                final int rowCount = 5_000;
+                execute("INSERT INTO base " +
+                        "SELECT timestamp_sequence('2026-01-01T00:00:00.000000Z', 1000), x::int " +
+                        "FROM long_sequence(" + rowCount + ")");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals("every sub-floor row is tallied as dropped",
+                        rowCount, inst.getBelowLowerBoundCount());
+                Assert.assertEquals("a wholly sub-floor commit is skipped in O(1): no row is visited",
+                        0, inst.getLowerBoundRowsScanned());
+                assertNoRefreshFaults("lv");
+            }
+
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
 }
