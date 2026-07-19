@@ -630,6 +630,53 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    // ---------- Task 3: S1 — remove SYNC batched-syncfs routing (SYNC apply == master msync) ----------
+
+    /**
+     * SYNC: apply must NOT issue syncfs (S1 reverted) — syncColumns() must route SYNC to the
+     * per-file syncColumns0(async) path (byte-identical to master), not syncColumnsBatchedSync().
+     *
+     * <p>RED before this task (SYNC still routes to the batched Linux syncfs path); GREEN after
+     * removing the {@code commitMode == CommitMode.SYNC && Os.isLinux() &&
+     * isAdaptiveEpochColumnSyncBatched()} branch in {@code syncColumns()}.
+     */
+    @Test
+    public void testSyncModeNoSyncfs() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            ff.reset();
+            execute("insert into x values ('2024-01-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+            Assert.assertEquals("SYNC apply must not syncfs (S1 reverted)", 0, ff.syncfsCount);
+        });
+    }
+
+    /**
+     * Regression: the ADAPTIVE durable epoch ({@code fsyncMaterializedState()}) must STILL syncfs —
+     * only the per-commit SYNC apply path lost the batched routing above. The epoch's own call to
+     * {@code syncColumnsBatchedSync()} (gated on {@code Os.isLinux() &&
+     * isAdaptiveEpochColumnSyncBatched()}, independent of commit mode) is untouched by this task.
+     */
+    @Test
+    public void testAdaptiveEpochStillSyncfs() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        final SyscallCountingFacade ff = new SyscallCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            ff.reset();
+            execute("insert into x values ('2024-01-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+            Assert.assertTrue("adaptive epoch must still syncfs the materialized state", ff.syncfsCount > 0);
+        });
+    }
+
     private void assertEpochCopyExists(io.questdb.cairo.TableToken tt, String baseFileName) {
         try (io.questdb.std.str.Path p = new io.questdb.std.str.Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(baseFileName).put(".epoch");

@@ -14129,32 +14129,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // ADAPTIVE skips this block: the WAL is durable (Task A fdatasync), so the table partition
         // columns are a rebuildable cache — no apply-side flush needed. See appliesColumnSync().
         if (appliesColumnSync(commitMode)) {
-            if (commitMode == CommitMode.SYNC && Os.isLinux() && configuration.isAdaptiveEpochColumnSyncBatched()) {
-                // Linux SYNC: BATCH the per-file device flushes into ~one. Instead of N blocking
-                // msync(MS_SYNC) (each carrying a device flush), every dirty column/symbol mem is
-                // msync(MS_ASYNC)'d then sync_file_range'd (WAIT_AFTER) so its content lands in the
-                // DEVICE CACHE without a flush; then ONE syncfs(fd) over the table's filesystem makes all
-                // that content durable AND journals every column's ext4 extent conversions + i_size in a
-                // single device flush. (This syncfs replaces an earlier BROKEN reliance on _cv's later
-                // msync(MS_SYNC): that flushed the column DATA but did NOT journal the columns' extent
-                // conversions, so a power cut could read committed columns back as zeros.) _cv then does its
-                // own msync(MS_SYNC), and _txn is written + flushed strictly after _cv, so the visibility
-                // pointer becomes durable only after everything it exposes. See the batched crash model
-                // (CrashFaultFilesFacade) + BatchedFlushDurabilityCrashTest.
-                syncColumnsBatchedSync();
-            } else {
-                // Fall back to the original per-file sync(async) — byte-identical to before — for:
-                //   - ASYNC commits;
-                //   - non-Linux SYNC (sync_file_range unavailable -> Files.syncFileRange is a no-op);
-                //   - SYNC where the batched path is disabled (configuration.isAdaptiveEpochColumnSyncBatched()
-                //     == false), i.e. the DB-root fs has ext4 fast_commit (per-inode journaling, where the
-                //     batched within-page durability is not guaranteed) or an operator force-disabled it.
-                // For SYNC this is the proven-durable per-file msync(MS_SYNC) baseline. See FastCommitCheck.
-                final boolean async = commitMode == CommitMode.ASYNC;
-                syncColumns0(async);
-                for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                    denseSymbolMapWriters.getQuick(i).sync(async);
-                }
+            // Per-file sync(async) — byte-identical to master — for SYNC and ASYNC commits.
+            // (The batched KICK/DRAIN/syncfs machinery below is reserved for the adaptive durable
+            // epoch — see fsyncMaterializedState() — which forces a whole-filesystem flush
+            // independent of commit mode. Routing per-commit SYNC apply through it was reverted:
+            // see FastCommitCheck for why per-file msync(MS_SYNC) is the proven-durable baseline.)
+            final boolean async = commitMode == CommitMode.ASYNC;
+            syncColumns0(async);
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                denseSymbolMapWriters.getQuick(i).sync(async);
             }
         }
         // Forward each indexer's purge entries that are already safe for the
