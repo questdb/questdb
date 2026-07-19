@@ -8405,6 +8405,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsAggregateFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a'), ('a')");
+            execute("INSERT INTO tb VALUES ('b'), (NULL)");
+
+            // mode/first/last over a union symbol resolve it through getInt (the merged dictionary
+            // key) and valueOf, not a static table. UNION ALL preserves branch order (ta rows then
+            // tb rows), so first is 'a' and last is the trailing NULL; mode is 'a' (seen twice) and
+            // count(s) skips the NULL.
+            assertQuery("SELECT first(s) f, last(s) l, mode(s) m, count(s) c FROM (ta UNION ALL tb)")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("f\tl\tm\tc\na\t\ta\t3\n");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsCastsBackToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG)");
@@ -8687,6 +8705,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE t_varchar (s VARCHAR)");
             execute("CREATE TABLE t_sym (s SYMBOL)");
 
+            // Regression guard: pin the union SOURCE type. The target-table assertions below pass
+            // even with re-symbolisation reverted (target types are fixed and the values round-trip),
+            // so this SYMBOL assertion is the one that fails when the fix regresses.
+            assertQuery("SELECT s FROM ta UNION ALL SELECT s FROM tb")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).noRandomAccess().expectSize()
+                    .returns("s\na\n\nb\na\n");
+
             // The union result is now SYMBOL, so INSERT ... SELECT routes through the SYMBOL-source
             // row copier into each target type. Values, including a NULL symbol, must round-trip.
             execute("INSERT INTO t_str SELECT s FROM ta UNION ALL SELECT s FROM tb");
@@ -8711,6 +8736,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE t_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE t_varchar (s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE t_sym (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Regression guard: pin the union SOURCE type. The target-table assertions below pass
+            // even with re-symbolisation reverted (target types are fixed and the values round-trip),
+            // so this SYMBOL assertion is the one that fails when the fix regresses.
+            assertQuery("SELECT s FROM (SELECT s, ts FROM ta UNION ALL SELECT s, ts FROM tb) ORDER BY ts")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("s\na\n\nb\na\n");
 
             // Exercise each SYMBOL-source WAL row-copy conversion, then apply all three
             // target WALs before checking their persisted types and values.
@@ -8796,6 +8828,51 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     .noLeakCheck().columnType(0, ColumnType.SYMBOL).columnType(1, ColumnType.SYMBOL)
                     .noRandomAccess().expectSize()
                     .returns("s1\ts2\na\tp\nb\tq\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tb (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // ta holds the earlier hour and tb the later one, so UNION ALL (ta rows then tb rows) is
+            // already ordered by ts - the order SAMPLE BY requires from its input.
+            execute("INSERT INTO ta VALUES ('a', 1, '2024-01-01T00:00:00.000000Z'), ('a', 2, '2024-01-01T00:30:00.000000Z')");
+            execute("INSERT INTO tb VALUES ('a', 4, '2024-01-01T02:00:00.000000Z')");
+
+            // SAMPLE BY ... FILL(...) over a union symbol key routes through the fill cursor factory.
+            // The empty 01:00 bucket is filled with NULL; the symbol key stays SYMBOL across the fill.
+            assertQuery("SELECT ts, s, sum(v) sm FROM (SELECT s, v, ts FROM ta UNION ALL SELECT s, v, ts FROM tb) timestamp(ts) SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().columnType(1, ColumnType.SYMBOL)
+                    .returns("ts\ts\tsm\n2024-01-01T00:00:00.000000Z\ta\t3\n2024-01-01T01:00:00.000000Z\ta\tnull\n2024-01-01T02:00:00.000000Z\ta\t4\n");
+        });
+    }
+
+    @Test
+    public void testUnionOfSymbolColumnsScalarFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("INSERT INTO ta VALUES ('apple'), (NULL), ('')");
+            execute("INSERT INTO tb VALUES ('banana'), ('avocado')");
+
+            // A union symbol is non-static, so LIKE, IN, ~ (regexp) and switch() all resolve it
+            // through the string path. Each must still work end to end over the re-symbolised column,
+            // which stays SYMBOL through the filter and ORDER BY.
+            assertQuery("SELECT s FROM (ta UNION ALL tb) WHERE s LIKE 'a%' ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\napple\navocado\n");
+            assertQuery("SELECT s FROM (ta UNION ALL tb) WHERE s IN ('apple', 'banana') ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\napple\nbanana\n");
+            assertQuery("SELECT s FROM (ta UNION ALL tb) WHERE s ~ '^a' ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\napple\navocado\n");
+            // switch() classifies by the string value; an unmatched value (avocado) hits the default.
+            assertQuery("SELECT s, switch(s, 'apple', 'A', 'banana', 'B', 'Z') k FROM (ta UNION ALL tb) WHERE s IN ('apple', 'avocado', 'banana') ORDER BY s")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL)
+                    .returns("s\tk\napple\tA\navocado\tZ\nbanana\tB\n");
         });
     }
 
