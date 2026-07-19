@@ -233,26 +233,29 @@ public interface CairoConfiguration {
 
     /**
      * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
-     * {@code cairo.adaptive.commit.group.window}). Default {@code 0} keeps today's synchronous
-     * fsync-before-return under {@link CommitMode#ADAPTIVE}: every acked WAL commit is fdatasync-durable
-     * before {@code commit0} returns (zero loss). When {@code > 0}, the WAL fdatasync (the device flush) is
-     * BATCHED across an adaptive table's commits within this window: {@code commit0} returns after the txn
-     * is sequenced (segment/events/sequencer msync'd to the page cache and ordered, but NOT yet
-     * device-durable) and the fdatasync is performed by a batched flush — bounded to {@code <= W} even when
-     * commits stop, by the background flusher in {@code WalPurgeJob}. A crash loses only commits whose batch
-     * fdatasync had not completed (RPO {@code <= W}); a torn tail is handled by the integrity CRCs +
-     * recovery frontier. {@code localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the batch
-     * fdatasync completes, so a durable-ack'd txn always survives a crash.
+     * {@code cairo.adaptive.commit.group.window}). Default {@code 50_000} (50ms): under
+     * {@link CommitMode#ADAPTIVE}, {@code commit0} returns after the txn is sequenced
+     * (segment/events/sequencer msync'd to the page cache and ordered, but NOT yet device-durable)
+     * and the WAL fdatasync (the device flush) is BATCHED across an adaptive table's commits within
+     * this window — bounded to {@code <= W} even when commits stop, by the background flusher in
+     * {@code WalPurgeJob}. A crash loses only commits whose batch fdatasync had not completed (RPO
+     * {@code <= W}); a torn tail is handled by the integrity CRCs + recovery frontier. {@code
+     * localDurableSeqTxn} (the durable-ack frontier) advances ONLY when the batch fdatasync
+     * completes, so a durable-ack'd txn always survives a crash.
+     *
+     * <p>Set {@code 0} to keep today's fully synchronous fsync-before-return instead: every acked
+     * WAL commit is fdatasync-durable before {@code commit0} returns (zero loss), at
+     * {@code sync}-class per-commit latency.
      *
      * <p>Has effect only under ADAPTIVE; other modes ignore it. A negative value is treated as {@code 0}.
      * Note: mat-view refresh WAL ({@link io.questdb.cairo.wal.ViewWalWriter}) is exempt from this setting
      * and keeps a per-commit fdatasync (strictly more durable; mat-view refresh has its own flush cadence).
      *
-     * @return the adaptive group-commit window in microseconds; {@code 0} (the default) = synchronous,
-     * zero-loss
+     * @return the adaptive group-commit window in microseconds; default {@code 50_000} (50ms,
+     * bounded-RPO batching); {@code 0} = synchronous, zero-loss
      */
     default long getAdaptiveCommitGroupWindowUs() {
-        return 0;
+        return 50_000;
     }
 
     /**

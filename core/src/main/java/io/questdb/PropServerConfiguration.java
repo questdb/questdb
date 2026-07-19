@@ -1569,9 +1569,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
-            // Default 0 == today's synchronous fsync-before-return under ADAPTIVE (zero loss). A negative
+            // Default 50_000 (50ms) batches the device flush within a small window (RPO <= 50ms) under
+            // ADAPTIVE. Set to 0 for today's synchronous fsync-before-return (zero loss). A negative
             // value is clamped to 0 (synchronous) so a misconfiguration never silently weakens durability.
-            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0));
+            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000));
             this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
             this.adaptiveEpochColumnSyncBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
             this.detectFastCommit = loadAdditionalConfigurations;
@@ -2602,7 +2603,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        final String commitMode = getString(properties, env, key, "nosync");
+        final String commitMode = getString(properties, env, key, "adaptive");
 
         // must not be null because we provided non-null default value
         assert commitMode != null;

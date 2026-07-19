@@ -3,8 +3,9 @@
 Operator guide to QuestDB's `adaptive` commit mode: crash-safe recovery with
 write performance close to the default, at a tunable recovery-point objective (RPO).
 
-> **Audience:** operators running QuestDB. This describes an **opt-in** mode.
-> `nosync` remains the default and nothing here changes unless you turn adaptive on.
+> **Audience:** operators running QuestDB. `adaptive` is the **default** commit mode as of
+> this release. `nosync`, `sync`, and `async` remain available via `cairo.commit.mode` or a
+> per-table `commit_mode` override for deployments that want different semantics.
 
 ---
 
@@ -67,7 +68,7 @@ supported. Prefer enabling it per table first — smaller blast radius.
 cairo.commit.mode=adaptive
 ```
 
-Accepted values: `nosync` (default), `sync`, `async`, `adaptive`. This affects
+Accepted values: `nosync`, `sync`, `async`, `adaptive` (default). This affects
 every table that has **not** set an explicit per-table override.
 
 ### Per table — at creation
@@ -109,8 +110,9 @@ global) — so a `WITH commit_mode='adaptive'` table reads `adaptive` even when 
 instance default is `nosync`.
 
 Confirmed in source: global key `cairo.commit.mode`
-(`PropertyKey.java:48`), default `nosync`
-(`PropServerConfiguration.java:2601` / fallback `:2622`); `CREATE TABLE ... WITH
+(`PropertyKey.java:48`), default `adaptive`
+(`PropServerConfiguration.java:2605`; an unrecognized value falls back to `nosync`,
+`:2626`); `CREATE TABLE ... WITH
 commit_mode='...'` (`SqlParser.java:1780`); `ALTER TABLE ... SET PARAM
 commit_mode='...'` (`SqlCompilerImpl.java:1722`); token parsing incl. `unset`
 (`CommitMode.fromString`, `CommitMode.java:101`); per-table-wins resolution
@@ -122,16 +124,16 @@ value (`WalTableListFunctionFactory.java:304`).
 ## 3. The RPO knob — the group-commit window `W`
 
 ```properties
-cairo.adaptive.commit.group.window=0     # microseconds; default 0
+cairo.adaptive.commit.group.window=50ms     # default 50ms (RPO <= 50ms); 0 = synchronous, zero-loss
 ```
 
 `W` trades **recovery-point objective (RPO)** against **throughput**:
 
-- **`W = 0` (default) — zero loss.** Every acked commit is `fdatasync`'d before it
+- **`W = 0` — zero loss.** Every acked commit is `fdatasync`'d before it
   returns; it is immediately device-durable. RPO is exactly zero. Cost is
   `sync`-class per-commit latency (you are paying a device flush per commit). Use
   when RPO must be 0.
-- **`W > 0` — RPO ≤ `W`.** The commit returns after the transaction is sequenced
+- **`W > 0` (default: `50_000` us / 50 ms) — RPO ≤ `W`.** The commit returns after the transaction is sequenced
   (`msync`'d to the page cache, **not** yet device-durable); the `fdatasync` is
   performed by a batched flush within the window `W`, shared across concurrent
   commits. A power loss can therefore lose at most the last `W` microseconds of
@@ -173,8 +175,8 @@ Reading: at the recommended production window, adaptive's p99 commit latency is
 close to `nosync`; at `W = 0` it is `sync`-class, by design.
 
 Confirmed in source: key `cairo.adaptive.commit.group.window`
-(`PropertyKey.java:63`), default `0`, clamped to ≥ 0
-(`PropServerConfiguration.java:1570`); the `W=0` zero-loss vs `W>0` RPO≤W semantics
+(`PropertyKey.java:67`), default `50_000` (50ms), clamped to ≥ 0
+(`PropServerConfiguration.java:1574`); the `W=0` zero-loss vs `W>0` RPO≤W semantics
 are documented at `PropertyKey.java:57-63`.
 
 ---
@@ -331,8 +333,9 @@ for absolutes.)
 ### Tuning the three knobs
 
 **`cairo.adaptive.commit.group.window` (`W`) — RPO ↔ throughput** (see §3).
-Start at 1–10 ms for throughput; `0` for zero-loss. Increase only up to the
-saturation knee; beyond it you buy RPO exposure for no throughput gain.
+Default `50_000` us (50ms). Start at 1–10 ms for a throughput-oriented deployment;
+`0` for zero-loss. Increase only up to the saturation knee; beyond it you buy RPO
+exposure for no throughput gain.
 
 **`cairo.adaptive.epoch.interval` — recovery-time ↔ apply-overhead, time-based.**
 
@@ -498,8 +501,8 @@ Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 
 | Key | Default | Semantics |
 |---|---|---|
-| `cairo.commit.mode` | `nosync` | Global commit mode. `nosync` \| `sync` \| `async` \| `adaptive`. |
-| `cairo.adaptive.commit.group.window` | `0` | Group-commit / RPO window (us). `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
+| `cairo.commit.mode` | `adaptive` | Global commit mode. `nosync` \| `sync` \| `async` \| `adaptive`. |
+| `cairo.adaptive.commit.group.window` | `50ms` (`50_000` us) | Group-commit / RPO window. `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
 | `cairo.adaptive.epoch.interval` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
 | `cairo.adaptive.epoch.max.rows` | `5_000_000` | Forces an epoch once this many rows are applied to a table since its last one, independent of the interval. Bounds WAL retention + recovery replay under active ingest. `<= 0` disables the cap (interval-only). |
 | `cairo.adaptive.recovery.roll.forward.enabled` | `true` | Run the durable-epoch recovery roll-forward at boot. `false` = no-op kill-switch. |
