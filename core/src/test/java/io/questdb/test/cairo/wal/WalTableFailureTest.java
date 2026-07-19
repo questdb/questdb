@@ -844,6 +844,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
+        // Force-drop removes the partition dir synchronously "at the end of the alter" under nosync; under
+        // adaptive the physical cleanup is deferred (like epoch-gated WAL purge), so the immediate
+        // assertFalse(dir exists) needs the deterministic nosync timing. This asserts drop mechanics, not durability.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
