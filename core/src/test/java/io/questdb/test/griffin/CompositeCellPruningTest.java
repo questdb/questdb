@@ -75,6 +75,18 @@ import org.junit.Test;
  * this task's scope and remain declined, unchanged -- {@link
  * #testHashAndTruncateDimensionMultiCellInListStillLoudGated()} is the regression lock for that boundary.
  * <p>
+ * <b>Task #27 composes the dimension prune with LATEST ON</b> instead of leaving that combination
+ * unconditionally LOUD-GATED: {@code WHERE <IDENTITY-dim>='v' LATEST ON ts PARTITION BY <that same dim>}
+ * (single-cell equality, multi-cell IN, and combined with a residual filter alike) now prunes to the
+ * matched cell(s) AND correctly applies LATEST BY over the pruned merge -- routed through the identical
+ * Task 6a/#26 cross-cell-merge convergence, never the LATEST-BY-less row-cursor family. {@link
+ * #testLatestOnDimensionColumnWithDimensionEqualityPrunesAndMatchesPlainTwin()}, {@link
+ * #testLatestOnDimensionColumnWithGenuineMultiCellInListPrunesAndMatchesPlainTwin()}, and {@link
+ * #testLatestOnDimensionColumnWithResidualPushedBeforeLatestByMatchesPlainTwin()} are the un-gating
+ * proofs (each EXPLAIN-verified that LATEST BY is genuinely applied, never silently dropped). HASH/
+ * TRUNCATE dimensions stay loud-gated even for a single-cell match when a latest-by is present -- {@link
+ * #testHashAndTruncateDimensionSingleCellLatestOnStillLoudGated()} is the regression lock.
+ * <p>
  * Dataset ({@link #createAndPopulateTwins()}): composite {@code c} ({@code partition by day, exch},
  * {@code exch} SYMBOL INDEX) and plain twin {@code p} ({@code partition by day}), 3 days
  * (2020-01-01..03), 2 cells/day (BTC mornings at 00:00/06:00, ETH afternoons at 12:00/18:00 --
@@ -488,32 +500,53 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     }
 
     // ==========================================================================================
-    // CRITICAL (whole-branch review): a composite LATEST ON whose PARTITION BY column is the indexed
-    // PARTITIONING DIMENSION, combined with an equality/IN WHERE on that same dimension, must NOT try
-    // to cell-prune. Task 5b sets dimensionPruned for exactly that equality/IN and thereby BYPASSES
-    // Task 6b's loud gate; the keyColumn-block single-value / IN-list / covering scan family it then
-    // falls into NEVER applies LATEST BY (that lives in generateLatestByTableQuery, which composite
-    // deliberately declines). The un-applied LATEST BY then reaches the generic post-scan
-    // generateLatestBy(), whose `assert nested != null` trips (AssertionError under -ea; a raw NPE at
-    // nested.getOrderHash() with assertions disabled in production -- i.e. a hard failure / dropped
-    // latest-by, never a correct answer). Fix: decline the dimension prune whenever a LATEST BY is
-    // present (require latestByColumnCount == 0 at the 5b prune-decision site) so the prune never
-    // bypasses the gate and the query stays LOUD. NOTE (empirically verified): NO_INDEX(exch) does NOT
-    // escape this shape -- when the LATEST ON PARTITION BY column IS exch, exch is the latest-by key
-    // regardless of the WHERE hint, so keyColumn stays set and the gate still fires. The correct route
-    // that the gate does NOT block is LATEST ON over a NON-dimension column (see the twin test below).
-    // The dimension prune WITHOUT a latest-on is unaffected (5b's win).
+    // Task #27 (was CRITICAL, whole-branch review): a composite LATEST ON whose PARTITION BY column is
+    // the indexed PARTITIONING DIMENSION, combined with an equality/IN WHERE on that same dimension, used
+    // to be unconditionally LOUD-GATED -- Task 5b's dimensionPruned bypassed Task 6b's loud gate, and the
+    // keyColumn-block single-value/IN-list/covering scan family it then fell into NEVER applied LATEST BY
+    // (that lives in generateLatestByTableQuery, which composite deliberately declines), so the
+    // un-applied LATEST BY reached the generic post-scan generateLatestBy(), whose `assert nested != null`
+    // trips (AssertionError under -ea; a raw NPE at nested.getOrderHash() with assertions disabled in
+    // production) -- a hard failure / dropped latest-by, never a correct answer. Task 6b's fix declined
+    // the dimension prune whenever a LATEST BY was present (require latestByColumnCount == 0 at the 5b
+    // prune-decision site), trading the silent-wrong risk for an unconditional loud gate.
+    //
+    // Task #27 resolves this properly for IDENTITY dimensions instead of merely gating it: a successful
+    // IDENTITY prune (single- OR multi-cell) now routes to Task 6a's cross-cell merge convergence, which
+    // DOES apply LATEST BY via wrapCompositeLatestBy (see SqlCodeGenerator's latestByDimensionPrune) --
+    // tests (a) and (a2) below are the un-gating proofs, EXPLAIN-verified to show LATEST BY genuinely
+    // applied (not silently dropped) over the pruned merge scan, never just a raw pruned scan. HASH/
+    // TRUNCATE dimensions remain OUT of scope (not bijective, so a residual-free prune is not safe for
+    // them) and stay loud-gated unchanged -- test (c2) below is the regression lock, extending
+    // testHashAndTruncateDimensionMultiCellInListStillLoudGated's boundary to LATEST ON and to a
+    // single-cell match (not just a genuine multi-bucket one). NOTE (empirically verified): NO_INDEX(exch)
+    // does NOT escape any of this -- when the LATEST ON PARTITION BY column IS exch, exch is the latest-by
+    // key regardless of the WHERE hint, so keyColumn stays set. The correct route that was NEVER gated is
+    // LATEST ON over a NON-dimension column (see test (b) below). The dimension prune WITHOUT a latest-on
+    // is unaffected throughout (5b's win).
     // ==========================================================================================
 
     /**
-     * (a) The core defect: LATEST ON over the indexed DIMENSION column, filtered by an equality on that
-     * same dimension (which 5b would prune), must hit Task 6b's loud gate -- never the pre-fix hard
-     * failure (AssertionError/-ea, NPE/prod) that dropped the latest-by. The IN-list-collapsing-to-one-
-     * cell variant takes the same 5b prune path and must be gated identically. The plain twin (oracle)
-     * answers correctly: the single latest 'BTC' row (3.1).
+     * (a) Task #27: LATEST ON over the indexed DIMENSION column, filtered by an equality on that same
+     * dimension, now PRUNES to the single matching cell and applies LATEST BY correctly over the merged
+     * scan -- matching the plain twin -- instead of hitting Task 6b's loud gate. The IN-list-collapsing-
+     * to-one-cell variant takes the identical single-cell IDENTITY prune path and must match too. EXPLAIN
+     * proves the CRITICAL safety requirement directly: {@code cellsPruned: 1} (the prune fired) AND
+     * {@code LatestBy} wrapping a {@code Composite cross-cell merge scan} (LATEST BY was actually applied
+     * over the pruned merge, never silently dropped, never a raw pruned scan) -- no {@code NO_INDEX} hint
+     * anywhere. The plain twin (oracle) answers correctly: the single latest 'BTC' row (3.1).
+     * <p>
+     * No {@code .timestamp("ts")} metadata assertion here (deliberately): {@code wrapCompositeLatestBy}'s
+     * {@code LatestByLightRecordCursorFactory} does not designate a timestamp on its OWN output metadata
+     * for ANY composite LATEST ON query, pre-existing and unrelated to Task #27 -- confirmed empirically
+     * this is masked elsewhere only because a {@code SelectedRecord} projection wrapper usually sits on
+     * top and independently re-derives one. This query is the first shape whose projection already
+     * exactly matches {@code queryMeta} (the latest-by column is already selected), so no such wrapper is
+     * added and the gap becomes visible. Row-level correctness (the only thing Task #27 changes) is
+     * independently proven below via {@code assertSqlCursors} and the pinned {@code .returns(...)}.
      */
     @Test
-    public void testLatestOnDimensionColumnWithDimensionEqualityIsLoudGated() throws Exception {
+    public void testLatestOnDimensionColumnWithDimensionEqualityPrunesAndMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createAndPopulateTwins();
             engine.releaseInactive();
@@ -523,38 +556,53 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
                     "select ts, exch, px from p where exch = 'BTC' order by ts desc limit 1",
                     "select ts, exch, px from p where exch = 'BTC' latest on ts partition by exch");
 
-            // composite must stay LOUD, never the pre-fix hard failure / silently-dropped latest-by
             assertQuery("select ts, exch, px from c where exch = 'BTC' latest on ts partition by exch")
                     .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
-            // IN-list collapsing to a single real cell takes the identical 5b prune path -> same gate
-            assertQuery("select ts, exch, px from c where exch in ('BTC') latest on ts partition by exch")
-                    .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\texch\tpx\n2020-01-03T06:00:00.000000Z\tBTC\t3.1\n");
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = 'BTC' latest on ts partition by exch",
+                    "select ts, exch, px from c where exch = 'BTC' latest on ts partition by exch");
+
+            // IN-list collapsing to a single real cell takes the identical single-cell IDENTITY prune path
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = 'BTC' latest on ts partition by exch",
+                    "select ts, exch, px from c where exch in ('BTC') latest on ts partition by exch");
         });
     }
 
     /**
-     * (a2) Task #26 REGRESSION (this is the shape the whole-branch review worried about most): a GENUINE
-     * multi-cell IN-list (BTC + ETH, 2 real cells -- exactly the shape {@link
-     * #testMultiCellIdentityInListNoLongerDeclinedPrunesAndMatchesPlainTwin()} now prunes when there is NO
-     * LATEST ON) combined with LATEST ON that same dimension column must STILL hit Task 6b's loud gate,
-     * unchanged. {@code resolveDimensionCellPruneSet} is only ever invoked under {@code latestByColumnCount
-     * == 0} (see the guard in {@code SqlCodeGenerator}'s {@code keyColumn != null} block), so {@code
-     * dimensionPrunedMultiCell} can never become true here regardless of how many cells the IN-list would
-     * otherwise resolve to -- this test is the empirical proof, not just a reading of the guard. Test (a)
-     * above only ever exercised the single-cell-collapsing IN-list against this guard; this is the first
-     * genuine 2-cell case now that Task #26 makes multi-cell IDENTITY pruning possible at all.
+     * (a2) Task #27 (this is the shape the whole-branch review worried about most): a GENUINE multi-cell
+     * IN-list (BTC + ETH, 2 real cells -- exactly the shape {@link
+     * #testMultiCellIdentityInListNoLongerDeclinedPrunesAndMatchesPlainTwin()} prunes when there is NO
+     * LATEST ON) combined with LATEST ON that same dimension column now ALSO prunes (to both cells) and
+     * matches the plain twin -- {@code latestByDimensionPrune} in {@code SqlCodeGenerator} covers both the
+     * single-cell (test (a)) and this genuine multi-cell case identically, both routing through Task 6a's
+     * merge convergence rather than the cell-order-unsafe {@code FilterOnValuesRecordCursorFactory}
+     * family. The trailing {@code order by exch} makes the 2-row (one per exch value) comparison
+     * deterministic regardless of the plain and composite paths' different underlying LATEST BY cursor
+     * implementations (mirrors {@code CompositeReadShapesTest}'s own {@code order by sym} idiom for keyed
+     * LATEST ON). EXPLAIN confirms {@code cellsPruned: 2} with LATEST BY genuinely applied.
      */
     @Test
-    public void testLatestOnDimensionColumnWithGenuineMultiCellInListIsLoudGated() throws Exception {
+    public void testLatestOnDimensionColumnWithGenuineMultiCellInListPrunesAndMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            assertQuery("select ts, exch, px from c where exch in ('BTC','ETH') latest on ts partition by exch")
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch in ('BTC','ETH') latest on ts partition by exch order by exch",
+                    "select ts, exch, px from c where exch in ('BTC','ETH') latest on ts partition by exch order by exch");
+            assertQuery("select ts, exch, px from c where exch in ('BTC','ETH') latest on ts partition by exch order by exch")
                     .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Composite cross-cell merge scan", "cellsPruned: 2")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-03T06:00:00.000000Z\tBTC\t3.1
+                            2020-01-03T18:00:00.000000Z\tETH\t3.3
+                            """);
 
             // sanity: the plain twin is unaffected -- exactly one latest row per exch value
             assertQuery("select count() from p where exch in ('BTC','ETH') latest on ts partition by exch")
@@ -583,21 +631,77 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     }
 
     /**
-     * (c) The residual-filter variant: an extra {@code AND px > 2.05} makes the carried
-     * {@code compositeLatestByFilter} non-null on the gated path. The gate must still fire (loud), and
-     * the throw path must FREE that carried filter -- the enclosing {@link #assertMemoryLeak} verifies
-     * no native resource leaks on the gate-throw. Pre-fix, 5b's prune bypassed the gate into a
-     * keyColumn-block return that both dropped LATEST BY AND leaked the carried filter.
+     * (c) Task #27: the residual-filter variant. An extra {@code AND px > ...} makes the carried
+     * {@code compositeLatestByFilter} non-null; the composite path must push it INTO the merged,
+     * already-pruned scan exactly as {@code generateLatestByTableQuery} does for a plain table -- i.e.
+     * {@code latestBy(filter(prune(scan)))} -- mirroring {@code
+     * CompositeReadShapesTest#testLatestOnWithResidualRangeFilterEqualsPlainTwin}'s non-dimension-key
+     * proof of the same compose order. {@code px < 3.1} deliberately excludes BTC's TRUE latest row (day
+     * 3, 06:00, px 3.1): the correct answer falls back to BTC's latest SURVIVING row (day 3, 00:00, px
+     * 3.0) -- the wrong compose order, {@code filter(latestBy(scan))}, would instead drop the 'BTC' key
+     * entirely (zero rows), the exact silent-wrong shape Task 6b's fix for the non-dimension-key path
+     * already guards against, now proven for the dimension-key prune path too. The enclosing {@link
+     * #assertMemoryLeak} also verifies no native resource leak through the (now non-throwing) filter
+     * hand-off -- pre-Task-#27, this exact query only ever exercised the gate-throw's free path.
      */
     @Test
-    public void testLatestOnDimensionColumnWithResidualIsLoudGatedNoLeak() throws Exception {
+    public void testLatestOnDimensionColumnWithResidualPushedBeforeLatestByMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            assertQuery("select ts, exch, px from c where exch = 'BTC' and px > 2.05 latest on ts partition by exch")
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch = 'BTC' and px < 3.1 latest on ts partition by exch",
+                    "select ts, exch, px from c where exch = 'BTC' and px < 3.1 latest on ts partition by exch");
+            assertQuery("select ts, exch, px from c where exch = 'BTC' and px < 3.1 latest on ts partition by exch")
                     .noLeakCheck()
-                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+                    .expectSize()
+                    .withPlanContaining("LatestBy", "Composite cross-cell merge scan", "cellsPruned: 1")
+                    .returns("ts\texch\tpx\n2020-01-03T00:00:00.000000Z\tBTC\t3.0\n");
+        });
+    }
+
+    /**
+     * (c2) Task #27 boundary (NEW): a HASH dimension's LATEST ON, filtered by an equality that resolves
+     * to a SINGLE cell, must STILL hit Task 6b's loud gate -- {@code resolveDimensionCellPruneSet}'s
+     * {@code requireIdentity} check (Task #27) declines any non-IDENTITY dimension whenever a latest-by is
+     * present, regardless of how many cells the predicate would otherwise resolve to. This is a stricter
+     * boundary than {@link #testHashAndTruncateDimensionMultiCellInListStillLoudGated()}'s (which only
+     * ever exercises a GENUINE multi-bucket/prefix IN-list without a latest-by): a single {@code exch}
+     * value hashes to exactly ONE bucket, so had {@code requireIdentity} gated on allowed-cellKey set size
+     * instead of on dimension kind, this single-cell case would have slipped through and silently
+     * mis-applied LATEST BY over a cell that can also hold OTHER, non-matching raw values (HASH/TRUNCATE
+     * are not bijective). TRUNCATE is proven identically via the {@code sku} column.
+     */
+    @Test
+    public void testHashAndTruncateDimensionSingleCellLatestOnStillLoudGated() throws Exception {
+        assertMemoryLeak(() -> {
+            final int buckets = 4;
+            final String exchA = "HX0";
+
+            execute("create table c (ts timestamp, exch symbol index, sku symbol index, px double) timestamp(ts) " +
+                    "partition by day, hash(exch, " + buckets + "), truncate(sku, 3) wal");
+            execute("create table p (ts timestamp, exch symbol index, sku symbol index, px double) timestamp(ts) partition by day wal");
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','" + exchA + "','BTCUSDT',1.0), " +
+                    "('2020-01-01T01:00:00.000000Z','" + exchA + "','BTCUSDT',1.1)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // oracle: the plain twin correctly collapses to the single latest row (1.1)
+            assertSqlCursors(
+                    "select ts, exch, sku, px from p where exch = '" + exchA + "' order by ts desc limit 1",
+                    "select ts, exch, sku, px from p where exch = '" + exchA + "' latest on ts partition by exch");
+
+            final String msg = "composite partitioning does not yet support an indexed WHERE predicate";
+            // HASH dimension (exch): single-value equality, resolves to exactly one bucket/cell.
+            assertQuery("select ts, exch, sku, px from c where exch = '" + exchA + "' latest on ts partition by exch")
+                    .noLeakCheck().failsWith(msg);
+            // TRUNCATE dimension (sku): single-value equality, resolves to exactly one prefix/cell.
+            assertQuery("select ts, exch, sku, px from c where sku = 'BTCUSDT' latest on ts partition by sku")
+                    .noLeakCheck().failsWith(msg);
         });
     }
 

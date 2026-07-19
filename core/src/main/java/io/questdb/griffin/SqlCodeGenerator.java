@@ -10244,6 +10244,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      *     execution into a cellKey set cached on the factory would go silently wrong were this same
      *     compiled factory later re-executed with a DIFFERENT bound value -- any such value aborts
      *     pruning for the WHOLE predicate, not just that one value.</li>
+     *     <li>{@code requireIdentity} is {@code true} (the caller passes {@code latestByColumnCount > 0})
+     *     AND the dimension is NOT IDENTITY -- Task #27. A LATEST BY over this same dimension needs the
+     *     prune to be ROW-EXACT with no residual filter at all (see {@code latestByDimensionPrune} at the
+     *     call site): true for IDENTITY (bijective value&harr;cellKey) regardless of set size, never true
+     *     for HASH/TRUNCATE (collapse distinct raw values into a shared bucket/prefix) even for a
+     *     single-value equality that resolves to exactly one cell.</li>
      *     <li>the resolved allowed-cellKey set has size &gt; 1 AND the dimension is NOT IDENTITY -- see
      *     below. Found empirically while grounding this task, not anticipated in the original design;
      *     narrowed again (IDENTITY exempted) by Task #26, also grounded empirically -- see the "Task #26
@@ -10294,7 +10300,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             TableReader reader,
             RecordMetadata metadata,
             CharSequence keyColumn,
-            ObjList<Function> keyValueFuncs
+            ObjList<Function> keyValueFuncs,
+            boolean requireIdentity
     ) {
         final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
         // Deliberately resolved against `metadata` (the reader-native TableRecordMetadata passed into
@@ -10318,6 +10325,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final PartitionDimension dimension = partitionSpec.getDimension(dimIndex);
         if (dimension.getKind() == PartitionDimension.KIND_EXPRESSION) {
+            return null;
+        }
+        // Task #27: a LATEST BY over this same dimension (requireIdentity, set by the caller from
+        // latestByColumnCount > 0) additionally requires the dimension to be IDENTITY, regardless of how
+        // many cells the predicate resolves to -- even a single-cell HASH/TRUNCATE match declines. HASH
+        // and TRUNCATE collapse multiple distinct raw values into a shared bucket/prefix, so pruning to
+        // "the" cell for one predicate value is not enough on its own to make that cell's LATEST BY answer
+        // correct -- the merge convergence this prune then routes to (see latestByDimensionPrune at the
+        // call site) has no residual filter to exclude a colliding OTHER raw value sharing the same cell.
+        // IDENTITY's value<->cellKey map IS bijective, so it alone stays eligible; declining here (return
+        // null) keeps dimensionPruned false, which keeps Task 6b's loud gate firing for HASH/TRUNCATE +
+        // LATEST ON, unchanged from before this task.
+        if (requireIdentity && dimension.getKind() != PartitionDimension.KIND_IDENTITY) {
             return null;
         }
 
@@ -10622,32 +10642,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // unchanged from 5b). Steers control away from the row-cursor family below (see its
                     // use just after the 6b gate).
                     boolean dimensionPrunedMultiCell = false;
-                    // Whole-branch review CRITICAL: never prune (never bypass 6b's gate) when a LATEST BY
-                    // is present (latestByColumnCount > 0). This reaches keyColumn != null only when the
-                    // LATEST ON PARTITION BY column IS this indexed dimension and the WHERE is an
-                    // equality/IN on it. The pruned scan is then handed to the single-value/IN-list/
-                    // covering row-cursor family below, which NEVER applies LATEST BY (that lives in
-                    // generateLatestByTableQuery, which composite deliberately declined at the top of this
-                    // method); the un-applied latest-by reaches the generic post-scan generateLatestBy(),
-                    // whose `assert nested != null` then trips -- an AssertionError under -ea, a raw NPE at
-                    // nested.getOrderHash() in production (assertions off), i.e. a hard failure / dropped
-                    // latest-by, never a correct answer. Requiring latestByColumnCount == 0 here keeps
-                    // dimensionPruned false for that shape, so 6b's gate FIRES and the query stays LOUD;
-                    // the gate-throw path frees the carried compositeLatestByFilter via this method's catch
-                    // (see there). NOTE: NO_INDEX(<dim>) does NOT escape this shape -- when the latest-by
-                    // key IS the dimension it is indexed regardless of the WHERE hint, so keyColumn stays
-                    // set. The correct route the gate does NOT block is LATEST ON over a NON-dimension
-                    // column: there the dimension WHERE stays a residual filter over the 6a-merged scan and
-                    // LATEST BY applies as latestBy(filter(scan)). A prune WITHOUT latest-on is unchanged
-                    // (5b's win).
-                    if (compositeTable && latestByColumnCount == 0 && nKeyValues > 0 && nKeyExcludedValues == 0) {
-                        IntHashSet allowedCellKeys = resolveDimensionCellPruneSet(reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs);
+                    // Whole-branch review CRITICAL (Task 6b) / Task #27 follow-up: a LATEST BY present
+                    // (latestByColumnCount > 0) reaches keyColumn != null only when the LATEST ON
+                    // PARTITION BY column IS this indexed dimension and the WHERE is an equality/IN on it.
+                    // Task 6b found that handing such a prune to the single-value/IN-list/covering
+                    // row-cursor family below is unsafe: that family NEVER applies LATEST BY (that lives in
+                    // generateLatestByTableQuery, which composite deliberately declines at the top of this
+                    // method); an un-applied latest-by then reaches the generic post-scan
+                    // generateLatestBy(), whose `assert nested != null` trips -- an AssertionError under
+                    // -ea, a raw NPE at nested.getOrderHash() in production (assertions off), i.e. a hard
+                    // failure / dropped latest-by, never a correct answer. 6b's original fix required
+                    // latestByColumnCount == 0 here, unconditionally declining every latest-by prune (loud
+                    // gate below). Task #27 replaces that blanket decline with two narrower guards instead
+                    // of removing safety: (1) resolveDimensionCellPruneSet's requireIdentity parameter
+                    // (passed as latestByColumnCount > 0 below) declines HASH/TRUNCATE dimensions outright
+                    // whenever latest-by is present -- they stay exactly as unsafe as 6b found, and still
+                    // hit the loud gate; (2) an IDENTITY dimension's successful prune -- bijective, so
+                    // ROW-EXACT with no residual filter needed -- instead routes to the SAME merge
+                    // convergence Task 6a/#26 already use (dimensionPrunedMultiCell below), which DOES apply
+                    // LATEST BY via wrapCompositeLatestBy; see latestByDimensionPrune just below. The
+                    // gate-throw path (still reached for any decline) frees the carried
+                    // compositeLatestByFilter via this method's catch (see there). NOTE: NO_INDEX(<dim>)
+                    // does NOT escape this shape -- when the latest-by key IS the dimension it is indexed
+                    // regardless of the WHERE hint, so keyColumn stays set. The correct route the gate does
+                    // NOT block (independent of this task) is LATEST ON over a NON-dimension column: there
+                    // the dimension WHERE stays a residual filter over the 6a-merged scan and LATEST BY
+                    // applies as latestBy(filter(scan)). A prune WITHOUT latest-on is unaffected (5b's win).
+                    if (compositeTable && nKeyValues > 0 && nKeyExcludedValues == 0) {
+                        IntHashSet allowedCellKeys = resolveDimensionCellPruneSet(
+                                reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs, latestByColumnCount > 0);
                         if (allowedCellKeys != null) {
                             dfcFactory.setAllowedCellKeys(allowedCellKeys);
                             dimensionPruned = true;
                             dimensionPrunedMultiCell = allowedCellKeys.size() > 1;
                         }
                     }
+                    // Task #27: a successful prune (dimensionPruned) that ALSO has a LATEST BY present --
+                    // only possible now for an IDENTITY dimension, see resolveDimensionCellPruneSet's
+                    // requireIdentity check just above -- must route to the merge convergence (Task 6a's
+                    // CompositePageFrameRecordCursorFactory + wrapCompositeLatestBy) exactly like
+                    // dimensionPrunedMultiCell already does, rather than fall into the row-cursor family
+                    // below (which never applies LATEST BY). Deliberately covers BOTH single- and
+                    // multi-cell IDENTITY prunes -- dimensionPrunedMultiCell alone is not enough here, since
+                    // a single-cell IDENTITY equality (allowedCellKeys.size() == 1) also needs this routing
+                    // whenever latest-by is present; see its use just below.
+                    boolean latestByDimensionPrune = dimensionPruned && latestByColumnCount > 0;
 
                     // Task 6b: every row-cursor factory this family can return (single-value, IN-list,
                     // NOT-IN, key sub-query, and the covering-index / sorted-symbol-index shortcuts
@@ -10691,7 +10730,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // control reaches the general Task 6a merged-scan routing at the bottom of this method,
                     // where model.setWhereClause(intrinsicModel.filter) applies it over the already-pruned
                     // dfcFactory.
-                    if (!dimensionPrunedMultiCell) {
+                    // Task #27: latestByDimensionPrune (a successful IDENTITY prune WITH a latest-by
+                    // present, single- or multi-cell alike -- see its own doc just above) skips this block
+                    // for the same reason plus one more: even the single-cell case must not reach this
+                    // family, because none of its factories apply LATEST BY (see the "Whole-branch review
+                    // CRITICAL" doc above) -- only the Task 6a convergence below does, via
+                    // wrapCompositeLatestBy.
+                    if (!dimensionPrunedMultiCell && !latestByDimensionPrune) {
                         if (intrinsicModel.keySubQuery != null) {
                             RecordCursorFactory rcf = null;
                             final Record.CharSequenceFunction func;
