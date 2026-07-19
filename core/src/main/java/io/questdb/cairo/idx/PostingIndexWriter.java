@@ -399,7 +399,16 @@ public class PostingIndexWriter implements IndexWriter {
                     if (liveSize < KEY_FILE_RESERVED) {
                         liveSize = KEY_FILE_RESERVED;
                     }
-                    keyMem.setSize(liveSize);
+                    if (liveSize > keyMem.size()) {
+                        // Another mapping published beyond this stale mapping and
+                        // already extended the file. Growing keyMem only to close it
+                        // would allocate and remap memory, and an allocation failure
+                        // would leave its old append offset armed for truncation in
+                        // the finally below. Close without truncation instead.
+                        keyMem.close(false);
+                    } else {
+                        keyMem.setSize(liveSize);
+                    }
                 } finally {
                     Misc.free(keyMem);
                 }

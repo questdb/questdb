@@ -144,6 +144,96 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseExtendFailureDoesNotTruncateExternalChain() throws Exception {
+        // The stale writer can map less of the .pk than a second writer later
+        // publishes. close() must not grow that stale mapping merely to select
+        // the truncate offset: a failed growth would leave the old append offset
+        // armed, and normal cleanup would truncate the external chain back out.
+        final PkAllocateFailingFacade allocateFail = new PkAllocateFailingFacade();
+        ff = allocateFail;
+        assertMemoryLeak(ff, () -> {
+            final FilesFacade rawFf = configuration.getFilesFacade();
+            final String name = "posting_stale_close_extend_fail";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                // Close an empty index first, then reopen it so staleWriter maps
+                // exactly the page-rounded empty-file length.
+                try (PostingIndexWriter creator = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // The constructor initializes the empty v2 headers.
+                }
+                final long staleMapSize = rawFf.length(
+                        PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+
+                PostingIndexWriter staleWriter = new PostingIndexWriter(configuration);
+                try {
+                    staleWriter.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+
+                    // Grow the published head past staleWriter's mapping on every
+                    // supported OS page size, including 64 KiB Windows pages.
+                    int expectedGenCount = 1;
+                    while (PostingIndexUtils.KEY_FILE_RESERVED
+                            + PostingIndexChainEntry.entrySize(expectedGenCount, 0) <= staleMapSize) {
+                        expectedGenCount++;
+                    }
+                    try (PostingIndexWriter appendWriter = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        for (int i = 0; i < expectedGenCount; i++) {
+                            appendWriter.add(1, i);
+                            appendWriter.setMaxValue(i);
+                            appendWriter.commit();
+                        }
+                    }
+
+                    final long publishedFileSize = rawFf.length(
+                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue(
+                            "published chain must extend past the stale mapping",
+                            publishedFileSize > staleMapSize
+                    );
+
+                    // If close() attempts to extend staleWriter, make the fd length
+                    // appear stale and reject the resulting allocate call.
+                    CairoException closeError = null;
+                    allocateFail.arm(staleMapSize);
+                    try {
+                        staleWriter.close();
+                    } catch (CairoException e) {
+                        closeError = e;
+                    } finally {
+                        allocateFail.disarm();
+                    }
+
+                    Assert.assertEquals(
+                            "stale close must not truncate the externally published chain",
+                            publishedFileSize,
+                            rawFf.length(PostingIndexUtils.keyFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE))
+                    );
+                    Assert.assertFalse(
+                            "stale close must not allocate merely to preserve an external extent",
+                            allocateFail.wasAllocationAttempted()
+                    );
+                    if (closeError != null) {
+                        Assert.fail("stale close must not fail while preserving an external extent [msg="
+                                + closeError.getFlyweightMessage() + ']');
+                    }
+
+                    try (PostingIndexWriter reopenedWriter = new PostingIndexWriter(configuration)) {
+                        reopenedWriter.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                        Assert.assertEquals(expectedGenCount - 1L, reopenedWriter.getMaxValue());
+                        Assert.assertEquals(expectedGenCount, reopenedWriter.getGenCount());
+                    }
+                } finally {
+                    allocateFail.disarm();
+                    staleWriter.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCloseNoTruncateSkipsSealOnPoisonedWriter() throws Exception {
         // SymbolMapWriter's emergency closeNoTruncate() runs a best-effort seal().
         // On a poisoned writer that seal() would throw via checkNotPoisoned() out
@@ -11586,6 +11676,60 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         int failureCount() {
             return failures.get();
+        }
+    }
+
+    private static class PkAllocateFailingFacade extends TestFilesFacadeImpl {
+        private final AtomicBoolean allocationAttempted = new AtomicBoolean(false);
+        private final AtomicBoolean armed = new AtomicBoolean(false);
+        private final java.util.concurrent.ConcurrentHashMap<Long, Boolean> pkFds =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        private long advertisedLength;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (armed.get() && pkFds.containsKey(fd)) {
+                allocationAttempted.set(true);
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean close(long fd) {
+            pkFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long length(long fd) {
+            if (armed.get() && pkFds.containsKey(fd)) {
+                return advertisedLength;
+            }
+            return super.length(fd);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd != -1 && name != null && Utf8s.containsAscii(name, ".pk")) {
+                pkFds.put(fd, Boolean.TRUE);
+            }
+            return fd;
+        }
+
+        void arm(long advertisedLength) {
+            this.advertisedLength = advertisedLength;
+            allocationAttempted.set(false);
+            armed.set(true);
+        }
+
+        void disarm() {
+            armed.set(false);
+        }
+
+        boolean wasAllocationAttempted() {
+            return allocationAttempted.get();
         }
     }
 
