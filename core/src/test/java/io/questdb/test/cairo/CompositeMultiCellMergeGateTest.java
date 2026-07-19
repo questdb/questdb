@@ -53,14 +53,21 @@ import org.junit.Test;
  * LOUD-GATED rather than fixed, mirroring the "explicit, loud (not silent) scope boundaries" precedent
  * {@code processO3BlockComposite} already sets for REPLACE mode / FORMAT PARQUET / var-size columns.
  * <p>
- * <b>The trigger is narrow</b> -- empirically isolated to exactly "a cellKey GROUP with 2+ rows AND that
- * cell already has committed data (a genuine O3_BLOCK_MERGE)". Three neighbouring shapes are PROVEN SAFE
- * and are NOT gated (each confirmed correct via its own minimal repro): a single-cellKey commit extending
- * one existing cell with 2+ out-of-order rows (never uses the regrouping path); a multi-cell commit where
- * every group has exactly 1 new row; and a multi-cell commit where the 2+-row group targets a genuinely
- * BRAND-NEW cell (no existing data). The documented workaround for the gated case is to issue each
- * already-populated cell's out-of-order rows in its OWN separate commit -- exactly what
- * {@code CompositeReadEndToEndTest}'s lifecycle builders do.
+ * <b>The trigger is narrow</b> -- empirically isolated to exactly "a cellKey GROUP with 2+ rows that
+ * genuinely MERGE into a cell with already-committed data", i.e. the group's MIN new ts reaches at or
+ * below that cell's existing max ts (a real O3_BLOCK_MERGE). FOUR neighbouring shapes are PROVEN SAFE and
+ * are NOT gated (each confirmed correct via its own minimal repro): a single-cellKey commit extending one
+ * existing cell with 2+ out-of-order rows (never uses the regrouping path); a multi-cell commit where
+ * every group has exactly 1 new row; a multi-cell commit where the 2+-row group targets a genuinely
+ * BRAND-NEW cell (no existing data); and -- the crucial one, Part B of the Task 6c review -- a multi-cell
+ * commit where each 2+-row group is a pure IN-ORDER APPEND into its existing cell (every new row strictly
+ * AFTER that cell's existing max), which is the ROUTINE continuous batch-ingest shape and takes
+ * O3PartitionJob's suffix-append branch rather than the merge path (see
+ * {@link #testMultiCellInOrderAppendIntoExistingCellsIsNotGated}). Gating that append would have crippled
+ * normal composite ingestion, so the gate reads the cell's real existing max ts (see
+ * {@code TableWriter#readCompositeCellMaxTimestamp}) and fires only on a genuine merge. The documented
+ * workaround for the gated (merge) case is to issue each already-populated cell's out-of-order rows in its
+ * OWN separate commit -- exactly what {@code CompositeReadEndToEndTest}'s lifecycle builders do.
  */
 public class CompositeMultiCellMergeGateTest extends AbstractCairoTest {
 
@@ -158,6 +165,46 @@ public class CompositeMultiCellMergeGateTest extends AbstractCairoTest {
                             "2020-04-01T01:30:00.000000Z\tY\tA\t902.0\n" +
                             "2020-04-01T02:00:00.000000Z\tX\tA\t3.0\n" +
                             "2020-04-01T03:00:00.000000Z\tY\tB\t4.0\n");
+        });
+    }
+
+    /**
+     * Proven-safe neighbour 3 (NOT gated): a multi-cell commit where EACH group carries 2+ new rows that
+     * are a pure IN-ORDER APPEND into its already-populated cell (every new row's ts is strictly AFTER
+     * that cell's existing max -- an O3_BLOCK_APPEND, not a genuine O3_BLOCK_MERGE). This is the ROUTINE
+     * continuous batch-ingest shape (a single INSERT spanning several cells, each already populated, 2+
+     * rows/cell) and MUST NOT be gated -- it lands every row correctly, byte-identical to a plain twin.
+     * Guards against the gate firing purely on "2+ rows into an existing cell" without an append-vs-merge
+     * test (which would cripple normal composite ingestion).
+     */
+    @Test
+    public void testMultiCellInOrderAppendIntoExistingCellsIsNotGated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table c (ts timestamp, exch symbol, sym symbol, px double) timestamp(ts) partition by day, exch wal");
+            execute("create table p (ts timestamp, exch symbol, sym symbol, px double) timestamp(ts) partition by day wal");
+
+            // Commit 1: populate BOTH cells X and Y on day1 (2 in-order rows each). X max = 00:30,
+            // Y max = 01:30. Brand-new cells here, so this commit is itself un-gated.
+            final String bulk = " values " +
+                    "('2020-04-01T00:00:00.000000Z','X','B',1.0), ('2020-04-01T00:30:00.000000Z','X','A',2.0), " +
+                    "('2020-04-01T01:00:00.000000Z','Y','C',3.0), ('2020-04-01T01:30:00.000000Z','Y','D',4.0)";
+            execute("insert into c" + bulk);
+            execute("insert into p" + bulk);
+            drainWalQueue();
+
+            // Commit 2: ONE multi-cell commit, 2 rows into EACH already-populated cell, every new row
+            // strictly AFTER its cell's existing max (02:00/03:00 > X's 00:30; 05:00/06:00 > Y's 01:30) --
+            // a pure per-cell in-order append. Distinct sym/px per row so any value swap diverges.
+            final String append = " values " +
+                    "('2020-04-01T02:00:00.000000Z','X','P',200.0), ('2020-04-01T03:00:00.000000Z','X','Q',300.0), " +
+                    "('2020-04-01T05:00:00.000000Z','Y','R',500.0), ('2020-04-01T06:00:00.000000Z','Y','S',600.0)";
+            execute("insert into c" + append);
+            execute("insert into p" + append);
+            drainWalQueue();
+
+            Assert.assertFalse("c must NOT be suspended -- a per-cell in-order append is not a merge (safe)",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("c")));
+            assertSqlCursors("select * from p order by ts", "select * from c order by ts");
         });
     }
 }

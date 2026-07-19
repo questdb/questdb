@@ -11235,13 +11235,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *     OTHER table columns). The overwhelmingly common single-cellKey-per-range case is unaffected
      *     regardless of column types, since it needs no reordering at all.</li>
      *     <li>Task 6c discovery: within the multi-cellKey regrouping path, a single cellKey GROUP that
-     *     both carries 2+ rows and merges into a cell with already-committed data (a genuine
-     *     O3_BLOCK_MERGE) throws rather than silently corrupting that group's non-timestamp column
-     *     values (root cause is deeper in the {@link O3PartitionJob} merge path, not yet fixed -- see
-     *     the throw site's own comment for the four minimal repros that isolated this exact
-     *     combination). A group with exactly 1 row, or a group merging into a genuinely brand-new cell
-     *     (no existing data), is unaffected and dispatches normally -- both were empirically confirmed
-     *     correct.</li>
+     *     both carries 2+ rows and genuinely MERGES into a cell with already-committed data (a real
+     *     O3_BLOCK_MERGE -- the group's min ts reaches at or below that cell's existing max ts) throws
+     *     rather than silently corrupting that group's non-timestamp column values (root cause is deeper
+     *     in the {@link O3PartitionJob} merge path, not yet fixed -- see the throw site's own comment).
+     *     A group with exactly 1 row, a group targeting a genuinely brand-new cell (no existing data),
+     *     or a group that is a pure in-order APPEND into an existing cell (every row strictly after that
+     *     cell's existing max -- the routine continuous batch-ingest shape) is unaffected and dispatches
+     *     normally -- all empirically confirmed correct (Part B of the Task 6c review narrowed the gate
+     *     from "2+ rows into existing data" to "2+ rows AND a genuine merge", after proving the append
+     *     is byte-identical to a plain twin).</li>
      * </ul>
      * <p>
      * Also note (residual, non-blocking risk, flagged for a follow-up task): {@code
@@ -11406,34 +11409,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Task 6c (read-side differential capstone) discovery, NOT a read-side
                             // regression: this scratch-buffer regrouping path silently corrupts
                             // non-timestamp column data when a single group both (a) carries 2+ rows
-                            // AND (b) merges into a cell that already has committed data (a genuine
-                            // O3_BLOCK_MERGE, not a pure append into a brand-new cell). Empirically
-                            // isolated to exactly this combination via four minimal repros: a single-
-                            // cellKey (non-multiCell) range extending an existing cell with 2+ OOO rows
-                            // is fine (does not use this scratch path at all); a multiCell range where
-                            // every group has exactly 1 row is fine; a multiCell range where a group has
-                            // 2+ rows but targets a genuinely brand-new cell (no existing data) is fine;
-                            // only "2+ rows AND existing data, inside a multiCell regroup" reproduces --
-                            // confirmed the 2nd (or later) row of such a group silently loses its own
-                            // non-timestamp column values, gaining a duplicate of a LATER row's values
-                            // instead (timestamps themselves stay correct). Root cause is deeper in the
+                            // AND (b) genuinely MERGES into a cell that already has committed data (a real
+                            // O3_BLOCK_MERGE -- new rows reach at or below the cell's existing max ts). The
+                            // 2nd (or later) row of such a group silently loses its own non-timestamp
+                            // column values, gaining a duplicate of a LATER row's values instead
+                            // (timestamps themselves stay correct). Root cause is deeper in the
                             // O3PartitionJob merge path than this method; not fixed here -- loud gate per
                             // this class's own established "explicit, loud (not silent) scope boundaries"
                             // precedent (REPLACE mode / FORMAT PARQUET / var-size columns above) rather
-                            // than risk an unsafe fix to the async merge internals. NO_INDEX-style
-                            // workaround: issue the out-of-order rows for each already-populated cell in
-                            // its OWN separate commit instead of one combined multi-cell commit (proven
-                            // safe -- see CompositeRoutingTest's existing single-cell extend coverage).
+                            // than risk an unsafe fix to the async merge internals. Workaround: issue the
+                            // out-of-order rows for each already-populated cell in its OWN separate commit
+                            // instead of one combined multi-cell commit (proven safe -- see
+                            // CompositeRoutingTest's existing single-cell extend coverage).
+                            //
+                            // CRITICAL: gate ONLY the genuine merge, not a pure in-order APPEND. A group
+                            // of 2+ rows whose MIN ts is strictly AFTER the cell's existing max is an
+                            // O3_BLOCK_APPEND (O3PartitionJob's suffix-append branch, never the merge
+                            // path) and is byte-identical to a plain twin -- empirically proven (Part B of
+                            // Task 6c review) by CompositeMultiCellMergeGateTest#
+                            // testMultiCellInOrderAppendIntoExistingCellsIsNotGated. Gating that append
+                            // would throw on the ROUTINE continuous multi-cell batch-ingest path (a plain
+                            // INSERT spanning several already-populated cells, 2+ rows/cell), crippling
+                            // composite ingestion. So the gate reads the cell's real existing max ts and
+                            // fires only when the new rows actually reach into or below it.
                             if (groupLen > 1) {
                                 final int gatePartitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, groupCellKey);
                                 final long gateSrcDataMax = gatePartitionIndexRaw > -1 ? getPartitionSizeByRawIndex(gatePartitionIndexRaw) : 0;
                                 if (gateSrcDataMax > 0) {
-                                    throw CairoException.critical(0)
-                                            .put("composite partitioning does not yet support 2 or more out-of-order rows landing in the same already-populated cell within one interleaved multi-cell commit [table=")
-                                            .put(tableToken.getTableName())
-                                            .put(", cellKey=").put(groupCellKey)
-                                            .put(", groupLen=").put(groupLen)
-                                            .put(']');
+                                    // order[] is stable-sorted by cellKey over a ts-ascending batch, so
+                                    // order[groupStart] is this group's MIN-ts row (see the sort above).
+                                    final long groupMinTs = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo + order[groupStart]);
+                                    final long gateNameTxn = getPartitionNameTxnByRawIndex(gatePartitionIndexRaw);
+                                    final long existingCellMax = readCompositeCellMaxTimestamp(
+                                            partitionTimestamp, groupCellKey, gateNameTxn, gateSrcDataMax, cellSegmentSink);
+                                    if (groupMinTs <= existingCellMax) {
+                                        throw CairoException.critical(0)
+                                                .put("composite partitioning does not yet support 2 or more out-of-order rows landing in the same already-populated cell within one interleaved multi-cell commit [table=")
+                                                .put(tableToken.getTableName())
+                                                .put(", cellKey=").put(groupCellKey)
+                                                .put(", groupLen=").put(groupLen)
+                                                .put(", newRowsMinTs=").put(groupMinTs)
+                                                .put(", existingCellMax=").put(existingCellMax)
+                                                .put(']');
+                                    }
                                 }
                             }
 
@@ -11651,6 +11669,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 cellKey
         );
         return 1;
+    }
+
+    /**
+     * Reads the maximum (last) designated-timestamp value already committed to one composite cell's
+     * on-disk timestamp column. Used only by {@link #processO3BlockComposite}'s multi-cell regroup gate
+     * to distinguish a genuine {@code O3_BLOCK_MERGE} (new rows reach at or below this value -- unsafe,
+     * gated) from a pure in-order {@code O3_BLOCK_APPEND} (all new rows strictly after it -- safe, not
+     * gated): the {@link O3PartitionJob} append-vs-merge decision itself pivots on exactly this
+     * comparison ({@code o3TimestampLo} vs the partition's {@code dataTimestampHi}). The designated
+     * timestamp column is dense and monotonically non-decreasing, so its last element is the cell's max.
+     * The (partitionTimestamp, cellKey, nameTxn, cellSize) tuple is resolved identically to {@link
+     * #dispatchCompositeCellRange}'s own {@code srcDataMax}/{@code srcNameTxn}; the read idiom mirrors
+     * {@link #o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp} (native, non-parquet cell
+     * -- FORMAT PARQUET is rejected before any row of a composite commit is dispatched).
+     *
+     * @param partitionTimestamp the day (partition floor) of the cell
+     * @param cellKey            the cell's key within that day
+     * @param nameTxn            the cell's partition name-txn suffix (its attached-partition record)
+     * @param cellSize           the cell's committed row count (caller guarantees {@code > 0})
+     * @param cellSegmentSink    scratch sink for rendering the cell segment (clobbered)
+     */
+    private long readCompositeCellMaxTimestamp(long partitionTimestamp, int cellKey, long nameTxn, long cellSize, StringSink cellSegmentSink) {
+        cellSegmentSink.clear();
+        renderCellSegment(cellSegmentSink, cellKey);
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, nameTxn, cellSegmentSink);
+            dFile(other, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
+            return readLongAtOffset(ff, other.$(), tempMem16b, (cellSize - 1) * Long.BYTES);
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     /**
