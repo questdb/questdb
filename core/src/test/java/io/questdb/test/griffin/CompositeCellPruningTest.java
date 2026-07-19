@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CompositeDimensionTransform;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -45,19 +47,33 @@ import org.junit.Test;
  * instead prunes to the matching cell(s) and succeeds, matching the plain twin --
  * {@link #testEqualityOnIndexedDimensionNoLongerThrowsAndMatchesPlainTwin()} proves it directly.
  * <p>
- * <b>Scope narrowing found while grounding this task (not in the original design):</b> pruning is only
- * safe to apply when the resolved allowed-cellKey set has size &lt;= 1. Beyond a single equality (or an
- * IN-list that happens to resolve to one real cell), the UNCHANGED row-cursor factory family the code
- * still builds after pruning ({@code FilterOnValuesRecordCursorFactory} and siblings) was never audited
- * for composite cross-cell ORDER -- confirmed by reading {@code FilterOnValuesRecordCursorFactory
- * #getScanDirection()}, which claims {@code SCAN_DIRECTION_FORWARD} from the requested scan order alone,
- * with zero cell-interleaving awareness, exactly the defect Task 6a fixed for the general scan via a
- * SEPARATE class ({@code CompositePageFrameRecordCursorFactory}) this family does not use.
- * {@code SqlCodeGenerator}'s single-column {@code ORDER BY <ts>} sort-skip trusts that flag, so pruning a
- * genuine multi-cell IN-list through this path could silently misorder rows. {@link
- * #testMultiCellInListIsSafelyDeclinedNotPrunedWrong()} turns this finding into a regression lock: a
- * predicate matching BOTH registered dimension values still hits Task 6b's gate, unchanged, rather than
- * risk a wrong prune.
+ * <b>Scope narrowing found while grounding Task 5b (not in the original design):</b> pruning was, at 5b,
+ * only considered safe to apply when the resolved allowed-cellKey set had size &lt;= 1. Beyond a single
+ * equality (or an IN-list that happens to resolve to one real cell), the UNCHANGED row-cursor factory
+ * family the code still builds after pruning ({@code FilterOnValuesRecordCursorFactory} and siblings) was
+ * never audited for composite cross-cell ORDER -- confirmed by reading {@code
+ * FilterOnValuesRecordCursorFactory#getScanDirection()}, which claims {@code SCAN_DIRECTION_FORWARD} from
+ * the requested scan order alone, with zero cell-interleaving awareness, exactly the defect Task 6a fixed
+ * for the general scan via a SEPARATE class ({@code CompositePageFrameRecordCursorFactory}) this family
+ * does not use. {@code SqlCodeGenerator}'s single-column {@code ORDER BY <ts>} sort-skip trusts that flag,
+ * so pruning a genuine multi-cell IN-list through this path could silently misorder rows.
+ * <p>
+ * <b>Task #26 lifts the &lt;= 1 cap for IDENTITY dimensions:</b> rather than auditing the FilterOnValues
+ * family, a successfully-pruned multi-cell IDENTITY set now BYPASSES it entirely and routes through Task
+ * 6a's own cross-cell-merge factory ({@code CompositePageFrameRecordCursorFactory}) instead -- the same
+ * genuinely-ordered path the general (non-indexed) composite scan already uses. An IDENTITY dimension's
+ * value&harr;cellKey map is bijective (a cell can only ever hold rows for the ONE raw value that produced
+ * its ordinal), so this is ROW-EXACT with no residual filter needed. {@link
+ * #testMultiCellIdentityInListNoLongerDeclinedPrunesAndMatchesPlainTwin()} proves the exact query this
+ * class used to lock as declined now prunes and matches the plain twin instead; {@link
+ * #testMultiCellIdentityInListPrunesInterleavedRowsInGlobalTsOrderAsc()} and its DESC/3-cell/ts-range/
+ * residual-filter siblings are the strong order-correctness oracle -- their dataset is deliberately
+ * TIME-INTERLEAVED across cells (unlike this class's original BTC-mornings/ETH-afternoons dataset, where
+ * naive per-cell concatenation happens to already agree with ts order), so a regression back to
+ * concatenation instead of a genuine merge would visibly misorder rows. HASH and TRUNCATE dimensions are
+ * NOT bijective (distinct raw values can collide into one bucket/prefix), so they are explicitly OUT of
+ * this task's scope and remain declined, unchanged -- {@link
+ * #testHashAndTruncateDimensionMultiCellInListStillLoudGated()} is the regression lock for that boundary.
  * <p>
  * Dataset ({@link #createAndPopulateTwins()}): composite {@code c} ({@code partition by day, exch},
  * {@code exch} SYMBOL INDEX) and plain twin {@code p} ({@code partition by day}), 3 days
@@ -209,27 +225,246 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
     }
 
     /**
-     * THE SAFETY BOUNDARY (see class javadoc): a predicate matching BOTH registered dimension values
-     * (BTC=cellKey0 AND ETH=cellKey1 -- a genuine 2-cell match) must NOT be pruned -- it still hits Task
-     * 6b's pre-existing gate, byte-for-byte the same message, completely unchanged from before this task.
-     * This is a deliberate "when in doubt, do not prune" decline, not a bug: proven necessary by reading
-     * {@code FilterOnValuesRecordCursorFactory#getScanDirection()} (see class javadoc). The plain twin is
-     * of course unaffected and answers the identical query normally.
+     * Task #26: the exact query this class used to lock as declined (see class javadoc) -- a predicate
+     * matching BOTH registered dimension values (BTC=cellKey0 AND ETH=cellKey1, a genuine 2-cell match) --
+     * now PRUNES to both cells instead of hitting Task 6b's gate, and matches the plain twin exactly,
+     * including with an explicit {@code ORDER BY ts}. Uses this class's original BTC-mornings/
+     * ETH-afternoons dataset for direct continuity with the pre-#26 test this replaces; the STRONG
+     * order-correctness proof (misorder would be visible) is {@link
+     * #testMultiCellIdentityInListPrunesInterleavedRowsInGlobalTsOrderAsc()} below, since -- as that
+     * test's own doc explains -- this dataset's per-cell concatenation happens to already agree with ts
+     * order, so it alone would not catch a regression to concatenation-instead-of-merge.
      */
     @Test
-    public void testMultiCellInListIsSafelyDeclinedNotPrunedWrong() throws Exception {
+    public void testMultiCellIdentityInListNoLongerDeclinedPrunesAndMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createAndPopulateTwins();
             engine.releaseInactive();
 
-            final String msg = "composite partitioning does not yet support an indexed WHERE predicate";
-            assertQuery("select ts, exch, px from c where exch in ('BTC','ETH') order by ts")
-                    .noLeakCheck().failsWith(msg);
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch in ('BTC','ETH') order by ts",
+                    "select ts, exch, px from c where exch in ('BTC','ETH') order by ts");
+            assertSqlCursors(
+                    "select ts, exch, px from p where exch in ('BTC','ETH') order by ts desc",
+                    "select ts, exch, px from c where exch in ('BTC','ETH') order by ts desc");
+
+            // count() takes a SEPARATE, order-indifferent frame-counting fast path (never the record-level
+            // "Composite cross-cell merge scan" factory -- see the row-returning ASC/DESC siblings below
+            // for that), but cellsPruned is emitted by the underlying dfcFactory either way.
             assertQuery("select count() from c where exch in ('BTC','ETH')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("cellsPruned: 2")
+                    .returns("count\n12\n");
+        });
+    }
+
+    /**
+     * THE PRIMARY order-correctness oracle for Task #26's multi-cell IDENTITY prune: {@code exch}'s two
+     * registered values are TIME-INTERLEAVED within every day (see {@link
+     * #createAndPopulateInterleavedTwins()} -- BTC/ETH/SOL cycle every 10 minutes), so a regression to
+     * naive per-cell concatenation (all of cellKey0's rows, THEN all of cellKey1's) would emit rows
+     * visibly out of {@code ts} order (e.g. 00:30 BTC before 00:10 ETH) -- unlike {@link
+     * #testMultiCellIdentityInListNoLongerDeclinedPrunesAndMatchesPlainTwin()}'s dataset, where
+     * concatenation happens to already agree with global order. Matching the plain twin exactly here
+     * (an order-sensitive cursor-by-cursor comparison) is only possible through a genuine cross-cell
+     * merge. The concrete {@code .returns(...)} pins the exact expected order for a human reader; {@code
+     * EXPLAIN} confirms the scan is routed through Task 6a's {@code CompositePageFrameRecordCursorFactory}
+     * ("Composite cross-cell merge scan") with {@code cellsPruned: 2} (BTC + ETH; SOL correctly excluded).
+     */
+    @Test
+    public void testMultiCellIdentityInListPrunesInterleavedRowsInGlobalTsOrderAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateInterleavedTwins();
+            engine.releaseInactive();
+
+            assertSqlCursors(
+                    "select ts, exch, px from pi where exch in ('BTC','ETH') order by ts",
+                    "select ts, exch, px from ci where exch in ('BTC','ETH') order by ts");
+
+            assertQuery("select ts, exch, px from ci where exch in ('BTC','ETH') order by ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Composite cross-cell merge scan", "cellsPruned: 2")
+                    .returns("""
+                            ts\texch\tpx
+                            2020-01-01T00:00:00.000000Z\tBTC\t1.0
+                            2020-01-01T00:10:00.000000Z\tETH\t1.1
+                            2020-01-01T00:30:00.000000Z\tBTC\t1.3
+                            2020-01-01T00:40:00.000000Z\tETH\t1.4
+                            2020-01-02T00:00:00.000000Z\tBTC\t2.0
+                            2020-01-02T00:10:00.000000Z\tETH\t2.1
+                            2020-01-02T00:30:00.000000Z\tBTC\t2.3
+                            2020-01-02T00:40:00.000000Z\tETH\t2.4
+                            2020-01-03T00:00:00.000000Z\tBTC\t3.0
+                            2020-01-03T00:10:00.000000Z\tETH\t3.1
+                            2020-01-03T00:30:00.000000Z\tBTC\t3.3
+                            2020-01-03T00:40:00.000000Z\tETH\t3.4
+                            """);
+        });
+    }
+
+    /**
+     * DESC counterpart of {@link #testMultiCellIdentityInListPrunesInterleavedRowsInGlobalTsOrderAsc()} --
+     * same interleaved dataset and prune, backward scan direction. A backward per-cell concatenation bug
+     * would be just as visibly wrong (cellKey1 reverse-ts ++ cellKey0 reverse-ts) as the forward case.
+     */
+    @Test
+    public void testMultiCellIdentityInListPrunesInterleavedRowsInGlobalTsOrderDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateInterleavedTwins();
+            engine.releaseInactive();
+
+            assertSqlCursors(
+                    "select ts, exch, px from pi where exch in ('BTC','ETH') order by ts desc",
+                    "select ts, exch, px from ci where exch in ('BTC','ETH') order by ts desc");
+        });
+    }
+
+    /**
+     * A 3-value IN-list spanning all 3 registered cells (BTC/ETH/SOL) -- one step beyond the 2-cell case,
+     * proving the fix generalizes past exactly 2. {@code EXPLAIN} shows {@code cellsPruned: 3}.
+     */
+    @Test
+    public void testThreeValueInListPrunesToThreeCellsAndMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateInterleavedTwins();
+            engine.releaseInactive();
+
+            assertSqlCursors(
+                    "select ts, exch, px from pi where exch in ('BTC','ETH','SOL') order by ts",
+                    "select ts, exch, px from ci where exch in ('BTC','ETH','SOL') order by ts");
+            assertSqlCursors(
+                    "select ts, exch, px from pi order by ts",
+                    "select ts, exch, px from ci where exch in ('BTC','ETH','SOL') order by ts");
+
+            assertQuery("select count() from ci where exch in ('BTC','ETH','SOL')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("cellsPruned: 3")
+                    .returns("count\n18\n");
+        });
+    }
+
+    /**
+     * A value that was never interned ({@code 'NONE'}) mixed into an otherwise-genuine multi-cell
+     * IN-list must contribute no ordinal -- only the 2 REAL cells (BTC, ETH) are pruned ({@code
+     * cellsPruned: 2}, not 3), and the row set is identical to the 2-value case / the plain twin.
+     */
+    @Test
+    public void testMultiCellInListWithNeverInternedValuePrunesOnlyRealCellsAndMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateInterleavedTwins();
+            engine.releaseInactive();
+
+            assertSqlCursors(
+                    "select ts, exch, px from pi where exch in ('BTC','ETH','NONE') order by ts",
+                    "select ts, exch, px from ci where exch in ('BTC','ETH','NONE') order by ts");
+            assertQuery("select count() from ci where exch in ('BTC','ETH','NONE')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("cellsPruned: 2")
+                    .returns("count\n12\n");
+        });
+    }
+
+    /**
+     * Multi-cell IN combined with a ts range, in BOTH scan directions -- exercises the INTERVAL cursor's
+     * own pruning (mirrors {@link #testEqualityCombinedWithTsRangeMatchesPlainTwinBothOrders()} for the
+     * single-cell case), composing with the existing ts culling rather than replacing it. Range covers
+     * days 2-3 only (8 of the dataset's 12 matching rows).
+     */
+    @Test
+    public void testMultiCellIdentityInListCombinedWithTsRangeMatchesPlainTwinBothOrders() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateInterleavedTwins();
+            engine.releaseInactive();
+
+            final String predicate = " where exch in ('BTC','ETH') and ts >= '2020-01-02' and ts <= '2020-01-03T23:59:59.999999Z'";
+            assertSqlCursors(
+                    "select ts, exch, px from pi" + predicate + " order by ts",
+                    "select ts, exch, px from ci" + predicate + " order by ts");
+            assertSqlCursors(
+                    "select ts, exch, px from pi" + predicate + " order by ts desc",
+                    "select ts, exch, px from ci" + predicate + " order by ts desc");
+
+            assertQuery("select count() from ci" + predicate)
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("Interval", "cellsPruned: 2")
+                    .returns("count\n8\n");
+        });
+    }
+
+    /**
+     * The residual-filter variant: {@code exch IN (...)} (the pruned, dropped key predicate) combined
+     * with an extra {@code AND px > ...} (an ordinary, non-key residual). Task #26's design explicitly
+     * leaves {@code intrinsicModel.filter} untouched when skipping the row-cursor family (see
+     * {@code SqlCodeGenerator}'s {@code dimensionPrunedMultiCell} doc) -- this proves that residual still
+     * applies correctly over the merged multi-cell scan, matching the plain twin.
+     */
+    @Test
+    public void testMultiCellIdentityInListWithResidualFilterMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateInterleavedTwins();
+            engine.releaseInactive();
+
+            final String predicate = " where exch in ('BTC','ETH') and px > 1.35 order by ts";
+            assertSqlCursors(
+                    "select ts, exch, px from pi" + predicate,
+                    "select ts, exch, px from ci" + predicate);
+            assertQuery("select count() from ci where exch in ('BTC','ETH') and px > 1.35")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n9\n");
+        });
+    }
+
+    /**
+     * REGRESSION (Task #26 boundary): HASH and TRUNCATE dimensions are explicitly OUT of this task's
+     * scope (see {@code resolveDimensionCellPruneSet}'s "Task #26 update" doc) -- their raw-value-to-
+     * cellKey map is NOT bijective (distinct raw values can collide into the same bucket/prefix), so a
+     * residual-free multi-cell prune would silently include rows for OTHER, non-matching raw values. An
+     * IN-list spanning 2 genuinely different buckets (HASH) / prefixes (TRUNCATE) must still hit Task 6b's
+     * gate, byte-for-byte unchanged. The two {@code exch} values are found by an explicit runtime search
+     * for two DIFFERENT {@code hash(exch,4)} buckets (not assumed/hardcoded), so this test cannot pass by
+     * accidentally taking the harmless same-bucket path instead of the genuine 2-cell one.
+     */
+    @Test
+    public void testHashAndTruncateDimensionMultiCellInListStillLoudGated() throws Exception {
+        assertMemoryLeak(() -> {
+            final int buckets = 4;
+            String exchA = null;
+            String exchB = null;
+            for (int i = 0; i < buckets * 8 && exchB == null; i++) {
+                String candidate = "HX" + i;
+                if (exchA == null) {
+                    exchA = candidate;
+                } else if (CompositeDimensionTransform.hashBucket(candidate, buckets)
+                        != CompositeDimensionTransform.hashBucket(exchA, buckets)) {
+                    exchB = candidate;
+                }
+            }
+            Assert.assertNotNull("expected to find two exch values hashing to different buckets", exchB);
+
+            execute("create table c (ts timestamp, exch symbol index, sku symbol index, px double) timestamp(ts) " +
+                    "partition by day, hash(exch, " + buckets + "), truncate(sku, 3) wal");
+            execute("create table p (ts timestamp, exch symbol index, sku symbol index, px double) timestamp(ts) partition by day wal");
+            final String rows = " values " +
+                    "('2020-01-01T00:00:00.000000Z','" + exchA + "','BTCUSDT',1.0), " +
+                    "('2020-01-01T01:00:00.000000Z','" + exchB + "','ETHUSDT',1.1)";
+            execute("insert into c" + rows);
+            execute("insert into p" + rows);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String msg = "composite partitioning does not yet support an indexed WHERE predicate";
+            // HASH dimension (exch): a genuine 2-bucket IN-list.
+            assertQuery("select ts, exch, sku, px from c where exch in ('" + exchA + "','" + exchB + "') order by ts")
+                    .noLeakCheck().failsWith(msg);
+            // TRUNCATE dimension (sku): a genuine 2-prefix IN-list.
+            assertQuery("select ts, exch, sku, px from c where sku in ('BTCUSDT','ETHUSDT') order by ts")
                     .noLeakCheck().failsWith(msg);
 
-            assertQuery("select count() from p where exch in ('BTC','ETH')")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n12\n");
+            // plain twin is of course unaffected
+            assertQuery("select count() from p where exch in ('" + exchA + "','" + exchB + "')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n2\n");
         });
     }
 
@@ -296,6 +531,35 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, px from c where exch in ('BTC') latest on ts partition by exch")
                     .noLeakCheck()
                     .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+        });
+    }
+
+    /**
+     * (a2) Task #26 REGRESSION (this is the shape the whole-branch review worried about most): a GENUINE
+     * multi-cell IN-list (BTC + ETH, 2 real cells -- exactly the shape {@link
+     * #testMultiCellIdentityInListNoLongerDeclinedPrunesAndMatchesPlainTwin()} now prunes when there is NO
+     * LATEST ON) combined with LATEST ON that same dimension column must STILL hit Task 6b's loud gate,
+     * unchanged. {@code resolveDimensionCellPruneSet} is only ever invoked under {@code latestByColumnCount
+     * == 0} (see the guard in {@code SqlCodeGenerator}'s {@code keyColumn != null} block), so {@code
+     * dimensionPrunedMultiCell} can never become true here regardless of how many cells the IN-list would
+     * otherwise resolve to -- this test is the empirical proof, not just a reading of the guard. Test (a)
+     * above only ever exercised the single-cell-collapsing IN-list against this guard; this is the first
+     * genuine 2-cell case now that Task #26 makes multi-cell IDENTITY pruning possible at all.
+     */
+    @Test
+    public void testLatestOnDimensionColumnWithGenuineMultiCellInListIsLoudGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createAndPopulateTwins();
+            engine.releaseInactive();
+
+            assertQuery("select ts, exch, px from c where exch in ('BTC','ETH') latest on ts partition by exch")
+                    .noLeakCheck()
+                    .failsWith("composite partitioning does not yet support an indexed WHERE predicate");
+
+            // sanity: the plain twin is unaffected -- exactly one latest row per exch value
+            assertQuery("select count() from p where exch in ('BTC','ETH') latest on ts partition by exch")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n2\n");
         });
     }
 
@@ -382,6 +646,33 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
                 "('2020-01-03T12:00:00.000000Z','ETH','ETH',3.2), ('2020-01-03T18:00:00.000000Z','ETH','ETH',3.3)";
         execute("insert into c" + rows);
         execute("insert into p" + rows);
+        drainWalQueue();
+    }
+
+    /**
+     * Builds composite {@code ci} ({@code partition by day, exch}, {@code exch} SYMBOL INDEX) and plain
+     * twin {@code pi} ({@code partition by day}) for Task #26's multi-cell IDENTITY order-correctness
+     * tests. Unlike {@link #createAndPopulateTwins()}'s BTC-mornings/ETH-afternoons split (where per-cell
+     * concatenation happens to already agree with ts order, since one cell's rows always entirely precede
+     * the other's within a day), {@code exch} here cycles BTC/ETH/SOL every 10 minutes -- TIME-INTERLEAVED
+     * within every day -- so a regression to naive per-cell concatenation (all of one cell's rows, THEN
+     * the next's) would emit rows visibly out of {@code ts} order. 3 days (2020-01-01..03), 3 cells/day
+     * (BTC first-seen =&gt; cellKey 0, ETH =&gt; cellKey 1, SOL =&gt; cellKey 2 -- registry size 3), 6
+     * rows/day, 18 rows total. One bulk insert per table (one WAL commit).
+     */
+    private void createAndPopulateInterleavedTwins() throws SqlException {
+        execute("create table ci (ts timestamp, exch symbol index, px double) timestamp(ts) partition by day, exch wal");
+        execute("create table pi (ts timestamp, exch symbol index, px double) timestamp(ts) partition by day wal");
+
+        final String rows = " values " +
+                "('2020-01-01T00:00:00.000000Z','BTC',1.0), ('2020-01-01T00:10:00.000000Z','ETH',1.1), ('2020-01-01T00:20:00.000000Z','SOL',1.2), " +
+                "('2020-01-01T00:30:00.000000Z','BTC',1.3), ('2020-01-01T00:40:00.000000Z','ETH',1.4), ('2020-01-01T00:50:00.000000Z','SOL',1.5), " +
+                "('2020-01-02T00:00:00.000000Z','BTC',2.0), ('2020-01-02T00:10:00.000000Z','ETH',2.1), ('2020-01-02T00:20:00.000000Z','SOL',2.2), " +
+                "('2020-01-02T00:30:00.000000Z','BTC',2.3), ('2020-01-02T00:40:00.000000Z','ETH',2.4), ('2020-01-02T00:50:00.000000Z','SOL',2.5), " +
+                "('2020-01-03T00:00:00.000000Z','BTC',3.0), ('2020-01-03T00:10:00.000000Z','ETH',3.1), ('2020-01-03T00:20:00.000000Z','SOL',3.2), " +
+                "('2020-01-03T00:30:00.000000Z','BTC',3.3), ('2020-01-03T00:40:00.000000Z','ETH',3.4), ('2020-01-03T00:50:00.000000Z','SOL',3.5)";
+        execute("insert into ci" + rows);
+        execute("insert into pi" + rows);
         drainWalQueue();
     }
 }

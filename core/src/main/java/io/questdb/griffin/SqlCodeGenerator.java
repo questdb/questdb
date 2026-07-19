@@ -10244,8 +10244,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      *     execution into a cellKey set cached on the factory would go silently wrong were this same
      *     compiled factory later re-executed with a DIFFERENT bound value -- any such value aborts
      *     pruning for the WHOLE predicate, not just that one value.</li>
-     *     <li>the resolved allowed-cellKey set has size &gt; 1 -- see below. This is the one restriction
-     *     found empirically while grounding this task, not anticipated in the original design.</li>
+     *     <li>the resolved allowed-cellKey set has size &gt; 1 AND the dimension is NOT IDENTITY -- see
+     *     below. Found empirically while grounding this task, not anticipated in the original design;
+     *     narrowed again (IDENTITY exempted) by Task #26, also grounded empirically -- see the "Task #26
+     *     update" paragraph below.</li>
      * </ul>
      * A value that resolves to {@link SymbolTable#VALUE_NOT_FOUND} (never interned) contributes no
      * ordinal -- an all-not-found predicate still returns a non-null EMPTY set (correctly prunes to a
@@ -10273,6 +10275,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * auditing this whole separate family the way 6a/6b/6c audited the general-scan path is out of this
      * task's scope; left as a follow-up (mirrors the gate's own "Plan-7 follow-up" framing). A multi-value
      * predicate that happens to resolve to &lt;= 1 real cell (e.g. one value never interned) still prunes.
+     * <p>
+     * <b>Task #26 update:</b> the size &gt; 1 decline above now applies ONLY when the matched dimension's
+     * {@link PartitionDimension#getKind()} is NOT {@link PartitionDimension#KIND_IDENTITY}. An IDENTITY
+     * dimension's value&harr;cellKey map is bijective -- a cell can only ever hold rows for the ONE raw
+     * value that produced its ordinal (unlike HASH/TRUNCATE, which collapse multiple distinct raw values
+     * into a shared bucket/prefix) -- so a multi-cell IDENTITY set is ROW-EXACT with no residual filter
+     * needed at all. The caller ({@code generateTableQuery0}'s {@code keyColumn != null} block) does NOT
+     * hand a multi-cell IDENTITY prune to this unaudited row-cursor family in the first place -- it
+     * routes through Task 6a's own {@code CompositePageFrameRecordCursorFactory} merge instead (see
+     * {@code dimensionPrunedMultiCell} there), sidestepping the FilterOnValues cell-order hazard entirely
+     * rather than auditing it. HASH/TRUNCATE dimensions still decline size &gt; 1 exactly as before: ROW
+     * pruning is only safe as an ADDITIVE narrowing when the real row-level filter still applies on top
+     * (5b's original design), so a HASH/TRUNCATE multi-cell prune would need a RECONSTRUCTED residual IN
+     * filter to remain correct through a residual-free merge route -- DEFERRED, unimplemented.
      */
     private static @Nullable IntHashSet resolveDimensionCellPruneSet(
             TableReader reader,
@@ -10297,7 +10313,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 break;
             }
         }
-        if (dimIndex == -1 || partitionSpec.getDimension(dimIndex).getKind() == PartitionDimension.KIND_EXPRESSION) {
+        if (dimIndex == -1) {
+            return null;
+        }
+        final PartitionDimension dimension = partitionSpec.getDimension(dimIndex);
+        if (dimension.getKind() == PartitionDimension.KIND_EXPRESSION) {
             return null;
         }
 
@@ -10313,10 +10333,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         final IntHashSet allowedCellKeys = reader.resolveDimensionCellKeys(dimIndex, allowedOrdinals);
-        if (allowedCellKeys.size() > 1) {
-            // See this method's own doc for why: a genuine multi-cell prune is not safe through the
-            // UNCHANGED row-cursor factory family the code below still builds (unaudited for composite
-            // cross-cell ordering -- confirmed by reading FilterOnValuesRecordCursorFactory).
+        // Task #26: a genuine multi-cell prune is only safe to hand back here when the dimension is
+        // IDENTITY -- see this method's own "Task #26 update" doc. HASH/TRUNCATE dimensions collapse
+        // distinct raw values into shared buckets/prefixes, so neither the unaudited FilterOnValues
+        // family (5b's original finding) nor a residual-free merge (would silently include OTHER
+        // colliding raw values' rows) is safe for them -- they keep declining, unchanged, pending a
+        // reconstructed residual IN filter (DEFERRED).
+        if (allowedCellKeys.size() > 1 && dimension.getKind() != PartitionDimension.KIND_IDENTITY) {
             return null;
         }
         return allowedCellKeys;
@@ -10593,6 +10616,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // family below is not audited for composite cross-cell ORDER, only for correct rows) --
                     // and those cases fall through to 6b's gate below completely UNCHANGED.
                     boolean dimensionPruned = false;
+                    // Task #26: true only when the prune below succeeded with an allowed-cellKey set of
+                    // size > 1 -- which resolveDimensionCellPruneSet only ever returns for an IDENTITY
+                    // dimension (see its doc: HASH/TRUNCATE still decline and return null for size > 1,
+                    // unchanged from 5b). Steers control away from the row-cursor family below (see its
+                    // use just after the 6b gate).
+                    boolean dimensionPrunedMultiCell = false;
                     // Whole-branch review CRITICAL: never prune (never bypass 6b's gate) when a LATEST BY
                     // is present (latestByColumnCount > 0). This reaches keyColumn != null only when the
                     // LATEST ON PARTITION BY column IS this indexed dimension and the WHERE is an
@@ -10616,6 +10645,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (allowedCellKeys != null) {
                             dfcFactory.setAllowedCellKeys(allowedCellKeys);
                             dimensionPruned = true;
+                            dimensionPrunedMultiCell = allowedCellKeys.size() > 1;
                         }
                     }
 
@@ -10650,259 +10680,95 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(tableToken.getTableName()).put(", column=").put(intrinsicModel.keyColumn).put(']');
                     }
 
-                    if (intrinsicModel.keySubQuery != null) {
-                        RecordCursorFactory rcf = null;
-                        final Record.CharSequenceFunction func;
-                        Function filter;
-                        try {
-                            rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                            func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
-                            filter = compileFilter(intrinsicModel, queryMeta, executionContext);
-                        } catch (Throwable th) {
-                            Misc.free(rcf);
-                            throw th;
-                        }
-
-                        if (filter != null && filter.isConstant() && !filter.getBool(null)) {
-                            Misc.free(dfcFactory);
-                            return new EmptyTableRecordCursorFactory(queryMeta);
-                        }
-                        return new FilterOnSubQueryRecordCursorFactory(
-                                configuration,
-                                queryMeta,
-                                dfcFactory,
-                                rcf,
-                                keyColumnIndex,
-                                filter,
-                                func,
-                                columnIndexes,
-                                columnSizeShifts
-                        );
-                    }
-                    assert nKeyValues > 0 || nKeyExcludedValues > 0;
-
-                    boolean orderByKeyColumn = false;
-                    int indexDirection = IndexReader.DIR_FORWARD;
-                    // Skip the order-by-key-column shortcut when an outer time-series join
-                    // needs the master in timestamp order. Honoring the order-by advice would
-                    // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
-                    // /LT/WINDOW merge that assumes ts order.
-                    if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
-                        final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
-                        final int orderByAdviceSize = orderByAdvice.size();
-                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
-                            guardAgainstDotsInOrderByAdvice(model);
-                            // todo: when order by coincides with keyColumn and there is index we can incorporate
-                            //    ordering in the code that returns rows from index rather than having an
-                            //    "overhead" order by implementation, which would be trying to oder already ordered symbols
-                            if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                                queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    boolean orderByTimestamp = false;
-                    // we can use skip sorting by timestamp if we:
-                    // - query index with a single value or
-                    // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
-                    // it doesn't matter if we hit one or more partitions
-                    if (!orderByKeyColumn && isOrderByDesignatedTimestampOnly(model)) {
-                        int orderByDirection = getOrderByDirectionOrDefault(model, 0);
-                        if (nKeyValues == 1 || (nKeyValues > 1 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING)) {
-                            orderByTimestamp = true;
-
-                            if (orderByDirection == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                indexDirection = IndexReader.DIR_BACKWARD;
-                            }
-                        } else if (nKeyExcludedValues > 0 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
-                            orderByTimestamp = true;
-                        }
-                    }
-
-                    if (nKeyExcludedValues == 0) {
-                        Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
-                        if (filter != null && filter.isConstant()) {
+                    // Task #26: a successfully-pruned multi-cell IDENTITY set (dimensionPrunedMultiCell)
+                    // skips this ENTIRE row-cursor-family block (key sub-query / single-value / IN-list
+                    // via FilterOnValuesRecordCursorFactory / NOT-IN) -- none of it is needed, because the
+                    // cell prune above is already ROW-EXACT for IDENTITY (see resolveDimensionCellPruneSet's
+                    // doc), and FilterOnValues specifically is cell-order-UNSAFE for a genuine multi-cell
+                    // match (this method's own doc). intrinsicModel.filter (any OTHER, non-key residual
+                    // predicate, e.g. an AND'd `px > 2.05`) is left completely untouched here -- mirrors the
+                    // NOT-IN-too-many-values restore idiom below (fall through without returning), so
+                    // control reaches the general Task 6a merged-scan routing at the bottom of this method,
+                    // where model.setWhereClause(intrinsicModel.filter) applies it over the already-pruned
+                    // dfcFactory.
+                    if (!dimensionPrunedMultiCell) {
+                        if (intrinsicModel.keySubQuery != null) {
+                            RecordCursorFactory rcf = null;
+                            final Record.CharSequenceFunction func;
+                            Function filter;
                             try {
-                                if (!filter.getBool(null)) {
-                                    Misc.free(dfcFactory);
-                                    return new EmptyTableRecordCursorFactory(queryMeta);
-                                }
-                            } finally {
-                                filter = Misc.free(filter);
+                                rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                                func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+                                filter = compileFilter(intrinsicModel, queryMeta, executionContext);
+                            } catch (Throwable th) {
+                                Misc.free(rcf);
+                                throw th;
                             }
-                        }
 
-                        if (nKeyValues == 1) {
-                            final RowCursorFactory rcf;
-                            Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
-                            try {
-                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
-                                final int symbolKey = symbolFunc.isRuntimeConstant()
-                                        ? SymbolTable.VALUE_NOT_FOUND
-                                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
-
-                                if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
-                                    int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
-                                    int[] coveringMapping = buildCoveringIndexMapping(
-                                            reader, keyReaderColIdx, columnIndexes, queryMeta
-                                    );
-                                    if (coveringMapping != null) {
-                                        CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
-                                                queryMeta,
-                                                dfcFactory,
-                                                keyReaderColIdx,
-                                                symbolKey,
-                                                symbolFunc,
-                                                columnIndexes,
-                                                coveringMapping,
-                                                null,
-                                                null,
-                                                false,
-                                                null
-                                        );
-                                        // coveringFactory now owns dfcFactory and symbolFunc; clear our
-                                        // references so the outer catch and finally do not double-free them.
-                                        dfcFactory = null;
-                                        symbolFunc = null;
-                                        if (filter != null) {
-                                            return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
-                                        }
-                                        return coveringFactory;
-                                    }
-                                }
-
-                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    if (filter == null) {
-                                        rcf = new DeferredSymbolIndexRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolFunc,
-                                                indexDirection
-                                        );
-                                    } else {
-                                        rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolFunc,
-                                                filter,
-                                                indexDirection
-                                        );
-                                    }
-                                } else {
-                                    if (filter == null) {
-                                        rcf = new SymbolIndexRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolKey,
-                                                indexDirection,
-                                                null
-                                        );
-                                    } else {
-                                        rcf = new SymbolIndexFilteredRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolKey,
-                                                filter,
-                                                indexDirection,
-                                                null
-                                        );
-                                    }
-                                }
-
-                                if (filter == null) {
-                                    // This special case factory can later be disassembled to framing and index
-                                    // cursors in SAMPLE BY processing
-                                    RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
-                                            configuration,
-                                            keyColumnIndex,
-                                            symbolFunc,
-                                            rcf,
-                                            queryMeta,
-                                            dfcFactory,
-                                            orderByKeyColumn || orderByTimestamp,
-                                            columnIndexes,
-                                            columnSizeShifts,
-                                            supportsRandomAccess
-                                    );
-                                    symbolFunc = null;
-                                    return result;
-                                }
-                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    symbolFunc = null;
-                                }
-                                return new PageFrameRecordCursorFactory(
-                                        configuration,
-                                        queryMeta,
-                                        dfcFactory,
-                                        rcf,
-                                        orderByKeyColumn || orderByTimestamp,
-                                        filter,
-                                        false,
-                                        columnIndexes,
-                                        columnSizeShifts,
-                                        supportsRandomAccess,
-                                        false
-                                );
-                            } finally {
-                                Misc.free(symbolFunc);
+                            if (filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                Misc.free(dfcFactory);
+                                return new EmptyTableRecordCursorFactory(queryMeta);
                             }
-                        }
-
-                        // Check if covering index can serve IN-list queries
-                        if (!orderByKeyColumn && !SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
-                            int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
-                            int[] coveringMapping = buildCoveringIndexMapping(
-                                    reader, keyReaderColIdx, columnIndexes, queryMeta
+                            return new FilterOnSubQueryRecordCursorFactory(
+                                    configuration,
+                                    queryMeta,
+                                    dfcFactory,
+                                    rcf,
+                                    keyColumnIndex,
+                                    filter,
+                                    func,
+                                    columnIndexes,
+                                    columnSizeShifts
                             );
-                            if (coveringMapping != null) {
-                                CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
-                                        queryMeta,
-                                        dfcFactory,
-                                        keyReaderColIdx,
-                                        SymbolTable.VALUE_NOT_FOUND,
-                                        null,
-                                        columnIndexes,
-                                        coveringMapping,
-                                        intrinsicModel.keyValueFuncs,
-                                        reader,
-                                        false,
-                                        null
-                                );
-                                // coveringFactory now owns dfcFactory; clear our reference so the
-                                // outer catch does not double-free it.
-                                dfcFactory = null;
-                                if (filter != null) {
-                                    return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
+                        }
+                        assert nKeyValues > 0 || nKeyExcludedValues > 0;
+
+                        boolean orderByKeyColumn = false;
+                        int indexDirection = IndexReader.DIR_FORWARD;
+                        // Skip the order-by-key-column shortcut when an outer time-series join
+                        // needs the master in timestamp order. Honoring the order-by advice would
+                        // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
+                        // /LT/WINDOW merge that assumes ts order.
+                        if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
+                            final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
+                            final int orderByAdviceSize = orderByAdvice.size();
+                            if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                                guardAgainstDotsInOrderByAdvice(model);
+                                // todo: when order by coincides with keyColumn and there is index we can incorporate
+                                //    ordering in the code that returns rows from index rather than having an
+                                //    "overhead" order by implementation, which would be trying to oder already ordered symbols
+                                if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
+                                    queryMeta.setTimestampIndex(-1);
+                                    if (orderByAdviceSize == 1) {
+                                        orderByKeyColumn = true;
+                                    } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
+                                        orderByKeyColumn = true;
+                                        if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                                            indexDirection = IndexReader.DIR_BACKWARD;
+                                        }
+                                    }
                                 }
-                                return coveringFactory;
+                            }
+                        }
+                        boolean orderByTimestamp = false;
+                        // we can use skip sorting by timestamp if we:
+                        // - query index with a single value or
+                        // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
+                        // it doesn't matter if we hit one or more partitions
+                        if (!orderByKeyColumn && isOrderByDesignatedTimestampOnly(model)) {
+                            int orderByDirection = getOrderByDirectionOrDefault(model, 0);
+                            if (nKeyValues == 1 || (nKeyValues > 1 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING)) {
+                                orderByTimestamp = true;
+
+                                if (orderByDirection == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    indexDirection = IndexReader.DIR_BACKWARD;
+                                }
+                            } else if (nKeyExcludedValues > 0 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+                                orderByTimestamp = true;
                             }
                         }
 
-                        if (orderByKeyColumn) {
-                            queryMeta.setTimestampIndex(-1);
-                        }
-
-                        return new FilterOnValuesRecordCursorFactory(
-                                configuration,
-                                queryMeta,
-                                dfcFactory,
-                                intrinsicModel.keyValueFuncs,
-                                keyColumnIndex,
-                                reader,
-                                filter,
-                                model.getOrderByAdviceMnemonic(),
-                                orderByKeyColumn,
-                                orderByTimestamp,
-                                getOrderByDirectionOrDefault(model, 0),
-                                indexDirection,
-                                columnIndexes,
-                                columnSizeShifts
-                        );
-                    } else if (nKeyExcludedValues > 0) {
-                        if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                        if (nKeyExcludedValues == 0) {
                             Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                             if (filter != null && filter.isConstant()) {
                                 try {
@@ -10915,12 +10781,159 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
 
-                            return new FilterOnExcludedValuesRecordCursorFactory(
+                            if (nKeyValues == 1) {
+                                final RowCursorFactory rcf;
+                                Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
+                                try {
+                                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
+                                    final int symbolKey = symbolFunc.isRuntimeConstant()
+                                            ? SymbolTable.VALUE_NOT_FOUND
+                                            : symbolMapReader.keyOf(symbolFunc.getStrA(null));
+
+                                    if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
+                                        int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                                        int[] coveringMapping = buildCoveringIndexMapping(
+                                                reader, keyReaderColIdx, columnIndexes, queryMeta
+                                        );
+                                        if (coveringMapping != null) {
+                                            CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                                    queryMeta,
+                                                    dfcFactory,
+                                                    keyReaderColIdx,
+                                                    symbolKey,
+                                                    symbolFunc,
+                                                    columnIndexes,
+                                                    coveringMapping,
+                                                    null,
+                                                    null,
+                                                    false,
+                                                    null
+                                            );
+                                            // coveringFactory now owns dfcFactory and symbolFunc; clear our
+                                            // references so the outer catch and finally do not double-free them.
+                                            dfcFactory = null;
+                                            symbolFunc = null;
+                                            if (filter != null) {
+                                                return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
+                                            }
+                                            return coveringFactory;
+                                        }
+                                    }
+
+                                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                        if (filter == null) {
+                                            rcf = new DeferredSymbolIndexRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolFunc,
+                                                    indexDirection
+                                            );
+                                        } else {
+                                            rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolFunc,
+                                                    filter,
+                                                    indexDirection
+                                            );
+                                        }
+                                    } else {
+                                        if (filter == null) {
+                                            rcf = new SymbolIndexRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolKey,
+                                                    indexDirection,
+                                                    null
+                                            );
+                                        } else {
+                                            rcf = new SymbolIndexFilteredRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolKey,
+                                                    filter,
+                                                    indexDirection,
+                                                    null
+                                            );
+                                        }
+                                    }
+
+                                    if (filter == null) {
+                                        // This special case factory can later be disassembled to framing and index
+                                        // cursors in SAMPLE BY processing
+                                        RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                                                configuration,
+                                                keyColumnIndex,
+                                                symbolFunc,
+                                                rcf,
+                                                queryMeta,
+                                                dfcFactory,
+                                                orderByKeyColumn || orderByTimestamp,
+                                                columnIndexes,
+                                                columnSizeShifts,
+                                                supportsRandomAccess
+                                        );
+                                        symbolFunc = null;
+                                        return result;
+                                    }
+                                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                        symbolFunc = null;
+                                    }
+                                    return new PageFrameRecordCursorFactory(
+                                            configuration,
+                                            queryMeta,
+                                            dfcFactory,
+                                            rcf,
+                                            orderByKeyColumn || orderByTimestamp,
+                                            filter,
+                                            false,
+                                            columnIndexes,
+                                            columnSizeShifts,
+                                            supportsRandomAccess,
+                                            false
+                                    );
+                                } finally {
+                                    Misc.free(symbolFunc);
+                                }
+                            }
+
+                            // Check if covering index can serve IN-list queries
+                            if (!orderByKeyColumn && !SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
+                                int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                                int[] coveringMapping = buildCoveringIndexMapping(
+                                        reader, keyReaderColIdx, columnIndexes, queryMeta
+                                );
+                                if (coveringMapping != null) {
+                                    CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                            queryMeta,
+                                            dfcFactory,
+                                            keyReaderColIdx,
+                                            SymbolTable.VALUE_NOT_FOUND,
+                                            null,
+                                            columnIndexes,
+                                            coveringMapping,
+                                            intrinsicModel.keyValueFuncs,
+                                            reader,
+                                            false,
+                                            null
+                                    );
+                                    // coveringFactory now owns dfcFactory; clear our reference so the
+                                    // outer catch does not double-free it.
+                                    dfcFactory = null;
+                                    if (filter != null) {
+                                        return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
+                                    }
+                                    return coveringFactory;
+                                }
+                            }
+
+                            if (orderByKeyColumn) {
+                                queryMeta.setTimestampIndex(-1);
+                            }
+
+                            return new FilterOnValuesRecordCursorFactory(
                                     configuration,
                                     queryMeta,
                                     dfcFactory,
-                                    intrinsicModel.keyExcludedValueFuncs,
+                                    intrinsicModel.keyValueFuncs,
                                     keyColumnIndex,
+                                    reader,
                                     filter,
                                     model.getOrderByAdviceMnemonic(),
                                     orderByKeyColumn,
@@ -10928,34 +10941,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     getOrderByDirectionOrDefault(model, 0),
                                     indexDirection,
                                     columnIndexes,
-                                    columnSizeShifts,
-                                    configuration.getMaxSymbolNotEqualsCount()
+                                    columnSizeShifts
                             );
-                        } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
-                            // restore filter
-                            ExpressionNode root = intrinsicModel.keyExcludedNodes.getQuick(0);
+                        } else if (nKeyExcludedValues > 0) {
+                            if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                                Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
+                                if (filter != null && filter.isConstant()) {
+                                    try {
+                                        if (!filter.getBool(null)) {
+                                            Misc.free(dfcFactory);
+                                            return new EmptyTableRecordCursorFactory(queryMeta);
+                                        }
+                                    } finally {
+                                        filter = Misc.free(filter);
+                                    }
+                                }
 
-                            for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
-                                ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
+                                return new FilterOnExcludedValuesRecordCursorFactory(
+                                        configuration,
+                                        queryMeta,
+                                        dfcFactory,
+                                        intrinsicModel.keyExcludedValueFuncs,
+                                        keyColumnIndex,
+                                        filter,
+                                        model.getOrderByAdviceMnemonic(),
+                                        orderByKeyColumn,
+                                        orderByTimestamp,
+                                        getOrderByDirectionOrDefault(model, 0),
+                                        indexDirection,
+                                        columnIndexes,
+                                        columnSizeShifts,
+                                        configuration.getMaxSymbolNotEqualsCount()
+                                );
+                            } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
+                                // restore filter
+                                ExpressionNode root = intrinsicModel.keyExcludedNodes.getQuick(0);
 
-                                OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
-                                ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
-                                newRoot.paramCount = 2;
-                                newRoot.lhs = expression;
-                                newRoot.rhs = root;
+                                for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
+                                    ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
 
-                                root = newRoot;
-                            }
+                                    OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                                    ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
+                                    newRoot.paramCount = 2;
+                                    newRoot.lhs = expression;
+                                    newRoot.rhs = root;
 
-                            if (intrinsicModel.filter == null) {
-                                intrinsicModel.filter = root;
-                            } else {
-                                OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
-                                ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
-                                filter.paramCount = 2;
-                                filter.lhs = intrinsicModel.filter;
-                                filter.rhs = root;
-                                intrinsicModel.filter = filter;
+                                    root = newRoot;
+                                }
+
+                                if (intrinsicModel.filter == null) {
+                                    intrinsicModel.filter = root;
+                                } else {
+                                    OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                                    ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
+                                    filter.paramCount = 2;
+                                    filter.lhs = intrinsicModel.filter;
+                                    filter.rhs = root;
+                                    intrinsicModel.filter = filter;
+                                }
                             }
                         }
                     }

@@ -121,7 +121,18 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     @Override
     public long size() {
-        return reader.size();
+        // Task #26: allowedCellKeys pruning narrows the actual visited row set below reader.size() (the
+        // WHOLE table's cheap cached total) -- a cheap, accurate PRUNED count isn't available here (that
+        // is exactly what the separate, allowed-to-be-slower calculateSize(Counter) is for, see
+        // FullFwd/BwdPartitionFrameCursor), so report -1 (undetermined) rather than the wrong, too-large
+        // reader.size() -- mirrors AbstractIntervalPartitionFrameCursor's own size(), which always
+        // honestly returns -1 for the identical reason. Every pre-#26 caller of setAllowedCellKeys only
+        // ever paired it with a row-filtering RowCursorFactory (isEntity()==false, e.g.
+        // SymbolIndexRowCursorFactory), which already made PageFrameRecordCursorImpl.size() report -1
+        // regardless of this method; Task #26's multi-cell IDENTITY prune is the first to pair pruning
+        // with an ENTITY row cursor (PageFrameRowCursorFactory, the general 6a merge routing), the first
+        // caller for which this method's own return value becomes observable.
+        return allowedCellKeys == null ? reader.size() : -1;
     }
 
     @Override
