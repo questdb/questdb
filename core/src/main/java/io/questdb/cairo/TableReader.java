@@ -588,6 +588,42 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
+     * Same find-floor search as {@link #getPartitionIndexByTimestamp(long)}, but for an exact match
+     * resolves to the HIGHEST partition index sharing that timestamp instead of the lowest -- i.e. a
+     * composite table's LAST cell (highest cellKey) of the matched day, rather than its first (cellKey
+     * 0). Used exclusively for interval-scan high-boundary resolution (see {@code
+     * AbstractIntervalPartitionFrameCursor#cullPartitions}) so every sibling cell of the highest matched
+     * day is included in {@code [partitionLo, partitionHi)}.
+     * <p>
+     * This is provably identical to {@link #getPartitionIndexByTimestamp(long)} in every case except an
+     * exact match against a multi-entry (multi-cell) run:
+     * <ul>
+     *     <li>NOT-FOUND (timestamp strictly between two days, e.g. a gap day, or before/after every
+     *     partition): {@code LongList#binarySearchBlock}'s scan-up and scan-down both fall through to
+     *     the same linear {@code scanUpBlock}/{@code scanDownBlock} tail search, which normalizes to the
+     *     identical insertion-point index regardless of direction -- there is no equal run to resolve
+     *     differently.</li>
+     *     <li>EXACT match, single-entry run (every day of a PLAIN table, since it has exactly one cell):
+     *     {@code scrollUpBlock}/{@code scrollDownBlock} both degenerate to that same single index --
+     *     there are no neighbouring equal entries for either direction to walk past.</li>
+     * </ul>
+     * Only an exact match against a multi-entry run (a composite table's multi-cell day) resolves
+     * differently -- {@code scrollUpBlock} walks to the lowest index of the run, {@code scrollDownBlock}
+     * to the highest. Do NOT alter {@link #getPartitionIndexByTimestamp(long)} itself -- it has other,
+     * floor-search callers (e.g. the interval low boundary, which is already correct: cellKey 0 is the
+     * lowest index of the low day, so starting there already includes that day's every sibling cell).
+     */
+    public int getPartitionIndexByTimestampScanDown(long timestamp) {
+        int end = openPartitionInfo.binarySearchBlock(PARTITIONS_SLOT_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_DOWN);
+        if (end < 0) {
+            // This will return -1 if searched timestamp is before the first partition
+            // The caller should handle negative return values
+            return (-end - 2) / PARTITIONS_SLOT_SIZE;
+        }
+        return end / PARTITIONS_SLOT_SIZE;
+    }
+
+    /**
      * Pretty convoluted logic to calculate upper timestamp bound of the given partition, e.g., by partition index.
      * First thing of note - the upper-bound value is inclusive, it must be a value that will be able to reside in the
      * partition.

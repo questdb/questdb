@@ -203,7 +203,13 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         }
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
-        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
+        // High boundary must resolve to the LAST (highest cellKey) partition sharing intervalHi's
+        // timestamp, not the first -- a composite table's multi-cell day would otherwise have its
+        // cellKey >= 1 siblings excluded by the "+1" below. getPartitionIndexByTimestampScanDown is
+        // byte-identical to getPartitionIndexByTimestamp for a plain table (one cell/day) and for any
+        // not-found (between-days) boundary -- see TableReader#getPartitionIndexByTimestampScanDown's
+        // own javadoc.
+        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestampScanDown(intervalHi) + 1);
     }
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
