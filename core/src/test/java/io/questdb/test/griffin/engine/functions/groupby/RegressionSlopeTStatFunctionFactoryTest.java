@@ -31,7 +31,7 @@ public class RegressionSlopeTStatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegrSlopeTStatAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select regr_slope_tstat(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))")
+        assertMemoryLeak(() -> assertQuery("select regr_slope_tstat(y, x) from (select null::double x, null::double y from long_sequence(100))")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -41,7 +41,7 @@ public class RegressionSlopeTStatFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrSlopeTStatConstantX() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select 5.0 x, cast(x as double) y from long_sequence(100))");
+            execute("create table tbl1 as (select 5.0 x, x::double y from long_sequence(100))");
             assertQuery("select regr_slope_tstat(y, x) from tbl1")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -64,7 +64,7 @@ public class RegressionSlopeTStatFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrSlopeTStatPerfectFit() throws Exception {
         // A perfect fit leaves the standard error at zero, so the t-statistic is NULL.
         assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select cast(x as double) x, cast(2 * x + 1 as double) y from long_sequence(100))");
+            execute("create table tbl1 as (select x::double x, (2 * x + 1)::double y from long_sequence(100))");
             assertQuery("select regr_slope_tstat(y, x) from tbl1")
                     .noLeakCheck()
                     .noRandomAccess()

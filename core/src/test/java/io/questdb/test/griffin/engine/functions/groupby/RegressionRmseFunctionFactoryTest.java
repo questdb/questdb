@@ -31,7 +31,7 @@ public class RegressionRmseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegrRmseAllNull() throws Exception {
-        assertMemoryLeak(() -> assertQuery("select regr_rmse(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))")
+        assertMemoryLeak(() -> assertQuery("select regr_rmse(y, x) from (select null::double x, null::double y from long_sequence(100))")
                 .noLeakCheck()
                 .noRandomAccess()
                 .expectSize()
@@ -42,7 +42,7 @@ public class RegressionRmseFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrRmseConstantX() throws Exception {
         // X does not vary, so no regression line exists and the result is NULL.
         assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select 5.0 x, cast(x as double) y from long_sequence(100))");
+            execute("create table tbl1 as (select 5.0 x, x::double y from long_sequence(100))");
             assertQuery("select regr_rmse(y, x) from tbl1")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -77,7 +77,7 @@ public class RegressionRmseFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrRmsePerfectFit() throws Exception {
         // y = 2x + 1 has zero residuals, so RMSE is exactly 0.
         assertMemoryLeak(() -> {
-            execute("create table tbl1 as (select cast(x as double) x, cast(2 * x + 1 as double) y from long_sequence(100))");
+            execute("create table tbl1 as (select x::double x, (2 * x + 1)::double y from long_sequence(100))");
             assertQuery("select regr_rmse(y, x) from tbl1")
                     .noLeakCheck()
                     .noRandomAccess()
