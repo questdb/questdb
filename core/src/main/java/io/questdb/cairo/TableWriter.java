@@ -11406,55 +11406,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                             final int groupLen = groupEnd - groupStart + 1;
 
-                            // Task 6c (read-side differential capstone) discovery, NOT a read-side
-                            // regression: this scratch-buffer regrouping path silently corrupts
-                            // non-timestamp column data when a single group both (a) carries 2+ rows
-                            // AND (b) genuinely MERGES into a cell that already has committed data (a real
-                            // O3_BLOCK_MERGE -- new rows reach at or below the cell's existing max ts). The
-                            // 2nd (or later) row of such a group silently loses its own non-timestamp
-                            // column values, gaining a duplicate of a LATER row's values instead
-                            // (timestamps themselves stay correct). Root cause is deeper in the
-                            // O3PartitionJob merge path than this method; not fixed here -- loud gate per
-                            // this class's own established "explicit, loud (not silent) scope boundaries"
-                            // precedent (REPLACE mode / FORMAT PARQUET / var-size columns above) rather
-                            // than risk an unsafe fix to the async merge internals. Workaround: issue the
-                            // out-of-order rows for each already-populated cell in its OWN separate commit
-                            // instead of one combined multi-cell commit (proven safe -- see
-                            // CompositeRoutingTest's existing single-cell extend coverage).
+                            // Every group here is correct regardless of size and regardless of whether it
+                            // genuinely MERGES into a cell that already has committed data (a real
+                            // O3_BLOCK_MERGE), is a pure in-order append/prepend, or targets a brand-new
+                            // cell: buildCompositeCellGroupScratch's scratch ts-index stores each row's
+                            // LOCAL, 0-based position in its .i (rowid) field, exactly matching the
+                            // scratchColumn[j] gather loop it feeds, so the native merge-shuffle path
+                            // (when a genuine merge triggers it) always reads the right slot. See that
+                            // method's own docs for the full mechanism.
                             //
-                            // CRITICAL: gate ONLY the genuine merge, not a pure in-order APPEND. A group
-                            // of 2+ rows whose MIN ts is strictly AFTER the cell's existing max is an
-                            // O3_BLOCK_APPEND (O3PartitionJob's suffix-append branch, never the merge
-                            // path) and is byte-identical to a plain twin -- empirically proven (Part B of
-                            // Task 6c review) by CompositeMultiCellMergeGateTest#
-                            // testMultiCellInOrderAppendIntoExistingCellsIsNotGated. Gating that append
-                            // would throw on the ROUTINE continuous multi-cell batch-ingest path (a plain
-                            // INSERT spanning several already-populated cells, 2+ rows/cell), crippling
-                            // composite ingestion. So the gate reads the cell's real existing max ts and
-                            // fires only when the new rows actually reach into or below it.
-                            if (groupLen > 1) {
-                                final int gatePartitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, groupCellKey);
-                                final long gateSrcDataMax = gatePartitionIndexRaw > -1 ? getPartitionSizeByRawIndex(gatePartitionIndexRaw) : 0;
-                                if (gateSrcDataMax > 0) {
-                                    // order[] is stable-sorted by cellKey over a ts-ascending batch, so
-                                    // order[groupStart] is this group's MIN-ts row (see the sort above).
-                                    final long groupMinTs = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo + order[groupStart]);
-                                    final long gateNameTxn = getPartitionNameTxnByRawIndex(gatePartitionIndexRaw);
-                                    final long existingCellMax = readCompositeCellMaxTimestamp(
-                                            partitionTimestamp, groupCellKey, gateNameTxn, gateSrcDataMax, cellSegmentSink);
-                                    if (groupMinTs <= existingCellMax) {
-                                        throw CairoException.critical(0)
-                                                .put("composite partitioning does not yet support 2 or more out-of-order rows landing in the same already-populated cell within one interleaved multi-cell commit [table=")
-                                                .put(tableToken.getTableName())
-                                                .put(", cellKey=").put(groupCellKey)
-                                                .put(", groupLen=").put(groupLen)
-                                                .put(", newRowsMinTs=").put(groupMinTs)
-                                                .put(", existingCellMax=").put(existingCellMax)
-                                                .put(']');
-                                    }
-                                }
-                            }
-
+                            // This used to be loud-gated here (throw) for any group with 2+ rows
+                            // genuinely merging into an already-populated cell -- the scratch ts-index
+                            // instead stored each row's ABSOLUTE position in the original O3 batch, which
+                            // the native merge-shuffle path (when it copied that index verbatim into its
+                            // own merge index) read back as a scratch-column position, landing on the
+                            // wrong -- later, or out-of-bounds -- row of the tiny per-group scratch buffer
+                            // (follow-up task #25; the workaround was issuing each already-populated
+                            // cell's out-of-order rows in its own separate commit instead of one combined
+                            // multi-cell commit). Fixed at the source, so the gate is gone.
                             if (compositeScratchColumnsToFree == null) {
                                 compositeScratchColumnsToFree = new ObjList<>();
                                 compositeScratchRawBuffersToFree = new LongList();
@@ -11669,37 +11638,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 cellKey
         );
         return 1;
-    }
-
-    /**
-     * Reads the maximum (last) designated-timestamp value already committed to one composite cell's
-     * on-disk timestamp column. Used only by {@link #processO3BlockComposite}'s multi-cell regroup gate
-     * to distinguish a genuine {@code O3_BLOCK_MERGE} (new rows reach at or below this value -- unsafe,
-     * gated) from a pure in-order {@code O3_BLOCK_APPEND} (all new rows strictly after it -- safe, not
-     * gated): the {@link O3PartitionJob} append-vs-merge decision itself pivots on exactly this
-     * comparison ({@code o3TimestampLo} vs the partition's {@code dataTimestampHi}). The designated
-     * timestamp column is dense and monotonically non-decreasing, so its last element is the cell's max.
-     * The (partitionTimestamp, cellKey, nameTxn, cellSize) tuple is resolved identically to {@link
-     * #dispatchCompositeCellRange}'s own {@code srcDataMax}/{@code srcNameTxn}; the read idiom mirrors
-     * {@link #o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp} (native, non-parquet cell
-     * -- FORMAT PARQUET is rejected before any row of a composite commit is dispatched).
-     *
-     * @param partitionTimestamp the day (partition floor) of the cell
-     * @param cellKey            the cell's key within that day
-     * @param nameTxn            the cell's partition name-txn suffix (its attached-partition record)
-     * @param cellSize           the cell's committed row count (caller guarantees {@code > 0})
-     * @param cellSegmentSink    scratch sink for rendering the cell segment (clobbered)
-     */
-    private long readCompositeCellMaxTimestamp(long partitionTimestamp, int cellKey, long nameTxn, long cellSize, StringSink cellSegmentSink) {
-        cellSegmentSink.clear();
-        renderCellSegment(cellSegmentSink, cellKey);
-        try {
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, nameTxn, cellSegmentSink);
-            dFile(other, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
-            return readLongAtOffset(ff, other.$(), tempMem16b, (cellSize - 1) * Long.BYTES);
-        } finally {
-            other.trimTo(pathSize);
-        }
     }
 
     /**
@@ -12199,8 +12137,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * including the timestamp column's own on-disk bytes -- confirmed directly against both {@code
      * O3OpenColumnJob}'s and {@code O3PartitionJob}'s identical {@code (i == timestampIndex) ?
      * sortedTimestampsAddr : oooMem1.addressOf(0)} convention -- gets the correct value); the {@code
-     * rowid} field is unused downstream (nothing re-gathers FROM this already-materialized scratch
-     * buffer) and is filled with the row's original absolute index purely for debuggability.
+     * rowid} ({@code .i}) field is NOT unused (follow-up task #25 -- this javadoc used to claim it was;
+     * that was the root cause of a real silent-corruption bug). On a genuine {@code O3_BLOCK_MERGE}
+     * (this cell's new row(s) genuinely interleave with data it already has on disk), {@code
+     * O3PartitionJob#createMergeIndex} / the native {@code binary_merge_ts_long_index} copies each of
+     * this index's out-of-order entries VERBATIM -- {@code .ts} AND {@code .i} -- into its own merge
+     * index, and the native {@code merge_shuffle_vanilla} then does {@code dest[k] =
+     * scratchColumn[index[k].i]} to pick this row's non-timestamp values back out of the scratch column
+     * buffers built below (0-based, exactly {@code groupLen} elements each). So {@code .i} MUST hold
+     * this row's LOCAL, 0-based position {@code j} within THIS scratch -- the same {@code j} the gather
+     * loop below indexes {@code scratchColumn} with -- never its position in the original O3 batch;
+     * otherwise that lookup lands on the wrong (later, or out-of-bounds) row of the tiny scratch buffer.
+     * The timestamp itself always stayed correct even with the bug, because the merged {@code ts} is
+     * read from this index's own inline {@code .ts} field, never derived from {@code .i}.
      * <p>
      * Every other LIVE, FIXED-size column (dimension or not) is gathered via a plain per-row
      * {@link Vect#memcpy} of exactly that column's element width -- width-agnostic, so it uniformly
@@ -12233,7 +12182,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long absoluteRow = srcOooLo + order[groupStart + j];
             long ts = getTimestampIndexValue(sortedTimestampsAddr, absoluteRow);
             Unsafe.putLong(tsIndexAddr + ((long) j << 4), ts);
-            Unsafe.putLong(tsIndexAddr + ((long) j << 4) + 8, absoluteRow);
+            // .i must be this row's LOCAL, 0-based position within THIS scratch (matching the
+            // scratchColumn[j] gather loop just below) -- NOT its absolute position in the original O3
+            // batch. Task #25: the native merge-shuffle path derefs this field to pick a row's
+            // non-timestamp values out of the scratch column buffers below; see this method's own docs.
+            Unsafe.putLong(tsIndexAddr + ((long) j << 4) + 8, (long) j);
         }
 
         final ObjList<MemoryCR> scratchColumns = new ObjList<>(columnCount * 2);

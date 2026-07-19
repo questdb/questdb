@@ -25,76 +25,92 @@
 package io.questdb.test.cairo;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * Composite partitioning WRITE-side safety: a single O3 commit whose out-of-order rows genuinely
- * INTERLEAVE across 2+ ALREADY-populated cells of one day, where 2+ of those new rows land in the SAME
- * cell, must be LOUD-GATED ({@code CairoException}, table suspended) -- never silently corrupt that
- * cell's non-timestamp column data.
+ * INTERLEAVE across 2+ ALREADY-populated cells of one day must write CORRECT non-timestamp column data,
+ * even when 2+ of those new rows land in the SAME already-populated cell (a genuine O3_BLOCK_MERGE) --
+ * byte-identical to a plain (non-composite) twin table fed the exact same commits.
  * <p>
- * <b>The bug this gate guards against is REAL and was isolated empirically</b> (found while developing
- * {@code io.questdb.test.griffin.CompositeReadEndToEndTest}, the read-side capstone). In
- * {@code TableWriter#processO3BlockComposite}'s multi-cellKey regrouping path, WITHOUT this gate, the
- * 2nd (and later) row of such a group silently LOST its own non-timestamp column values, instead gaining
- * a duplicate of a LATER row's values -- the row's own designated timestamp stayed correct, so no rows
- * vanished and the row count stayed right, but the payload was wrong. Concrete negative-control repro
- * (gate absent): bulk 4 rows across cells X/Y, then ONE commit adding out-of-order rows
- * {@code (00:30 X A 900), (02:30 X C 901), (01:30 Y A 902), (03:30 Y C 903)} produced, for the Y cell,
- * {@code 01:30 -> Y C 903} (should have been {@code Y A 902}) and {@code 03:30 -> Y C 903} -- i.e. the
- * 01:30 row's own {@code (sym=A, px=902)} was overwritten with the 03:30 row's {@code (sym=C, px=903)}.
+ * <b>History (why this class exists):</b> {@code TableWriter#processO3BlockComposite}'s multi-cellKey
+ * regrouping path used to silently corrupt non-timestamp column data for this shape. Root cause
+ * (follow-up task #25, confirmed to the native merge-shuffle level): {@code
+ * buildCompositeCellGroupScratch} gathers each group's non-timestamp columns into a LOCAL, 0-based
+ * scratch buffer ({@code scratchColumn[j]}, {@code j} in {@code [0, groupLen)}) but used to write the
+ * row's ORIGINAL, batch-ABSOLUTE position into the scratch timestamp-index's {@code rowid} ({@code .i})
+ * field instead of that same local {@code j}. On a genuine merge, {@code O3PartitionJob}'s native merge
+ * path ({@code createMergeIndex} / {@code binary_merge_ts_long_index}) copies each out-of-order
+ * {@code index_t} entry -- {@code .ts} AND {@code .i} -- verbatim into the merge index, and
+ * {@code merge_shuffle_vanilla} then does {@code dest[k] = scratchColumn[index[k].i]}: with the absolute
+ * row in {@code .i}, that reads the WRONG (later, or out-of-bounds) slot of the tiny
+ * {@code groupLen}-sized scratch buffer instead of the row's own local slot {@code j}. Timestamps
+ * themselves always stayed correct (the merged {@code ts} comes from the index's inline {@code ts}
+ * field, never {@code .i}). Concrete negative-control repro (bug present, gate/fix both absent): bulk 4
+ * rows across cells X/Y, then ONE commit adding out-of-order rows {@code (00:30 X A 900), (02:30 X C
+ * 901), (01:30 Y A 902), (03:30 Y C 903)} produced, for the Y cell, {@code 01:30 -> Y C 903} (should have
+ * been {@code Y A 902}) and {@code 03:30 -> Y C 903} -- i.e. the 01:30 row's own {@code (sym=A, px=902)}
+ * was overwritten with the 03:30 row's {@code (sym=C, px=903)}.
  * <p>
- * The root cause is deeper in the {@link io.questdb.cairo.O3PartitionJob} async merge-into-existing-data
- * internals than the composite dispatch layer itself (the per-cell scratch buffers
- * {@code buildCompositeCellGroupScratch} hands off were verified correct by manual trace) -- too deep and
- * too performance-critical to fix safely within the read-side task that found it. It is therefore
- * LOUD-GATED rather than fixed, mirroring the "explicit, loud (not silent) scope boundaries" precedent
- * {@code processO3BlockComposite} already sets for REPLACE mode / FORMAT PARQUET / var-size columns.
+ * This shape was initially LOUD-GATED ({@code CairoException}, table suspended) rather than fixed, as an
+ * "explicit, loud (not silent) scope boundary" (mirroring the REPLACE mode / FORMAT PARQUET / var-size
+ * column precedents {@code processO3BlockComposite} already sets) -- the root cause was believed to be
+ * deeper in the async merge internals than it actually was. Follow-up task #25 traced it to the single
+ * {@code buildCompositeCellGroupScratch} line above and fixed it (store the LOCAL position {@code j} in
+ * the {@code .i} field, unconditionally for every group regardless of size) -- this {@code groupLen > 1}
+ * shape is now proven correct and the gate is REMOVED. (Task #25 also investigated whether the narrower
+ * {@code groupLen == 1} case -- a singleton group whose one new row's ts is at or below its cell's
+ * existing max -- was an ungated live corruption too, since the old gate only ever fired for {@code
+ * groupLen > 1}; it is NOT, for a reason specific to that group size -- see {@code
+ * CompositeMultiCellMergeTest}'s class javadoc for the full account. The {@code .i = j} fix still applies
+ * to {@code groupLen == 1} groups unconditionally, pre-emptively closing that path too.)
  * <p>
- * <b>The trigger is narrow</b> -- empirically isolated to exactly "a cellKey GROUP with 2+ rows that
- * genuinely MERGE into a cell with already-committed data", i.e. the group's MIN new ts reaches at or
- * below that cell's existing max ts (a real O3_BLOCK_MERGE). FOUR neighbouring shapes are PROVEN SAFE and
- * are NOT gated (each confirmed correct via its own minimal repro): a single-cellKey commit extending one
- * existing cell with 2+ out-of-order rows (never uses the regrouping path); a multi-cell commit where
- * every group has exactly 1 new row; a multi-cell commit where the 2+-row group targets a genuinely
- * BRAND-NEW cell (no existing data); and -- the crucial one, Part B of the Task 6c review -- a multi-cell
- * commit where each 2+-row group is a pure IN-ORDER APPEND into its existing cell (every new row strictly
- * AFTER that cell's existing max), which is the ROUTINE continuous batch-ingest shape and takes
- * O3PartitionJob's suffix-append branch rather than the merge path (see
- * {@link #testMultiCellInOrderAppendIntoExistingCellsIsNotGated}). Gating that append would have crippled
- * normal composite ingestion, so the gate reads the cell's real existing max ts (see
- * {@code TableWriter#readCompositeCellMaxTimestamp}) and fires only on a genuine merge. The documented
- * workaround for the gated (merge) case is to issue each already-populated cell's out-of-order rows in its
- * OWN separate commit -- exactly what {@code CompositeReadEndToEndTest}'s lifecycle builders do.
+ * <b>Proven-safe neighbours</b> (were never gated, remain correct, regression-pinned below): a
+ * single-cellKey commit extending one existing cell with 2+ out-of-order rows (never uses the regrouping
+ * path); a multi-cell commit where every group has exactly 1 new row; a multi-cell commit where the
+ * 2+-row group targets a genuinely BRAND-NEW cell (no existing data); and a multi-cell commit where each
+ * 2+-row group is a pure IN-ORDER APPEND into its existing cell (every new row strictly AFTER that cell's
+ * existing max), the ROUTINE continuous batch-ingest shape, which takes {@code O3PartitionJob}'s
+ * suffix-append branch rather than the merge path and so was never exposed to the {@code .i} bug either.
  */
 public class CompositeMultiCellMergeGateTest extends AbstractCairoTest {
 
+    /**
+     * The FORMERLY-gated shape (follow-up task #25): a cellKey group with 2+ rows genuinely merges into
+     * an already-populated cell inside an interleaved multi-cell commit. Must now SUCCEED (no suspension)
+     * and match a plain (non-composite) twin table fed the identical two commits, exactly -- not merely
+     * "does not throw".
+     */
     @Test
-    public void testMultiCellMultiRowMergeIntoExistingCellsIsLoudGated() throws Exception {
+    public void testMultiCellMultiRowMergeIntoExistingCellsMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table g (ts timestamp, exch symbol, sym symbol, px double) timestamp(ts) partition by day, exch wal");
-            execute("insert into g values " +
+            execute("create table gp (ts timestamp, exch symbol, sym symbol, px double) timestamp(ts) partition by day wal");
+
+            final String bulk = " values " +
                     "('2020-04-01T00:00:00.000000Z','X','B',1.0), ('2020-04-01T01:00:00.000000Z','Y','C',2.0), " +
-                    "('2020-04-01T02:00:00.000000Z','X','A',3.0), ('2020-04-01T03:00:00.000000Z','Y','B',4.0)");
+                    "('2020-04-01T02:00:00.000000Z','X','A',3.0), ('2020-04-01T03:00:00.000000Z','Y','B',4.0)";
+            execute("insert into g" + bulk);
+            execute("insert into gp" + bulk);
             drainWalQueue();
             Assert.assertFalse("g must not be suspended after the bulk commit",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("g")));
 
             // ONE commit, genuinely interleaved across BOTH already-populated cells (X and Y), 2 new
-            // out-of-order rows landing in EACH cell -- the exact gated shape. WITHOUT the gate this
-            // silently corrupts the Y cell's 2nd row (see class javadoc's negative-control detail).
-            execute("insert into g values " +
+            // out-of-order rows landing in EACH cell -- the shape task #25's fix makes correct (formerly
+            // loud-gated; see class javadoc for the exact corruption this used to produce without a fix
+            // or a gate).
+            final String merge = " values " +
                     "('2020-04-01T00:30:00.000000Z','X','A',900.0), ('2020-04-01T02:30:00.000000Z','X','C',901.0), " +
-                    "('2020-04-01T01:30:00.000000Z','Y','A',902.0), ('2020-04-01T03:30:00.000000Z','Y','C',903.0)");
+                    "('2020-04-01T01:30:00.000000Z','Y','A',902.0), ('2020-04-01T03:30:00.000000Z','Y','C',903.0)";
+            execute("insert into g" + merge);
+            execute("insert into gp" + merge);
             drainWalQueue();
 
-            Assert.assertTrue("g must be suspended by the multi-cell multi-row merge gate, not silently corrupted",
+            Assert.assertFalse("g must not be suspended -- task #25's fix makes this genuine merge correct, not gated",
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("g")));
-            printSql("select errorMessage from wal_tables() where name = 'g'");
-            TestUtils.assertContains(sink,
-                    "composite partitioning does not yet support 2 or more out-of-order rows landing in the same already-populated cell within one interleaved multi-cell commit");
+            assertSqlCursors("select * from gp order by ts", "select * from g order by ts");
         });
     }
 
