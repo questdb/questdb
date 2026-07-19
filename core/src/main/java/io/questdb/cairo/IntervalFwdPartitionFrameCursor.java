@@ -124,6 +124,13 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         // Fragment, but a sibling cell of the same day (composite table) still needs
                         // its own chance to be checked against this SAME interval -- mirrors next()'s
                         // own fix (Task 6c finding), see this class's javadoc.
+                        // Task 6c review Part A: symmetric with next() -- gate the unsupported
+                        // multiple-sub-day-intervals-over-one-multi-cell-day shape so count() agrees with
+                        // the row scan (both throw) rather than silently miscounting the dropped rows.
+                        if (intervalsLo1 + 1 < intervalsHi1
+                                && intervals.getQuick((intervalsLo1 + 1) * 2) <= partitionTimestampHiExact) {
+                            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                        }
                         partitionLimit1 = -1;
                         partitionLo1++;
                     } else {
@@ -263,6 +270,19 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         // table's partitionLo+1 is always the NEXT DAY, never a same-timestamp sibling,
                         // so this branch is unreachable there) -- kept unconditional rather than gated on
                         // composite detection, mirroring 233532984f's own precedent.
+                        //
+                        // Task 6c review Part A: the SINGLE-interval sibling visit above is correct, but
+                        // 2+ intervals over this SAME multi-cell day are not yet supported -- advancing
+                        // partitionLo to the sibling ABANDONS this fragmented cell (its rows past intervalHi
+                        // are unconsumed), and monotonic partitionLo can never revisit it for a LATER
+                        // interval. If that later interval reaches into this cell's own span (its lo <= this
+                        // cell's exact max ts) those leftover rows would be SILENTLY dropped -- gate loudly
+                        // instead (proven to fire on exactly the drop cases, never on a correct multi-DAY
+                        // date-list). See AbstractIntervalPartitionFrameCursor#multipleSubDayIntervalsOverMultiCellDayUnsupported.
+                        if (intervalsLo + 1 < intervalsHi
+                                && intervals.getQuick((intervalsLo + 1) * 2) <= partitionTimestampHiExact) {
+                            throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                        }
                         partitionLimit = 0;
                         partitionLo++;
                     } else {

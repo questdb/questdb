@@ -127,6 +127,13 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     // Fragment, but a sibling cell of the same day (composite table) still needs its
                     // own chance to be checked against this SAME interval -- mirrors next()'s own fix
                     // (Task 6c finding), see this class's javadoc.
+                    // Task 6c review Part A: symmetric with next() -- gate the unsupported
+                    // multiple-sub-day-intervals-over-one-multi-cell-day shape so count() agrees with the
+                    // backward row scan (both throw) rather than silently miscounting the dropped rows.
+                    if (currentInterval - 1 >= intervalsLo1
+                            && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
+                        throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                    }
                     partitionHi1 = currentPartition;
                     partitionLimit1 = -1;
                 } else {
@@ -238,6 +245,17 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     // plain table (currentPartition - 1 is always the PREVIOUS DAY there, never a
                     // same-timestamp sibling) -- kept unconditional, mirroring 233532984f's own
                     // precedent.
+                    //
+                    // Task 6c review Part A (symmetric with the forward cursor): 2+ intervals over this
+                    // SAME multi-cell day are not yet supported. Skipping to the sibling ABANDONS this
+                    // fragmented cell's leftover rows (those BELOW lo, i.e. below intervalLo), and the
+                    // monotonic backward walk can never revisit it for a LOWER (later-in-scan) interval.
+                    // If that lower interval reaches into this cell's own span (its hi >= this cell's exact
+                    // MIN ts) those leftover rows would be SILENTLY dropped -- gate loudly instead.
+                    if (currentInterval - 1 >= intervalsLo
+                            && intervals.getQuick((currentInterval - 1) * 2 + 1) >= partitionTimestampLoExact) {
+                        throw multipleSubDayIntervalsOverMultiCellDayUnsupported();
+                    }
                     skipPartition(currentPartition);
                 } else {
                     // only fragment, no sibling cell left to check -- this interval is now fully

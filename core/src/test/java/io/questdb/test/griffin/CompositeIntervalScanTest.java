@@ -470,6 +470,108 @@ public class CompositeIntervalScanTest extends AbstractCairoTest {
     }
 
     /**
+     * Task 6c review Part A -- the MULTI-INTERVAL sibling-drop shape, now LOUD-GATED. Commit
+     * {@code d31aa88716} fixed SINGLE-interval sibling visiting, but a query with 2+ intervals hitting the
+     * SAME multi-cell day still SILENTLY dropped rows: {@code partitionLo}/{@code partitionHi} advance
+     * monotonically, so once the first interval consumed a day's cells the later interval could not
+     * revisit them. Here day1 has two genuinely interleaved cells X and Y, each with a row in BOTH sub-day
+     * intervals ({@code [01:00,02:00)} and {@code [03:00,04:00)}); pre-gate the forward scan dropped X's
+     * 03:00 row (it advanced past X to Y for the first interval and never returned), and the backward scan
+     * + {@code calculateSize} (count) dropped the symmetric row.
+     * <p>
+     * A correct real fix would require the interval cursor to iterate cells and intervals as a 2D grid
+     * (per-cell interval reset) while STILL emitting frames in the day-contiguous, per-cell-contiguous
+     * order the downstream {@code CompositeMergePartitionRecordCursor} requires -- too invasive to do
+     * safely here without risking a subtly-wrong scan in the hottest query path. So this shape is
+     * LOUD-GATED (a clear {@code CairoException}) at the exact point the drop becomes imminent, in all
+     * four cursor paths (forward/backward {@code next()} and {@code calculateSize()}); the plain twin,
+     * which never has a same-day sibling, still answers the identical query correctly.
+     */
+    @Test
+    public void testTwoSubDayIntervalsOverOneMultiCellDayIsLoudGated() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedTwins();
+            engine.releaseInactive();
+
+            // Sanity: a SINGLE sub-day interval over the multi-cell day IS correct (commit d31aa88716) --
+            // not gated, matches the plain twin.
+            final String single = " where ts in '2020-06-01T01:00:00.000000Z;1h'";
+            assertSqlCursors("select ts, exch, px from pi" + single + " order by ts, exch",
+                    "select ts, exch, px from ci" + single + " order by ts, exch");
+
+            // The gated shape: TWO sub-day intervals over the SAME multi-cell day -- forward scan,
+            // backward scan, and count() (calculateSize) all throw the same clear error.
+            final String msg = "composite partitioning does not yet support multiple sub-day time intervals over a single multi-cell day";
+            final String twoIntervals =
+                    " where ts in '2020-06-01T01:00:00.000000Z;1h' or ts in '2020-06-01T03:00:00.000000Z;1h'";
+            assertQuery("select ts, exch, px from ci" + twoIntervals + " order by ts").noLeakCheck().failsWith(msg);
+            assertQuery("select ts, exch, px from ci" + twoIntervals + " order by ts desc").noLeakCheck().failsWith(msg);
+            assertQuery("select count() from ci" + twoIntervals).noLeakCheck().failsWith(msg);
+
+            // The plain twin is composite-agnostic: the identical query still returns all 4 matching rows.
+            assertQuery("select count() from pi" + twoIntervals).noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+        });
+    }
+
+    /**
+     * Task 6c review Part A -- the MUST-NOT-BREAK case. Multiple WHOLE-day intervals on DIFFERENT
+     * multi-cell days ({@code ts in 'day1' or ts in 'day3'}) were already correct and must stay correct:
+     * each interval maps to a distinct day, so the monotonic {@code partitionLo} advance never needs to
+     * revisit a day. Guards the Part A fix against regressing the common multi-day date-list shape.
+     */
+    @Test
+    public void testMultipleWholeDayIntervalsAcrossDifferentDaysMatchesPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createInterleavedTwins();
+            engine.releaseInactive();
+
+            final String predicate = " where ts in '2020-06-01' or ts in '2020-06-03'";
+            assertSqlCursors("select ts, exch, px from pi" + predicate + " order by ts, exch",
+                    "select ts, exch, px from ci" + predicate + " order by ts, exch");
+            assertSqlCursors("select ts, exch, px from pi" + predicate + " order by ts desc, exch",
+                    "select ts, exch, px from ci" + predicate + " order by ts desc, exch");
+            assertSqlCursors("select count() from pi" + predicate, "select count() from ci" + predicate);
+        });
+    }
+
+    /**
+     * Builds composite {@code ci} ({@code partition by day, exch}) and plain twin {@code pi} with two
+     * genuinely INTERLEAVED cells X and Y per day over 3 days (2020-06-01..03): each day, cell X has rows
+     * at 01:00 and 03:00, cell Y at 01:15 and 03:15 -- so both cells have a row inside each of the two
+     * sub-day windows {@code [01:00,02:00)} and {@code [03:00,04:00)}. X is listed first so it interns as
+     * cellKey 0. One bulk insert per table.
+     */
+    private void createInterleavedTwins() throws SqlException {
+        execute("create table ci (ts timestamp, exch symbol, px double) timestamp(ts) partition by day, exch wal");
+        execute("create table pi (ts timestamp, exch symbol, px double) timestamp(ts) partition by day wal");
+        final StringBuilder rows = new StringBuilder(" values ");
+        final String[] days = {"2020-06-01", "2020-06-02", "2020-06-03"};
+        boolean first = true;
+        for (int d = 0; d < days.length; d++) {
+            // X first (interns as cellKey 0), then Y; two rows each, interleaved across the two windows.
+            final String[][] cells = {
+                    {"X", "01:00", "03:00"},
+                    {"Y", "01:15", "03:15"},
+            };
+            for (int cIdx = 0; cIdx < cells.length; cIdx++) {
+                final String exch = cells[cIdx][0];
+                for (int t = 1; t < cells[cIdx].length; t++) {
+                    if (!first) {
+                        rows.append(", ");
+                    }
+                    first = false;
+                    rows.append("('").append(days[d]).append('T').append(cells[cIdx][t])
+                            .append(":00.000000Z','").append(exch).append("',")
+                            .append(d + 1).append('.').append(cIdx).append(t).append(')');
+                }
+            }
+        }
+        execute("insert into ci" + rows);
+        execute("insert into pi" + rows);
+        drainWalQueue();
+    }
+
+    /**
      * Builds composite table {@code c} ({@code partition by day, exch} -- 2 cells/day for d1..d3) and its
      * plain twin {@code p} ({@code partition by day}, {@code exch} an ordinary column), then inserts
      * byte-for-byte identical rows into both via one bulk insert per table: a sentinel single-cell day d0
