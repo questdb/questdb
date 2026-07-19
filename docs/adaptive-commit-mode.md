@@ -179,12 +179,23 @@ are documented at `PropertyKey.java:57-63`.
 
 ---
 
-## 4. Observability
+## 4. QWP durable acknowledgements
+
+A client receives durable-ack frames only when it opts in with the
+`X-QWP-Request-Durable-Ack` handshake header. Without the header, no durable-ack frames
+flow, so the client cannot safely retry within the group-commit window `W` (a retried
+commit could double-apply). Durable-ack progress advances only for tables whose effective
+commit mode is `adaptive`; on other modes an opted-in client receives the handshake but no
+frames.
+
+---
+
+## 5. Observability
 
 Two surfaces, matching QuestDB's established split: **`wal_tables()`** for
 per-table drill-down, and **Prometheus** for process-level aggregates.
 
-### 4.1 `wal_tables()` columns
+### 5.1 `wal_tables()` columns
 
 ```sql
 SELECT name, commitMode, sequencerTxn, writerTxn,
@@ -225,7 +236,7 @@ from `getDurableEpochSeqTxn()` at `:314` — hence equal to `durableEpochSeqTxn`
 `lastEpochTs` TIMESTAMP (`:419`, `NULL` when no epoch, `:321`); plus existing
 `sequencerTxn` (`:400`) and `writerTxn` (`:396`).
 
-### 4.2 Prometheus metrics
+### 5.2 Prometheus metrics
 
 Three adaptive-related series are exported on the metrics endpoint. **Get the
 scraped names right** — counters carry a `_total` suffix, gauges do not, and all
@@ -252,7 +263,7 @@ questdb_wal_apply_seq_txn - questdb_wal_apply_local_durable_seq_txn
 > durable flushes. So on an instance running both modes, `nosync` tables inflate
 > the numerator and the global difference reads higher than the real adaptive-table
 > lag. For an accurate figure, use the **per-table** `wal_tables()` computation in
-> §4.1, filtered to `commitMode = 'adaptive'`.
+> §5.1, filtered to `commitMode = 'adaptive'`.
 
 Confirmed in source (`WalMetrics.java`): registrations
 `wal_apply_local_durable_seq_txn` gauge (`:52`), `wal_adaptive_epoch_advances`
@@ -267,7 +278,7 @@ caveat); epoch-advances at `ApplyWal2TableJob.java:791`; recovery-events at
 
 ---
 
-## 5. Operations runbook
+## 6. Operations runbook
 
 ### What the signals mean
 
@@ -287,7 +298,7 @@ caveat); epoch-advances at `ApplyWal2TableJob.java:791`; recovery-events at
   (`sequencerTxn - localDurableSeqTxn` on adaptive tables) stays elevated and
   growing rather than oscillating around `W`. A persistently rising lag means the
   batched WAL flush is not keeping up — investigate device saturation or a stalled
-  flush. (Remember §4.1: use per-table, not the global Prometheus difference, on
+  flush. (Remember §5.1: use per-table, not the global Prometheus difference, on
   mixed deployments.)
 - **`lastEpochTs` stale / `questdb_wal_adaptive_epoch_advances_total` flat** while a
   table is actively ingesting means epochs are not advancing — recovery time and WAL
@@ -407,7 +418,7 @@ Tuning framing from `docs/superpowers/specs/2026-07-17-adaptive-sp-c-perf-valida
 
 ---
 
-## 6. Upgrade and downgrade
+## 7. Upgrade and downgrade
 
 Adaptive is **opt-in** and turning it on or off is a **runtime commit-mode change**:
 there is **no on-disk migration and no file rewrite**. All new adaptive artifacts
