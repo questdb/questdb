@@ -144,10 +144,17 @@ silent-wrong and touches the hot scan path.)*
 fixes only where a gap surfaces. Audit targets in `SqlCodeGenerator` + the async/export frame consumers.
 **Owns the two index-based scan sites 6a deferred** (both `framingSupported=false`, row-cursor model, not fitting the
 page-frame merge): `SqlCodeGenerator:10564` (indexed-symbol IN-list + residual filter, e.g. `WHERE <indexed sym> IN (…)`)
-and `:6661` (`generateLatestByTableQuery`, indexed LATEST BY). For each: make it cell-correct on composite (e.g. route
-its output through the merged path, or make its per-partition row cursors cell-aware), OR — if a correct fix is
-non-trivial — LOUD-GATE that shape for composite (clear `CairoException`, never silent) and document it as a Plan-7
-follow-up. The differential-vs-twin test decides which.
+and `:6661` (`generateLatestByTableQuery`, indexed LATEST BY). **Preferred fix = SUPPRESS the index fast-path for a
+composite table so the query falls through to the merged general scan** (which 6a already makes correct): i.e. at the
+generator's index-path *selection* (ground it — the `keyColumn`/indexed-symbol branch that picks 10564, and the
+`generateLatestByTableQuery` vs general `generateLatestBy` choice), add a composite guard that declines the index path,
+so a `WHERE <sym> IN (…)` composite query uses the general filtered merged scan (predicate as a row filter over the
+merged cursor) and an indexed `LATEST ON` composite uses the general (non-indexed) LATEST BY over the merged cursor
+(Agent-3: the non-indexed LATEST ON path is correct over an ordered base). This reuses the merge, loses only the index
+speedup (correctness-first; 5b restores dimension-predicate pruning). If a clean fall-through is not reachable for a
+shape, LOUD-GATE it for composite (clear `CairoException`, never silent) and document as a Plan-7 follow-up. The
+differential-vs-twin test decides correct-vs-gate. Also add a factory `toPlan("Composite cross-cell merge scan")`
+override (6a Minor b) so EXPLAIN-based assertions here read cleanly.
 
 **Interfaces:** Consumes 6a's merged base. Produces confidence (with tests) that ORDER BY, SAMPLE BY (+FILL),
 LATEST ON, and the joins are correct == plain twin, and that no runtime frame consumer is misled.
@@ -179,6 +186,11 @@ LATEST ON, and the joins are correct == plain twin, and that no runtime frame co
   (Plan 4b) and after a checkpoint/restore round-trip (Plan 4d): assert a battery of queries (ORDER BY ts asc/desc,
   ts-range filter + ORDER BY, SAMPLE BY, LATEST ON, an ASOF self-join, dimension-equality filter, `table_partitions()`
   cell names) ALL EQUAL the plain twin. Confirm the previously-documented `ORDER BY ts` silent-wrong bug is GONE.
+  CAVEAT (6a review): equal designated ts ACROSS sibling cells tie-breaks in heap/cellKey order, which can differ from
+  the plain twin's O3 insertion order — SQL-legal for `ORDER BY ts` (ts not a total order) but OBSERVABLE to an ASOF/LT
+  join whose composite input has DUPLICATE timestamps at the join point. So: use globally-UNIQUE timestamps in the
+  join differentials (keeps the oracle unambiguous), OR assert the duplicate-ts tie-break behavior explicitly and
+  document it. Do NOT let a duplicate-ts tie-break difference masquerade as a merge bug.
 - [ ] **Step 2-4:** run → any gap → minimal fix or loud gate → PASS. Fresh JVM.
 - [ ] **Step 5:** Broad `mvn -pl core test -Dtest='Composite*'` + a wide net (`Tx*,O3*,TableReader*,SampleBy*,LatestBy*,*Join*`)
   — 0 failures (note any unrelated infra flake).

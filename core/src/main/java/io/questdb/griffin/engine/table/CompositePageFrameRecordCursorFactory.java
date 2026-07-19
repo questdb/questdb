@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -134,6 +135,16 @@ public class CompositePageFrameRecordCursorFactory extends PageFrameRecordCursor
     @Override
     public boolean supportsTimeFrameCursor() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        // 6a Minor (b): a distinct label from the inherited PageFrameRecordCursorFactory.toPlan()'s
+        // "PageFrame" so EXPLAIN visibly distinguishes the merged composite scan from a plain one;
+        // toPlanInner (inherited) still lists the same rowCursorFactory/partitionFrameCursorFactory
+        // children.
+        sink.type("Composite cross-cell merge scan");
+        toPlanInner(sink);
     }
 
     @Override

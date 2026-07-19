@@ -195,6 +195,19 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
             // 7. A dimension column indexed from CREATE (not retroactively added over already-populated
             // partitions -- see this method's own javadoc) must correctly discriminate rows by value,
             // matching an equivalent plain table.
+            //
+            // Task 6b UPDATE: this assertion's THREE rows are one-dimension-value-per-day (day1/day2
+            // 'A', day3 'B') -- no day ever has more than one cell -- so it never actually exercised the
+            // cell-concatenation defect (see CompositeReadShapesTest, whose interleaved multi-cell
+            // dataset does). Task 6b's audit found the underlying mechanism (an indexed-symbol WHERE
+            // predicate's row-cursor factories) fundamentally cannot sit under the cross-cell merge
+            // cursor without silently dropping the predicate for a GENUINELY interleaved composite
+            // table (see SqlCodeGenerator's Task 6b comment at the intrinsicModel.keyColumn != null
+            // guard), so it is now loud-gated for EVERY composite table, conservatively, regardless of
+            // whether a given table's data happens to be single-cell-per-day like this one. The
+            // NO_INDEX hint (documented in the gate's own exception text) routes around the index path
+            // entirely, keeping this assertion's original intent -- discriminate rows by value, matching
+            // the plain twin -- proven over the general (6a-merged) scan instead.
             execute("create table ci (ts timestamp, exchange symbol index, px double) timestamp(ts) partition by day, exchange wal");
             execute("create table pi (ts timestamp, exchange symbol index, px double) timestamp(ts) partition by day");
             final String indexedRows = " values " +
@@ -205,8 +218,11 @@ public class CompositeEndToEndTest extends AbstractCairoTest {
             drainWalQueue();
             assertSqlCursors(
                     "select ts, exchange, px from pi where exchange = 'A' order by ts",
-                    "select ts, exchange, px from ci where exchange = 'A' order by ts");
+                    "select /*+ NO_INDEX(exchange) */ ts, exchange, px from ci where exchange = 'A' order by ts");
             assertQuery("select count() from ci where exchange = 'A'")
+                    .noLeakCheck().failsWith(
+                            "composite partitioning does not yet support an indexed WHERE predicate");
+            assertQuery("select /*+ NO_INDEX(exchange) */ count() from ci where exchange = 'A'")
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
 
             // 8. ADD COLUMN + DROP COLUMN, then force a column-purge cycle to completion, then re-query.

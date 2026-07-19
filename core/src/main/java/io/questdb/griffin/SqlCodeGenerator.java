@@ -28,6 +28,7 @@ import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -10155,6 +10156,69 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Task 6b: applies LATEST BY directly over an already-built (6a cross-cell-merged) composite base
+     * scan, for the two {@code generateTableQuery0} sites that decline their own cell-blind LATEST BY
+     * cursor families for a composite table (the {@code generateLatestByTableQuery} guard, and the "no
+     * WHERE clause" branch's guard). This mirrors {@link #generateLatestBy(RecordCursorFactory,
+     * IQueryModel)}'s own logic (same factories, same {@link #keyTypes}/{@link #listColumnFilterA}
+     * scratch state, same {@code LatestByRecordCursorFactory} vs {@code LatestByLightRecordCursorFactory}
+     * choice keyed on random-access support) rather than calling that generic post-scan pipeline step
+     * directly: {@code generateLatestBy} asserts {@code model.getNestedModel() != null}, which does not
+     * hold here -- {@code model} at this point in {@code generateTableQuery0} IS the base-table model
+     * (the level that owns the LATEST BY clause and prepares {@link #keyTypes} for it), not a wrapper
+     * around one, so leaving {@code model.getLatestBy()} populated for the external step to consume (as
+     * a first attempt at this fix did) trips that assert instead of applying LATEST BY. {@code
+     * orderedByTimestampAsc} is computed from {@code model.isForceBackwardScan()} -- the SAME flag that
+     * just chose the scan's own forward/backward order a few lines above each call site -- rather than
+     * from {@code generateLatestBy}'s {@code nested.getOrderHash()} lookup (unavailable here for the
+     * same reason), which is a more direct and equally correct source of truth for whether the scan
+     * this method just built is genuinely ts-ascending.
+     */
+    private RecordCursorFactory wrapCompositeLatestBy(
+            RecordCursorFactory scanFactory,
+            IQueryModel model,
+            ObjList<ExpressionNode> latestBy,
+            RecordMetadata queryMeta
+    ) throws SqlException {
+        try {
+            // a sub-query present in the (already-compiled-by-now) residual filter may have clobbered
+            // the shared listColumnFilterA/keyTypes scratch state, so recompute it defensively from
+            // latestBy -- mirrors the same defensive re-populate generateLatestByTableQuery's caller
+            // does (see the comment there).
+            prepareLatestByColumnIndexes(latestBy, queryMeta);
+            // 'latest by' clause takes over the latest by nodes here, so the later generic
+            // generateLatestBy() post-scan pipeline step is a no-op for this model (mirrors the same
+            // comment/clear at the two cell-blind sites this helper replaces for a composite table) --
+            // required, not optional: generateLatestBy() asserts model.getNestedModel() != null, which
+            // does not hold for this (base-table) model, so leaving latestBy non-empty does not merely
+            // duplicate work, it trips that assert. MUST run after prepareLatestByColumnIndexes:
+            // latestBy IS model.getLatestBy() (same reference, see generateTableQuery), so clearing
+            // first would make prepareLatestByColumnIndexes see an empty list.
+            model.getLatestBy().clear();
+            if (!scanFactory.recordCursorSupportsRandomAccess()) {
+                return new LatestByRecordCursorFactory(
+                        configuration,
+                        scanFactory,
+                        RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
+                        keyTypes,
+                        queryMeta.getTimestampIndex()
+                );
+            }
+            return new LatestByLightRecordCursorFactory(
+                    configuration,
+                    scanFactory,
+                    RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
+                    keyTypes,
+                    queryMeta.getTimestampIndex(),
+                    !model.isForceBackwardScan()
+            );
+        } catch (Throwable e) {
+            Misc.free(scanFactory);
+            throw e;
+        }
+    }
+
     private RecordCursorFactory generateTableQuery0(
             @Transient IQueryModel model,
             @Transient SqlExecutionContext executionContext,
@@ -10309,24 +10373,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new EmptyTableRecordCursorFactory(queryMeta);
                 }
 
-                // a sub-query present in the filter may have used the latest by
-                // column index lists, so we need to regenerate them
-                prepareLatestByColumnIndexes(latestBy, queryMeta);
+                // Task 6b: generateLatestByTableQuery's entire cursor family -- indexed
+                // (LatestByValueRecordCursor, LatestByValuesIndexedFilteredRecordCursor, ...) AND
+                // non-indexed alike (LatestByValueListRecordCursor.find*, LatestByAllFilteredRecordCursor)
+                // -- walks PageFrameCursor frames directly with a backward "first-seen-per-key-wins"
+                // trick that assumes one physical partition per day; none of them consult 6a's
+                // CompositeMergePartitionRecordCursor, so a composite table's cell-concatenated frame
+                // order (cell1-then-cell0 within a day) can make the wrong row "first seen" for a key
+                // that spans cells. Toggling the indexed-vs-general choice inside that method does not
+                // help -- every branch there is equally cell-blind. Instead, for a composite table,
+                // decline generateLatestByTableQuery ENTIRELY and fall through to the ordinary
+                // interval/full scan construction below, which 6a already routes through the cross-cell
+                // merge; wrapCompositeLatestBy (see its doc) then applies LATEST BY directly over that
+                // merged scan at this method's own final return points. (An EARLIER version of this fix
+                // instead left model.getLatestBy() populated for the generic post-scan generateLatestBy()
+                // pipeline step to consume -- that step asserts model.getNestedModel() != null, which
+                // does not hold for this base-table model, so it trips the assert instead of applying
+                // LATEST BY; seen empirically via CompositeReadShapesTest before switching to
+                // wrapCompositeLatestBy.) A WHERE predicate on the latest-by column itself
+                // (intrinsicModel.keyColumn != null) falls through further, to that guard's own
+                // composite handling below.
+                if (!reader.getMetadata().getPartitionSpec().isComposite()) {
+                    // a sub-query present in the filter may have used the latest by
+                    // column index lists, so we need to regenerate them
+                    prepareLatestByColumnIndexes(latestBy, queryMeta);
 
-                return generateLatestByTableQuery(
-                        model,
-                        reader,
-                        queryMeta,
-                        tableToken,
-                        intrinsicModel,
-                        filter,
-                        executionContext,
-                        metadata.getTimestampIndex(),
-                        columnIndexes,
-                        columnSizeShifts,
-                        prefixes,
-                        hasInterval
-                );
+                    return generateLatestByTableQuery(
+                            model,
+                            reader,
+                            queryMeta,
+                            tableToken,
+                            intrinsicModel,
+                            filter,
+                            executionContext,
+                            metadata.getTimestampIndex(),
+                            columnIndexes,
+                            columnSizeShifts,
+                            prefixes,
+                            hasInterval
+                    );
+                }
+                Misc.free(filter);
             }
 
             // below code block generates index-based filter
@@ -10378,6 +10465,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int keyColumnIndex = SqlUtil.getColumnIndexQuiet(queryMeta, intrinsicModel.keyColumn);
                     final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                     final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
+
+                    // Task 6b: every row-cursor factory this family can return (single-value, IN-list,
+                    // NOT-IN, key sub-query, and the covering-index / sorted-symbol-index shortcuts
+                    // below) is a framingSupported=false PageFrameRecordCursorFactory driven by a
+                    // per-partition bitmap-index RowCursorFactory. 6a's CompositeMergePartitionRecordCursor
+                    // cannot sit under one of these: it walks every row of a pulled frame unconditionally
+                    // (it has no hook for a RowCursorFactory's row-level index selection), so swapping it
+                    // in here would silently DROP the key predicate -- returning rows for symbol values
+                    // outside the WHERE list, not just in the wrong order. A predicate-preserving
+                    // fallback (fold the key predicate back into a residual filter and use the plain
+                    // merged full-scan, mirroring the NOT-IN-too-many-values restore below) is possible
+                    // in principle, but reconstructing it safely -- either re-quoting keyValueFuncs'
+                    // values into a fresh AST node (escaping risk: unverified whether the round trip
+                    // through GenericLexer.unquote()/the literal parser is lossless for values containing
+                    // quotes) or hand-building a Function tree outside FunctionParser.parseFunction
+                    // (ownership risk: keyValueFuncs' constant-vs-deferred split changes which entries a
+                    // hand-built InSymbolFunctionFactory.Func would retain vs discard, so a generic
+                    // caller cannot safely free the leftovers without risking a leak or a double-free) --
+                    // was not implemented here. Composite is loud-gated rather than risking either a
+                    // dropped predicate or a leak/double-free; see task-6b-report.md (Plan-7 follow-up).
+                    // A NO_INDEX hint on the column (or on the whole query) avoids this gate entirely: it
+                    // stops WhereClauseParser from ever setting intrinsicModel.keyColumn, so the predicate
+                    // stays a normal residual filter over the already-correct merged scan.
+                    if (reader.getMetadata().getPartitionSpec().isComposite()) {
+                        throw CairoException.critical(0)
+                                .put("composite partitioning does not yet support an indexed WHERE predicate [table=")
+                                .put(tableToken.getTableName()).put(", column=").put(intrinsicModel.keyColumn).put(']');
+                    }
 
                     if (intrinsicModel.keySubQuery != null) {
                         RecordCursorFactory rcf = null;
@@ -10710,6 +10825,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // this is our kind of column — bitmap only (native scanner)
                         if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
                                 && !SqlHints.hasNoIndexHint(model)) {
+                            // Task 6b: SortedSymbolIndexRecordCursorFactory walks this column's global
+                            // bitmap index in symbol-key order across every partition slot; for a
+                            // composite table that includes every sibling cell of a day, and this
+                            // factory has no cell awareness (same family of gap as the other two index
+                            // sites in this method -- discovered auditing this method, out of the two
+                            // sites the brief named, so loud-gated conservatively rather than left
+                            // silently un-audited). NO_INDEX on the column avoids the gate (falls back
+                            // to a plain sorted scan over the merged getCursor()). Plan-7 follow-up.
+                            if (reader.getMetadata().getPartitionSpec().isComposite()) {
+                                throw CairoException.critical(0)
+                                        .put("composite partitioning does not yet support ORDER BY on an indexed symbol column [table=")
+                                        .put(tableToken.getTableName()).put(", column=").put(queryMeta.getColumnName(columnIndex)).put(']');
+                            }
                             boolean orderByKeyColumn = false;
                             int indexDirection = IndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
@@ -10747,7 +10875,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // guard). The residual (post-scan) filter is applied by generateFilter around the merged
                 // getCursor(), so ordering is preserved through it.
                 if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
-                    return new CompositePageFrameRecordCursorFactory(
+                    RecordCursorFactory compositeScan = new CompositePageFrameRecordCursorFactory(
                             configuration,
                             queryMeta,
                             dfcFactory,
@@ -10760,8 +10888,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             supportsRandomAccess,
                             false
                     );
+                    // Task 6b: latestBy.size() > 0 here only when the generateLatestByTableQuery guard
+                    // above declined (composite); apply LATEST BY directly over the merged scan.
+                    if (latestBy.size() > 0) {
+                        return wrapCompositeLatestBy(compositeScan, model, latestBy, queryMeta);
+                    }
+                    return compositeScan;
                 }
-                return new PageFrameRecordCursorFactory(
+                RecordCursorFactory plainScan = new PageFrameRecordCursorFactory(
                         configuration,
                         queryMeta,
                         dfcFactory,
@@ -10774,6 +10908,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         supportsRandomAccess,
                         false
                 );
+                if (latestBy.size() > 0) {
+                    return wrapCompositeLatestBy(plainScan, model, latestBy, queryMeta);
+                }
+                return plainScan;
             } catch (Throwable e) {
                 Misc.free(dfcFactory);
                 throw e;
@@ -10781,7 +10919,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // no where clause
-        if (latestByColumnCount == 0) {
+        // Task 6b: this "no WHERE clause" branch has its OWN independent LATEST BY implementation
+        // below (LatestByAllIndexedRecordCursorFactory / LatestByDeferredListValuesFilteredRecordCursorFactory
+        // / LatestByAllSymbolsFilteredRecordCursorFactory / LatestByAllFilteredRecordCursorFactory, all fed a
+        // FRESH FullPartitionFrameCursorFactory built right here) -- a SEPARATE code path from
+        // generateLatestByTableQuery (used only when a WHERE clause/override/pushed-interval is present),
+        // discovered auditing this method for Task 6b's differential tests (a bare `LATEST ON ts PARTITION
+        // BY sym` with no WHERE clause reaches THIS branch, not generateLatestByTableQuery). Every one of
+        // its cursors is the same cell-blind backward "first-seen-per-key-wins" family as
+        // generateLatestByTableQuery's (see the guard there), so it is equally wrong for composite. Widen
+        // this branch's condition to ALSO take the (already 6a-merged) full-scan path for ANY composite
+        // table regardless of latestByColumnCount, then apply LATEST BY directly over that merged scan via
+        // wrapCompositeLatestBy (see its doc: the generic post-scan generateLatestBy() pipeline step
+        // cannot be used here, its own assert requires a wrapping model this base-table model does not have).
+        if (latestByColumnCount == 0 || reader.getMetadata().getPartitionSpec().isComposite()) {
             // construct new metadata, which is a copy of what we constructed just above, but
             // in the interest of isolating problems we will only affect this factory
 
@@ -10806,7 +10957,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // order-indifferent bare projection of non-ts columns), and the plain factory's storage order
             // is the pre-existing, acceptable behaviour for such a query.
             if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
-                return new CompositePageFrameRecordCursorFactory(
+                RecordCursorFactory compositeScan = new CompositePageFrameRecordCursorFactory(
                         configuration,
                         queryMeta,
                         cursorFactory,
@@ -10819,9 +10970,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         supportsRandomAccess,
                         false
                 );
+                // Task 6b: latestByColumnCount > 0 here only for a composite table (see the widened
+                // condition above); apply LATEST BY directly over the merged scan.
+                if (latestByColumnCount > 0) {
+                    return wrapCompositeLatestBy(compositeScan, model, latestBy, queryMeta);
+                }
+                return compositeScan;
             }
 
-            return new PageFrameRecordCursorFactory(
+            RecordCursorFactory plainScan = new PageFrameRecordCursorFactory(
                     configuration,
                     queryMeta,
                     cursorFactory,
@@ -10834,6 +10991,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     supportsRandomAccess,
                     false
             );
+            if (latestByColumnCount > 0) {
+                return wrapCompositeLatestBy(plainScan, model, latestBy, queryMeta);
+            }
+            return plainScan;
         }
 
         // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
