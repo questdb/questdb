@@ -8441,6 +8441,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsClearsMaskForEarlyStringLeg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tb (s1 SYMBOL, s2 SYMBOL)");
+            execute("CREATE TABLE tc (s1 STRING, s2 SYMBOL)");
+            execute("INSERT INTO ta VALUES ('a', 'p')");
+            execute("INSERT INTO tb VALUES ('b', 'q')");
+            execute("INSERT INTO tc VALUES ('c', 'r')");
+
+            // s1 (the earlier candidate) stops qualifying at the third leg while s2 (the later one)
+            // survives. The in-place mask compaction must drop candidate slot 0 and shift the retained
+            // s2 down into it, so the write index trails the read index - the arrangement
+            // testUnionOfSymbolColumnsClearsMaskForLateStringLeg (a trailing-column drop, write and
+            // read indices stay aligned) never reaches.
+            assertQuery("SELECT s1, s2 FROM ta UNION ALL SELECT s1, s2 FROM tb UNION ALL SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).columnType(1, ColumnType.SYMBOL)
+                    .noRandomAccess().expectSize()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+            assertQuery("SELECT s1, s2 FROM ta UNION SELECT s1, s2 FROM tb UNION SELECT s1, s2 FROM tc")
+                    .noLeakCheck().columnType(0, ColumnType.STRING).columnType(1, ColumnType.SYMBOL)
+                    .noRandomAccess()
+                    .returns("s1\ts2\na\tp\nb\tq\nc\tr\n");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsClearsMaskForLateStringLeg() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s1 SYMBOL, s2 SYMBOL)");
