@@ -47,7 +47,7 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
     @Test
     public void testBacklogCapForcesEpoch() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, LONG_INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, LONG_INTERVAL_MS);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 500);
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -71,7 +71,7 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
     @Test
     public void testCapDisabledNoEpochOnBacklog() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, LONG_INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, LONG_INTERVAL_MS);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0); // cap disabled
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -92,7 +92,7 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
     @Test
     public void testBacklogCounterResetsAfterEpoch() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, LONG_INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, LONG_INTERVAL_MS);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 500);
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -122,7 +122,7 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
     @Test
     public void testTimePathStillFiresWhenCapHuge() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0); // every batch (time path)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0); // every batch (time path)
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1_000_000_000L); // cap never hit
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");

@@ -231,8 +231,8 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
     private VsAndSyms runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
         final VsAndSyms[] resultBox = new VsAndSyms[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, recoveryOn ? "true" : "false");
         try {
             runWithCrashFacade(() -> {
@@ -251,7 +251,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 drainWalQueue();
 
                 // Disable further epochs: the next LAZY_M rows are applied LAZILY (no new durable cut).
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
@@ -305,8 +305,8 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
         }
         return resultBox[0];
@@ -329,16 +329,16 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
 
     private void withAdaptiveLazyGap(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0"); // W = 0 (synchronous)
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);        // setup re-affirms/flips per phase
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // setup re-affirms/flips per phase
         // Recovery roll-forward left at its default (enabled) — we WANT it to run and prove it recovers.
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -447,7 +447,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         public TableToken[] setup(int iteration) throws Exception {
             table = "sym_lazygap";
             // Epoch ENABLED for the LAZY_K-row prefix so a durable cut is taken at seqTxn=LAZY_K.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + table);
             drainWalQueue();
             execute("create table " + table + " (ts timestamp, s symbol index, v long) timestamp(ts) "
@@ -463,7 +463,7 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
 
             // DISABLE further epochs: the driver's swept commit() phase (the LAZY_M rows) is applied
             // LAZILY, building the sustained gap between the durable cut and the frontier.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{tt};
         }
 

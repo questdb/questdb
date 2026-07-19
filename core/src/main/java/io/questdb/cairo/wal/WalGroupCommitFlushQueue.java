@@ -32,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Engine-wide registry of {@link WalWriter}s that have a PENDING (not-yet-device-flushed) adaptive
- * group-commit (Deferred 2, {@code cairo.adaptive.commit.group.window.us} {@code > 0}).
+ * group-commit (Deferred 2, {@code cairo.adaptive.commit.group.window} {@code > 0}).
  *
  * <p>The hard durability requirement is that an idle writer's last commit becomes device-durable within
  * {@code <= W} even when commits STOP. A committing thread advances durability on its own subsequent

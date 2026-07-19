@@ -5,7 +5,7 @@ operator guide). This traces what actually happens on disk for a typical insert 
 `CommitMode.ADAPTIVE`: every file created, every sync issued, and where durability is
 established. References are to **methods** (stable) rather than line numbers (which drift).
 
-> Scope: `nw_adaptive_commit`. `W` = `cairo.adaptive.commit.group.window.us`
+> Scope: `nw_adaptive_commit`. `W` = `cairo.adaptive.commit.group.window`
 > (`getAdaptiveCommitGroupWindowUs()`); "deferred device flush" ⇔ `W > 0`.
 
 ---

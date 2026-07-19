@@ -122,7 +122,7 @@ value (`WalTableListFunctionFactory.java:304`).
 ## 3. The RPO knob — the group-commit window `W`
 
 ```properties
-cairo.adaptive.commit.group.window.us=0     # microseconds; default 0
+cairo.adaptive.commit.group.window=0     # microseconds; default 0
 ```
 
 `W` trades **recovery-point objective (RPO)** against **throughput**:
@@ -172,7 +172,7 @@ workload, p99 commit latency):
 Reading: at the recommended production window, adaptive's p99 commit latency is
 close to `nosync`; at `W = 0` it is `sync`-class, by design.
 
-Confirmed in source: key `cairo.adaptive.commit.group.window.us`
+Confirmed in source: key `cairo.adaptive.commit.group.window`
 (`PropertyKey.java:63`), default `0`, clamped to ≥ 0
 (`PropServerConfiguration.java:1570`); the `W=0` zero-loss vs `W>0` RPO≤W semantics
 are documented at `PropertyKey.java:57-63`.
@@ -302,7 +302,7 @@ caveat); epoch-advances at `ApplyWal2TableJob.java:791`; recovery-events at
   mixed deployments.)
 - **`lastEpochTs` stale / `questdb_wal_adaptive_epoch_advances_total` flat** while a
   table is actively ingesting means epochs are not advancing — recovery time and WAL
-  retention will grow unbounded. Check that `cairo.adaptive.epoch.interval.ms` is not
+  retention will grow unbounded. Check that `cairo.adaptive.epoch.interval` is not
   negative (disabled) and that the apply worker is healthy.
 - **Unexpected `recoveryIncarnation` / recovery-events increment** flags a crash and
   a successful recovery — cross-check with an unclean shutdown.
@@ -330,14 +330,14 @@ for absolutes.)
 
 ### Tuning the three knobs
 
-**`cairo.adaptive.commit.group.window.us` (`W`) — RPO ↔ throughput** (see §3).
+**`cairo.adaptive.commit.group.window` (`W`) — RPO ↔ throughput** (see §3).
 Start at 1–10 ms for throughput; `0` for zero-loss. Increase only up to the
 saturation knee; beyond it you buy RPO exposure for no throughput gain.
 
-**`cairo.adaptive.epoch.interval.ms` — recovery-time ↔ apply-overhead, time-based.**
+**`cairo.adaptive.epoch.interval` — recovery-time ↔ apply-overhead, time-based.**
 
 ```properties
-cairo.adaptive.epoch.interval.ms=60000     # default: at most one epoch per 60 seconds per table
+cairo.adaptive.epoch.interval=60000     # default: at most one epoch per 60 seconds per table
 ```
 
 - **Larger interval** → fewer time-triggered epoch flushes, but a longer tail on a
@@ -405,7 +405,7 @@ cairo.adaptive.recovery.roll.forward.enabled=true    # default true
 Leave this `true`. Setting it `false` makes the boot-time epoch roll-forward a
 no-op — an operator kill-switch / negative-control hook, not a normal setting.
 
-Confirmed in source: `cairo.adaptive.epoch.interval.ms` (`PropertyKey.java:53`;
+Confirmed in source: `cairo.adaptive.epoch.interval` (`PropertyKey.java:53`;
 `0` = every batch, negative = disabled, per `:50-52`), default `60000`
 (`PropServerConfiguration.java:1570`); `cairo.adaptive.epoch.max.rows`
 (`PropertyKey.java:57`; `<= 0` disables the cap, per `:54-56`), default
@@ -499,8 +499,8 @@ Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 | Key | Default | Semantics |
 |---|---|---|
 | `cairo.commit.mode` | `nosync` | Global commit mode. `nosync` \| `sync` \| `async` \| `adaptive`. |
-| `cairo.adaptive.commit.group.window.us` | `0` | Group-commit / RPO window (us). `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
-| `cairo.adaptive.epoch.interval.ms` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
+| `cairo.adaptive.commit.group.window` | `0` | Group-commit / RPO window (us). `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
+| `cairo.adaptive.epoch.interval` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
 | `cairo.adaptive.epoch.max.rows` | `5_000_000` | Forces an epoch once this many rows are applied to a table since its last one, independent of the interval. Bounds WAL retention + recovery replay under active ingest. `<= 0` disables the cap (interval-only). |
 | `cairo.adaptive.recovery.roll.forward.enabled` | `true` | Run the durable-epoch recovery roll-forward at boot. `false` = no-op kill-switch. |
 

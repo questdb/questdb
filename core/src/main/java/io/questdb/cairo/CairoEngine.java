@@ -299,7 +299,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
     // Deferred 2 (adaptive group commit): registry of WAL writers with a pending (not-yet-device-flushed)
-    // commit under cairo.adaptive.commit.group.window.us > 0. The WalPurgeJob background flusher sweeps it so
+    // commit under cairo.adaptive.commit.group.window > 0. The WalPurgeJob background flusher sweeps it so
     // an idle writer's last commit is durable within <= W even if commits stop. Always present (cheap, empty
     // when W=0 since nothing registers).
     private final WalGroupCommitFlushQueue walGroupCommitFlushQueue = new WalGroupCommitFlushQueue();
@@ -1451,7 +1451,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * The adaptive group-commit (Deferred 2) pending-flush registry: WAL writers with a deferred device
-     * flush under {@code cairo.adaptive.commit.group.window.us > 0}. Swept by the {@code WalPurgeJob}
+     * flush under {@code cairo.adaptive.commit.group.window > 0}. Swept by the {@code WalPurgeJob}
      * background flusher so an idle writer's last commit becomes durable within {@code <= W}.
      */
     public @NotNull WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {

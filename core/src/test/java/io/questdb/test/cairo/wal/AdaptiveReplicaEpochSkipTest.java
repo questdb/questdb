@@ -48,7 +48,7 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
     @Test
     public void testReplicaSkipFiresNoEpochButDataStillReadable() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0); // epoch eligible every batch
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0); // epoch eligible every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
@@ -90,7 +90,7 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
     @Test
     public void testDemoteInEpochWindowRecheckSuppressesEpoch() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0); // epoch eligible every batch
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0); // epoch eligible every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             // Apply the CREATE under REPLICA_SKIP so it fires no epoch (the table starts with no trio).
@@ -154,7 +154,7 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
     @Test
     public void testAlwaysOnFiresEpoch() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             // default policy = ALWAYS_ON (no setLocalDurabilityPolicy call)

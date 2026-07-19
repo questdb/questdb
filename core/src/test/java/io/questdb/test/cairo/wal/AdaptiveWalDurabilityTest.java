@@ -277,7 +277,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         // epoch (Plan 3B) deliberately forces a column flush from inside the apply worker, which is
         // covered separately by testFsyncMaterializedStateForcesFlushAndWritesEpochCopies + the
         // adaptive epoch crash test.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -334,7 +334,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     public void testAdaptiveO3ApplyIssuesZeroColumnSyncsOnApply() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1); // isolate apply
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1); // isolate apply
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -455,7 +455,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Disable the automatic epoch so the EXPLICIT fsyncMaterializedState() call below is the only
         // durable cut under test here (B1 in isolation; the apply-worker hook is B2's concern).
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
         final TableSyncTrackingFacade trackFf = new TableSyncTrackingFacade();
         assertMemoryLeak(trackFf, () -> {
@@ -506,7 +506,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // interval 0 => epoch fires on every apply batch (no cadence wait), deterministic for the test.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
 
         assertMemoryLeak(() -> {
             execute("create table tab_i (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -618,7 +618,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     @Test
     public void testAdaptiveStillFsyncsAfterLegacyRevert() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0); // epoch every batch
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0); // epoch every batch
         final SyscallCountingFacade ff = new SyscallCountingFacade();
         assertMemoryLeak(ff, () -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -788,7 +788,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     @Test
     public void testAdaptiveEpochStillSyncfs() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         final SyscallCountingFacade ff = new SyscallCountingFacade();
         assertMemoryLeak(ff, () -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");

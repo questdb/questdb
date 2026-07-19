@@ -58,7 +58,7 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
     @Test
     public void testEpochAdvancesCounterIncrements() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, "0"); // advance every batch
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "0"); // advance every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             long before = TestUtils.getMetricValue(engine, "questdb_wal_adaptive_epoch_advances_total");

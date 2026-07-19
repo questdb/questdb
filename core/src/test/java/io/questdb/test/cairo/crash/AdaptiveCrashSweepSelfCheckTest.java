@@ -125,15 +125,15 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
 
     private void withAdaptiveW0(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0"); // W = 0 (synchronous)
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);        // durable epoch every batch
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // durable epoch every batch
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

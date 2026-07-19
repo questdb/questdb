@@ -226,8 +226,8 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
     private String runScoreboardArm(int k, boolean evictScoreboard) throws Exception {
         final String[] outcome = new String[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             runWithCrashFacade(() -> {
                 crashFf.modelSharedJournal = false;
@@ -243,7 +243,7 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                     insertO3Row(table, LAZY_TS_HOUR[i], i);
                 }
                 drainWalQueue();
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
@@ -310,24 +310,24 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
         return outcome[0];
     }
 
     private void withAdaptiveLazyGap(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0"); // W = 0 (synchronous)
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);        // setup re-affirms/flips per phase
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // setup re-affirms/flips per phase
         // Recovery roll-forward left at its default (enabled) — we WANT it to run and prove it recovers.
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -398,7 +398,7 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
         public TableToken[] setup(int iteration) throws Exception {
             table = "o3_lazygap";
             // Epoch ENABLED for the K-row prefix so a durable cut is taken at seqTxn=K.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + table);
             drainWalQueue();
             execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal "
@@ -413,7 +413,7 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
 
             // DISABLE further epochs: the driver's swept commit() phase (the M rows) is applied LAZILY,
             // building the sustained gap between the durable cut and the frontier.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{tt};
         }
 

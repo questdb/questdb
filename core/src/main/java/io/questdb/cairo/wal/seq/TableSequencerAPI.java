@@ -261,7 +261,7 @@ public class TableSequencerAPI implements QuietCloseable {
     /**
      * The engine's adaptive group-commit (Deferred 2) pending-flush registry. Exposed here so a
      * {@link io.questdb.cairo.wal.WalWriter} (which holds the sequencer API, not the engine) can register
-     * itself when it defers a device flush under {@code cairo.adaptive.commit.group.window.us > 0}.
+     * itself when it defers a device flush under {@code cairo.adaptive.commit.group.window > 0}.
      */
     @NotNull
     public io.questdb.cairo.wal.WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {

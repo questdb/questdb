@@ -112,10 +112,10 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
     @Test
     public void testFreshRebootMatchesInProcessResetAndSelfHeals() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
         // Epoch on every apply batch, so the durable epoch is deterministic and the "first post-boot
         // epoch" that clears the transient retention is the first resumed-ingest apply.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
@@ -204,8 +204,8 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

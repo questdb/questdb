@@ -1526,7 +1526,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         // Disable the automatic apply-worker epoch (Plan 3B) so this test drives durableEpochSeqTxn
         // MANUALLY and exercises the WAL-purge floor (Task D) in isolation; otherwise the worker
         // would auto-advance the floor to the applied seqTxn during drainWalQueue.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -1633,7 +1633,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Epoch eligible on every apply batch, so the ONLY thing keeping durableEpochSeqTxn at 0 is the
         // REPLICA_SKIP policy gate (mirrors a live replica), not a disabled cadence.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
 
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();

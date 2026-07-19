@@ -68,7 +68,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Epoch interval -1 => the auto-epoch never fires; we drive the durable cut explicitly so the
         // epoch is recorded at a KNOWN seqTxn (K), then apply more after it without a new epoch.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
 
@@ -128,7 +128,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertEquals("recoveryIncarnation must be 1 after one successful restore", 1L, incarnation);
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -145,7 +145,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Epoch interval -1 => the auto-epoch never fires; we drive the durable cut explicitly so the
         // epoch is recorded at a KNOWN seqTxn (K), then apply more after it without a new epoch.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
 
@@ -203,7 +203,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             assertTrue("a table rewound to its durable epoch at recovery must increment the counter", after > before);
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -214,7 +214,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRecoverWithNoSnapshotLeavesIncarnationZero() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             execute("create table noepoch (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into noepoch values ('2024-09-01T00:00:00.000000Z', 42)");
@@ -233,7 +233,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertEquals("recoveryIncarnation must be 0 when no epoch was restored", 0L, incarnation);
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -249,7 +249,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRecoverSkipsRegularViewWithUnhydratedState() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             execute("create table base (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into base values ('2024-09-01T00:00:00.000000Z', 1)");
@@ -286,7 +286,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertEquals("a regular view must not be recovered", 0L, incarnation);
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -302,7 +302,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRecoverSkipsEpochAheadOfRestoredTxn() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
             // Earlier cut: apply 3 rows, then capture (back up) _txn/_cv — the "backup".
@@ -355,7 +355,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     0L, engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation());
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -464,7 +464,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRemoveAdaptiveEpochArtifactsRemovesTrioOnly() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             execute("create table r (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into r values ('2024-09-01T00:00:00.000000Z', 1)");
@@ -513,7 +513,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             }
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -529,7 +529,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRecoverSuspendsTableOnRestoreIoErrorAndRecoversSiblings() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         // A path-targeted copy fault: fail ONLY the target table's live _txn restore (_txn.epoch -> _txn),
         // reporting ENOSPC (28 -> ErrorTag.DISK_FULL on linux). errno() returns the simulated code exactly
         // once, right after the failed copy, so no other errno read is poisoned.
@@ -618,7 +618,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         } finally {
             AbstractCairoTest.ff = ffBefore;
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -635,7 +635,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRestoreCvFailureSuspendsTableAndFailsLoud() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         final int simErrno = 28;
         final AtomicBoolean justFailed = new AtomicBoolean(false);
         final AtomicReference<String> failDirName = new AtomicReference<>();
@@ -692,7 +692,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         } finally {
             AbstractCairoTest.ff = ffBefore;
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

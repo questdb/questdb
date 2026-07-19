@@ -220,7 +220,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     private List<Long> runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
         final List<Long>[] resultBox = new List[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, recoveryOn ? "true" : "false");
         try {
             runWithCrashFacade(() -> {
@@ -239,7 +239,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 drainWalQueue();
 
                 // Disable further epochs: the next LAZY_M rows are applied LAZILY (no new durable cut).
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
                 // Baseline of non-cached engine fds after a clean release (mirrors the sweep driver): a
                 // simulated crash unwinds an fsync mid-operation on the LIVE JVM, so a fault-injection fd
@@ -293,7 +293,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
         }
         return resultBox[0];
@@ -306,15 +306,15 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     private void withAdaptiveW0(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0"); // W = 0 (synchronous)
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);        // durable epoch every batch
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // durable epoch every batch
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

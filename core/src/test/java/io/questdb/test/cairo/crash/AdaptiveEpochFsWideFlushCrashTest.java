@@ -74,7 +74,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
     public void testNonBatchedEpochFlushIsFsWideClosedPartitionSurvives() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Drive the epoch explicitly so we can probe syncfs right around it; auto-epoch must not fire.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         // FORCE the non-batched path: this is the ext4-fast_commit / non-Linux case I1 targets.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "false");
         try {
@@ -155,7 +155,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         }
     }

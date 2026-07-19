@@ -232,7 +232,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
         @Override
         public TableToken[] setup(int iteration) throws Exception {
             // Epoch ENABLED for the K-row prefix so a durable cut is taken at seqTxn=K (base and mv).
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop materialized view if exists mv");
             execute("drop table if exists base");
             drainWalAndMatViewQueues();
@@ -259,7 +259,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
 
             // DISABLE further epochs: the driver's swept commit() phase (the M rows + their mv refreshes) is
             // applied LAZILY, building the sustained gap between the durable cut and the frontier.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{baseTt, mvTt};
         }
 
@@ -386,8 +386,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
 
     private void assertMatViewRollForward(boolean recoveryEnabled) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
@@ -415,7 +415,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 markDurableBaseline();
 
                 // Disable the epoch; apply the M rows LAZILY (columns non-durable past the epoch).
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
                 for (int i = LAZY_K; i < LAZY_K + LAZY_M; i++) {
                     insertBaseRow(LAZY_TS_HOUR[i], i);
                 }
@@ -504,8 +504,8 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -515,15 +515,15 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
 
     private void withAdaptiveLazyGap(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0"); // W = 0 (synchronous)
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);        // setup re-affirms/flips per phase
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // setup re-affirms/flips per phase
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

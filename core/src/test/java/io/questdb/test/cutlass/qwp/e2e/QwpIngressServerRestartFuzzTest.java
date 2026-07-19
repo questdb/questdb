@@ -422,8 +422,8 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
     @Test
     public void testSameSenderReplaysUnackedAcrossRestartUnderAdaptiveW50ms() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "50000"); // W = 50ms group-commit window
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "50000"); // W = 50ms group-commit window
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         try {
             assertMemoryLeak(() -> {
                 createTargetTable();
@@ -468,7 +468,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
         }
     }
 

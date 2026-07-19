@@ -58,7 +58,7 @@ import io.questdb.std.str.Utf8StringSink;
  * </ol>
  *
  * <p><b>What this shows:</b> recovery/catch-up time is ~linear in the un-applied tail, so an operator
- * bounds worst-case recovery by choosing {@code cairo.adaptive.epoch.interval.ms} (which bounds how
+ * bounds worst-case recovery by choosing {@code cairo.adaptive.epoch.interval} (which bounds how
  * far the tail can run past the last epoch). This is a TIMING proxy on a CLEAN reopen — crash
  * CORRECTNESS (torn-tail rewind, zero corruption, every acked txn survives) is SP-D's job, already
  * covered by the adaptive crash-fuzz + power-loss harness; do not read a durability verdict here.

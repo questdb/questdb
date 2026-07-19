@@ -331,8 +331,8 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private TwoTableRows runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
         final TwoTableRows[] resultBox = new TwoTableRows[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, recoveryOn ? "true" : "false");
         try {
             runWithCrashFacade(() -> {
@@ -358,7 +358,7 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 }
                 drainWalQueue();
 
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
 
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
@@ -423,8 +423,8 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
         }
         return resultBox[0];
@@ -480,16 +480,16 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
 
     private void withAdaptiveLazyGap(RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0"); // W = 0 (synchronous)
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);        // setup re-affirms/flips per phase
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // setup re-affirms/flips per phase
         // Recovery roll-forward left at its default (enabled) — we WANT it to run and prove it recovers.
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -553,7 +553,7 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
         @Override
         public TableToken[] setup(int iteration) throws Exception {
             // Epoch ENABLED for the LAZY_K-row prefix so a durable cut is taken at seqTxn=LAZY_K for BOTH.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + T1);
             execute("drop table if exists " + T2);
             drainWalQueue();
@@ -578,7 +578,7 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
 
             // DISABLE further epochs: the driver's swept commit() phase (LAZY_M rows per table) is applied
             // LAZILY, building the sustained gap between each table's durable cut and its frontier.
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{tt1, tt2};
         }
 

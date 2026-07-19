@@ -118,7 +118,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
     @Test
     public void testNegativeControlOldBehaviourBricksOnTornCopy() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             final FilesFacade ff = engine.getConfiguration().getFilesFacade();
             final TableToken tt = buildTableWithEpochAndLazyTail();
@@ -154,7 +154,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
             );
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -163,7 +163,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
     private void assertTornCopyHandledSafely(TornMode mode) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Drive the epoch explicitly at a KNOWN cut; the auto-epoch must not fire.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
 
@@ -205,7 +205,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
             }
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

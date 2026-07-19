@@ -91,7 +91,7 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Epoch on the FIRST applied batch (interval 0), then we disable it before the post-epoch
         // batch so those M rows are applied with NO further epoch.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
@@ -107,7 +107,7 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
                 final TableToken tt = engine.verifyTableName("t");
 
                 // Now DISABLE the epoch so the next M rows are applied LAZILY (no new durable cut).
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
                 for (int i = K; i < K + M; i++) {
                     execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
                 }
@@ -188,7 +188,7 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

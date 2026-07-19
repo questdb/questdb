@@ -44,7 +44,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Deferred 2 — adaptive GROUP-COMMIT (the RPO knob {@code cairo.adaptive.commit.group.window.us}).
+ * Deferred 2 — adaptive GROUP-COMMIT (the RPO knob {@code cairo.adaptive.commit.group.window}).
  *
  * <p>W=0 (default) is today's synchronous fsync-before-return (zero loss). When {@code W > 0}, the WAL
  * fdatasync (the device flush) is BATCHED across an adaptive table's commits within window {@code W}:
@@ -75,7 +75,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     @Test
     public void testGroupWindowDefaultsToZero() throws Exception {
         assertMemoryLeak(() -> Assert.assertEquals(
-                "cairo.adaptive.commit.group.window.us default must be 0 (synchronous, zero-loss)",
+                "cairo.adaptive.commit.group.window default must be 0 (synchronous, zero-loss)",
                 0L, engine.getConfiguration().getAdaptiveCommitGroupWindowUs()
         ));
     }
@@ -88,7 +88,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     public void testWindowZeroFsyncsEveryCommitAndAdvancesDurableSynchronously() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
 
         final WalFdatasyncFacade ff = new WalFdatasyncFacade();
         assertMemoryLeak(ff, () -> {
@@ -130,7 +130,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     public void testWindowPositiveBatchesFsyncAndLagsDurable() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
 
         final WalFdatasyncFacade ff = new WalFdatasyncFacade();
         assertMemoryLeak(ff, () -> {
@@ -179,7 +179,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     public void testNextCommitAfterWindowFlushesBacklog() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
 
         assertMemoryLeak(() -> {
             setCurrentMicros(1_000_000L);
@@ -219,7 +219,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     public void testBackgroundFlusherMakesIdleWriterDurableWithinWindow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
 
         assertMemoryLeak(() -> {
             setCurrentMicros(1_000_000L);
@@ -267,7 +267,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     public void testWriterReleaseFlushesPending() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
 
         assertMemoryLeak(() -> {
             setCurrentMicros(1_000_000L);
@@ -308,7 +308,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     public void testStructuralChangeFlushesPendingFirst() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
 
         assertMemoryLeak(() -> {
             setCurrentMicros(1_000_000L);
@@ -356,7 +356,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Tiny window so the flusher actually fires (real wall clock here, not the test clock), maximizing
         // the overlap with segment rolls.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "1");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "1");
         // Roll the segment every few rows so openNewSegment() (the fd close/reopen) runs constantly.
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, "3");
 
@@ -430,7 +430,7 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Tiny window so the flusher fires immediately — maximising the chance it runs while the
         // writer is mid-close and still in the registry (before dropPendingDurable deregisters it).
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "1");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "1");
 
         final int iterations = 50; // repeat open→commit→close many times to stress the race window
         final int rowsPerIter = 10;

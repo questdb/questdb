@@ -229,10 +229,10 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         Assume.assumeTrue("soak budget must be positive", soakCycles > 0 || soakMinutes > 0);
 
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(windowUs));
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(windowUs));
         // Epoch on every apply batch: keeps _txn.epoch/_cv.epoch always present + refreshed (the ping-pong
         // growth invariant is meaningful) and makes recovery's roll-forward anchor deterministic.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         if (windowUs > 0) {
             // Pin the microsecond clock (see AdaptiveGroupCommitCrashTest / testConvertPartitionCrashSafeWN):
             // under W>0 the group-commit deferral trigger and the WAL-apply time quota both read the engine
@@ -407,8 +407,8 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                 setCurrentMicros(-1); // -1 => real clock (harness default); never leak a fixed clock into a later test
             }
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

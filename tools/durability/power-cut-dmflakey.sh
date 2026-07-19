@@ -207,7 +207,7 @@ WRITER_PID=""
 
 run_one() {
     local MODE="$1"
-    local W="${2:-0}"          # cairo.adaptive.commit.group.window.us (only meaningful for adaptive; 0 for SYNC/NOSYNC)
+    local W="${2:-0}"          # cairo.adaptive.commit.group.window (only meaningful for adaptive; 0 for SYNC/NOSYNC)
     local BATCHED="${3:-true}"
     echo ""
     echo "======================================================"

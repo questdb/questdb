@@ -233,7 +233,7 @@ public interface CairoConfiguration {
 
     /**
      * The adaptive GROUP-COMMIT window in MICROSECONDS (the RPO knob,
-     * {@code cairo.adaptive.commit.group.window.us}). Default {@code 0} keeps today's synchronous
+     * {@code cairo.adaptive.commit.group.window}). Default {@code 0} keeps today's synchronous
      * fsync-before-return under {@link CommitMode#ADAPTIVE}: every acked WAL commit is fdatasync-durable
      * before {@code commit0} returns (zero loss). When {@code > 0}, the WAL fdatasync (the device flush) is
      * BATCHED across an adaptive table's commits within this window: {@code commit0} returns after the txn

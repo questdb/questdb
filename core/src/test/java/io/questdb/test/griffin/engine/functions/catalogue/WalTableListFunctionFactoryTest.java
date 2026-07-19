@@ -320,7 +320,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWalTablesExposesLocalDurableAndLastEpochTs() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, "0"); // cut an epoch every batch
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "0"); // cut an epoch every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values (0, 1)");

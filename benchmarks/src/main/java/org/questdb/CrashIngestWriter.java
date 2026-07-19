@@ -70,16 +70,16 @@ import java.nio.file.StandardOpenOption;
  *           LOST on a power cut (page cache discarded).  Also the NON-WAL path.
  *   adaptive: the WAL path (CommitMode.ADAPTIVE). Rows flow through a WalWriter into the WAL
  *           sequencer; the apply job (ApplyWal2TableJob + CheckWalTransactionsJob) materializes
- *           them and fires durable epochs; the group-commit window (cairo.adaptive.commit.group.window.us)
+ *           them and fires durable epochs; the group-commit window (cairo.adaptive.commit.group.window)
  *           batches the WAL device flush. After each commit the writer records BOTH the committed
  *           sequencer txn (C) and the durable-ack frontier localDurableSeqTxn (Wm). CrashVerifier
  *           reopens, runs the production recovery triple, and asserts the adaptive durability oracle
  *           (see the SP-D4 protocol spec) against (C, Wm).
  *
  * ADAPTIVE KNOBS:
- *   -Dgroup.window.us=<W>   -> cairo.adaptive.commit.group.window.us (0 = synchronous/zero-loss;
+ *   -Dgroup.window.us=<W>   -> cairo.adaptive.commit.group.window (0 = synchronous/zero-loss;
  *                              >0 = batched WAL fdatasync bounded to W microseconds, RPO<=W).
- *   -Depoch.interval.ms=<n> -> cairo.adaptive.epoch.interval.ms (min interval between durable epochs
+ *   -Depoch.interval.ms=<n> -> cairo.adaptive.epoch.interval (min interval between durable epochs
  *                              per table; default 1000ms, production default; 0 epochs every apply batch).
  *
  * HARNESS #1 — PROCESS-CRASH-CONSISTENCY (crash-consistency-pkill.sh):
@@ -165,13 +165,13 @@ public class CrashIngestWriter {
                 return batchedSync;
             }
 
-            // Adaptive group-commit window (cairo.adaptive.commit.group.window.us). Only ADAPTIVE reads it.
+            // Adaptive group-commit window (cairo.adaptive.commit.group.window). Only ADAPTIVE reads it.
             @Override
             public long getAdaptiveCommitGroupWindowUs() {
                 return groupWindowUs;
             }
 
-            // Adaptive durable-epoch cadence (cairo.adaptive.epoch.interval.ms).
+            // Adaptive durable-epoch cadence (cairo.adaptive.epoch.interval).
             @Override
             public long getAdaptiveEpochIntervalMs() {
                 return epochIntervalMs;

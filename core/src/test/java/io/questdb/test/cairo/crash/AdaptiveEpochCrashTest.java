@@ -81,7 +81,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
     public void testEpochMakesLazilyAppliedRowsDurable() throws Exception {
         // ADAPTIVE + epoch on every batch so the prefix is epoch'd deterministically.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
@@ -116,7 +116,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -128,7 +128,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
     @Test
     public void testNegativeControlWithoutEpochAnchorIsAbsent() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1); // epochs disabled
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1); // epochs disabled
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
@@ -158,7 +158,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -174,7 +174,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
         // explicitly via fsyncMaterializedState() with a crash armed mid-way, isolating the
         // mid-epoch-fsync crash from the apply's own (WAL) durability ops.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         try {
             runWithCrashFacade(() -> {
                 crashFf.modelSharedJournal = false;
@@ -207,7 +207,7 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 

@@ -211,8 +211,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         // 1h >> any test commit() duration: fresh-table lastEpochTs==0 fires exactly one deterministic
         // epoch on batch 1 and nothing can reach 1h to fire a second -- see Budget & runtime / Mechanism
         // in the plan. A small interval is wall-clock-timing-flaky against the sweep's `fired` guard.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, windowUs);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, windowUs);
         return forEachAdaptiveCrashPoint(new FuzzCrashWorkload(s0, s1), cap);
     }
 
@@ -316,8 +316,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     @Test
     public void testConvertPartitionCrashSafeW0() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
             Assert.assertFalse("convert-partition sweep truncated (N > cap) — raise the cap", r.truncated);
@@ -345,8 +345,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     @Test
     public void testConvertPartitionCrashSafeWN() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, GROUP_WINDOW_WN_US);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, GROUP_WINDOW_WN_US);
         // Pin the microsecond clock. Under W>0 BOTH the group-commit deferral trigger
         // (WalWriter.recordPendingDurable) and the WAL-apply time quota (ApplyWal2TableJob's per-batch
         // timeLimit) read the engine's microsecond clock, so with the REAL clock a heavy-load run's wall-clock
@@ -449,8 +449,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     @Test
     public void testRebaseWalCrashSafeW0() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 3_600_000);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true"); // SUSPEND WAL (rebase precondition) is dev-mode gated
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true"); // REBASE WAL demands this
         runWithCrashFacade(() -> {

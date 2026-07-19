@@ -1567,11 +1567,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
-            this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 60000);
+            this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
             // Default 0 == today's synchronous fsync-before-return under ADAPTIVE (zero loss). A negative
             // value is clamped to 0 (synchronous) so a misconfiguration never silently weakens durability.
-            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, 0));
+            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0));
             this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
             this.adaptiveEpochColumnSyncBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
             this.detectFastCommit = loadAdditionalConfigurations;

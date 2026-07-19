@@ -221,7 +221,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     @Test
     public void testDowngradeFromAdaptiveDrainsCleanlyAndArtifactsAreInert() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0); // epoch every apply batch
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0); // epoch every apply batch
         assertMemoryLeak(() -> {
             execute("create table d (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into d values ('2024-03-01T00:00:00.000000Z', 1)");
@@ -278,7 +278,7 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     @Test
     public void testDowngradeThenRebootPreservesDataAndIgnoresStaleEpoch() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
             execute("create table dr (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into dr values ('2024-04-01T00:00:00.000000Z', 1)");

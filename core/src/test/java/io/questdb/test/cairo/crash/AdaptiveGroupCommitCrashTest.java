@@ -74,11 +74,11 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
     @Test
     public void testDurableAckedTxnSurvivesCrash() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
         // Epoch every apply batch so the MATERIALIZED table is recoverable end-to-end (the durable epoch +
         // roll-forward rebuilds the applied columns from the durable WAL). The group-commit fdatasync is what
         // makes that WAL durable; this test asserts a durable-ACK'd WAL txn survives the crash end to end.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             runWithCrashFacade(() -> {
@@ -128,8 +128,8 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
@@ -149,8 +149,8 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
     @Test
     public void testUnflushedTxnMayBeLostButNoCorruption() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, String.valueOf(WINDOW_US));
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         try {
             runWithCrashFacade(() -> {
                 setCurrentMicros(1_000_000L);
@@ -216,8 +216,8 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW_US, "0");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL_MS, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
