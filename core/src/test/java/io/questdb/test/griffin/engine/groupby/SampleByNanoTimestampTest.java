@@ -5830,7 +5830,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
+                            UnionSymbolCast
                               functions: [sym::symbol,first,avg,last,max]
                                 Union All
                                     SelectedRecord
@@ -5872,7 +5872,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "sample by 1m align to calendar ")
                     .noLeakCheck()
                     .assertsPlan("""
-                            VirtualRecord
+                            UnionSymbolCast
                               functions: [tstmp,sym::symbol,first,avg,last,max]
                                 Union All
                                     Encode sort light

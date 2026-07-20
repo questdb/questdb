@@ -8889,6 +8889,49 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsTranslatesNativeKeysAcrossThreeSources() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+            execute("CREATE TABLE tc (s SYMBOL)");
+            // Every leg assigns native key 0, each to different text, and every leg also carries
+            // 'a'. A flat three-leg chain nests the set cursors, so bindSymbolSourceTracker has to
+            // recurse and hand each leaf its own index. Were two leaves to share one translation
+            // cache, the later leg's key 0 would resolve to the earlier leg's text.
+            execute("INSERT INTO ta VALUES ('a'), ('a')");
+            execute("INSERT INTO tb VALUES ('b'), ('a')");
+            execute("INSERT INTO tc VALUES ('c'), ('a')");
+
+            final String sql = "SELECT s FROM ta UNION ALL SELECT s FROM tb UNION ALL SELECT s FROM tc";
+            try (RecordCursorFactory factory = select(sql)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable resultTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+                    // Read keys, not text: getSymA() serves a re-symbolised column straight off the
+                    // base record, so only the integer path exercises the per-source translation.
+                    final String[] expected = {"a", "a", "b", "a", "c", "a"};
+                    final int[] keys = new int[expected.length];
+                    for (int i = 0; i < expected.length; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        keys[i] = record.getInt(0);
+                        TestUtils.assertEquals(expected[i], resultTable.valueOf(keys[i]));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+
+                    // 'a' arrives under a different native key in each leg yet merges to one key.
+                    Assert.assertEquals(keys[0], keys[1]);
+                    Assert.assertEquals(keys[0], keys[3]);
+                    Assert.assertEquals(keys[0], keys[5]);
+                    // Distinct text never collides.
+                    Assert.assertNotEquals(keys[0], keys[2]);
+                    Assert.assertNotEquals(keys[0], keys[4]);
+                    Assert.assertNotEquals(keys[2], keys[4]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsTranslatesNativeKeysPerSource() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG)");
@@ -8901,8 +8944,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("SELECT s, v FROM ta UNION ALL SELECT s, v FROM tb")) {
                 UnionSymbolCastRecordCursorFactory projection = null;
                 for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-                    if (current instanceof UnionSymbolCastRecordCursorFactory) {
-                        projection = (UnionSymbolCastRecordCursorFactory) current;
+                    if (current instanceof UnionSymbolCastRecordCursorFactory found) {
+                        projection = found;
                         break;
                     }
                 }
@@ -8910,8 +8953,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertEquals(
                         "only the SYMBOL column should have a projection function",
                         1,
-                        projection.getFunctionCount()
+                        projection.getFunctions().size()
                 );
+                // The projection must stay off every parallel path: a worker that cloned or
+                // snapshotted it would read a half-built, non-thread-safe dictionary.
+                Assert.assertFalse(projection.supportsPageFrameCursor());
+                Assert.assertFalse(projection.supportsFilterStealing());
+                Assert.assertFalse(projection.supportsTimeFrameCursor());
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     final SymbolTable resultTable = cursor.getSymbolTable(0);
@@ -9904,20 +9952,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     private static ObjList<CastStrToSymbolFunctionFactory.Func> findUnionSymbolCasts(RecordCursorFactory factory) {
         final ObjList<CastStrToSymbolFunctionFactory.Func> symbolCasts = new ObjList<>();
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof VirtualRecordCursorFactory) {
-                final ObjList<Function> functions = ((VirtualRecordCursorFactory) current).getFunctions();
+            final ObjList<Function> functions = projectionFunctions(current);
+            if (functions != null) {
                 for (int i = 0, n = functions.size(); i < n; i++) {
-                    final Function function = functions.getQuick(i);
-                    if (function instanceof CastStrToSymbolFunctionFactory.Func) {
-                        symbolCasts.add((CastStrToSymbolFunctionFactory.Func) function);
-                    }
-                }
-            } else if (current instanceof UnionSymbolCastRecordCursorFactory) {
-                final UnionSymbolCastRecordCursorFactory projection = (UnionSymbolCastRecordCursorFactory) current;
-                for (int i = 0, n = projection.getFunctionCount(); i < n; i++) {
-                    final Function function = projection.getFunction(i);
-                    if (function instanceof CastStrToSymbolFunctionFactory.Func) {
-                        symbolCasts.add((CastStrToSymbolFunctionFactory.Func) function);
+                    if (functions.getQuick(i) instanceof CastStrToSymbolFunctionFactory.Func symbolCast) {
+                        symbolCasts.add(symbolCast);
                     }
                 }
             }
@@ -9927,6 +9966,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         }
         Assert.fail("could not find the union symbol casts in the factory chain");
         return null;
+    }
+
+    // Both projection factories expose their functions the same way, so the caller does not have
+    // to know which one the compiler picked.
+    private static ObjList<Function> projectionFunctions(RecordCursorFactory factory) {
+        if (factory instanceof VirtualRecordCursorFactory virtualRecord) {
+            return virtualRecord.getFunctions();
+        }
+        return factory instanceof UnionSymbolCastRecordCursorFactory projection ? projection.getFunctions() : null;
     }
 
     private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {

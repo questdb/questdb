@@ -1162,7 +1162,7 @@ public class ViewQueryTest extends AbstractViewTest {
                                         Row forward scan
                                         Frame forward scan on: Részvény_áíóúüűöő
                                     Hash
-                                        VirtualRecord
+                                        UnionSymbolCast
                                           functions: [ts,k2::symbol,v_max]
                                             Union
                                                 Filter filter: 7<v_max
@@ -1815,7 +1815,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            VirtualRecord
+                            UnionSymbolCast
                               functions: [ts,k2::symbol,v_max]
                                 Union
                                     Filter filter: 7<v_max
@@ -1891,7 +1891,7 @@ public class ViewQueryTest extends AbstractViewTest {
                                         Row forward scan
                                         Frame forward scan on: table1
                                     Hash
-                                        VirtualRecord
+                                        UnionSymbolCast
                                           functions: [ts,k2::symbol,v_max]
                                             Union
                                                 Filter filter: 7<v_max

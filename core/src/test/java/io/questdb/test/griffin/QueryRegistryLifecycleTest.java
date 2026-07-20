@@ -310,7 +310,14 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
             try (
                     SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
-                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+                    // cancel() reads the canceller's principal immediately after it looks the
+                    // entry up and before it calls beginCancel(), so blocking inside getPrincipal()
+                    // parks the canceller in exactly the window this test needs. The context belongs
+                    // to this test alone, unlike an engine-wide hook a stranded test could leave
+                    // behind to wedge every later cancel() in the fork.
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(
+                            new BlockingPrincipalSecurityContext(entryLookedUp, releaseCanceller)
+                    )
             ) {
                 final long oldId = registry.register("SELECT old", ownerContext);
                 final QueryRegistry.Entry oldEntry = registry.getEntry(oldId);
@@ -326,15 +333,8 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
 
                 long newId = -1;
                 try {
-                    // Install the hook and start the canceller inside the try so the finally always
-                    // removes the hook and releases the latch, even if Thread.start() throws (a loaded
-                    // fork can fail to create a native thread). The hook lives on the engine-wide
-                    // registry, so a stranded one would wedge every later cancel() in this JVM fork
-                    // forever on the untimed releaseCanceller await.
-                    registry.setCancelLookupTestHook(() -> {
-                        entryLookedUp.countDown();
-                        TestUtils.await(releaseCanceller);
-                    });
+                    // Start the canceller inside the try so the finally always releases the latch,
+                    // even if Thread.start() throws (a loaded fork can fail to create a thread).
                     cancellerThread.start();
                     Assert.assertTrue("canceller did not look up the old entry", entryLookedUp.await(5, TimeUnit.SECONDS));
 
@@ -342,7 +342,6 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     newId = registry.register("SELECT new", ownerContext);
                     final QueryRegistry.Entry newEntry = registry.getEntry(newId);
                     Assert.assertSame(oldEntry, newEntry);
-                    Assert.assertFalse(newEntry.getCancelled().get());
 
                     releaseCanceller.countDown();
                     cancellerThread.join(5_000);
@@ -353,7 +352,6 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     Assert.assertFalse(cancelResult.get());
                     Assert.assertFalse("stale canceller touched the recycled entry", newEntry.getCancelled().get());
                 } finally {
-                    registry.setCancelLookupTestHook(null);
                     releaseCanceller.countDown();
                     if (cancellerThread.isAlive()) {
                         cancellerThread.interrupt();

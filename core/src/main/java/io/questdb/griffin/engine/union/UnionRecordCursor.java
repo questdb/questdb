@@ -35,18 +35,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor, UnionSymbolSourceCursor {
+class UnionRecordCursor extends AbstractUnionSymbolSourceCursor implements NoRandomAccessRecordCursor {
     private final Map map;
     private final NextMethod nextB = this::nextB;
     private final AbstractUnionRecord record;
     private final RecordSink recordSink;
     private boolean isOpen;
-    private boolean isUsingCursorA;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
-    private int symbolSourceIndexA = -1;
-    private int symbolSourceIndexB = -1;
-    private SymbolSourceTracker symbolSourceTracker;
 
     public UnionRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         if (castFunctionsA != null && castFunctionsB != null) {
@@ -58,24 +54,6 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         this.map = map;
         this.isOpen = false;
         this.recordSink = recordSink;
-    }
-
-    @Override
-    public int bindSymbolSourceTracker(SymbolSourceTracker tracker, int nextSourceIndex) {
-        symbolSourceTracker = tracker;
-        if (cursorA instanceof UnionSymbolSourceCursor sourceCursor) {
-            nextSourceIndex = sourceCursor.bindSymbolSourceTracker(tracker, nextSourceIndex);
-            symbolSourceIndexA = -1;
-        } else {
-            symbolSourceIndexA = nextSourceIndex++;
-        }
-        if (cursorB instanceof UnionSymbolSourceCursor sourceCursor) {
-            nextSourceIndex = sourceCursor.bindSymbolSourceTracker(tracker, nextSourceIndex);
-            symbolSourceIndexB = -1;
-        } else {
-            symbolSourceIndexB = nextSourceIndex++;
-        }
-        return nextSourceIndex;
     }
 
     @Override
@@ -129,11 +107,6 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         cursorB.toTop();
     }
 
-    @Override
-    public void updateSymbolSource() {
-        updateSymbolSource(isUsingCursorA ? cursorA : cursorB, isUsingCursorA ? symbolSourceIndexA : symbolSourceIndexB);
-    }
-
     private boolean nextA() {
         if (cursorA.hasNext()) {
             return true;
@@ -151,16 +124,6 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         nextMethod = nextB;
         updateSymbolSource();
         return nextMethod.next();
-    }
-
-    private void updateSymbolSource(RecordCursor cursor, int sourceIndex) {
-        if (symbolSourceTracker != null) {
-            if (cursor instanceof UnionSymbolSourceCursor sourceCursor) {
-                sourceCursor.updateSymbolSource();
-            } else {
-                symbolSourceTracker.of(cursor, sourceIndex);
-            }
-        }
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {

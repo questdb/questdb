@@ -211,6 +211,25 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     }
 
     @Test
+    public void testNativeKeyCacheChargesTheTrackerAboveTheTextPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // Both runs intern the same two values into the same merged dictionary; only the second
+            // also builds a per-source key cache. The difference between them is what attributes
+            // bytes to that cache. A test that merely asserts "the tracker was charged" stays green
+            // even if the cache stopped being tracked at all, because the dictionary alone charges
+            // it - which is exactly the regression this has to catch.
+            final long textOnly = measurePeakTrackedBytes(true);
+            final long withKeyCache = measurePeakTrackedBytes(false);
+            Assert.assertTrue("the text fallback must still charge the dictionary", textOnly > 0);
+            Assert.assertTrue(
+                    "the per-source key cache must be charged to the query tracker"
+                            + " [textOnly=" + textOnly + ", withKeyCache=" + withKeyCache + ']',
+                    withKeyCache > textOnly
+            );
+        });
+    }
+
+    @Test
     public void testNativeKeyCacheRehashesUnderTrackerAndReleases() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
@@ -401,6 +420,37 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     }
 
     @Test
+    public void testUnresolvableSourceKeyIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
+            try {
+                // A source dictionary answers VALUE_NOT_FOUND for text it does not hold. That is
+                // not VALUE_IS_NULL, so it slips past the null check and reaches the translation
+                // cache as a negative key - which a cache indexed by the raw key would read out of
+                // bounds. The projection must reject it instead of translating it.
+                final StaticSymbolCursorFactory base =
+                        new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"gamma"}});
+                final ObjList<Function> functions =
+                        functions(new CastStrToSymbolFunctionFactory.Func(new StrColumn(0)));
+                try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        try {
+                            cursor.getRecord().getInt(0);
+                            Assert.fail("expected the projection to reject an unresolvable source key");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "invalid union symbol key [key=-2]");
+                        }
+                    }
+                }
+                Assert.assertEquals("the rejected key must not strand tracked memory", 0, tracker.getUsed());
+            } finally {
+                releaseTracker(tracker);
+            }
+        });
+    }
+
+    @Test
     public void testUnsupportedSourceSymbolTableFallsBackToTextKeys() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
@@ -499,6 +549,31 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                 return key >= 0 && key < count ? "v" + key : null;
             }
         };
+    }
+
+    // Interns every row through the projection and reports what the query tracker holds while the
+    // cursor is still open. isTextFallback makes the source refuse a symbol table, which drops the
+    // per-source key cache while leaving the merged dictionary identical.
+    private long measurePeakTrackedBytes(boolean isTextFallback) throws Exception {
+        final MemoryTracker tracker = acquireTracker();
+        try {
+            final StaticSymbolCursorFactory base =
+                    new StaticSymbolCursorFactory(SYMBOL_TABLE, new String[][]{{"alpha"}, {"beta"}});
+            base.cursor.isSymbolTableUnsupported = isTextFallback;
+            final ObjList<Function> functions =
+                    functions(new CastStrToSymbolFunctionFactory.Func(new StrColumn(0)));
+            try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getInt(0);
+                    }
+                    return tracker.getUsed();
+                }
+            }
+        } finally {
+            releaseTracker(tracker);
+        }
     }
 
     private static class FailingInitSymbolFunction extends TrackingSymbolFunction {

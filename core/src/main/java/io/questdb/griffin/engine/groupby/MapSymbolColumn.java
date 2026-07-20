@@ -71,6 +71,12 @@ public class MapSymbolColumn extends SymbolFunction {
         return null;
     }
 
+    // Unlike SymbolColumn, this does NOT short-circuit to rec.getSymA() for a dynamic table.
+    // SymbolColumn does so to avoid minting a key for a caller that only wants text, but here the
+    // key already sits in the map: getInt() reads it from mapColumnIndex, so resolving it costs a
+    // lookup and nothing more. The record is a map record keyed by mapColumnIndex while the symbol
+    // table belongs to cursorColumnIndex, so rec.getSymA() is not an equivalent read in the first
+    // place. The two classes differ deliberately; do not unify them.
     @Override
     public CharSequence getSymbol(Record rec) {
         return symbolTable.valueOf(getInt(rec));

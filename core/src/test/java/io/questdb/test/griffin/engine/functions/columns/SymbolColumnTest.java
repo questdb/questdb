@@ -34,12 +34,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+/**
+ * The record's text and the dictionary deliberately disagree, so each assertion proves which side
+ * the column reads. A non-static column reads the record text (getSymA/getSymB) without minting a
+ * key; a static column keeps the integer fast path (dictionary valueOf(getInt)). Both must agree on
+ * a well-formed cursor - this pins the getSymbol read-path split introduced for lazy symbol casts.
+ */
 public class SymbolColumnTest extends AbstractCairoTest {
-
-    // The record's text and the dictionary deliberately disagree, so each assertion proves which side
-    // the column reads. A non-static column reads the record text (getSymA/getSymB) without minting a
-    // key; a static column keeps the integer fast path (dictionary valueOf(getInt)). Both must agree on
-    // a well-formed cursor - this pins the getSymbol read-path split introduced for lazy symbol casts.
 
     @Test
     public void testNonStaticColumnReadsRecordTextNotDictionary() {
@@ -62,6 +63,25 @@ public class SymbolColumnTest extends AbstractCairoTest {
         Assert.assertNull(column.getSymbol(nullRecord()));
         Assert.assertNull(column.getSymbolB(nullRecord()));
         column.close();
+    }
+
+    @Test
+    public void testSupportsKeyValueAccessFollowsTheBoundDictionary() {
+        // QwpResultBatchBuffer reads this flag to decide whether egress may ship a value once per
+        // key, so it has to follow the dictionary actually bound rather than the column's declared
+        // staticness. It is also read before init() binds one, where a safe false is required.
+        SymbolColumn uninitialised = new SymbolColumn(0, false);
+        Assert.assertFalse("an unbound column must not claim the key path", uninitialised.supportsKeyValueAccess());
+
+        SymbolColumn overStatic = new SymbolColumn(0, true);
+        overStatic.init(sourceOf(staticDictionaryTable()), sqlExecutionContext);
+        Assert.assertTrue(overStatic.supportsKeyValueAccess());
+        overStatic.close();
+
+        SymbolColumn overDynamic = new SymbolColumn(0, false);
+        overDynamic.init(sourceOf(dictionaryTable()), sqlExecutionContext);
+        Assert.assertFalse(overDynamic.supportsKeyValueAccess());
+        overDynamic.close();
     }
 
     private static SymbolTable dictionaryTable() {

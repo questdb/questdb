@@ -128,14 +128,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    @TestOnly
-    public Function getFunction(int index) {
-        return functions.getQuick(index);
-    }
-
-    @TestOnly
-    public int getFunctionCount() {
-        return functions.size();
+    // Matches VirtualRecordCursorFactory.getFunctions(), so a caller can walk either projection's
+    // functions the same way instead of branching on which one it found.
+    public ObjList<Function> getFunctions() {
+        return functions;
     }
 
     @Override
@@ -171,8 +167,11 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        // Retain the established plan shape while the implementation uses a symbol-only record.
-        sink.type("VirtualRecord");
+        // Name the operator that actually runs. Printing "VirtualRecord" would make the plan
+        // indistinguishable from a real VirtualRecordCursorFactory, which delegates different
+        // capabilities and carries no serial-base guard - so a refactor that dropped this
+        // projection would leave every plan assertion green.
+        sink.type("UnionSymbolCast");
         sink.attr("functions").val('[');
         for (int i = 0, n = columnToFunctionIndex.size(); i < n; i++) {
             if (i > 0) {

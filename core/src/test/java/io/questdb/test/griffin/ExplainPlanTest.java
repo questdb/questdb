@@ -9229,7 +9229,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            VirtualRecord
+                            UnionSymbolCast
                               functions: [i,s::symbol]
                                 Union All
                                     PageFrame
@@ -9247,7 +9247,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            VirtualRecord
+                            UnionSymbolCast
                               functions: [i,s::symbol]
                                 Union
                                     PageFrame

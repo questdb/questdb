@@ -39,6 +39,9 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     private int capacity;
     private int free;
     private long mask;
+    // Per-query native memory tracker bound by the owning component before the
+    // backing directory is (re)allocated. Null when no per-query limit applies;
+    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
     @Nullable
     private MemoryTracker memoryTracker;
     private long ptr;
@@ -64,6 +67,8 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             this.ptr = Unsafe.malloc(8L * capacity, memoryTag, memoryTracker);
             zero();
         }
+        // else: ptr stays 0; the first reopen() allocates the directory under
+        // whatever MemoryTracker is bound at that time.
     }
 
     public int capacity() {
@@ -83,6 +88,7 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
             ptr = Unsafe.free(ptr, 8L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
+            mask = 0;
             size = 0;
         }
     }
@@ -161,7 +167,14 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
         clear();
     }
 
+    /**
+     * Binds the per-query tracker. It must be bound before the backing directory is
+     * allocated and cleared only after it is freed, so that a malloc and its matching free
+     * charge the same tracker. Rebinding over a live directory would refund bytes the new
+     * tracker was never charged.
+     */
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        assert ptr == 0 || memoryTracker == null : "tracker must be bound before allocation";
         this.memoryTracker = memoryTracker;
     }
 
@@ -228,6 +241,11 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable, Reopenable 
     }
 
     private void zero() {
+        if (ptr == 0) {
+            // Lazy-open (openOnInit == false) leaves capacity sized while ptr is still 0.
+            // reopen() zeroes the directory it allocates, so there is nothing to do here.
+            return;
+        }
         if (noEntryKey == 0) {
             // Vectorized fast path for zero default value.
             Vect.memset(ptr, 8L * capacity, 0);

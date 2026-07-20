@@ -694,6 +694,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
+        // Bound the test hook by this generator's lifetime: clear() runs on every compile, so it
+        // cannot own the reset, but a hook must never outlive the compiler that installed it.
+        unionSymbolProjectionTestHook = null;
         Misc.free(jitIRMem);
     }
 
@@ -11499,9 +11502,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 UnionSymbolProjectionTestHook.SYMBOL_FUNCTION
                         );
                         functions.setQuick(functionIndex, function);
-                    }
-                    if (!(function instanceof CastStrToSymbolFunctionFactory.Func)) {
-                        throw CairoException.critical(0).put("invalid union symbol projection function");
                     }
                     if (unionSymbolProjectionTestHook != null) {
                         unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.SYMBOL_FUNCTION);

@@ -3973,7 +3973,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .withPlan("""
-                            VirtualRecord
+                            UnionSymbolCast
                               functions: [timestamp,vehicle_id::symbol,i000]
                                 Union
                                     Long Top K lo: 10

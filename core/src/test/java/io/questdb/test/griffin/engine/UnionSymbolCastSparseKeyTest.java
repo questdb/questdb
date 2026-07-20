@@ -166,7 +166,15 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
                     Assert.assertEquals(0, resultKey);
                     TestUtils.assertEquals("sparse", symbolTable.valueOf(resultKey));
                     Assert.assertTrue(tracker.getUsed() > 0);
-                    Assert.assertTrue(tracker.getUsed() < 1024 * 1024L);
+                    // Bound the cache by cardinality, not by key range, and pick a bound that is
+                    // independent of the tracker's own limit: acquireTracker() caps the query at
+                    // 1 MiB, so asserting anything below that can never fail. One source key of
+                    // one column needs a couple of hundred bytes; a structure indexed by the raw
+                    // key (100_000_000) would need ~400 MB and breach long before this.
+                    Assert.assertTrue(
+                            "cache must be sized by cardinality [used=" + tracker.getUsed() + ']',
+                            tracker.getUsed() < 4096
+                    );
 
                     final long used = tracker.getUsed();
                     Assert.assertEquals(resultKey, record.getInt(0));
