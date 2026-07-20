@@ -391,6 +391,32 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Narrow, fail-safe opt-in consulted ONLY by the four order-indifferent group-by/aggregation
+     * selection sites in {@code SqlCodeGenerator#generateSelectGroupBy} (the vectorized Rosti path, the
+     * parallel/async group-by path, and the filter-stealing assert that follows it). Defaults to
+     * {@link #supportsPageFrameCursor()}, so for every factory that does not override this method the new
+     * capability is identical to the old one -- no behavioural change.
+     * <p>
+     * A factory may override this to {@code true} while keeping {@link #supportsPageFrameCursor()}
+     * {@code false} ONLY when its {@link #getPageFrameCursor} yields frames that are not globally ordered
+     * but are still safe for order-INDIFFERENT consumption -- e.g. a composite (time + dimension
+     * partitioned) table's cell-blind, per-partition physical frames: wrong for anything order-sensitive
+     * (filters, joins, ORDER BY / SAMPLE BY) but correct for aggregation, since the vector aggregate
+     * functions and any {@code GroupByFunction.supportsParallelism()} opt-in combine partials
+     * commutatively.
+     * <p>
+     * Every consumer OTHER than those four aggregation sites MUST keep gating on
+     * {@link #supportsPageFrameCursor()}, not this method -- a factory that overrides this to diverge from
+     * {@link #supportsPageFrameCursor()} is asserting that {@link #getPageFrameCursor} is reachable ONLY
+     * through call sites that have been individually reviewed for order-indifference.
+     *
+     * @return true if the factory's page frames are safe for order-indifferent aggregation
+     */
+    default boolean supportsPageFrameCursorForUnorderedAggregation() {
+        return supportsPageFrameCursor();
+    }
+
+    /**
      * Returns true when this factory's page-frame cursor ({@link #getPageFrameCursor})
      * yields frames whose column page addresses are fully materialized — a raw
      * page-frame consumer that reads {@code frame.getPageAddress(col)} directly (the

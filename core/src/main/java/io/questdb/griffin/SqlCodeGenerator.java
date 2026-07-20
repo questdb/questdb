@@ -8763,7 +8763,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (hourIndex != -1) {
                 factory = generateSubQuery(model, executionContext);
-                pageFramingSupported = factory.supportsPageFrameCursor();
+                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
+                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
+                pageFramingSupported = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
                     // find position of the hour() argument in the factory meta
@@ -8783,7 +8785,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     IQueryModel.restoreWhereClause(expressionNodePool, model);
                 }
                 factory = generateSubQuery(model, executionContext);
-                pageFramingSupported = factory.supportsPageFrameCursor();
+                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
+                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
+                pageFramingSupported = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
             }
 
             RecordMetadata baseMetadata = factory.getMetadata();
@@ -8974,7 +8978,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
-                boolean supportsParallelism = factory.supportsPageFrameCursor();
+                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
+                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
+                boolean supportsParallelism = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
                 ObjList<Function> bindVarFunctions = null;
@@ -8986,7 +8992,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!supportsParallelism && factory.supportsFilterStealing()) {
                     RecordCursorFactory filterFactory = factory;
                     factory = factory.getBaseFactory();
-                    assert factory.supportsPageFrameCursor();
+                    assert factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
                     compiledFilter = filterFactory.getCompiledFilter();
                     bindVarMemory = filterFactory.getBindVarMemory();
                     bindVarFunctions = filterFactory.getBindVarFunctions();

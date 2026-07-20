@@ -241,6 +241,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean supportsPageFrameCursorForUnorderedAggregation() {
+        return base.supportsPageFrameCursorForUnorderedAggregation();
+    }
+
+    @Override
     public boolean supportsSharedCursors() {
         return base.supportsSharedCursors();
     }
