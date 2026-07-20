@@ -294,6 +294,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
+    // Adaptive durable-epoch marker + its scratch path, lazily created on the first
+    // advanceDurableEpoch() call (only adaptive WAL tables ever advance an epoch).
+    private final Path durableEpochSnapshotPath = new Path();
+    private SnapshotMarker durableEpochMarker;
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -1512,6 +1516,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
             }
 
+            // Under adaptive, advance the durable epoch once for the batch so the parquet->native
+            // conversions are the recovery anchor and the epoch pin moves past this txn; otherwise the
+            // stale pin defers the old parquet-dir purges below to the async O3PartitionPurgeJob.
+            // Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
+            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+                try {
+                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                } catch (Throwable ex) {
+                    LOG.error().$("could not advance durable epoch after batched parquet->native conversion [table=").$(tableToken).$(", e=").$(ex).I$();
+                }
+            }
+
             for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
                 long pts = pendingParquetToNativeConversions.getQuick(i);
                 long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
@@ -1739,6 +1755,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 closeActivePartition(false);
             }
 
+            // Under adaptive, advance the durable epoch now so the just-converted partition version is
+            // the recovery anchor (no replay of the pre-convert version) and the epoch pin moves past this
+            // txn. Otherwise the stale pre-convert pin makes checkScoreboardHasReadersBeforeLastCommitted-
+            // Txn() defer the old-dir purge below to the async O3PartitionPurgeJob, leaking the superseded
+            // partition dir until the next cadence epoch. Best-effort: on failure the convert stays durable
+            // (WAL) and the purge falls back to async. WAL-only: the durable epoch is a WAL-apply mechanism.
+            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+                try {
+                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                } catch (Throwable e) {
+                    LOG.error().$("could not advance durable epoch after partition convert [table=").$(tableToken).$(", e=").$(e).I$();
+                }
+            }
+
             // remove old partition dir
             safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
         } catch (Throwable e) {
@@ -1869,6 +1899,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (lastPartitionConverted) {
                 closeActivePartition(false);
+            }
+
+            // Under adaptive, advance the durable epoch now so the just-converted partition version is
+            // the recovery anchor (no replay of the pre-convert version) and the epoch pin moves past this
+            // txn. Otherwise the stale pre-convert pin makes checkScoreboardHasReadersBeforeLastCommitted-
+            // Txn() defer the old-dir purge below to the async O3PartitionPurgeJob, leaking the superseded
+            // partition dir until the next cadence epoch. Best-effort: on failure the convert stays durable
+            // (WAL) and the purge falls back to async. WAL-only: the durable epoch is a WAL-apply mechanism.
+            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+                try {
+                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                } catch (Throwable e) {
+                    LOG.error().$("could not advance durable epoch after partition convert [table=").$(tableToken).$(", e=").$(e).I$();
+                }
             }
 
             // remove old partition dir
@@ -2060,6 +2104,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+        // Under adaptive, advance the durable epoch so the detach is the recovery anchor and the epoch
+        // pin moves past this txn; otherwise the stale pre-detach pin defers the in-table partition-dir
+        // purge below to the async O3PartitionPurgeJob, leaking the detached base dir until the next
+        // cadence epoch. Best-effort; WAL-only (the durable epoch is a WAL-apply mechanism).
+        if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+            try {
+                advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+            } catch (Throwable e) {
+                LOG.error().$("could not advance durable epoch after detach partition [table=").$(tableToken).$(", e=").$(e).I$();
+            }
         }
         safeDeletePartitionDir(timestamp, partitionNameTxn);
         return AttachDetachStatus.OK;
@@ -3571,6 +3626,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+
+            // Under adaptive, advance the durable epoch so the native<->parquet switch is the recovery
+            // anchor and the epoch pin moves past this txn; otherwise the stale pin defers the old-dir
+            // purge below to the async O3PartitionPurgeJob. Best-effort; WAL-only.
+            if (tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+                try {
+                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                } catch (Throwable ex) {
+                    LOG.error().$("could not advance durable epoch after native<->parquet switch [table=").$(tableToken).$(", e=").$(ex).I$();
+                }
             }
 
             // remove old partition dir
@@ -6545,6 +6611,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
+        durableEpochMarker = Misc.free(durableEpochMarker);
+        Misc.free(durableEpochSnapshotPath);
         Misc.free(todoMem);
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
@@ -14321,6 +14389,73 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         path.trimTo(pathSize);
+    }
+
+    /**
+     * Advance the adaptive durable EPOCH for this table: a fully-durable, self-consistent cut of the
+     * materialized state, recorded so recovery lands exactly on it (INV-5 strict ordering). Owned here
+     * so BOTH the WAL-apply cadence path ({@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}) and
+     * partition-structural DDL ({@link #convertPartitionNativeToParquet}) can pin the epoch at their own
+     * txn — the DDL case so a just-superseded partition version is no longer epoch-referenced and can be
+     * reclaimed inline (matching legacy timing) instead of leaking until the next cadence epoch.
+     * <p>
+     * Preconditions: the writer is held single-threaded (apply worker / DDL executor) and the table's
+     * effective mode is ADAPTIVE. Best-effort: a demote-in-window or an unexpectedly-occupied ping-pong
+     * slot logs and returns without publishing, leaving the prior epoch intact (retried next batch).
+     */
+    public void advanceDurableEpoch(long nowMs) {
+        // Demote-in-window re-check: bail before writing anything if local durability was disabled since
+        // the caller's gate (an Enterprise replica demote). Benign on OSS (always enabled).
+        if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            LOG.info().$("adaptive durable epoch skipped: local durability disabled [table=").$(tableToken).I$();
+            return;
+        }
+
+        // Step 1: make the materialized state fully durable + write the durable epoch copies.
+        fsyncMaterializedState();
+
+        // The cut's identity, captured AFTER the durable cut's A/B commit point.
+        final long epochSeqTxn = getSeqTxn();
+        final long epochTxn = getTxn();
+        final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+
+        // Step 2: write + fsync the _snapshot marker (the hard crash boundary).
+        if (durableEpochMarker == null) {
+            durableEpochMarker = new SnapshotMarker(configuration);
+        }
+        durableEpochSnapshotPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+        durableEpochMarker.of(durableEpochSnapshotPath.$());
+        durableEpochMarker.write(epochSeqTxn, epochTxn, nowMs);
+
+        // Steps 3+4: ping-pong pin handover. Pin the NEW epoch txn into the FREE slot, THEN release the
+        // prior from the other slot, so a concurrent O3PartitionPurgeJob never sees an unprotected gap
+        // between epoch generations (INV-5 pin-before-release).
+        final long priorEpochTxn = tracker.getPinnedEpochTxn();
+        final boolean priorSlotA = tracker.isPinnedEpochSlotA();
+        // First epoch uses slot A; thereafter alternate to the free slot.
+        final boolean newSlotA = priorEpochTxn < 0 || !priorSlotA;
+        final int newSlotId = newSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
+        if (!txnScoreboard.incrementTxn(newSlotId, epochTxn)) {
+            // The target ping-pong slot was unexpectedly occupied. Do NOT release the prior pin (that
+            // would expose a purge gap); skip publishing this epoch and retry on the next batch.
+            LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
+                    .$(", epochTxn=").$(epochTxn).$(", slotA=").$(newSlotA).I$();
+            return;
+        }
+        if (priorEpochTxn >= 0 && !(priorSlotA == newSlotA && priorEpochTxn == epochTxn)) {
+            txnScoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
+        }
+        tracker.setPinnedEpoch(epochTxn, newSlotA);
+
+        // Step 5: publish the durable frontier (WAL-purge floor) + cadence timestamp, LAST.
+        tracker.setDurableEpochSeqTxn(epochSeqTxn);
+        engine.getMetrics().walMetrics().incrementEpochAdvances();
+        tracker.setLastEpochTs(nowMs);
+        // Restart the backlog count now the epoch is published (success path only).
+        tracker.resetRowsSinceEpoch();
+
+        LOG.info().$("adaptive durable epoch [table=").$(tableToken)
+                .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();
     }
 
     /**
