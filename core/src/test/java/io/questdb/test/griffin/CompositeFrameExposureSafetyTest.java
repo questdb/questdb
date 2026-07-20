@@ -75,8 +75,11 @@ import org.junit.Test;
  * All three assertions were empirically confirmed to have real teeth (not vacuously true) by temporarily
  * flipping {@code CompositePageFrameRecordCursorFactory.supportsPageFrameCursor()} to {@code true} (an
  * in-place Edit + inverse revert -- never a {@code git checkout}/{@code stash} of this uncommitted
- * worktree) and re-running this class: see task-2-report.md for the exact RED failure text captured
- * before the revert, and the GREEN re-run captured after.
+ * worktree) and re-running this class: under the mutation,
+ * {@link #testTailLimitDoesNotPlanAsyncPageFrameConsumerOverCompositeBase()} went RED -- the plan showed
+ * an {@code Async JIT Filter} node directly over the {@code Composite cross-cell merge scan} (the
+ * landmine materializing: an order-sensitive consumer wrongly consuming cell-blind unordered frames).
+ * Reverting the mutation restored GREEN with zero net production diff.
  */
 public class CompositeFrameExposureSafetyTest extends AbstractCairoTest {
 
@@ -92,12 +95,14 @@ public class CompositeFrameExposureSafetyTest extends AbstractCairoTest {
     /**
      * Pins the capability pair on the factory a real query actually gets back from {@code select()} --
      * which is {@link io.questdb.griffin.engine.QueryProgress}, a telemetry wrapper around the composite
-     * base, NOT the composite factory directly (confirmed empirically: an earlier version of this test
-     * asserted a direct {@code instanceof} on the un-unwrapped factory and failed with "got class
-     * io.questdb.griffin.engine.QueryProgress" -- see task-2-report.md). So this asserts BOTH flags on
-     * the OUTER (caller-visible) factory -- proving {@code QueryProgress}'s own delegation (Task 1 also
-     * modified {@code QueryProgress#supportsPageFrameCursorForUnorderedAggregation()} to delegate to its
-     * base) -- AND, via {@link ParquetExportMode#unwrapFactory}, that the UNWRAPPED factory really is the
+     * base, NOT the composite factory directly: {@code SqlCompilerImpl#generateSelectOneShot} wraps every
+     * top-level query's factory in a fresh {@code QueryProgress} before returning it (confirmed
+     * empirically: an earlier version of this test asserted a direct {@code instanceof} on the
+     * un-unwrapped factory and failed with "got class io.questdb.griffin.engine.QueryProgress"). So this
+     * asserts BOTH flags on the OUTER (caller-visible) factory -- proving {@code QueryProgress}'s own
+     * delegation (Task 1 also modified
+     * {@code QueryProgress#supportsPageFrameCursorForUnorderedAggregation()} to delegate to its base) --
+     * AND, via {@link ParquetExportMode#unwrapFactory}, that the UNWRAPPED factory really is the
      * composite cross-cell-merge factory under test, not some other incidental wrapper.
      */
     @Test
@@ -163,10 +168,12 @@ public class CompositeFrameExposureSafetyTest extends AbstractCairoTest {
      * {@code generateFilter} (and therefore the {@code AsyncFilteredRecordCursorFactory} candidacy this
      * test targets) is never even entered, which would make a bare-limit assertion here vacuously true.
      * (Confirmed empirically: the bare-limit shape stayed green even under the negative-control mutation
-     * described in this class's doc -- see task-2-report.md.) {@code px > 0} is the residual filter that
-     * forces a genuine {@code Function} filter to be built, mirroring the same distinction {@code
-     * CompositeReadShapesTest#testTailLimitEqualsPlainTwin} already draws ("combined with a residual
-     * filter, still async-order-sensitive").
+     * described in this class's doc, precisely because it never enters {@code generateFilter}'s
+     * async-selection branch in the first place -- the mutation has nothing to expose there.) {@code
+     * px > 0} is therefore the load-bearing part of this test, not decorative: it is what forces a
+     * genuine {@code Function} filter to be built and the async page-frame gate to actually be
+     * consulted, mirroring the same distinction {@code CompositeReadShapesTest#testTailLimitEqualsPlainTwin}
+     * already draws ("combined with a residual filter, still async-order-sensitive").
      */
     @Test
     public void testTailLimitDoesNotPlanAsyncPageFrameConsumerOverCompositeBase() throws Exception {

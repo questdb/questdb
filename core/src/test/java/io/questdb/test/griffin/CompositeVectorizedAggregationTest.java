@@ -63,10 +63,22 @@ import org.junit.Test;
  * <p>
  * Task 2 (the differential capstone) extends this class with the order-SENSITIVE counterpart shapes --
  * {@code ORDER BY} (asc/desc), {@code SAMPLE BY}, {@code LATEST ON}, an ASOF join (composite
- * master/slave/both), and a tail {@code LIMIT -N} -- proving each still equals the plain twin, i.e. that
- * Task 1's opt-in stayed scoped to exactly the four aggregation sites and nothing order-sensitive
- * silently regressed onto the newly-real cell-blind frames. The companion inverted-invariant proof (the
- * capability pair itself, plus the tail-limit / parquet-export PLAN-shape checks) lives in the sibling
+ * master/slave/both), and a tail {@code LIMIT -N} -- proving each still equals the plain twin. These five
+ * shapes are not uniformly evidence of the same thing, though: four of them are valid GENERAL
+ * order-sensitive non-regression coverage, each kept off the cell-blind frames by its OWN separate,
+ * pre-existing gate that Task 1 never touched -- ASOF join selection gates on
+ * {@code supportsConcurrentTimeFrameCursor()} ({@code SqlCodeGenerator}'s fast-vs-light join selection),
+ * {@code LATEST ON}'s {@code LatestBy*} factories never consult either capability at all and always walk
+ * the merged {@code getCursor()}, {@code SAMPLE BY}'s frame-based first()/last() fast path is gated by
+ * the separate {@code convertToSampleByIndexPageFrameCursorFactory()}, and a bare, unfiltered, unlimited
+ * {@code ORDER BY DESC} scan never reaches any call site of either capability. Only the tail
+ * {@code LIMIT -N} shape's residual-filter variant genuinely intersects the real
+ * {@code supportsPageFrameCursor()} / {@code getPageFrameCursor()} pair Task 1 changed -- it is that
+ * shape, together with the Step-2 safety tests, that actually proves Task 1's opt-in stayed scoped to
+ * exactly the four aggregation sites and nothing order-sensitive silently regressed onto the newly-real
+ * cell-blind frames; the other four shapes remain worthwhile non-regression coverage in their own right,
+ * just not evidence for THIS specific landmine. The companion inverted-invariant proof (the capability
+ * pair itself, plus the tail-limit / parquet-export PLAN-shape checks) lives in the sibling
  * {@code CompositeFrameExposureSafetyTest}.
  */
 public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
@@ -84,11 +96,11 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
      * ASOF JOIN non-regression, composite on the MASTER, the SLAVE, and BOTH sides: the exhaustive matrix
      * of join kinds/positions over composite (ASOF/LT/SPLICE/WINDOW/HORIZON) already lives in {@code
      * CompositeReadShapesTest} and {@code CompositeWindowHorizonSlaveTest} / {@code
-     * CompositeWindowHorizonEndToEndTest} (all re-verified unaffected by this task's broad regression
-     * run -- see task-2-report.md) -- this method ties ONE representative join kind directly to THIS
-     * class's own fixture/claim, as its capstone. A join factory never consults
-     * {@code supportsPageFrameCursorForUnorderedAggregation()} (only the four group-by selection sites
-     * do), so a composite slave must still fall back to the LIGHT join, never the fast
+     * CompositeWindowHorizonEndToEndTest} (all re-verified unaffected: re-run in this fix pass at 33
+     * tests / 0 failures / 0 errors across those three classes) -- this method ties ONE representative
+     * join kind directly to THIS class's own fixture/claim, as its capstone. A join factory never
+     * consults {@code supportsPageFrameCursorForUnorderedAggregation()} (only the four group-by
+     * selection sites do), so a composite slave must still fall back to the LIGHT join, never the fast
      * TimeFrameCursor-based factory ({@code supportsConcurrentTimeFrameCursor()} is false for composite).
      */
     @Test
@@ -96,6 +108,7 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSingleTableTwins();
             createJoinMasterTwins();
+            // No TS_BOUND (unlike its siblings): ASOF needs ts-ordered access to both sides regardless of the outer SELECT.
             final String q = "select m.ts, m.sym, m.qty, s.px from %s m asof join %s s on (m.sym = s.sym)";
             final String oracle = String.format(q, "jp", "p");
             assertSqlCursors(oracle, String.format(q, "jp", "c")); // composite slave
@@ -244,8 +257,9 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
      * CompositeReadShapesTest#testTailLimitEqualsPlainTwin}'s "combined with a residual filter, still
      * async-order-sensitive" case: a bare ts-bounded tail limit is fully resolved by interval pruning with
      * no leftover row-wise filter function, so it never even reaches {@code SqlCodeGenerator}'s {@code
-     * generateFilter} async-selection site (confirmed empirically -- see task-2-report.md); only the
-     * residual-filter shape genuinely exercises it.
+     * generateFilter} async-selection site at all; only the residual-filter shape genuinely exercises it,
+     * which is exactly why the {@code px > 0} residual is load-bearing here (it is what forces the async
+     * page-frame gate to actually be consulted), not decorative.
      */
     @Test
     public void testTailLimitNonRegressionStillEqualsPlainTwin() throws Exception {
