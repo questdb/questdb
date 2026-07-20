@@ -83,7 +83,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // LV_FILE_VERSION_UNSUPPORTED and LV_CHECKPOINT_FILE_VERSION_MISMATCH, which
     // cover required state and do surface to the operator.
     public static final int LV_CHECKPOINT_RING_MANIFEST_INVALID = LV_FILE_VERSION_UNSUPPORTED - 1;
-    private static final int TABLE_SUSPENDED = LV_CHECKPOINT_RING_MANIFEST_INVALID - 1;
+    // A live-view versioned checkpoint timeline artifact failed structural
+    // validation: a torn/foreign _timeline superblock slot, or a metadata page
+    // whose framing, bounds, or per-page checksum did not hold. Like the ring
+    // manifest, timeline state is derived and rebuildable, so this is a
+    // recovery-quality signal rather than a compatibility break: a bad
+    // superblock slot falls back to the other slot, and a bad metadata page
+    // invalidates only that one root version and schedules its reconstruction.
+    public static final int LV_CHECKPOINT_TIMELINE_INVALID = LV_CHECKPOINT_RING_MANIFEST_INVALID - 1;
+    private static final int TABLE_SUSPENDED = LV_CHECKPOINT_TIMELINE_INVALID - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
