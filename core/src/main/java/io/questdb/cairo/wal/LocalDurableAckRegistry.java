@@ -38,7 +38,7 @@ import org.jetbrains.annotations.NotNull;
  * sequencer API. NOSYNC tables (or tables whose tracker has not yet recorded a local-durable txn)
  * return -1. Unknown directory names return -1.
  *
- * <p>{@link #getDurablyUploadedSeqTxn(CharSequence)} always returns -1 in OSS (no upload pipeline).
+ * <p>{@link #getReplicatedDurableSeqTxn(CharSequence)} always returns -1 in OSS (no upload pipeline).
  * Enterprise installations install their own registry via
  * {@link CairoEngine#setDurableAckRegistry(DurableAckRegistry)}, which can compose with or
  * supersede this local tier.
@@ -92,7 +92,7 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
      * Returns -1 in OSS — no upload pipeline is available.
      */
     @Override
-    public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+    public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
         return -1L;
     }
 

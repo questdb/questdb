@@ -824,7 +824,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         return new CairoEngine(new DefaultTestCairoConfiguration(root)) {
             private final DurableAckRegistry testRegistry = new DurableAckRegistry() {
                 @Override
-                public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                     return durableWatermark.get();
                 }
 
@@ -921,7 +921,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
         // This harness's registry (newEngineWithRegistry) models only the
-        // uploaded/Enterprise tier (getDurablyUploadedSeqTxn), with no local
+        // uploaded/Enterprise tier (getReplicatedDurableSeqTxn), with no local
         // tracking -- so the connection must negotiate REPLICATED for
         // collectDurableProgress to read that tier. Real handshake tier
         // negotiation from the X-QWP-Request-Durable-Ack header value now
@@ -949,7 +949,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
         // This harness's registry (newEngineWithRegistry) models only the
-        // uploaded/Enterprise tier (getDurablyUploadedSeqTxn), with no local
+        // uploaded/Enterprise tier (getReplicatedDurableSeqTxn), with no local
         // tracking -- so the connection must negotiate REPLICATED for
         // collectDurableProgress to read that tier. Real handshake tier
         // negotiation from the X-QWP-Request-Durable-Ack header value now

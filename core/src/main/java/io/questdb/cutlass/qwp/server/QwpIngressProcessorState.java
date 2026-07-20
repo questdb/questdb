@@ -290,12 +290,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * Selects the frontier for this connection's negotiated {@link #durableAckTier}
      * instead of taking the max of both tiers:
      * <ul>
-     *   <li>{@link DurabilityTier#REPLICATED}: {@link DurableAckRegistry#getDurablyUploadedSeqTxn(CharSequence)} —
+     *   <li>{@link DurabilityTier#REPLICATED}: {@link DurableAckRegistry#getReplicatedDurableSeqTxn(CharSequence)} —
      *       uploaded to an object store (Enterprise replication only)</li>
      *   <li>otherwise ({@link DurabilityTier#LOCAL}): {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)} —
      *       fdatasync'd to local disk (ADAPTIVE tables, OSS + Enterprise)</li>
      * </ul>
-     * No {@code max()}: {@code localDurableSeqTxn >= uploadedSeqTxn} always holds, so a blind
+     * No {@code max()}: {@code localDurableSeqTxn >= replicatedDurableSeqTxn} always holds, so a blind
      * max would silently resolve to the local frontier and downgrade a REPLICATED
      * (failover-safe) client's guarantee to mere LOCAL (power-loss-safe) durability.
      * Selecting the requested tier is exactly the requested guarantee.
@@ -313,11 +313,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = pendingDurableDirNames.get(tableName);
             // Durability frontier for this connection's negotiated tier. REPLICATED reads the
-            // uploaded frontier; LOCAL reads the local-fsync frontier. No max(): selecting the
-            // requested tier is exactly the requested guarantee (local >= uploaded), so a
+            // replicated frontier; LOCAL reads the local-fsync frontier. No max(): selecting the
+            // requested tier is exactly the requested guarantee (local >= replicated), so a
             // REPLICATED client is never advanced by the weaker local tier.
             long durableSeqTxn = (durableAckTier == DurabilityTier.REPLICATED)
-                    ? registry.getDurablyUploadedSeqTxn(dirName)
+                    ? registry.getReplicatedDurableSeqTxn(dirName)
                     : registry.getLocalDurableSeqTxn(dirName);
             if (durableSeqTxn >= 0) {
                 long lastSent = lastDurableSeqTxns.get(tableName);
@@ -517,7 +517,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = pendingDurableDirNames.get(tableName);
-            if (dirName == null || registry.getDurablyUploadedSeqTxn(dirName) < pendingDurableSeqTxns.get(tableName)) {
+            if (dirName == null || registry.getReplicatedDurableSeqTxn(dirName) < pendingDurableSeqTxns.get(tableName)) {
                 return false;
             }
         }

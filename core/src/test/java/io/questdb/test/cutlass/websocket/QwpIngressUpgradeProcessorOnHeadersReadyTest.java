@@ -668,7 +668,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
         @Override
-        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+        public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
             return -1L;
         }
 

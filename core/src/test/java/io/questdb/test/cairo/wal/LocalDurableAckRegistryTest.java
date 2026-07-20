@@ -132,7 +132,7 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
     }
 
     /**
-     * (2c) getDurablyUploadedSeqTxn still returns -1 on the OSS LocalDurableAckRegistry
+     * (2c) getReplicatedDurableSeqTxn still returns -1 on the OSS LocalDurableAckRegistry
      * (no upload pipeline in OSS).
      */
     @Test
@@ -143,8 +143,8 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
             DurableAckRegistry registry = engine.getDurableAckRegistry();
             TableToken tt = engine.verifyTableName("oss_tbl");
             Assert.assertEquals(
-                    "OSS has no upload tier — getDurablyUploadedSeqTxn must return -1",
-                    -1L, registry.getDurablyUploadedSeqTxn(tt.getDirName())
+                    "OSS has no upload tier — getReplicatedDurableSeqTxn must return -1",
+                    -1L, registry.getReplicatedDurableSeqTxn(tt.getDirName())
             );
         });
     }
@@ -278,7 +278,7 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
             // Enterprise overrides with its own impl
             DurableAckRegistry fakeEnterprise = new DurableAckRegistry() {
                 @Override
-                public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                     return 99L;
                 }
 
@@ -295,7 +295,7 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
             engine.setDurableAckRegistry(fakeEnterprise);
 
             Assert.assertSame(fakeEnterprise, engine.getDurableAckRegistry());
-            Assert.assertEquals(99L, engine.getDurableAckRegistry().getDurablyUploadedSeqTxn("any"));
+            Assert.assertEquals(99L, engine.getDurableAckRegistry().getReplicatedDurableSeqTxn("any"));
             Assert.assertEquals(42L, engine.getDurableAckRegistry().getLocalDurableSeqTxn("any"));
 
             // Restore so other tests are not affected

@@ -40,23 +40,24 @@ import io.questdb.cairo.TableToken;
 public interface DurableAckRegistry {
 
     /**
-     * Returns the highest seqTxn that has been durably uploaded for the given
-     * table, or -1 if no upload has completed yet, the table is unknown to the
-     * registry, or durable-ack tracking is not enabled on this server.
+     * Returns the highest seqTxn durably REPLICATED (uploaded to the configured object store) for
+     * the given table, or -1 if nothing has been replicated yet, the table is unknown to the
+     * registry, or durable-ack tracking is not enabled on this server. This is the
+     * {@link DurabilityTier#REPLICATED} (failover-safe) frontier.
      *
      * @param tableDirName the directory name of the table (matches
      *                     {@code TableToken.getDirName()})
-     * @return the highest durably-uploaded seqTxn, or -1
+     * @return the highest durably-replicated seqTxn, or -1
      */
-    long getDurablyUploadedSeqTxn(CharSequence tableDirName);
+    long getReplicatedDurableSeqTxn(CharSequence tableDirName);
 
     /**
      * Returns the highest seqTxn whose WAL commit was fdatasync'd locally for the given table,
      * or -1 if no local-fsync guarantee has been established (e.g. NOSYNC tables, unknown dir,
      * or a registry that does not track local durability).
      *
-     * <p>The local-durable frontier is a weaker tier than the uploaded frontier:
-     * {@code applied >= localDurable >= uploaded} in the durability ordering.
+     * <p>The local-durable frontier is a weaker tier than the replicated frontier:
+     * {@code applied >= localDurable >= replicated} in the durability ordering.
      *
      * <p>Default implementation returns -1 (no local-fsync tracking). Override in
      * {@code LocalDurableAckRegistry} (OSS default) which reads from the table's

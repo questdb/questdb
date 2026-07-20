@@ -523,7 +523,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                     return 4;
                 }
 
@@ -3147,7 +3147,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         private final HashMap<String, Long> watermarks = new HashMap<>();
 
         @Override
-        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+        public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
             Long v = watermarks.get(tableDirName.toString());
             return v == null ? -1L : v;
         }
@@ -3166,7 +3166,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         // asymmetric DurableAckRegistry instead of using this fake.
         @Override
         public long getLocalDurableSeqTxn(CharSequence tableDirName) {
-            return getDurablyUploadedSeqTxn(tableDirName);
+            return getReplicatedDurableSeqTxn(tableDirName);
         }
 
         @Override
