@@ -214,27 +214,163 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinConstWholeSubQueryStaysSerialFilter() throws Exception {
+    public void testJoinAsofConstSubQueryGates() throws Exception {
+        // A runtime-const WHERE over an ASOF join gates the same way: false yields no rows without
+        // scanning the join output, true delegates to it. The gate wraps the ASOF join factory.
+        assertMemoryLeak(() -> {
+            createAsofTables();
+            createTables();
+            try (RecordCursorFactory factory =
+                         select("select * from a1 asof join a2 where (select b from x_false limit 1)")) {
+                Assert.assertTrue(
+                        "runtime-const WHERE over an ASOF join must gate",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                Assert.assertFalse(
+                        "the gated ASOF join must not carry a per-row post-join filter",
+                        hasPostJoinFilter(factory));
+            }
+            assertRowCountSql(0, "select * from a1 asof join a2 where (select b from x_false limit 1)");
+            assertRowCountSql(2, "select * from a1 asof join a2 where (select b from x_true limit 1)");
+        });
+    }
+
+    @Test
+    public void testJoinBindVarWholePredicateGatesAndReEvaluates() throws Exception {
+        // A $1 bind-variable whole predicate over a join is a runtime constant: it gates and must be
+        // re-read on every open. A single compiled factory returns 0 rows when false and all rows
+        // when true, proving the value is never baked at compile time.
+        assertMemoryLeak(() -> {
+            createJoinTables();
+            bindVariableService.setBoolean(0, true);
+            try (RecordCursorFactory factory =
+                         select("select * from j1 join j2 on j1.k = j2.k where $1::boolean")) {
+                Assert.assertTrue(
+                        "bind-var whole predicate over a join must gate",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                bindVariableService.setBoolean(0, false);
+                assertRowCount(0, factory);
+                bindVariableService.setBoolean(0, true);
+                assertRowCount(2, factory);
+                bindVariableService.setBoolean(0, false);
+                assertRowCount(0, factory);
+            }
+        });
+    }
+
+    @Test
+    public void testJoinConstWholeSubQueryGates() throws Exception {
         // A join whose whole constant WHERE is a runtime constant (boolean sub-query) is routed to
-        // the post-join where clause by SqlOptimiser.mergeConstIntoPostJoinWhereClause (which moves
-        // every non-compile-time-constant const-where term to postJoinWhereClause). It is therefore
-        // applied as a serial per-row FilteredRecordCursorFactory, NOT the runtime-const gate: the
-        // join gate branch in generateJoins only ever sees compile-time constants. This test pins
-        // that current reality (see worker report sub-task 2). It still returns correct results.
+        // the last join model's postJoinWhereClause by SqlOptimiser.mergeConstIntoPostJoinWhereClause.
+        // generateJoins now compiles that post-join filter once and, because the whole filter is a
+        // runtime constant, gates the join output behind RuntimeConstGateRecordCursorFactory instead
+        // of applying a serial/async per-row filter: false returns empty without scanning the join,
+        // true delegates to it. This is the join analogue of the single-table generateFilter0 gate.
         assertMemoryLeak(() -> {
             createJoinTables();
             createTables();
             try (RecordCursorFactory factory =
                          select("select * from j1 join j2 on j1.k = j2.k where (select b from x_false limit 1)")) {
                 Assert.assertTrue(
-                        "runtime-const WHERE over a join is a serial post-join filter, not the gate",
-                        hasFactory(factory, io.questdb.griffin.engine.table.FilteredRecordCursorFactory.class));
-                Assert.assertFalse(
-                        "the join gate branch is unreachable: runtime constants are moved to postJoinWhereClause",
+                        "runtime-const WHERE over a join must gate, not apply a per-row filter",
                         hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                Assert.assertFalse(
+                        "the gated join must not also carry a per-row post-join filter",
+                        hasPostJoinFilter(factory));
             }
             assertRowCountSql(0, "select * from j1 join j2 on j1.k = j2.k where (select b from x_false limit 1)");
             assertRowCountSql(4, "select * from j1 cross join j2 where (select b from x_true limit 1)");
+        });
+    }
+
+    @Test
+    public void testJoinCrossConstSubQueryGates() throws Exception {
+        // Same gate over a CROSS join: false yields no rows, true yields the full 2x2 product.
+        assertMemoryLeak(() -> {
+            createJoinTables();
+            createTables();
+            try (RecordCursorFactory factory =
+                         select("select * from j1 cross join j2 where (select b from x_false limit 1)")) {
+                Assert.assertTrue(
+                        "runtime-const WHERE over a CROSS join must gate",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+            }
+            assertRowCountSql(0, "select * from j1 cross join j2 where (select b from x_false limit 1)");
+            assertRowCountSql(4, "select * from j1 cross join j2 where (select b from x_true limit 1)");
+        });
+    }
+
+    @Test
+    public void testJoinInnerConstSubQueryGates() throws Exception {
+        // Same gate over an explicit INNER join.
+        assertMemoryLeak(() -> {
+            createJoinTables();
+            createTables();
+            try (RecordCursorFactory factory =
+                         select("select * from j1 inner join j2 on j1.k = j2.k where (select b from x_false limit 1)")) {
+                Assert.assertTrue(
+                        "runtime-const WHERE over an INNER join must gate",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+            }
+            assertRowCountSql(0, "select * from j1 inner join j2 on j1.k = j2.k where (select b from x_false limit 1)");
+            assertRowCountSql(2, "select * from j1 inner join j2 on j1.k = j2.k where (select b from x_true limit 1)");
+        });
+    }
+
+    @Test
+    public void testJoinLeftOuterConstSubQueryGates() throws Exception {
+        // Same gate over a LEFT OUTER join. j1 has a key (3) with no match in j2, which a LEFT join
+        // keeps (NULL-extended). false yields no rows; true yields every left row (3 of them).
+        assertMemoryLeak(() -> {
+            execute("create table lj1 (k int, a int)");
+            execute("insert into lj1 values (1, 10), (2, 20), (3, 30)");
+            execute("create table lj2 (k int, b2 int)");
+            execute("insert into lj2 values (1, 100), (2, 200)");
+            createTables();
+            try (RecordCursorFactory factory =
+                         select("select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_false limit 1)")) {
+                Assert.assertTrue(
+                        "runtime-const WHERE over a LEFT join must gate",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+            }
+            assertRowCountSql(0, "select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_false limit 1)");
+            assertRowCountSql(3, "select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_true limit 1)");
+        });
+    }
+
+    @Test
+    public void testJoinNowWholePredicateGates() throws Exception {
+        // A now()-driven whole predicate over a join is a runtime constant and gates: a far-past
+        // bound is always true (all rows), a far-future bound is false for the next century (none).
+        assertMemoryLeak(() -> {
+            createJoinTables();
+            try (RecordCursorFactory factory =
+                         select("select * from j1 join j2 on j1.k = j2.k where now() > '2000-01-01T00:00:00.000000Z'")) {
+                Assert.assertTrue(
+                        "now()-driven whole predicate over a join must gate",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+            }
+            assertRowCountSql(2, "select * from j1 join j2 on j1.k = j2.k where now() > '2000-01-01T00:00:00.000000Z'");
+            assertRowCountSql(0, "select * from j1 join j2 on j1.k = j2.k where now() > '2124-01-01T00:00:00.000000Z'");
+        });
+    }
+
+    @Test
+    public void testJoinPerRowPostJoinPredicateStaysNonGated() throws Exception {
+        // A genuine per-row post-join predicate (referencing both sides) is NOT runtime-constant, so
+        // it must keep the ordinary async/serial per-row filter and must NOT be gated (guards against
+        // over-gating). j1.a + j2.b2 in {110, 210, 120, 220}; > 150 keeps 210 and 220 => 2 rows.
+        assertMemoryLeak(() -> {
+            createJoinTables();
+            try (RecordCursorFactory factory =
+                         select("select * from j1 cross join j2 where j1.a + j2.b2 > 150")) {
+                Assert.assertFalse(
+                        "a per-row post-join predicate must NOT be gated",
+                        hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
+                Assert.assertTrue(
+                        "a per-row post-join predicate must keep the per-row filter",
+                        hasPostJoinFilter(factory));
+            }
+            assertRowCountSql(2, "select * from j1 cross join j2 where j1.a + j2.b2 > 150");
         });
     }
 
@@ -246,6 +382,11 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             f = f.getBaseFactory();
         }
         return false;
+    }
+
+    private static boolean hasPostJoinFilter(RecordCursorFactory f) {
+        return hasFactory(f, io.questdb.griffin.engine.table.FilteredRecordCursorFactory.class)
+                || hasFactory(f, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
@@ -405,6 +546,13 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
     private void createBigTable() throws Exception {
         execute("create table big (ts timestamp, v int) timestamp(ts) partition by day");
         execute("insert into big select (x * 1_000_000)::timestamp, x::int from long_sequence(1_000)");
+    }
+
+    private void createAsofTables() throws Exception {
+        execute("create table a1 (ts timestamp, k int) timestamp(ts) partition by day");
+        execute("insert into a1 values ('2020-01-01T00:00:00.000000Z', 1), ('2020-01-01T00:00:01.000000Z', 2)");
+        execute("create table a2 (ts timestamp, v int) timestamp(ts) partition by day");
+        execute("insert into a2 values ('2020-01-01T00:00:00.000000Z', 100)");
     }
 
     private void createJoinTables() throws Exception {

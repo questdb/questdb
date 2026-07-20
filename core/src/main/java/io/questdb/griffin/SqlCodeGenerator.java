@@ -6450,41 +6450,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
-                    if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
-                        final Function filter = compileJoinFilter(
-                                filterExpr,
-                                master.getMetadata(),
-                                executionContext
-                        );
-                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
+                    // Compile the post-join filter ONCE, then branch on its runtime-constant-ness.
+                    // From here on `filter` must be freed on every path that does not hand it to a
+                    // retained factory. The enclosing join-loop catch frees `joinFilter`/`master`,
+                    // not this filter, so a throw from any pre-adoption step below (argument
+                    // evaluation or a factory constructor) would otherwise leak it. Adoption is the
+                    // terminal statement of each branch, so on success the catch is never reached
+                    // and cannot double-free an already-owned filter.
+                    final Function filter = compileJoinFilter(filterExpr, master.getMetadata(), executionContext);
+                    try {
+                        if (filter.isRuntimeConstant()) {
+                            // The whole post-join filter is a runtime constant (e.g. a scalar
+                            // boolean sub-query used directly, now(), or a bind variable). Gate the
+                            // join output behind a single per-execution evaluation instead of an
+                            // async/serial per-row filter: false returns an empty cursor without
+                            // scanning the join output, true delegates straight to it with the
+                            // join's page-frame capability preserved. The gate retains `master` as
+                            // its base and frees it once on close, so - unlike the const-false
+                            // branch that builds EmptyTableRecordCursorFactory over the freed
+                            // master's JoinRecordMetadata - no incrementRefCount is needed here.
+                            master = new RuntimeConstGateRecordCursorFactory(master, filter);
+                        } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                            collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        filterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, filterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
-                    } else {
-                        master = new FilteredRecordCursorFactory(
-                                master,
-                                compileJoinFilter(filterExpr, master.getMetadata(), executionContext)
-                        );
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    compileWorkerFiltersConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedQueryWorkerCount(),
+                                            filterExpr,
+                                            master.getMetadata()
+                                    ),
+                                    deepClone(expressionNodePool, filterExpr),
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } else {
+                            master = new FilteredRecordCursorFactory(master, filter);
+                        }
+                    } catch (Throwable e) {
+                        Misc.free(filter);
+                        throw e;
                     }
                 }
             }
