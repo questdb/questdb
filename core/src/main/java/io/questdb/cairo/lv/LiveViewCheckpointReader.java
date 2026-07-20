@@ -283,7 +283,12 @@ public class LiveViewCheckpointReader implements Closeable {
         private long nextBlockOffset;
 
         public boolean hasNext() {
-            return blockIndex < blockCount && nextBlockOffset < bodyEnd;
+            // Require room for the whole 8-byte block header before bodyEnd: next() reads two
+            // ints off nextBlockOffset, so a bare "< bodyEnd" admits an offset up to bodyEnd-1
+            // and the header read runs up to 7 bytes past bodyEnd - past fileSize on a crafted
+            // CRC-valid file (FILE_TRAILER_SIZE is only 4), an OOB read that SIGSEGVs with -ea
+            // off. A valid last block ends exactly at bodyEnd, so this never rejects real data.
+            return blockIndex < blockCount && nextBlockOffset + BLOCK_HEADER_SIZE <= bodyEnd;
         }
 
         public ReadableBlock next() {

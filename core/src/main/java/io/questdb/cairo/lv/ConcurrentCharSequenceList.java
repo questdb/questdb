@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 
 import java.util.Arrays;
@@ -33,8 +32,7 @@ import java.util.Arrays;
  * Single-writer, multi-reader, append-only {@link CharSequence} list that safely
  * publishes its backing array. {@link LiveViewSymbolCache} keeps its per-column
  * {@code id -> string} lead mappings here: the refresh worker writes
- * ({@link #extendAndSet}, {@link #size}), cursors read ({@link #indexOf},
- * {@link #valueOf}).
+ * ({@link #extendAndSet}, {@link #size}), cursors read ({@link #valueOf}).
  * <p>
  * Unlike a plain {@link io.questdb.std.ObjList}, a growth stores the reallocated
  * array with a release ({@code volatile} field) and every read loads it with an
@@ -85,22 +83,6 @@ final class ConcurrentCharSequenceList implements Mutable {
         if (index >= size) {
             size = index + 1;
         }
-    }
-
-    /**
-     * Reader. Id of {@code value} in {@code [fromId, toId)}, or {@code -1} if
-     * absent. {@code toId} is a published slot horizon, so it stays within the
-     * acquired array. Null slots (committed-only ids) are skipped.
-     */
-    int indexOf(CharSequence value, int fromId, int toId) {
-        final CharSequence[] snap = buffer; // acquire: one snapshot per scan
-        for (int i = Math.max(0, fromId); i < toId; i++) {
-            final CharSequence s = snap[i];
-            if (s != null && Chars.equals(s, value)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**

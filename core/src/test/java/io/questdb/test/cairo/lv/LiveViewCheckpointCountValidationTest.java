@@ -137,6 +137,67 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAnchorSnapshotRejectsCountExceedingPayload() throws Exception {
+        // m9: an oversized (but positive, CRC-valid) partition count must be rejected up front,
+        // before the read loop drives an out-of-bounds / long-running read that only the final
+        // length check would catch. Uses the 3-arg restore so a real payloadLength is known -
+        // the 1-arg overload passes Long.MAX_VALUE and deliberately skips the bound. The empty
+        // snapshot leaves no room for entries, so any positive count exceeds; 5 stays inside the
+        // buffer so the pre-fix path reaches the length-mismatch check rather than reading OOB.
+        assertMemoryLeak(() -> {
+            final Map anchorMap = MapFactory.createUnorderedMap(
+                    configuration, new SingleColumnType(ColumnType.LONG), LiveViewWindow.anchorMapValueTypes());
+            try (
+                    LiveViewWindow window = new LiveViewWindow(
+                            configuration, "w", LongConstant.NULL, ColumnType.LONG,
+                            new SingleColumnType(ColumnType.LONG), anchorMap, NOOP_SINK, new ObjList<>(), false, null);
+                    MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                window.snapshot(buf);
+                final long len = buf.getAppendOffset();
+                window.restore(buf, 0, len); // sanity: a well-formed count restores cleanly
+
+                // The empty map wrote no entries, so the trailing long is the partition count.
+                buf.jumpTo(len - Long.BYTES);
+                buf.putLong(5L);
+                try {
+                    window.restore(buf, 0, len);
+                    Assert.fail("oversized anchor partition count must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "partition count exceeds payload");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFunctionSnapshotRejectsCountExceedingPayload() throws Exception {
+        // m9: an oversized (but positive, CRC-valid) partition count must be rejected up front,
+        // before onSnapshotRestoreBegin mutates state - the guard runs ahead of the scalar
+        // count != 1 check, so a scalar stub still exercises it (pre-fix, the scalar check
+        // rejects with a different message; the guard is what makes the map path safe too).
+        assertMemoryLeak(() -> {
+            try (MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                final ScalarStub f = new ScalarStub();
+                LiveViewFunctionSnapshot.write(buf, f);
+                final long len = buf.getAppendOffset();
+                LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0); // sanity: count=1 restores cleanly
+
+                // The partition count is the long immediately after the 4-byte key-column count.
+                buf.jumpTo(Integer.BYTES);
+                buf.putLong(Long.MAX_VALUE);
+                try {
+                    LiveViewFunctionSnapshot.restore(buf, 0, len, f, 0);
+                    Assert.fail("oversized function-snapshot partition count must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "partition count exceeds payload");
+                }
+                f.close();
+            }
+        });
+    }
+
     // A scalar (no-map) window function that round-trips a single state long, enough to drive
     // LiveViewFunctionSnapshot.write / restore without a real partition map.
     private static class ScalarStub extends BaseWindowFunction {

@@ -175,7 +175,21 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         // storm still returns (at worst disk-only, one flush stale) instead of spinning.
         for (int attempt = 0; ; attempt++) {
             LiveViewRecordCursor cursor = openBoundCursor(executionContext, instance, diskScanAscending);
-            if (attempt >= MAX_STALE_DISK_RETRIES || !cursor.isSlotNewerThanDisk()) {
+            final boolean slotNewer = cursor.isSlotNewerThanDisk();
+            if (attempt >= MAX_STALE_DISK_RETRIES || !slotNewer) {
+                // A fence-miss disk-only cursor whose slot is NOT newer than the disk snapshot
+                // (slot older / empty / unstamped) can never trip this staleness retry, so it
+                // holds its tier slot pin for nothing. Release it now (mirrors the frame path's
+                // non-routing release) so sustained concurrent such reads straddling a tier swap
+                // do not pin both slots and starve the refresh worker's publishToInMemoryTier.
+                //
+                // A slot-NEWER fence miss that merely ran out of retries keeps its pin:
+                // isSlotNewerThanDisk() stays the retry's signal (of()'s comment spells this out),
+                // and testVersionFenceMissKeepsTierPin pins that contract. A routing cursor also
+                // keeps its pin - releaseSlotPinIfDiskOnly() no-ops unless the mode is disk-only.
+                if (!slotNewer) {
+                    cursor.releaseSlotPinIfDiskOnly();
+                }
                 return cursor;
             }
             // Fully closes this attempt: releases the slot pin and closes the disk

@@ -262,6 +262,48 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDiskOnlyFenceMissReleasesTierPin() throws Exception {
+        // M1: a version-fence miss that serves ROUTING_DISK_ONLY but where the slot is NOT
+        // newer than the disk snapshot (slot older / empty / unstamped) will not trip
+        // getCursor's isSlotNewerThanDisk() staleness retry, so nothing downstream ever
+        // reads the slot. The record path used to keep the tier slot pinned for the cursor's
+        // whole lifetime anyway - unlike the frame path, which releases on every non-routing
+        // outcome. Sustained concurrent such reads straddling a tier swap pin BOTH slots, so
+        // the refresh worker's publishToInMemoryTier fails and it emergency-flushes every cycle.
+        //
+        // Companion to testTierPinTracksRoutingNotSeamEligibility, which covers the statically
+        // disk-only release (a shape no mode can serve); this covers the fence-miss release.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            Assert.assertTrue("published slot must hold rows", slot.rowCount() > 0);
+            Assert.assertFalse("no reader open -> slot unpinned", isPublishedSlotReaderPinned(tier));
+
+            // Force a fence miss with the slot OLDER than the disk snapshot: the fence
+            // disengages (serves disk-only) and isSlotNewerThanDisk() is false, so getCursor
+            // returns on the first attempt with no staleness retry. An identity forward scan
+            // has a routing candidate mode, so this exercises of()'s fence-miss branch (not
+            // the statically-disk-only branch that already releases at open).
+            slot.setLvSeqTxn(slot.lvSeqTxn() - 1);
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertEquals("an older-slot fence miss must serve disk-only",
+                        LiveViewRecordCursor.ROUTING_DISK_ONLY, cursor.routingMode());
+                Assert.assertFalse("a disk-only fence-miss read must not hold the slot pin",
+                        isPublishedSlotReaderPinned(tier));
+            }
+            // The pin is balanced after close either way.
+            Assert.assertFalse("closing the read leaves the slot unpinned", isPublishedSlotReaderPinned(tier));
+        });
+    }
+
+    @Test
     public void testIntervalFilteredReadRoutesAndHoldsTierPin() throws Exception {
         // A designated-timestamp predicate (SELECT * FROM lv WHERE ts >= '...') is pushed
         // into the page-frame scan as an interval filter, so the disk side yields only the

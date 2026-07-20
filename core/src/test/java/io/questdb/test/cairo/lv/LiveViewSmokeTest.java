@@ -22836,6 +22836,301 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefreshLatchReleasedWhenStagingBufferCloseThrows() throws Exception {
+        // M2 regression: refreshInstance's finally frees the worker's staging buffer
+        // (Misc.free -> LiveViewInMemoryBuffer.close()) and THEN releases the refresh
+        // latch (unlockAfterRefresh). Misc.free catches only IOException, so an
+        // AssertionError (QuestDB runs with -ea) or a CairoException from a native-memory
+        // / tracker-balance assert in close() propagates and skips unlockAfterRefresh -
+        // the view's refresh latch is never released and it silently stops refreshing
+        // forever, while the shared exec-context tracker stays bound to this view. The
+        // fix wraps the free in a nested try/finally so the release always runs, keeping
+        // the deliberate "free under the latch" ordering.
+        //
+        // The fault is armed via a one-shot @TestOnly hook that throws at the exact point
+        // where a real close() would - right after Misc.free in the finally.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline populate cycle establishes the in-mem tier and the staging buffer.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                // The latch is free between cycles.
+                Assert.assertTrue("baseline latch must be free", instance.tryLockForRefresh());
+                instance.unlockAfterRefresh();
+
+                // Arm the one-shot staging-buffer close fault, then drive a refresh cycle
+                // whose finally frees the staging buffer and throws.
+                job.setSimulateStagingBufferCloseFaultForTest();
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 2)");
+                drainWalQueue();
+                boolean faultObserved = false;
+                try {
+                    drainJob(job);
+                } catch (AssertionError e) {
+                    if ("injected staging-buffer close fault".equals(e.getMessage())) {
+                        faultObserved = true;
+                    } else {
+                        throw e;
+                    }
+                }
+                Assert.assertTrue("the injected staging-buffer close fault must fire in the refresh finally", faultObserved);
+
+                // The refresh latch MUST be released even though the staging-buffer close threw.
+                // Without the fix, unlockAfterRefresh is skipped and this fails (latch stuck forever).
+                Assert.assertTrue("refresh latch must be released even if the staging-buffer close throws",
+                        instance.tryLockForRefresh());
+                instance.unlockAfterRefresh();
+
+                // The view recovers on the next cycle and serves the correct rows.
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t1\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t2\t2\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ApplyAheadWalEventFaultDoesNotLeakBaseReader() throws Exception {
+        // M3 regression: the apply-ahead O3 replay must not leak its pooled base
+        // TableReader when the WAL-E read that gates the resume faults.
+        //
+        // o3HeadMissReplay (and replayFromAnchor) acquire a base TableReader via
+        // waitForApply into a bare local, then - BEFORE the try/finally that owns
+        // reader.close() - call computeApplyAheadMinTs, which opens the base WAL-E
+        // event file for the seqTxns ApplyWal2TableJob raced past the O3 trigger. A
+        // read fault there (a torn / purged WAL-E - the "applied base outlived its
+        // WAL" state the refresh engine handles elsewhere) throws CairoException,
+        // which unwinds past the bare reader without closing it. The refresh cycle's
+        // top-level catch swallows the throw (ticks the flush-retry budget), so the
+        // leak is silent: one pooled reader per failed attempt, surfaced at
+        // end-of-test by assertMemoryLeak's busy-reader check (and pinned directly
+        // below via getBusyReaderCount()).
+        //
+        // The scenario mirrors testO3HeadMissReplayUnderApplyAheadDoesNotDuplicateTrailingRow:
+        // a back-dated row (seqTxn 2, ts=15 < headMaxTs=20) is head-miss eligible, and a
+        // trailing in-order row (seqTxn 3) is applied to the base before the refresh runs,
+        // so o3HeadMissReplay pins the reader at seqTxn 3 while the trigger is seqTxn 2 and
+        // enters the apply-ahead branch (effectiveSeqTxn != advanceTo).
+        //
+        // Fault targeting: drainBaseWal's detection reads seqTxn 2's _event and breaks
+        // WITHOUT reading seqTxn 3's, and (no SYMBOL column) holds no reader; only
+        // computeApplyAheadMinTs reads seqTxn 3's _event, and it does so while the pooled
+        // base reader is borrowed. Gating on a busy reader therefore fires the one-shot
+        // fault exactly on computeApplyAheadMinTs, never on detection.
+        final String[] baseDir = new String[1];
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicBoolean faultFired = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (shouldFailBaseWalEventRead(name)) {
+                    faultFired.set(true);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                if (shouldFailBaseWalEventRead(name)) {
+                    faultFired.set(true);
+                    return -1;
+                }
+                return super.openRONoCache(name);
+            }
+
+            private boolean shouldFailBaseWalEventRead(LPSZ name) {
+                return armed.get()
+                        && !faultFired.get()
+                        && baseDir[0] != null
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, WalUtils.WAL_NAME_BASE)
+                        && Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME)
+                        && engine.getBusyReaderCount() > 0;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // seqTxn 1: two in-order rows. A head lands at maxTs=20, latestSeenTs=20.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 1), " +
+                        "('2026-11-01T00:00:20.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                // seqTxn 2: back-dated ts=15 (< headMaxTs=20). seqTxn 3: trailing ts=100s.
+                // Both applied to the base before the refresh runs (no drainJob between the
+                // inserts), so the replay's base reader sits at seqTxn 3 while the O3 trigger
+                // is only seqTxn 2.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:15.000000Z', 3)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:01:40.000000Z', 4)");
+                drainWalQueue();
+
+                armed.set(true);
+                drainJob(job); // faulting apply-ahead cycle: leaks a pooled reader without the fix
+                armed.set(false);
+                drainWalQueue();
+
+                Assert.assertTrue("computeApplyAheadMinTs must have faulted on the base WAL-E read", faultFired.get());
+                // The pooled base reader must be balanced even though the WAL-E read threw.
+                Assert.assertEquals("apply-ahead WAL-E fault leaked the pooled base reader",
+                        0, engine.getBusyReaderCount());
+
+                // The fault was transient (one-shot); a follow-up cycle converges the view,
+                // proving the throw did not permanently wedge the refresh path.
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t1\t1\n" +
+                        "2026-11-01T00:00:15.000000Z\t3\t2\n" +
+                        "2026-11-01T00:00:20.000000Z\t2\t3\n" +
+                        "2026-11-01T00:01:40.000000Z\t4\t4\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ApplyAheadHeadHitWalEventFaultDoesNotLeakBaseReader() throws Exception {
+        // M3 regression, replayFromAnchor (head-hit) sibling of
+        // testO3ApplyAheadWalEventFaultDoesNotLeakBaseReader. A head-hit-eligible O3
+        // trigger under apply-ahead routes to replayFromAnchor, which - like
+        // o3HeadMissReplay - acquires a pooled base reader via waitForApply and then
+        // calls computeApplyAheadMinTs BEFORE the try/finally that owns reader.close().
+        // A WAL-E read fault there must not leak the reader. replayFromAnchor also
+        // carries an early reader.close()+recurse fallback (no resumable anchor below
+        // the ahead floor), so its fix must guard the finally against a double close;
+        // this test only exercises the fault-before-fallback path, and the existing
+        // apply-ahead resume tests exercise the fallback with the fix in place.
+        //
+        // Scenario mirrors testO3HeadHitUnderApplyAheadResumesFromAnchor: an O3 trigger
+        // at ts=25 (> headMaxTs=20, head-hit eligible) with a trailing seqTxn applied to
+        // the base before the refresh runs, so replayFromAnchor pins the reader ahead of
+        // the trigger and enters the apply-ahead branch.
+        final String[] baseDir = new String[1];
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicBoolean faultFired = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (shouldFailBaseWalEventRead(name)) {
+                    faultFired.set(true);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                if (shouldFailBaseWalEventRead(name)) {
+                    faultFired.set(true);
+                    return -1;
+                }
+                return super.openRONoCache(name);
+            }
+
+            private boolean shouldFailBaseWalEventRead(LPSZ name) {
+                return armed.get()
+                        && !faultFired.get()
+                        && baseDir[0] != null
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, WalUtils.WAL_NAME_BASE)
+                        && Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME)
+                        && engine.getBusyReaderCount() > 0;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // seqTxn 1: two in-order rows. A head lands at maxTs=20.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 1), " +
+                        "('2026-11-01T00:00:20.000000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                // seqTxn 2: in-order rows move latestSeenTs to 40 without rewriting the head.
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 3), " +
+                        "('2026-11-01T00:00:40.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // seqTxn 3: head-hit O3 trigger at ts=25 (20 < 25 < 40). seqTxn 4: trailing
+                // ts=100s. Both applied to the base before the refresh runs.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:25.000000Z', 5)");
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:01:40.000000Z', 6)");
+                drainWalQueue();
+
+                armed.set(true);
+                drainJob(job); // faulting head-hit apply-ahead cycle: leaks a pooled reader without the fix
+                armed.set(false);
+                drainWalQueue();
+
+                Assert.assertTrue("computeApplyAheadMinTs must have faulted on the base WAL-E read", faultFired.get());
+                Assert.assertEquals("apply-ahead WAL-E fault leaked the pooled base reader",
+                        0, engine.getBusyReaderCount());
+
+                // The fault was transient; a follow-up cycle converges the view.
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                        "2026-11-01T00:00:10.000000Z\t1\t1\n" +
+                        "2026-11-01T00:00:20.000000Z\t2\t2\n" +
+                        "2026-11-01T00:00:25.000000Z\t5\t3\n" +
+                        "2026-11-01T00:00:30.000000Z\t3\t4\n" +
+                        "2026-11-01T00:00:40.000000Z\t4\t5\n" +
+                        "2026-11-01T00:01:40.000000Z\t6\t6\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3HeadMissReplayUnderApplyAheadDoesNotDuplicateTrailingRow() throws Exception {
         // Regression for the concurrent-O3 permanent duplicate row
         // (LiveViewConcurrencyTest#testMultiWalWriterInterleavingRowNumber). The bug

@@ -183,7 +183,11 @@ public class LiveViewCheckpointRingManifestReader implements Mutable {
             }
             long offset = 0;
             final int onDiskVersion = block.getInt(offset);
-            if (onDiskVersion > LiveViewCheckpointRingManifest.RING_MANIFEST_FORMAT_VERSION) {
+            // Reject both a too-new version and a below-floor one (version 1 is the first;
+            // 0 / negative is corruption, not a legacy v1). Aligns with the .cp reader's
+            // SUPPORTED_VERSION_MIN=1 floor so the first version bump cannot make a zeroed /
+            // torn header silently parse as v1.
+            if (onDiskVersion < 1 || onDiskVersion > LiveViewCheckpointRingManifest.RING_MANIFEST_FORMAT_VERSION) {
                 throw invalid(liveViewToken)
                         .put("manifest format version not supported [onDiskVersion=")
                         .put(onDiskVersion)

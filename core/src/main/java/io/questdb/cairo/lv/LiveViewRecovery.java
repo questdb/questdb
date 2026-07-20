@@ -277,7 +277,12 @@ public final class LiveViewRecovery {
                     // Malformed filename - leave alone for the same reason.
                     continue;
                 }
-                if (appliedWatermark != Numbers.LONG_NULL && lvSeqTxn > appliedWatermark) {
+                // A real applied watermark is a non-negative base seqTxn; both "uninitialized"
+                // sentinels - LiveViewStateReader's -1 (what CairoEngine's startup sweep passes)
+                // and Numbers.LONG_NULL - are negative and mean "no watermark, keep every .cp".
+                // Guarding on >= 0 recognizes both, so an uninitialized state cannot make the
+                // sweep evict live checkpoints as false orphans.
+                if (appliedWatermark >= 0 && lvSeqTxn > appliedWatermark) {
                     if (!isListed(ringCandidate, lvSeqTxn)) {
                         unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
                     }

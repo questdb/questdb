@@ -230,6 +230,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LongList ringSnapshot = new LongList();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
+    // Test-only: when armed, the refresh finally throws right where a real
+    // LiveViewInMemoryBuffer.close() would (a native-memory / tracker-balance assert
+    // under -ea), so a test can prove the refresh latch is still released on that path.
+    // One-shot (self-clears on fire); always false in production.
+    @TestOnly
+    private boolean simulateStagingBufferCloseFaultForTest;
     // Reusable ARRAY read flyweight for the O3-rebuild disk stager
     // (copyReaderRowsToStaging): binds a view over the LV table reader's (data, aux)
     // column memory for one row, which is immediately re-appended into the staging
@@ -387,6 +393,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setCheckpointTrailingFunctionSnapshotBlocksToOmit(int count) {
         this.checkpointTrailingFunctionSnapshotBlocksToOmit = count;
+    }
+
+    /**
+     * Test-only: arms a one-shot fault so the next refresh finally throws at the point where the
+     * staging buffer is freed, modelling a native-memory / tracker-balance assert from
+     * {@link LiveViewInMemoryBuffer#close()}. Lets a test prove the refresh latch is released even
+     * on that throw. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateStagingBufferCloseFaultForTest() {
+        this.simulateStagingBufferCloseFaultForTest = true;
     }
 
     /**
@@ -3039,7 +3056,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // (which sees the ahead rows and advances the watermark to exactly what
             // it materialised). waitForApply guarantees effectiveSeqTxn >= advanceTo,
             // so this is the strictly-ahead case.
-            final long minAheadTs = computeApplyAheadMinTs(baseToken, advanceTo, effectiveSeqTxn, viewLowerBoundTimestamp);
+            //
+            // computeApplyAheadMinTs reads the base WAL-E off the pinned reader; a read
+            // fault (a torn / purged base WAL-E - the "applied base outlived its WAL"
+            // state) must return the pooled reader rather than leak it out of the shared
+            // pool. The main try/finally below does not cover this pre-detach call, so
+            // close and rethrow here. The no-anchor fallback further down already closes
+            // the reader before it recurses, so it stays leak-safe without this guard.
+            final long minAheadTs;
+            try {
+                minAheadTs = computeApplyAheadMinTs(baseToken, advanceTo, effectiveSeqTxn, viewLowerBoundTimestamp);
+            } catch (Throwable th) {
+                reader.close();
+                throw th;
+            }
             // A LONG_NULL minAheadTs means the ahead range is not safely resumable (a
             // structural / non-DATA commit, or no DATA commit at all) - force the rebuild.
             final long ceilTs = minAheadTs == Numbers.LONG_NULL || triggerLowTs == Numbers.LONG_NULL
@@ -3101,7 +3131,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // is one a restart either trusts (its covered still equals the reconciled
         // floor, meaning this commit never landed and the survivors really are
         // still sealed there) or ignores.
-        invalidateRetainedCheckpointsOnO3(instance, retireThreshold, commitSeqTxn);
+        // Same reader-lifetime guard as the apply-ahead read above: the retire
+        // publication runs off the pinned reader but before the main try/finally, so a
+        // fault here must return the reader to the pool rather than leak it.
+        try {
+            invalidateRetainedCheckpointsOnO3(instance, retireThreshold, commitSeqTxn);
+        } catch (Throwable th) {
+            reader.close();
+            throw th;
+        }
         // Effectively-final snapshot of the commit / watermark point for the commit
         // lambda and the bookkeeping below (commitSeqTxn is reassigned above).
         final long committedSeqTxn = commitSeqTxn;
@@ -3341,38 +3379,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // already-materialised seqTxns and a trailing in-order commit (e.g. a
         // lone row at the global max) re-appends a duplicate row.
         final long effectiveSeqTxn = reader.getSeqTxn();
-        // Retire the checkpoints this O3 has unsealed. A DATA trigger keeps every
-        // entry with maxTs < the retire floor (still sealed - no un-incorporated
-        // base row sits at or below them) and drops the rest, including the head; a
-        // non-DATA / recovery trigger (LONG_NULL) drops the whole ring
-        // conservatively. Clearing the head puts the post-replay write on its
-        // first-cp path. The follow-up write below seals a fresh head; until then a
-        // restart rebuilds from the boundary.
-        //
-        // The floor is derived only after pinning the reader so it can account for
-        // apply-ahead: when ApplyWal2TableJob has raced past the trigger, the
-        // snapshot this rebuild materialises includes seqTxns in (advanceTo,
-        // effectiveSeqTxn] the ring's entries predate, so a back-dated row among
-        // them at ts M un-seals every entry with maxTs >= M just as the trigger
-        // does. Lower the floor to that ahead range's minimum in-view ts
-        // (min(triggerLowTs, minAheadTs)); leaving it at triggerLowTs would strand a
-        // poisoned survivor in [minAheadTs, triggerLowTs) that a later resume could
-        // anchor on. An unresumable ahead range (structural / non-DATA commit) drops
-        // the whole ring (LONG_NULL). A non-DATA trigger is already the whole-ring
-        // case, so it needs no adjustment.
-        long retireLowTs = triggerLowTs;
-        if (effectiveSeqTxn != advanceTo && triggerLowTs != Numbers.LONG_NULL) {
-            final long minAheadTs = computeApplyAheadMinTs(baseToken, advanceTo, effectiveSeqTxn, viewLowerBoundTimestamp);
-            retireLowTs = minAheadTs == Numbers.LONG_NULL
-                    ? Numbers.LONG_NULL
-                    : Math.min(triggerLowTs, minAheadTs);
-        }
-        // The retire publishes the survivors durably at effectiveSeqTxn - this
-        // rebuild's commit point - before the commit below, off the same
-        // retireLowTs that drives the in-memory drop. A non-DATA / recovery
-        // trigger empties the ring, so its publication is an empty manifest and a
-        // crash mid-rebuild leaves no anchor to select.
-        invalidateRetainedCheckpointsOnO3(instance, retireLowTs, effectiveSeqTxn);
         boolean readerAttached = false;
         long appendedRows = 0;
         // True when the zero-surviving-row path issued a pure-delete
@@ -3384,7 +3390,47 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // ts-ascending, so the first appended row is the minimum). Base of the
         // REPLACE_RANGE low boundary decided at the commit site below.
         long replayMinTs = Numbers.LONG_NULL;
+        // The reader is pinned above, but everything that can throw off it -
+        // computeApplyAheadMinTs (opens the base WAL-E) and the retire publication -
+        // runs INSIDE this try so the finally always returns it to the pool. A WAL-E
+        // read fault on the apply-ahead floor (a torn / purged base WAL-E) would
+        // otherwise unwind past the bare reader and leak one pooled reader per refresh
+        // attempt, since an aborted replay never advances the watermark and the fault
+        // re-fires every cycle until the flush-retry budget trips.
         try {
+            // Retire the checkpoints this O3 has unsealed. A DATA trigger keeps every
+            // entry with maxTs < the retire floor (still sealed - no un-incorporated
+            // base row sits at or below them) and drops the rest, including the head; a
+            // non-DATA / recovery trigger (LONG_NULL) drops the whole ring
+            // conservatively. Clearing the head puts the post-replay write on its
+            // first-cp path. The follow-up write below seals a fresh head; until then a
+            // restart rebuilds from the boundary.
+            //
+            // The floor is derived only after pinning the reader so it can account for
+            // apply-ahead: when ApplyWal2TableJob has raced past the trigger, the
+            // snapshot this rebuild materialises includes seqTxns in (advanceTo,
+            // effectiveSeqTxn] the ring's entries predate, so a back-dated row among
+            // them at ts M un-seals every entry with maxTs >= M just as the trigger
+            // does. Lower the floor to that ahead range's minimum in-view ts
+            // (min(triggerLowTs, minAheadTs)); leaving it at triggerLowTs would strand a
+            // poisoned survivor in [minAheadTs, triggerLowTs) that a later resume could
+            // anchor on. An unresumable ahead range (structural / non-DATA commit) drops
+            // the whole ring (LONG_NULL). A non-DATA trigger is already the whole-ring
+            // case, so it needs no adjustment.
+            long retireLowTs = triggerLowTs;
+            if (effectiveSeqTxn != advanceTo && triggerLowTs != Numbers.LONG_NULL) {
+                final long minAheadTs = computeApplyAheadMinTs(baseToken, advanceTo, effectiveSeqTxn, viewLowerBoundTimestamp);
+                retireLowTs = minAheadTs == Numbers.LONG_NULL
+                        ? Numbers.LONG_NULL
+                        : Math.min(triggerLowTs, minAheadTs);
+            }
+            // The retire publishes the survivors durably at effectiveSeqTxn - this
+            // rebuild's commit point - before the commit below, off the same
+            // retireLowTs that drives the in-memory drop. A non-DATA / recovery
+            // trigger empties the ring, so its publication is an empty manifest and a
+            // crash mid-rebuild leaves no anchor to select.
+            invalidateRetainedCheckpointsOnO3(instance, retireLowTs, effectiveSeqTxn);
+
             engine.detachReader(reader);
             executionContext.of(reader);
             readerAttached = true;
@@ -4273,6 +4319,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
         }
         if (!instance.isSnapshotCapability()) {
+            return;
+        }
+        // A head with no maxTs cannot anchor a head-hit or bound a findResumeAnchorBelow
+        // ceiling - it is refused hit-eligibility upstream (see promoteRestoredHeadIntoRing) -
+        // so sealing one only poisons the ring. Every caller reaches here with rows behind it
+        // (appendedRows / flushRows > 0), so batchMaxTs is a real timestamp today; this guard
+        // keeps a future force-caller from writing a poison head past the cadence gate below.
+        if (batchMaxTs == Numbers.LONG_NULL) {
             return;
         }
 
@@ -7231,14 +7285,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // and before tryCloseIfDropped / tryFreeRuntimeStateIfInvalid (below) can recycle it. The
             // buffer is worker-owned and reused across views, so scoping its charge to the cycle is what
             // keeps the tracker binding safe; the next populate-the-tier cycle rebuilds it.
-            stagingBuffer = Misc.free(stagingBuffer);
-            executionContext.ofRefreshingInstance(null);
-            instance.unlockAfterRefresh();
-            instance.tryCloseIfDropped();
-            // If this view was invalidated concurrently while this cycle held
-            // the refresh latch (so the invalidator's own free lost the CAS),
-            // free its runtime state now that the latch is released.
-            instance.tryFreeRuntimeStateIfInvalid();
+            // Free the buffer inside a nested try so the release below always runs even if
+            // close() throws. Misc.free catches only IOException, so an AssertionError (under
+            // -ea) or a CairoException from a native-memory / tracker-balance assert in
+            // LiveViewInMemoryBuffer.close() would otherwise skip unlockAfterRefresh and wedge
+            // the view's refresh latch forever (and leave the exec-context tracker bound to it).
+            // The nested finally preserves the deliberate "free under the latch" ordering.
+            try {
+                stagingBuffer = Misc.free(stagingBuffer);
+                if (simulateStagingBufferCloseFaultForTest) { // @TestOnly, always false in production
+                    simulateStagingBufferCloseFaultForTest = false;
+                    throw new AssertionError("injected staging-buffer close fault");
+                }
+            } finally {
+                executionContext.ofRefreshingInstance(null);
+                instance.unlockAfterRefresh();
+                instance.tryCloseIfDropped();
+                // If this view was invalidated concurrently while this cycle held
+                // the refresh latch (so the invalidator's own free lost the CAS),
+                // free its runtime state now that the latch is released.
+                instance.tryFreeRuntimeStateIfInvalid();
+            }
         }
         // Invalidate outside the refresh latch: invalidateLiveView's
         // freeze-aware synchronized block parks on the instance monitor when a

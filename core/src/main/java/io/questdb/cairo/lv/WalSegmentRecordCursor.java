@@ -59,8 +59,12 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
 
     @Override
     public void close() {
-        // Reset iteration state only. The frame cursor is not owned by this cursor
-        // and must be freed by the caller (LiveViewRefreshJob).
+        // Reset iteration state. The frame cursor is not owned by this cursor and must be
+        // freed by the caller (LiveViewRefreshJob). The record IS owned, so close it: today
+        // it only holds non-owning WalSymbolTable / BorrowedArray views (a no-op), but a
+        // future frame source that hands the record owning symbol tables would leak them.
+        // close() is reuse-safe - it clears the record's lazy caches and a later of() re-binds.
+        record.close();
         isFrameLoaded = false;
         currentRow = -1;
         rowCount = 0;

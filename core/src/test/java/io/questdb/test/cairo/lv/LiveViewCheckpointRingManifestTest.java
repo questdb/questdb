@@ -420,6 +420,17 @@ public class LiveViewCheckpointRingManifestTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVersionBelowFloorRejected() throws Exception {
+        // m10: version 1 is the first format; a below-floor version (0 / negative) is a zeroed
+        // or torn header, not a legacy v1. The guard now rejects it rather than parsing it as v1
+        // (which would matter the moment the format version bumps past 1).
+        assertMemoryLeak(() -> {
+            writeRawManifest(0, 1, 100, 3, THREE_ENTRIES);
+            assertRejected("manifest format version not supported");
+        });
+    }
+
     private static void assertCleared(LiveViewCheckpointRingManifestReader reader) {
         Assert.assertEquals(Numbers.LONG_NULL, reader.getCoveredBaseSeqTxn());
         Assert.assertEquals(Numbers.LONG_NULL, reader.getGeneration());

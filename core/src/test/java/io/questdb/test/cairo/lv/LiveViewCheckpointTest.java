@@ -455,6 +455,36 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSweepKeepsCheckpointsWhenWatermarkUninitialized() throws Exception {
+        // m6: LiveViewStateReader's uninitialized appliedWatermark is -1 (what CairoEngine's
+        // startup sweep passes for a view whose _lv.s never persisted one). sweepCheckpoints
+        // must treat that as "no watermark, keep every .cp" - the same as Numbers.LONG_NULL -
+        // not as a real watermark of -1 that makes every non-negative lvSeqTxn an orphan and
+        // evicts live checkpoints. Pre-fix this returned LONG_NULL and unlinked all three .cp.
+        assertMemoryLeak(() -> {
+            try (Path liveViewDir = newLiveViewDir();
+                 Path scratch = new Path()) {
+                for (long n = 1; n <= 3; n++) {
+                    writeMinimalCheckpoint(liveViewDir, n);
+                }
+                final StringSink nameSink = new StringSink();
+                final long head = LiveViewRecovery.sweepCheckpoints(
+                        configuration.getFilesFacade(),
+                        scratch,
+                        liveViewDir,
+                        -1L,
+                        nameSink,
+                        null
+                );
+                // No .cp is an orphan under "no watermark", so the highest becomes the head;
+                // the second-pass retire still trims the older two below it.
+                Assert.assertEquals(3L, head);
+                Assert.assertTrue("highest .cp survives the uninitialized-watermark sweep", existsCp(liveViewDir, 3L));
+            }
+        });
+    }
+
+    @Test
     public void testSweepRemovesCpTmpOrphans() throws Exception {
         assertMemoryLeak(() -> {
             try (Path liveViewDir = newLiveViewDir();

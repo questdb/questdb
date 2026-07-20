@@ -405,6 +405,30 @@ public class LiveViewRecordCursor implements RecordCursor {
         return symbolTableSource.newSymbolTable(columnIndex);
     }
 
+    /**
+     * Releases a disk-only cursor's tier slot pin once {@link
+     * LiveViewRecordCursorFactory#getCursor} has committed to returning this cursor. A
+     * version-fence miss keeps the slot pinned through {@link #of} so getCursor's {@link
+     * #isSlotNewerThanDisk()} staleness retry can read it; getCursor calls this only for a
+     * cursor whose slot is NOT newer than the disk snapshot, which the retry can never
+     * re-examine, so a {@code ROUTING_DISK_ONLY} cursor there never touches the slot again -
+     * no serving path reads it in that mode - and the global pin lease and per-slot rc are
+     * pure cost. A slot-newer fence miss keeps its pin (the retry's signal). Mirrors {@link
+     * LiveViewRecordCursorFactory}'s frame path, which releases the pin on every non-routing
+     * outcome: sustained concurrent disk-only reads straddling a tier swap would otherwise
+     * pin BOTH slots, failing the refresh worker's publishToInMemoryTier and forcing an
+     * emergency flush of the lead every cycle. A routing cursor keeps its pin until close().
+     */
+    void releaseSlotPinIfDiskOnly() {
+        if (routingMode == ROUTING_DISK_ONLY && pinnedSlot != null) {
+            // of() already bound symbolTableSource / recordA / recordB pass-through for a
+            // disk-only read (isRoutingEligible() is false), so no serving path dereferences
+            // the slot once the pin is dropped here.
+            releaseSlot();
+            pinnedSlot = null;
+        }
+    }
+
     public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex, boolean diskScanAscending) {
         // Take ownership of diskCursor before anything that can throw, so a later
         // failure in of() closes it via close() rather than leaking it back to

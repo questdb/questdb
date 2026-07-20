@@ -540,6 +540,21 @@ public class LiveViewWindow implements QuietCloseable {
                     .put(partitionCount)
                     .put(']');
         }
+        // Reject a count that cannot fit in the remaining payload BEFORE clearing the frontier:
+        // each entry consumes at least the anchor Long, so a crafted (CRC-valid) oversized count
+        // would otherwise drive an out-of-bounds / long-running read that only the final length
+        // check catches. Division avoids overflow; skipped when the length is unknown.
+        if (payloadLength != Long.MAX_VALUE) {
+            final long remainingBytes = payloadLength - (offset - payloadStart);
+            if (remainingBytes < 0 || partitionCount > remainingBytes / Long.BYTES) {
+                throw CairoException.nonCritical()
+                        .put("live view checkpoint anchor block partition count exceeds payload [count=")
+                        .put(partitionCount)
+                        .put(", remainingBytes=")
+                        .put(remainingBytes)
+                        .put(']');
+            }
+        }
 
         anchorMap.clear();
         tombstoneCount = 0;

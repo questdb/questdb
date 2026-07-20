@@ -129,6 +129,19 @@ public final class LiveViewFunctionSnapshot {
                     .put(partitionCount)
                     .put(']');
         }
+        // Reject a count that cannot fit in the remaining payload BEFORE onSnapshotRestoreBegin
+        // mutates state: each entry consumes at least one byte, so a crafted (CRC-valid) count
+        // larger than the bytes left would otherwise drive an out-of-bounds / long-running read
+        // that only the final length check catches - after the running state was already wiped.
+        final long remainingBytes = payloadLength - (offset - payloadStart);
+        if (remainingBytes < 0 || partitionCount > remainingBytes) {
+            throw CairoException.critical(0)
+                    .put("live view function snapshot partition count exceeds payload [count=")
+                    .put(partitionCount)
+                    .put(", remainingBytes=")
+                    .put(remainingBytes)
+                    .put(']');
+        }
 
         f.onSnapshotRestoreBegin();
 
