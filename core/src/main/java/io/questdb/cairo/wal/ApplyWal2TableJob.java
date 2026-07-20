@@ -579,8 +579,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // Adaptive durable epoch (Plan 3B): right after the batch commits, while we still
                     // hold the writer (single-threaded per table -> a consistent cut, no quiesce
                     // needed), fire a durable epoch at most once per the configured cadence. This is
-                    // the only place the table's COLUMN state is forced durable under ADAPTIVE; without
-                    // it the lazily-applied columns are non-durable until the next epoch / shutdown.
+                    // the main place the table's COLUMN state is forced durable under ADAPTIVE (a
+                    // graceful writer close also flushes a final epoch over any tail -- see
+                    // TableWriter.doClose); without it the lazily-applied columns are non-durable
+                    // between epochs, until the next epoch or a clean close.
                     // Materialized-view / view block-file state (_mv.s / _mv / _view) is a separate
                     // concern, independently policy-gated at each write site via
                     // LocalDurabilityPolicy.resolveCommitMode (S5.1 Task 5).

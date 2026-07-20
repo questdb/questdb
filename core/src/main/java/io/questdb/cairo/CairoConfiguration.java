@@ -272,6 +272,20 @@ public interface CairoConfiguration {
         return true;
     }
 
+    /**
+     * Whether a clean {@link io.questdb.cairo.TableWriter} close flushes a final durable epoch over any
+     * committed-but-un-epoched tail (ADAPTIVE only). When {@code true} (default), a graceful close --
+     * idle-eviction or shutdown -- advances the durable epoch to the committed frontier, so a restart
+     * lands there with nothing to roll forward. When {@code false}, the tail is left for the next boot's
+     * idempotent WAL replay, bounded by the epoch cadence ({@link #getAdaptiveEpochIntervalMs()} /
+     * {@link #getAdaptiveEpochMaxRows()}). No effect under non-ADAPTIVE commit modes.
+     *
+     * @return {@code true} to flush a durable epoch on a clean writer close
+     */
+    default boolean isAdaptiveEpochFlushOnClose() {
+        return true;
+    }
+
     int getCompileViewModelPoolCapacity();
 
     @NotNull

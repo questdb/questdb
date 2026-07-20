@@ -241,12 +241,12 @@ public class ViewsFunctionTest extends AbstractViewTest {
             assertQueryAndPlan(
                     """
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tcommitMode\tdurableEpochSeqTxn\twalRetentionTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
-                            table1\tfalse\t9\t0\t9\t\t\t0\tnosync\t0\t0\t0\t-1\t
-                            table2\tfalse\t9\t0\t9\t\t\t0\tnosync\t0\t0\t0\t-1\t
-                            view1\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t0\t-1\t
-                            view2\tfalse\t0\t0\t0\t\t\t0\tnosync\t0\t0\t0\t-1\t
-                            view3\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0\t-1\t
-                            view4\tfalse\t1\t0\t1\t\t\t0\tnosync\t0\t0\t0\t-1\t
+                            table1\tfalse\t9\t0\t9\t\t\t0\tadaptive\t9\t9\t0\t9\t2025-06-19T15:00:00.000000Z
+                            table2\tfalse\t9\t0\t9\t\t\t0\tadaptive\t9\t9\t0\t9\t2025-06-19T15:00:00.000000Z
+                            view1\tfalse\t0\t0\t0\t\t\t0\tadaptive\t0\t0\t0\t-1\t
+                            view2\tfalse\t0\t0\t0\t\t\t0\tadaptive\t0\t0\t0\t-1\t
+                            view3\tfalse\t1\t0\t1\t\t\t0\tadaptive\t1\t1\t0\t1\t2025-06-19T15:00:00.000000Z
+                            view4\tfalse\t1\t0\t1\t\t\t0\tadaptive\t1\t1\t0\t1\t2025-06-19T15:00:00.000000Z
                             """,
                     "wal_tables() order by 1",
                     null,

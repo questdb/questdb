@@ -119,6 +119,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAdaptiveEpochFlushOnClose() {
+        return getDelegate().isAdaptiveEpochFlushOnClose();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }

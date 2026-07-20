@@ -58,6 +58,10 @@ public enum PropertyKey implements ConfigPropertyKey {
     // Plan 3 Task C: run the adaptive durable-epoch recovery roll-forward at startup. Default true;
     // false makes it a no-op (operator kill-switch / negative-control test hook). See RecoveryCoordinator.
     CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
+    // Whether a clean writer close flushes a final durable epoch over any un-epoched tail so a restart
+    // has nothing to roll forward. Default true; false leaves the tail for the next boot's WAL replay
+    // (bounded by the epoch cadence). See TableWriter.doClose.
+    CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE("cairo.adaptive.epoch.flush.on.close"),
     // Deferred 2 (the RPO knob): adaptive GROUP-COMMIT window in microseconds. Default 50_000 (50ms):
     // the WAL fdatasync is BATCHED across an adaptive table's commits within this window: commit0 returns
     // after the txn is sequenced (msync'd to page cache, NOT yet device-durable) and the fdatasync is

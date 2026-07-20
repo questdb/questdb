@@ -238,6 +238,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     // Whether the adaptive durable-epoch recovery roll-forward runs at startup; default true.
     // See CairoConfiguration.isAdaptiveRecoveryRollForwardEnabled / RecoveryCoordinator.
     private final boolean adaptiveRecoveryRollForwardEnabled;
+    // Whether a clean writer close flushes a final durable epoch over the tail; default true.
+    // See CairoConfiguration.isAdaptiveEpochFlushOnClose / TableWriter.doClose.
+    private final boolean adaptiveEpochFlushOnClose;
     // Raw value of cairo.adaptive.epoch.column.sync.batched (operator override / safety valve), default true.
     private final boolean adaptiveEpochColumnSyncBatchedProp;
     private final String confRoot;
@@ -1562,7 +1565,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
+            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
             // Default 50_000 (50ms) batches the device flush within a small window (RPO <= 50ms) under
@@ -1570,6 +1573,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // value is clamped to 0 (synchronous) so a misconfiguration never silently weakens durability.
             this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000));
             this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
+            this.adaptiveEpochFlushOnClose = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, true);
             this.adaptiveEpochColumnSyncBatchedProp = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
             this.detectFastCommit = loadAdditionalConfigurations;
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -1938,7 +1942,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.LINE_UDP_OWN_THREAD_AFFINITY, -1);
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
-            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
+            // Legacy UDP ingestion keeps its pre-adaptive default (nosync); the adaptive durable-epoch
+            // machinery is WAL-apply-only and does not apply to the line-UDP commit path.
+            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE, "nosync");
             this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
@@ -2598,8 +2604,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         return bytes;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        final String commitMode = getString(properties, env, key, "adaptive");
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultMode) {
+        final String commitMode = getString(properties, env, key, defaultMode);
 
         // must not be null because we provided non-null default value
         assert commitMode != null;
@@ -3901,6 +3907,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isAdaptiveRecoveryRollForwardEnabled() {
             return adaptiveRecoveryRollForwardEnabled;
+        }
+
+        @Override
+        public boolean isAdaptiveEpochFlushOnClose() {
+            return adaptiveEpochFlushOnClose;
         }
 
         @Override

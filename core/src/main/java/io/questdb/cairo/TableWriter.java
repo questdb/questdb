@@ -298,6 +298,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // advanceDurableEpoch() call (only adaptive WAL tables ever advance an epoch).
     private final Path durableEpochSnapshotPath = new Path();
     private SnapshotMarker durableEpochMarker;
+    // Set when a posting-index reseal published a superseded-.pv purge during the
+    // current commit (parquet O3-worker path, native writer-thread path, or a deferred
+    // future-txn catch-up). The purge is scoreboard-gated behind the durable-epoch pin;
+    // under ADAPTIVE, commitTxWriterAndPublishPendingPostingSealPurges() advances the
+    // epoch past this commit so the stale pin no longer blocks reclamation of the old
+    // value file until the next timed/backlog epoch. volatile: the parquet path writes
+    // it on O3 workers, read post-join on the writer thread. Cleared every commit.
+    private volatile boolean postingResealPurgePublished;
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -5224,6 +5232,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
+        // A posting-index reseal this commit queued a scoreboard-gated purge of the
+        // now-superseded .pv. Under ADAPTIVE the durable-epoch pin (which sits at an
+        // older txn between epochs) falls inside that purge's [from, to) window and
+        // blocks reclamation until the next timed/backlog epoch. Advance the epoch
+        // inline past this commit -- exactly like the partition-structural DDL paths
+        // -- so the pin moves to >= the purge's toTableTxn and the PostingSealPurgeJob
+        // can reclaim the old value file on its next pass.
+        boolean reseal = postingResealPurgePublished;
+        postingResealPurgePublished = false;
+        if (reseal && tableToken.isWal() && getEffectiveCommitMode() == CommitMode.ADAPTIVE) {
+            try {
+                advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+            } catch (Throwable e) {
+                LOG.error().$("adaptive: durable-epoch advance after posting reseal failed [table=")
+                        .$(tableToken).$(", err=").$(e).I$();
+            }
+        }
     }
 
     private void configureAppendPosition() {
@@ -6509,6 +6534,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     currentTableTxn
             );
         }
+        // Native reseal twin of the parquet path: flag the superseded-.pv purge so
+        // the ADAPTIVE commit path advances the durable epoch past it.
+        postingResealPurgePublished = true;
     }
 
     private void discardAbandonedDeferredPostingSealPurges(long currentTableTxn) {
@@ -6590,6 +6618,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lifecycleManager.onBeforeClose();
         // destroy() may have already closed everything
         boolean tx = inTransaction();
+        // Graceful-close durable epoch: fold any committed-but-un-epoched tail into a final durable
+        // epoch so a clean restart lands on the committed frontier with nothing to roll forward
+        // (durableEpochSeqTxn catches up to seqTxn). Runs before the teardown below, while txWriter /
+        // columnVersionWriter / the epoch marker and the still-open (writerPool is freed before the
+        // sequencer + scoreboard in CairoEngine.close) sequencer are all live. Gated to a HEALTHY
+        // ADAPTIVE WAL writer that actually has a tail: a distressed/rolled-back writer -- including
+        // the drop path, which sets distressed before doClose -- must NOT stamp an epoch over
+        // possibly-torn or about-to-be-deleted state; a negative epoch interval is the operator's
+        // opt-out of epochs entirely (honor it here too, since this bypasses the cadence gate).
+        // Best effort: a failure just leaves the tail for the next boot's idempotent WAL replay.
+        if (!distressed
+                && configuration.isAdaptiveEpochFlushOnClose()
+                && tableToken.isWal()
+                && getEffectiveCommitMode() == CommitMode.ADAPTIVE
+                && configuration.getAdaptiveEpochIntervalMs() >= 0) {
+            try {
+                if (getSeqTxn() > engine.getTableSequencerAPI().getTxnTracker(tableToken).getDurableEpochSeqTxn()) {
+                    advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                }
+            } catch (Throwable e) {
+                LOG.error().$("adaptive: durable-epoch flush on close failed [table=").$(tableToken).$(", err=").$(e).I$();
+            }
+        }
         // Best-effort cleanup that now does I/O: a spill mmap, and a direct
         // purge-log persist that can open a TableWriter+SqlCompiler. A throw
         // here would skip every free below and the lock release, leaking the
@@ -11722,6 +11773,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 pubSeq.done(cursor);
             }
+            // A future-txn reseal purge just became publishable at this commit; flag it
+            // so the ADAPTIVE commit path advances the durable epoch past its window.
+            postingResealPurgePublished = true;
             releaseDeferredPostingSealPurgeTask(deferredTask);
         }
         for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
@@ -15191,6 +15245,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     currentTableTxn
             );
         }
+        // A parquet reseal superseded a .pv; its scoreboard-gated purge needs the
+        // durable epoch advanced past this commit under ADAPTIVE (see the check in
+        // commitTxWriterAndPublishPendingPostingSealPurges). Written on an O3 worker,
+        // read post-join -- volatile carries the visibility.
+        postingResealPurgePublished = true;
     }
 
     long getColumnTop(int columnIndex) {

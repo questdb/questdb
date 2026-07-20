@@ -523,6 +523,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     final String[] expectedProps = (
                             "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.commit.group.window\tQDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW\t50000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.column.sync.batched\tQDB_CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.flush.on.close\tQDB_CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.interval\tQDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL\t60000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.max.rows\tQDB_CAIRO_ADAPTIVE_EPOCH_MAX_ROWS\t5000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.recovery.roll.forward.enabled\tQDB_CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
                                     "cairo.character.store.capacity\tQDB_CAIRO_CHARACTER_STORE_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
@@ -530,7 +536,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.column.indexer.queue.capacity\tQDB_CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.column.pool.capacity\tQDB_CAIRO_COLUMN_POOL_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t600000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tnosync\tdefault\tfalse\tfalse\n" +
+                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tadaptive\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
