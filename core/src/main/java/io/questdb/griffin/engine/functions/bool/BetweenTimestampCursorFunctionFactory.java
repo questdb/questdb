@@ -85,14 +85,22 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         final RecordCursorFactory hiFactory = hiFunc.getRecordCursorFactory();
         final int hiColumnType = assertComparableCursorColumn(hiFactory, hiPos);
         final int argType = resolveLeftTimestampType(arg, argPositions.getQuick(0), hiColumnType, ColumnType.UNDEFINED);
+        final TimestampDriver driver = ColumnType.getTimestampDriver(argType);
+        final int loValueType = ColumnType.getTimestampType(loFunc.getType());
+        // a constant or runtime-constant lower bound is invariant across rows: read it once per
+        // execution during init() instead of re-evaluating it (getter + precision conversion +
+        // min/max) per row, mirroring the ConstFunc specialization in between(NNN)
+        if (loFunc.isConstant() || loFunc.isRuntimeConstant()) {
+            return new CursorScalarFunc(arg, loFunc, hiFunc, hiFactory, driver, hiColumnType, hiPos, loValueType, true);
+        }
         return new CursorHiFunc(
                 arg,
                 loFunc,
                 hiFunc,
                 hiFactory,
-                ColumnType.getTimestampDriver(argType),
+                driver,
                 hiColumnType,
-                ColumnType.getTimestampType(loFunc.getType()),
+                loValueType,
                 hiPos
         );
     }
@@ -105,14 +113,22 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         final RecordCursorFactory loFactory = loFunc.getRecordCursorFactory();
         final int loColumnType = assertComparableCursorColumn(loFactory, loPos);
         final int argType = resolveLeftTimestampType(arg, argPositions.getQuick(0), loColumnType, ColumnType.UNDEFINED);
+        final TimestampDriver driver = ColumnType.getTimestampDriver(argType);
+        final int hiValueType = ColumnType.getTimestampType(hiFunc.getType());
+        // a constant or runtime-constant upper bound is invariant across rows: read it once per
+        // execution during init() instead of re-evaluating it (getter + precision conversion +
+        // min/max) per row, mirroring the ConstFunc specialization in between(NNN)
+        if (hiFunc.isConstant() || hiFunc.isRuntimeConstant()) {
+            return new CursorScalarFunc(arg, loFunc, hiFunc, loFactory, driver, loColumnType, loPos, hiValueType, false);
+        }
         return new CursorLoFunc(
                 arg,
                 loFunc,
                 hiFunc,
                 loFactory,
-                ColumnType.getTimestampDriver(argType),
+                driver,
                 loColumnType,
-                ColumnType.getTimestampType(hiFunc.getType()),
+                hiValueType,
                 loPos
         );
     }
@@ -405,6 +421,132 @@ public class BetweenTimestampCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof CursorLoFunc thatF) {
                 thatF.loEpoch = loEpoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            TernaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" between ").val(loFunc).val(" and ").val(hiFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
+        }
+    }
+
+    /**
+     * Handles the mixed signatures {@code between(NNC)} / {@code between(NCN)} when the non-cursor
+     * bound is a constant or runtime-constant. Both bounds resolve to fixed epochs during
+     * {@code init()} - the cursor bound from its sub-query, the non-cursor bound from a single
+     * {@code getTimestamp(null)} plus one precision conversion - so {@code getBool} reduces to the
+     * same O(1)/row range test as {@link DualCursorFunc}, and reversed bounds normalize once per
+     * execution instead of per row. Row-dependent non-cursor bounds keep using the per-row
+     * {@link CursorHiFunc} / {@link CursorLoFunc}.
+     */
+    private static class CursorScalarFunc extends BooleanFunction implements TernaryFunction {
+        private final Function arg;
+        private final int cursorColumnType;
+        private final RecordCursorFactory cursorFactory;
+        private final boolean cursorIsHi;
+        private final int cursorPos;
+        private final TimestampDriver driver;
+        private final Function hiFunc;
+        private final Function loFunc;
+        private final Function scalarFunc;
+        private final int scalarValueType;
+        private long hiEpoch;
+        private long loEpoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
+
+        public CursorScalarFunc(
+                Function arg,
+                Function loFunc,
+                Function hiFunc,
+                RecordCursorFactory cursorFactory,
+                TimestampDriver driver,
+                int cursorColumnType,
+                int cursorPos,
+                int scalarValueType,
+                boolean cursorIsHi
+        ) {
+            this.arg = arg;
+            this.loFunc = loFunc;
+            this.hiFunc = hiFunc;
+            this.cursorFactory = cursorFactory;
+            this.driver = driver;
+            this.cursorColumnType = cursorColumnType;
+            this.cursorPos = cursorPos;
+            this.scalarValueType = scalarValueType;
+            this.cursorIsHi = cursorIsHi;
+            this.scalarFunc = cursorIsHi ? loFunc : hiFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (loEpoch == Numbers.LONG_NULL || hiEpoch == Numbers.LONG_NULL) {
+                return false;
+            }
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NULL) {
+                return false;
+            }
+            return loEpoch <= value && value <= hiEpoch;
+        }
+
+        @Override
+        public Function getCenter() {
+            return arg;
+        }
+
+        @Override
+        public Function getLeft() {
+            return loFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return hiFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
+            final long cursorEpoch = readCursorBound(cursorFactory, cursorColumnType, driver, executionContext, cursorPos);
+            // the non-cursor bound is (runtime-)constant, so a null record yields the per-execution
+            // value; convert it to the left operand's precision exactly like the per-row path did
+            final long scalarEpoch = driver.from(scalarFunc.getTimestamp(null), scalarValueType);
+            if (cursorIsHi) {
+                loEpoch = scalarEpoch;
+                hiEpoch = cursorEpoch;
+            } else {
+                loEpoch = cursorEpoch;
+                hiEpoch = scalarEpoch;
+            }
+            // normalize reversed bounds once per execution, matching between(NNN) and DualCursorFunc
+            if (loEpoch != Numbers.LONG_NULL && hiEpoch != Numbers.LONG_NULL && loEpoch > hiEpoch) {
+                final long tmp = loEpoch;
+                loEpoch = hiEpoch;
+                hiEpoch = tmp;
+            }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            // the non-cursor bound is folded to a cached epoch, so per-row work only touches arg
+            return arg.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof CursorScalarFunc thatF) {
+                thatF.loEpoch = loEpoch;
+                thatF.hiEpoch = hiEpoch;
                 thatF.stateInherited = this.stateShared = true;
             }
             TernaryFunction.super.offerStateTo(that);

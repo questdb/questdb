@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestRuntimeConstTimestampCounterFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
@@ -230,6 +231,37 @@ public class BetweenTimestampCursorBoundaryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFoldedScalarEndpointSharesState() throws Exception {
+        // a folded (constant / runtime-constant) non-cursor endpoint must still donate its cached
+        // bound epochs to per-worker filter clones. The ::varchar::timestamp round-trip makes the
+        // left operand non-thread-safe, forcing the async filter to clone the between() predicate;
+        // opening the cursor donates the owner's normalized epochs (offerStateTo), surfaced as
+        // [state-shared]. Covers both mixed signatures (constant LOWER + cursor UPPER, and
+        // cursor LOWER + constant UPPER).
+        assertMemoryLeak(() -> {
+            createBaseTables();
+            // between(NNC): constant LOWER, cursor UPPER
+            assertQuery("SELECT x FROM t WHERE ts2::varchar::timestamp BETWEEN '2020-01-01T01:00:00.000000Z' AND (SELECT hi FROM b)")
+                    .withPlanContaining("[state-shared]")
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+            // between(NCN): cursor LOWER, constant UPPER
+            assertQuery("SELECT x FROM t WHERE ts2::varchar::timestamp BETWEEN (SELECT lo FROM b) AND '2020-01-01T03:00:00.000000Z'")
+                    .withPlanContaining("[state-shared]")
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testHiEndpointNullOrEmpty() throws Exception {
         // a NULL or empty UPPER bound makes BETWEEN false for every row (empty result) and NOT
         // BETWEEN true for every row - the symmetric counterpart to the LOWER-bound cases already
@@ -297,6 +329,48 @@ public class BetweenTimestampCursorBoundaryTest extends AbstractCairoTest {
                             3
                             4
                             """);
+        });
+    }
+
+    @Test
+    public void testNonCursorEndpointReadOncePerExecution() throws Exception {
+        // the non-cursor endpoint of a mixed cursor BETWEEN is invariant across rows when it is a
+        // constant or runtime-constant; it must be read once per execution during init(), not once
+        // per outer row. test_rt_const_ts_counter() is a runtime-constant TIMESTAMP leaf that counts
+        // every getTimestamp() call, so a single execution reading the folded endpoint once counts 1
+        // (the per-row implementation counted one per matched/scanned row instead).
+        assertMemoryLeak(() -> {
+            createBaseTables();
+
+            // between(NNC): constant LOWER endpoint, cursor UPPER bound
+            final String hiSql = "SELECT x FROM t WHERE ts2 BETWEEN " +
+                    "test_rt_const_ts_counter('2020-01-01T01:00:00.000000Z') AND (SELECT hi FROM b)";
+            TestRuntimeConstTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = select(hiSql)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("x\n1\n2\n3\n", cursor, factory.getMetadata(), true);
+                }
+            }
+            Assert.assertEquals(
+                    "the constant LOWER endpoint must be read once per execution, not once per row",
+                    1,
+                    TestRuntimeConstTimestampCounterFactory.COUNTER.get()
+            );
+
+            // between(NCN): cursor LOWER bound, constant UPPER endpoint
+            final String loSql = "SELECT x FROM t WHERE ts2 BETWEEN " +
+                    "(SELECT lo FROM b) AND test_rt_const_ts_counter('2020-01-01T03:00:00.000000Z')";
+            TestRuntimeConstTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = select(loSql)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("x\n1\n2\n3\n", cursor, factory.getMetadata(), true);
+                }
+            }
+            Assert.assertEquals(
+                    "the constant UPPER endpoint must be read once per execution, not once per row",
+                    1,
+                    TestRuntimeConstTimestampCounterFactory.COUNTER.get()
+            );
         });
     }
 

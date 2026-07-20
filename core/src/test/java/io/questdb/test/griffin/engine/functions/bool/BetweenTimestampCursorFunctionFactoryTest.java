@@ -102,6 +102,39 @@ public class BetweenTimestampCursorFunctionFactoryTest extends AbstractCairoTest
     }
 
     @Test
+    public void testFoldedNonCursorBoundReversedAndNull() throws Exception {
+        // a folded (constant) non-cursor endpoint must reproduce the per-row semantics exactly:
+        // reversed bounds normalize via min/max, and a NULL endpoint makes the predicate false
+        assertMemoryLeak(() -> {
+            createBaseTables();
+            // between(NNC) reversed: constant LOWER 03:00 with cursor UPPER lo=01:00 normalizes to
+            // [01:00, 03:00]
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN '2020-01-01T03:00:00.000000Z' AND (SELECT lo FROM b)")
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+            // between(NCN) reversed: cursor LOWER hi=03:00 with constant UPPER 01:00 normalizes to
+            // [01:00, 03:00]
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN (SELECT hi FROM b) AND '2020-01-01T01:00:00.000000Z'")
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+            // between(NNC) with a NULL constant LOWER endpoint: false for every row
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN cast(null AS timestamp) AND (SELECT hi FROM b)")
+                    .returns("x\n");
+            // between(NCN) with a NULL constant UPPER endpoint: false for every row
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN (SELECT lo FROM b) AND cast(null AS timestamp)")
+                    .returns("x\n");
+        });
+    }
+
+    @Test
     public void testIntrinsicControlStillUsesIntervalScan() throws Exception {
         // regression guard: a conjunctive designated-timestamp BETWEEN must keep using the
         // interval scan intrinsic instead of the new cursor-bound between() function
@@ -384,6 +417,36 @@ public class BetweenTimestampCursorFunctionFactoryTest extends AbstractCairoTest
                             1
                             2
                             3
+                            """);
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantNonCursorBound() throws Exception {
+        // a runtime-constant non-cursor endpoint (dateadd over now()) folds to a cached epoch during
+        // init() yet must return the same rows the per-row path would. The 100-year offsets keep the
+        // range boundaries far outside the data, so the result is deterministic regardless of now().
+        assertMemoryLeak(() -> {
+            createBaseTables();
+            // between(NNC): runtime-constant LOWER bound (100 years before now, below all data),
+            // cursor UPPER bound hi=03:00
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN dateadd('y', -100, now()) AND (SELECT hi FROM b)")
+                    .returns("""
+                            x
+                            0
+                            1
+                            2
+                            3
+                            """);
+            // between(NCN): cursor LOWER bound lo=01:00, runtime-constant UPPER bound (100 years
+            // after now, above all data)
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN (SELECT lo FROM b) AND dateadd('y', 100, now())")
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            4
                             """);
         });
     }
