@@ -230,7 +230,17 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                         hasPostJoinFilter(factory));
             }
             assertRowCountSql(0, "select * from a1 asof join a2 where (select b from x_false limit 1)");
-            assertRowCountSql(2, "select * from a1 asof join a2 where (select b from x_true limit 1)");
+            // TRUE path: lock the 2-row projected content. Each a1 row picks up the single a2 row
+            // (ts <= a1.ts). The output keeps a1.ts as the designated timestamp, in a1 order.
+            assertQuery("select * from a1 asof join a2 where (select b from x_true limit 1)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(
+                            "ts\tk\tts1\tv\n" +
+                                    "2020-01-01T00:00:00.000000Z\t1\t2020-01-01T00:00:00.000000Z\t100\n" +
+                                    "2020-01-01T00:00:01.000000Z\t2\t2020-01-01T00:00:00.000000Z\t100\n"
+                    );
         });
     }
 
@@ -333,7 +343,15 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
                         hasFactory(factory, RuntimeConstGateRecordCursorFactory.class));
             }
             assertRowCountSql(0, "select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_false limit 1)");
-            assertRowCountSql(3, "select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_true limit 1)");
+            // TRUE path: lock the full projected content, including the NULL-extended row for the
+            // unmatched left key (3). ORDER BY the left key makes the comparison deterministic.
+            assertQuery("select * from lj1 left join lj2 on lj1.k = lj2.k where (select b from x_true limit 1) order by lj1.k")
+                    .returns(
+                            "k\ta\tk1\tb2\n" +
+                                    "1\t10\t1\t100\n" +
+                                    "2\t20\t2\t200\n" +
+                                    "3\t30\tnull\tnull\n"
+                    );
         });
     }
 
