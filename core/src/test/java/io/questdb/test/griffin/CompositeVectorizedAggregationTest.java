@@ -60,6 +60,14 @@ import org.junit.Test;
  * child (confirmed empirically by temporarily reverting the composite factory's capability
  * exposure). A trailing ORDER BY non-regression and a plain-table EXPLAIN check prove the
  * merged-cursor / plain-table paths are untouched.
+ * <p>
+ * Task 2 (the differential capstone) extends this class with the order-SENSITIVE counterpart shapes --
+ * {@code ORDER BY} (asc/desc), {@code SAMPLE BY}, {@code LATEST ON}, an ASOF join (composite
+ * master/slave/both), and a tail {@code LIMIT -N} -- proving each still equals the plain twin, i.e. that
+ * Task 1's opt-in stayed scoped to exactly the four aggregation sites and nothing order-sensitive
+ * silently regressed onto the newly-real cell-blind frames. The companion inverted-invariant proof (the
+ * capability pair itself, plus the tail-limit / parquet-export PLAN-shape checks) lives in the sibling
+ * {@code CompositeFrameExposureSafetyTest}.
  */
 public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
 
@@ -71,6 +79,33 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
      */
     private static final String TS_BOUND =
             " where ts >= '2020-02-01T00:00:00.000000Z' and ts <= '2020-02-04T00:00:00.000000Z' ";
+
+    /**
+     * ASOF JOIN non-regression, composite on the MASTER, the SLAVE, and BOTH sides: the exhaustive matrix
+     * of join kinds/positions over composite (ASOF/LT/SPLICE/WINDOW/HORIZON) already lives in {@code
+     * CompositeReadShapesTest} and {@code CompositeWindowHorizonSlaveTest} / {@code
+     * CompositeWindowHorizonEndToEndTest} (all re-verified unaffected by this task's broad regression
+     * run -- see task-2-report.md) -- this method ties ONE representative join kind directly to THIS
+     * class's own fixture/claim, as its capstone. A join factory never consults
+     * {@code supportsPageFrameCursorForUnorderedAggregation()} (only the four group-by selection sites
+     * do), so a composite slave must still fall back to the LIGHT join, never the fast
+     * TimeFrameCursor-based factory ({@code supportsConcurrentTimeFrameCursor()} is false for composite).
+     */
+    @Test
+    public void testAsofJoinNonRegressionStillEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createSingleTableTwins();
+            createJoinMasterTwins();
+            final String q = "select m.ts, m.sym, m.qty, s.px from %s m asof join %s s on (m.sym = s.sym)";
+            final String oracle = String.format(q, "jp", "p");
+            assertSqlCursors(oracle, String.format(q, "jp", "c")); // composite slave
+            assertSqlCursors(oracle, String.format(q, "jm", "p")); // composite master
+            assertSqlCursors(oracle, String.format(q, "jm", "c")); // both composite
+
+            // Composite slave must fall back to the LIGHT join, never the fast time-frame-cursor factory.
+            assertQuery(String.format(q, "jp", "c")).noLeakCheck().assertsPlanNotContaining("Fast");
+        });
+    }
 
     @Test
     public void testFiveAggEqualsPlainTwinAndIsVectorized() throws Exception {
@@ -93,6 +128,40 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
                     "select sym, sum(px) from c" + TS_BOUND + "group by sym order by sym"
             );
             assertAggregationVectorizedOrParallel("select sym, sum(px) from c" + TS_BOUND + "group by sym");
+        });
+    }
+
+    /**
+     * LATEST ON non-regression: {@code LATEST ON ts PARTITION BY sym} (sym is an ORDINARY,
+     * non-dimension column, cycling A/B/C) over the same interleaved fixture the aggregation tests above
+     * use -- {@code LatestByRecordCursorFactory} walks {@code getCursor()} row-by-row and must still
+     * resolve each key's true latest row via the genuinely-ordered merge, not a cell-blind concatenation
+     * (which could resolve a key's "latest" from the wrong cell's tail row instead of the globally last
+     * one).
+     */
+    @Test
+    public void testLatestOnNonRegressionStillEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createSingleTableTwins();
+            assertSqlCursors(
+                    "select * from p" + TS_BOUND + "latest on ts partition by sym order by sym",
+                    "select * from c" + TS_BOUND + "latest on ts partition by sym order by sym"
+            );
+        });
+    }
+
+    /**
+     * DESC counterpart of {@link #testOrderByNonRegressionStillEqualsPlainTwin()}: the merge cursor's
+     * max-heap (backward) mode, not just its forward/min-heap mode, must also still equal the plain twin.
+     */
+    @Test
+    public void testOrderByDescNonRegressionStillEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createSingleTableTwins();
+            assertSqlCursors(
+                    "select * from p order by ts desc",
+                    "select * from c order by ts desc"
+            );
         });
     }
 
@@ -133,6 +202,66 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * SAMPLE BY non-regression (non-keyed, keyed, and the first()/last() shape) over the same interleaved
+     * fixture the aggregation tests above use. {@code SAMPLE BY}'s OWN optimized page-frame-based
+     * first()/last() fast path ({@code SampleByFirstLastRecordCursorFactory}) is gated by a SEPARATE,
+     * independent capability -- {@code convertToSampleByIndexPageFrameCursorFactory()} -- that {@code
+     * CompositePageFrameRecordCursorFactory} deliberately does NOT override (see its class doc: the
+     * inherited default unconditionally returns null), so this proves that gate -- not just {@code
+     * supportsPageFrameCursor()} -- also keeps composite off a frame-based SAMPLE BY path: EXPLAIN must
+     * never show {@code SampleByFirstLast}.
+     */
+    @Test
+    public void testSampleByNonRegressionStillEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createSingleTableTwins();
+            assertSqlCursors(
+                    "select ts, sum(px), count() from p" + TS_BOUND + "sample by 1h",
+                    "select ts, sum(px), count() from c" + TS_BOUND + "sample by 1h"
+            );
+            assertSqlCursors(
+                    "select ts, sym, sum(px), count() from p" + TS_BOUND + "sample by 1h order by ts, sym",
+                    "select ts, sym, sum(px), count() from c" + TS_BOUND + "sample by 1h order by ts, sym"
+            );
+            assertSqlCursors(
+                    "select ts, first(px), last(px) from p" + TS_BOUND + "sample by 1h",
+                    "select ts, first(px), last(px) from c" + TS_BOUND + "sample by 1h"
+            );
+            assertQuery("select ts, first(px), last(px) from c" + TS_BOUND + "sample by 1h")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("SampleByFirstLast");
+        });
+    }
+
+    /**
+     * Tail {@code LIMIT -N} non-regression (correctness only -- the plan-shape / inverted-invariant proof
+     * that this exact shape never reaches the composite cell-blind frames lives in {@code
+     * CompositeFrameExposureSafetyTest}, the more precise home for a plan/capability assertion): a
+     * negative LIMIT trusts the base scan's advertised order to take the LAST N rows (see {@code
+     * AsyncFilteredNegativeLimitRecordCursor}) -- must still equal the plain twin's tail. The residual
+     * ({@code px > 0}) variant additionally mirrors {@code
+     * CompositeReadShapesTest#testTailLimitEqualsPlainTwin}'s "combined with a residual filter, still
+     * async-order-sensitive" case: a bare ts-bounded tail limit is fully resolved by interval pruning with
+     * no leftover row-wise filter function, so it never even reaches {@code SqlCodeGenerator}'s {@code
+     * generateFilter} async-selection site (confirmed empirically -- see task-2-report.md); only the
+     * residual-filter shape genuinely exercises it.
+     */
+    @Test
+    public void testTailLimitNonRegressionStillEqualsPlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            createSingleTableTwins();
+            assertSqlCursors(
+                    "select * from p" + TS_BOUND + "limit -5",
+                    "select * from c" + TS_BOUND + "limit -5"
+            );
+            assertSqlCursors(
+                    "select * from p" + TS_BOUND + "and px > 0 limit -5",
+                    "select * from c" + TS_BOUND + "and px > 0 limit -5"
+            );
+        });
+    }
+
     @Test
     public void testUnkeyedSumEqualsPlainTwinAndIsVectorized() throws Exception {
         assertMemoryLeak(() -> {
@@ -155,6 +284,30 @@ public class CompositeVectorizedAggregationTest extends AbstractCairoTest {
         printSql("explain " + sql);
         TestUtils.assertContainsEither(sink, "vectorized: true", "Async Group By", "Async JIT Group By");
         TestUtils.assertNotContains(sink, "vectorized: false");
+    }
+
+    /**
+     * Builds a small master table pair for {@link #testAsofJoinNonRegressionStillEqualsPlainTwin()}:
+     * composite {@code jm} ({@code partition by day, exch}) and plain twin {@code jp}, 144 rows over 3
+     * days at a 30-minute cadence offset +7 minutes from {@link #createSingleTableTwins()}'s 15-minute
+     * slave grid (so no master row can ever collide on ts with a slave row -- the same offset technique
+     * {@code CompositeReadShapesTest#createJoinTwins} uses). {@code exch} alternates by row parity (2
+     * cells/day) and {@code sym} cycles A/B/C, matching the slave's own key domain so the join has real
+     * matching work to do.
+     */
+    private void createJoinMasterTwins() throws SqlException {
+        execute("create table jm (ts timestamp, exch symbol, sym symbol, qty double) timestamp(ts) partition by day, exch wal");
+        execute("create table jp (ts timestamp, exch symbol, sym symbol, qty double) timestamp(ts) partition by day wal");
+
+        final String select =
+                "select ('2020-02-01T00:07:00.000000Z'::timestamp + (x - 1) * 1800000000L)::timestamp ts, " +
+                        "case when x % 2 = 0 then 'X' else 'Y' end exch, " +
+                        "case when x % 3 = 0 then 'A' when x % 3 = 1 then 'B' else 'C' end sym, " +
+                        "x::double qty " +
+                        "from long_sequence(144) order by x desc";
+        execute("insert into jm " + select);
+        execute("insert into jp " + select);
+        drainWalQueue();
     }
 
     /**
