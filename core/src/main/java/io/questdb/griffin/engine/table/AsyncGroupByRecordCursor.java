@@ -257,7 +257,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                         if (workStealingStrategy.shouldSteal(processedCount)) {
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
