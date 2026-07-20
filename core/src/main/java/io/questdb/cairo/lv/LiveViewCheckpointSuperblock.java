@@ -132,6 +132,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     private final Path path = new Path();
     private long generationFloor = Long.MIN_VALUE;
     private boolean isOpen;
+    private long oldestValidGeneration = Long.MAX_VALUE;
     private int selectedSlot = NO_SLOT;
 
     public LiveViewCheckpointSuperblock(@NotNull CairoConfiguration configuration) {
@@ -148,6 +149,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         mem.close(false);
         Misc.free(path);
         generationFloor = Long.MIN_VALUE;
+        oldestValidGeneration = Long.MAX_VALUE;
         isOpen = false;
         selectedSlot = NO_SLOT;
         resetFields();
@@ -160,6 +162,17 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public int getSelectedSlot() {
         ensureOpen();
         return selectedSlot;
+    }
+
+    /**
+     * Returns the oldest independently checksum-valid A/B slot generation. This
+     * is the fallback floor used by generation-safe physical purge. A corrupt
+     * slot does not protect files; a structurally unusable but checksum-valid
+     * slot is retained conservatively until it is overwritten.
+     */
+    public long getOldestValidGeneration() {
+        ensureOpen();
+        return oldestValidGeneration;
     }
 
     /**
@@ -301,6 +314,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         int best = NO_SLOT;
         long bestGeneration = Long.MIN_VALUE;
         generationFloor = Long.MIN_VALUE;
+        oldestValidGeneration = Long.MAX_VALUE;
         for (int slot = 0; slot < 2; slot++) {
             final long base = (long) slot * SLOT_SIZE;
             if (isSlotValid(base)) {
@@ -310,6 +324,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     bestGeneration = gen;
                 }
                 generationFloor = Math.max(generationFloor, gen);
+                oldestValidGeneration = Math.min(oldestValidGeneration, gen);
             }
         }
         if (best == NO_SLOT) {

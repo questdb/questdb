@@ -131,6 +131,16 @@ public class LiveViewCheckpointMetaStore implements Closeable {
         return generationTracker.pin();
     }
 
+    long getMinPinnedGeneration() {
+        ensureOpen();
+        return generationTracker.minPinnedGeneration();
+    }
+
+    long getOldestValidSuperblockGeneration() {
+        ensureOpen();
+        return superblock.getOldestValidGeneration();
+    }
+
     /**
      * Validates the candidate root pages, commits the inactive superblock slot,
      * and only then makes the new generation pinnable.

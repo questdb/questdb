@@ -180,6 +180,10 @@ public class LiveViewCheckpointSegmentDirectory implements Closeable {
         return entryValue(segmentId, 1, "file length");
     }
 
+    public long getFileLengthAt(int index) {
+        return entryValueAt(index, 1, "file length");
+    }
+
     public long getObsoleteBytes() {
         long bytes = 0;
         for (int i = 0, n = size(); i < n; i++) {
@@ -206,8 +210,25 @@ public class LiveViewCheckpointSegmentDirectory implements Closeable {
         return entryValue(segmentId, 2, "reference count");
     }
 
+    public long getReferenceCountAt(int index) {
+        return entryValueAt(index, 2, "reference count");
+    }
+
     public long getRetireGeneration(long segmentId) {
         return entryValue(segmentId, 3, "retire generation");
+    }
+
+    public long getRetireGenerationAt(int index) {
+        return entryValueAt(index, 3, "retire generation");
+    }
+
+    public long getSegmentId(int index) {
+        if (index < 0 || index >= size()) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint segment directory index out of bounds [index=")
+                    .put(index).put(", size=").put(size()).put(']');
+        }
+        return entries.getQuick(index * LONGS_PER_ENTRY);
     }
 
     /**
@@ -349,6 +370,16 @@ public class LiveViewCheckpointSegmentDirectory implements Closeable {
             throw CairoException.critical(0)
                     .put("unknown live view checkpoint data segment ")
                     .put(fieldName).put(", segmentId=").put(segmentId);
+        }
+        return entries.getQuick(index * LONGS_PER_ENTRY + field);
+    }
+
+    private long entryValueAt(int index, int field, CharSequence fieldName) {
+        if (index < 0 || index >= size()) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint segment directory ").put(fieldName)
+                    .put(" index out of bounds [index=").put(index)
+                    .put(", size=").put(size()).put(']');
         }
         return entries.getQuick(index * LONGS_PER_ENTRY + field);
     }
