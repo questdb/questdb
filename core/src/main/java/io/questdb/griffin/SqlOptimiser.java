@@ -6014,17 +6014,26 @@ public class SqlOptimiser implements Mutable {
                     break;
                 default:
                     if (reverse) {
-                        ExpressionNode n = expressionNodePool.next();
-                        n.token = "not";
-                        n.paramCount = 1;
-                        n.rhs = node;
-                        n.type = OPERATION;
-                        return n;
+                        return negate(node);
                     }
                     break;
             }
+        } else if (reverse) {
+            // tokenless node, e.g. a sub-query used directly as a boolean predicate:
+            // like any other non-negatable expression it must be wrapped in NOT,
+            // otherwise the negation would be silently discarded
+            return negate(node);
         }
         return node;
+    }
+
+    private ExpressionNode negate(ExpressionNode node) {
+        final ExpressionNode n = expressionNodePool.next();
+        n.token = "not";
+        n.paramCount = 1;
+        n.rhs = node;
+        n.type = OPERATION;
+        return n;
     }
 
     private void optimiseBooleanNot(IQueryModel model) {
@@ -6578,7 +6587,10 @@ public class SqlOptimiser implements Mutable {
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
             if (n != null) {
-                switch (joinOps.get(n.token)) {
+                // a tokenless node (e.g. a sub-query used directly as a boolean predicate)
+                // is not a join op; route it to the default arm so it is kept as a plain
+                // predicate and rejected later by filter compilation
+                switch (n.token != null ? joinOps.get(n.token) : -1) {
                     case JOIN_OP_EQUAL:
                         analyseEquals(parent, n, innerPredicate, joinModel, joinIndex);
                         n = null;

@@ -1532,8 +1532,12 @@ public class QueryModel implements IQueryModel {
         // pre-order traversal
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
-            if (n != null && n.token != null) {
-                if (isAndKeyword(n.token)) {
+            if (n != null) {
+                // a tokenless conjunct (e.g. a sub-query used directly as a boolean predicate)
+                // is not an AND node and must be kept: dropping it here would silently remove
+                // the predicate from the rebuilt WHERE clause instead of letting filter
+                // compilation reject (or evaluate) it
+                if (n.token != null && isAndKeyword(n.token)) {
                     if (n.rhs != null) {
                         sqlNodeStack.push(n.rhs);
                     }

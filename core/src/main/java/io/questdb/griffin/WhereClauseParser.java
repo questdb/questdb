@@ -276,7 +276,10 @@ public final class WhereClauseParser implements Mutable {
         stack.clear();
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (isAndKeyword(node.token)) {
+                // tokenless nodes (e.g. sub-queries used as boolean predicates) are not
+                // intrinsic candidates; fall through to the poll branch so they stay in
+                // the residual filter
+                if (node.token != null && isAndKeyword(node.token)) {
                     if (!removeAndIntrinsics(
                             timestampDriver,
                             translator,
@@ -311,7 +314,7 @@ public final class WhereClauseParser implements Mutable {
                     } else {
                         node = node.lhs;
                     }
-                } else if (isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
+                } else if (node.token != null && isOrKeyword(node.token) && tryExtractOrTimestampIntrinsics(timestampDriver, model, node, functionParser, metadata, executionContext)) {
                     // Entire OR tree was extracted as timestamp intrinsics
                     node = stack.poll();
                 } else {
@@ -2534,14 +2537,14 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private ExpressionNode collapseWithin0(ExpressionNode node) {
-        if (node == null || isWithinKeyword(node.token)) {
+        if (node == null || (node.token != null && isWithinKeyword(node.token))) {
             return null;
         }
-        if (node.queryModel == null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
-            if (node.lhs == null || isWithinKeyword(node.lhs.token)) {
+        if (node.queryModel == null && node.token != null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
+            if (node.lhs == null || (node.lhs.token != null && isWithinKeyword(node.lhs.token))) {
                 return node.rhs;
             }
-            if (node.rhs == null || isWithinKeyword(node.rhs.token)) {
+            if (node.rhs == null || (node.rhs.token != null && isWithinKeyword(node.rhs.token))) {
                 return node.lhs;
             }
         }
@@ -2549,7 +2552,7 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
-        if (node == null || isWithinKeyword(node.token)) {
+        if (node == null || (node.token != null && isWithinKeyword(node.token))) {
             return null;
         }
         node.lhs = collapseWithinNodes(collapseWithin0(node.lhs));
@@ -3239,7 +3242,7 @@ public final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext,
             LongList prefixes) throws SqlException {
 
-        if (isWithinKeyword(node.token)) {
+        if (node.token != null && isWithinKeyword(node.token)) {
 
             if (prefixes.size() > 0) {
                 throw SqlException.$(node.position, "Multiple 'within' expressions not supported");
@@ -3584,7 +3587,7 @@ public final class WhereClauseParser implements Mutable {
         stack.clear();
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
+                if (node.token != null && (isAndKeyword(node.token) || isOrKeyword(node.token))) {
                     if (!removeWithin(translator, node.rhs, metadata, functionParser, executionContext, prefixes)) {
                         stack.push(node.rhs);
                     }
