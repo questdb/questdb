@@ -1560,6 +1560,12 @@ public class SqlParser {
         // we walk the named-window map here.
         validateLiveViewAnchors(queryModel);
 
+        // Enforce the Phase 0 finite-influence scope cut: unanchored ranking
+        // functions (row_number / rank / dense_rank) have no finite forward
+        // influence and are rejected at CREATE. Runs after validateLiveViewAnchors
+        // so the named-window anchor kinds it inspects are already validated.
+        validateLiveViewFiniteInfluence(queryModel);
+
         // Defense-in-depth lead() reject. The factory-side check inside
         // CairoEngine only fires when the planner picks a window factory
         // that exposes lead - a future planner path that bypasses both
@@ -1869,6 +1875,115 @@ public class SqlParser {
             }
             walkInlineWindows(qc.getAst());
         }
+    }
+
+    /**
+     * Parser-side half of the Phase 0 finite-influence scope cut (see
+     * {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md} section 6.2 and
+     * {@code io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind}).
+     * The localized out-of-order repair the checkpoint timeline relies on can
+     * only bound its work when every window function has a finite forward
+     * influence boundary {@code H}. Ranking functions - {@code row_number()},
+     * {@code rank()}, {@code dense_rank()} - have no finite {@code H} when they
+     * run unanchored: an out-of-order row shifts every following row's rank
+     * without bound. Reject them at CREATE, naming the function.
+     * <p>
+     * The anchored, per-segment-reset forms have a finite {@code H} (the segment
+     * end) and stay eligible; they route through the fixed-anchor dependency
+     * kind and their full O3 repair returns in Phase 7.
+     * <p>
+     * Partitioned-but-unanchored ranking (e.g. {@code row_number() OVER
+     * (PARTITION BY sym ORDER BY ts)}) is already turned away by
+     * {@link #validateLiveViewAnchors}' bare-unbounded reject; this closes the
+     * remaining single-partition {@code OVER ()} / {@code OVER (ORDER BY ts)}
+     * hole, which {@code validateLiveViewAnchors} deliberately leaves open for
+     * O(1)-state single-partition windows.
+     */
+    private static void validateLiveViewFiniteInfluence(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                rejectUnanchoredRanking(qc.getAst(), (WindowExpression) qc, named);
+            }
+            // Ranking calls nested in an arithmetic / function tree carry their
+            // OVER clause on the function node itself; walk for those too.
+            walkForUnanchoredRanking(qc.getAst(), named);
+        }
+    }
+
+    /**
+     * Recursive AST walk for the nested case of {@link #validateLiveViewFiniteInfluence}:
+     * a ranking function with an inline {@code OVER (...)} embedded inside a larger
+     * expression carries its window on {@code node.windowExpression}.
+     */
+    private static void walkForUnanchoredRanking(
+            ExpressionNode node,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            rejectUnanchoredRanking(node, node.windowExpression, named);
+        }
+        if (node.paramCount < 3) {
+            walkForUnanchoredRanking(node.lhs, named);
+            walkForUnanchoredRanking(node.rhs, named);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForUnanchoredRanking(node.args.getQuick(i), named);
+            }
+        }
+    }
+
+    /**
+     * Throws when {@code fn} is a ranking window function ({@code row_number} /
+     * {@code rank} / {@code dense_rank}) whose window {@code window} is not
+     * anchored. See {@link #validateLiveViewFiniteInfluence}.
+     */
+    private static void rejectUnanchoredRanking(
+            ExpressionNode fn,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
+        if (fn == null || fn.type != ExpressionNode.FUNCTION || !isRankingFunctionToken(fn.token)) {
+            return;
+        }
+        if (isAnchoredWindow(window, named)) {
+            return;
+        }
+        throw SqlException.$(fn.position, "live view select cannot use ")
+                .put(fn.token)
+                .put("() without an anchored WINDOW; it has no finite out-of-order influence boundary. ")
+                .put("Add an ANCHOR to reset per segment, e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
+    }
+
+    /**
+     * Resolves whether {@code window} carries an ANCHOR clause. A named-window
+     * reference ({@code OVER w}) inherits the anchor kind of its definition in
+     * {@code named}; an inline window carries its own.
+     */
+    private static boolean isAnchoredWindow(
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        if (window == null) {
+            return false;
+        }
+        if (window.isNamedWindowReference()) {
+            WindowExpression def = named.get(window.getWindowName());
+            return def != null && def.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE;
+        }
+        return window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE;
+    }
+
+    private static boolean isRankingFunctionToken(CharSequence token) {
+        return token != null
+                && (Chars.equalsLowerCaseAscii(token, "row_number")
+                || Chars.equalsLowerCaseAscii(token, "rank")
+                || Chars.equalsLowerCaseAscii(token, "dense_rank"));
     }
 
     /**

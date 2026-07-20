@@ -61,6 +61,48 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LiveViewValidationTest extends AbstractCairoTest {
 
     @Test
+    public void testRejectUnanchoredRanking() throws Exception {
+        // Phase 0 finite-influence scope cut (see
+        // LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md section 6.2): the ranking
+        // functions row_number/rank/dense_rank have no finite forward influence
+        // boundary when they run unanchored - an out-of-order row shifts every
+        // following row's rank without bound - so the localized O3 repair the
+        // checkpoint timeline relies on cannot bound its work. Reject them at CREATE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Single-partition OVER () - the O(1)-state hole validateLiveViewAnchors
+            // leaves open for non-ranking shapes.
+            assertUnanchoredRankingRejected("SELECT ts, x, row_number() OVER () AS rn FROM base", "row_number");
+            assertUnanchoredRankingRejected("SELECT ts, x, row_number() OVER (ORDER BY ts) AS rn FROM base", "row_number");
+            // Case-insensitive token match.
+            assertUnanchoredRankingRejected("SELECT ts, x, ROW_NUMBER() OVER () AS rn FROM base", "ROW_NUMBER");
+            // rank / dense_rank, ordered by the designated timestamp.
+            assertUnanchoredRankingRejected("SELECT ts, x, rank() OVER (ORDER BY ts) AS r FROM base", "rank");
+            assertUnanchoredRankingRejected("SELECT ts, x, dense_rank() OVER (ORDER BY ts) AS r FROM base", "dense_rank");
+            // A ranking call nested in an arithmetic tree still carries its OVER clause.
+            assertUnanchoredRankingRejected("SELECT ts, x, row_number() OVER () + 1 AS rn FROM base", "row_number");
+            // Referencing an unanchored named WINDOW is rejected too.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, x, row_number() OVER w AS rn FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)",
+                    "row_number"
+            );
+
+            // Positive control: the anchored, per-segment-reset form stays eligible - it
+            // has a finite H (the segment end) and returns fully in Phase 7.
+            execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("DROP LIVE VIEW lv_anchor");
+            // ANCHOR DAILY is the desugared equivalent and must stay eligible as well.
+            execute("CREATE LIVE VIEW lv_daily FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            execute("DROP LIVE VIEW lv_daily");
+        });
+    }
+
+    @Test
     public void testCreateNameCollisionMessage() throws Exception {
         // A name already taken by a non-live-view (here a plain table) is rejected up
         // front, mirroring CREATE MATERIALIZED VIEW. Crucially, IF NOT EXISTS does NOT
@@ -946,6 +988,31 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
                     Chars.contains(e.getFlyweightMessage(), expectedMessage)
+            );
+        }
+    }
+
+    private void assertUnanchoredRankingRejected(String selectSql, String offendingToken) throws Exception {
+        // The finite-influence gate runs during the CREATE statement parse, so its
+        // position is relative to the whole statement, not the SELECT substring.
+        final String fullSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql;
+        try {
+            execute(fullSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected unanchored-ranking reject for: " + selectSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
+                    Chars.contains(e.getFlyweightMessage(), "cannot use " + offendingToken)
+                            && Chars.contains(e.getFlyweightMessage(), "no finite out-of-order influence boundary")
+            );
+            // Error Position Convention: point at the offending function token.
+            final int pos = e.getPosition();
+            Assert.assertTrue(
+                    "position " + pos + " must point at '" + offendingToken + "' in: " + fullSql,
+                    pos >= 0 && fullSql.startsWith(offendingToken, pos)
             );
         }
     }

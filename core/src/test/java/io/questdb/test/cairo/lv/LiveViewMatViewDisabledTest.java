@@ -78,7 +78,8 @@ public class LiveViewMatViewDisabledTest extends AbstractBootstrapTest {
                 // SEED admits the pre-existing (historical-timestamp) rows regardless
                 // of the view's real-time lower bound, so the assertion is deterministic.
                 serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
-                        "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                        "SELECT val, ts, row_number() OVER w AS rn FROM base " +
+                        "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
                 // With the refresh job wired, the seed sweep materialises all three
                 // base rows. Pre-fix (live-view refresh gated on the mat-view flag)

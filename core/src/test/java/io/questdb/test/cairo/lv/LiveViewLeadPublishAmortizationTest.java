@@ -225,7 +225,8 @@ public class LiveViewLeadPublishAmortizationTest extends AbstractLiveViewTest {
         // Pin the CREATE wall clock below the data so every row stays in-frame.
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
-                "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                "SELECT ts, x, row_number() OVER w AS rn FROM base WHERE x > 0 " +
+                "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {

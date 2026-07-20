@@ -84,7 +84,8 @@ public class LiveViewIngestRejectTest extends AbstractBootstrapTest {
             )) {
                 serverMain.execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
                 serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                        "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                        "SELECT val, ts, row_number() OVER w AS rn FROM base " +
+                        "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
                 // ILP over HTTP surfaces the rejection in the response body.
                 final StringSink sink = new StringSink();
