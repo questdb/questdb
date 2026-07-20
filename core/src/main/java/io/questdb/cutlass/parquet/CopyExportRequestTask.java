@@ -85,6 +85,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private RecordCursorFactory tempTableFactory;
     private @Nullable StreamWriteParquetCallBack writeCallback;
 
+    public static Status classifyFailureStatus(SqlExecutionCircuitBreaker circuitBreaker) {
+        return circuitBreaker.checkIfTrippedNoThrottle() ? Status.CANCELLED : Status.FAILED;
+    }
+
     public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
         if (columns == null || columns.isEmpty()) {
             return;
