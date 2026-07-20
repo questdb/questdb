@@ -303,20 +303,24 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
                         keyTypes,
                         LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
                 );
+                // Release the eagerly allocated (untracked) map backing, then bind the retained
+                // per-query tracker and reopen so the live backing charges the per-query counter
+                // symmetrically with the close()/reset() that frees it. Binding a tracker on the
+                // eager backing post-hoc would decrement bytes that were never charged and drive the
+                // per-query counter negative. Mirrors the deferred cursor's partitionMap lazy-open.
+                map.close();
                 memory = Vm.getCARWInstance(
                         configuration.getSqlWindowStorePageSize(),
                         configuration.getSqlWindowStoreMaxPages(),
                         MemoryTag.NATIVE_CIRCULAR_BUFFER
                 );
-                // Bind the retained per-query tracker to the freshly allocated ring only. The ring
-                // (MemoryCARWImpl) allocates lazily on first append, so binding here -- before that
-                // append -- keeps alloc and free symmetric on the per-query counter. The map is left
-                // untracked on purpose: MapFactory allocates the map backing eagerly at construction,
-                // so binding a tracker post-hoc would decrement bytes that were never charged and
-                // drive the per-query counter negative. The map is small and partition-capped.
+                // The ring (MemoryCARWImpl) allocates lazily on first append, so binding it here --
+                // before that append -- is likewise symmetric on the per-query counter.
                 if (memoryTracker != null) {
+                    map.setMemoryTracker(memoryTracker);
                     memory.setMemoryTracker(memoryTracker);
                 }
+                map.reopen();
             }
             super.pass1(record, recordOffset, spi);
         }
