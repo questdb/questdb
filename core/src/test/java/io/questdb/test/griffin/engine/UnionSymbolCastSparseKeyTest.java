@@ -39,6 +39,54 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
+    // A static source dictionary whose keys straddle the translation cache's dense/map boundary.
+    // getSymbolCount() bounds the direct-indexed region, so keys below it translate through the
+    // array and keys above it through the hash map - one source column, both code paths.
+    private static final int MIXED_SYMBOL_COUNT = 3;
+    private static final StaticSymbolTable MIXED_TABLE = new StaticSymbolTable() {
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return MIXED_SYMBOL_COUNT;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value == null) {
+                return VALUE_NOT_FOUND;
+            }
+            if ("dense0".contentEquals(value)) {
+                return 0;
+            }
+            if ("dense2".contentEquals(value)) {
+                return 2;
+            }
+            if ("beyond500".contentEquals(value)) {
+                return 500;
+            }
+            return "beyond501".contentEquals(value) ? 501 : VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return switch (key) {
+                case 0 -> "dense0";
+                case 2 -> "dense2";
+                case 500 -> "beyond500";
+                case 501 -> "beyond501";
+                default -> null;
+            };
+        }
+    };
     // A static source dictionary whose only key is far larger than its cardinality. It proves the
     // per-source translation cache is sized by cardinality (keys actually seen), not by key range,
     // so a direct-indexed array over the raw source key is not a valid substitute here.
@@ -69,6 +117,41 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
             return key == SPARSE_SOURCE_KEY ? "sparse" : null;
         }
     };
+
+    // Source keys either side of the dense/map boundary must translate to the same merged key for
+    // the same text, and to distinct keys for distinct text. A boundary that routed a key to the
+    // wrong structure would return the "not translated yet" sentinel and re-intern it, handing the
+    // same source key two different merged keys on two passes - which the repeated rows catch.
+    @Test
+    public void testKeysAcrossDenseAndMapRegionsTranslateCorrectly() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] texts = {"dense0", "beyond500", "dense2", "beyond501", "dense0", "beyond500"};
+            final String[][] rows = new String[texts.length][];
+            for (int i = 0; i < texts.length; i++) {
+                rows[i] = new String[]{texts[i]};
+            }
+            try (RecordCursorFactory factory = newFactory(new StaticSymbolCursorFactory(MIXED_TABLE, rows))) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    final int[] keys = new int[texts.length];
+                    for (int i = 0; i < texts.length; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        keys[i] = record.getInt(0);
+                        TestUtils.assertEquals(texts[i], symbolTable.valueOf(keys[i]));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                    // Repeats collapse onto the cached key in both regions: dense (0) and map (500).
+                    Assert.assertEquals(keys[0], keys[4]);
+                    Assert.assertEquals(keys[1], keys[5]);
+                    // Distinct source text never shares a merged key.
+                    Assert.assertNotEquals(keys[0], keys[1]);
+                    Assert.assertNotEquals(keys[0], keys[2]);
+                    Assert.assertNotEquals(keys[1], keys[3]);
+                }
+            }
+        });
+    }
 
     @Test
     public void testSparseSourceKeyUsesCardinalitySizedTrackedCache() throws Exception {

@@ -231,6 +231,54 @@ public class CastStrToSymbolFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    // valueOf/valueBOf hand out DirectString flyweights over the dictionary's text storage, and a
+    // consumer may hold one while the cursor keeps advancing: RecordChain resolves a symbol as
+    // getSymbolTable(col).valueOf(getInt(col)) and a sort comparator holds the left-hand value
+    // across further reads. Text storage is therefore append-only - growing it must never move or
+    // overwrite an entry already handed out. Interning here far past the first chunk forces many
+    // growths; a storage that reallocated instead would leave every held value pointing at freed
+    // memory, so these assertions read back garbage rather than the original text.
+    @Test
+    public void testValuesSurviveFurtherInterning() throws Exception {
+        assertMemoryLeak(() -> {
+            final FeedFunction arg = new FeedFunction();
+            final CastStrToSymbolFunctionFactory.Func func = new CastStrToSymbolFunctionFactory.Func(arg);
+            try {
+                arg.valueA = "held_by_key_0";
+                Assert.assertEquals(0, func.getInt(null));
+                arg.valueA = "held_by_key_1";
+                Assert.assertEquals(1, func.getInt(null));
+
+                // Take the references BEFORE the dictionary grows, through both the function itself
+                // and a separately requested view, and keep them live across every later intern.
+                final CharSequence heldA = func.valueOf(0);
+                final CharSequence heldB = func.valueBOf(1);
+                final SymbolTable view = func.newSymbolTable();
+                final CharSequence heldView = view.valueOf(0);
+
+                // A long value forces an oversized chunk; the short ones drive the doubling schedule.
+                final StringBuilder longValue = new StringBuilder();
+                for (int i = 0; i < 4096; i++) {
+                    longValue.append('x');
+                }
+                for (int i = 2; i < 3000; i++) {
+                    arg.valueA = i == 1500 ? longValue.toString() : "filler_" + i;
+                    Assert.assertEquals(i, func.getInt(null));
+                }
+
+                TestUtils.assertEquals("held_by_key_0", heldA);
+                TestUtils.assertEquals("held_by_key_1", heldB);
+                TestUtils.assertEquals("held_by_key_0", heldView);
+                // The dictionary still answers correctly for old and new keys alike.
+                TestUtils.assertEquals("held_by_key_0", func.valueOf(0));
+                TestUtils.assertEquals("filler_2999", func.valueOf(2999));
+                Assert.assertEquals(4096, view.valueOf(1500).length());
+            } finally {
+                func.close();
+            }
+        });
+    }
+
     private static class FeedFunction extends StrFunction {
         CharSequence valueA;
         CharSequence valueB;

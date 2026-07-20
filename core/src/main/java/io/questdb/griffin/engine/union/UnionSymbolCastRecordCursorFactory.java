@@ -52,6 +52,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -254,33 +255,89 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     private static class NativeKeyMap implements QuietCloseable {
+        private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
         private static final int NOT_FOUND = -1;
         private final DirectIntIntHashMap map = new DirectIntIntHashMap(
                 4,
                 0.5,
                 SymbolTable.VALUE_IS_NULL,
                 NOT_FOUND,
-                MemoryTag.NATIVE_FUNC_RSS,
+                MEMORY_TAG,
                 false
         );
+        private static final int INITIAL_DENSE_CAPACITY = 16;
+        private long denseAddress;
+        private int denseCapacity;
+        private int denseLimit;
+        @Nullable
+        private MemoryTracker memoryTracker;
 
         @Override
         public void close() {
-            map.close();
-            map.setMemoryTracker(null);
+            try {
+                denseAddress = Unsafe.free(denseAddress, (long) denseCapacity * Integer.BYTES, MEMORY_TAG, memoryTracker);
+                denseCapacity = 0;
+                denseLimit = 0;
+            } finally {
+                map.close();
+                map.setMemoryTracker(null);
+                memoryTracker = null;
+            }
         }
 
         private int get(int sourceKey) {
+            if (sourceKey >= 0 && sourceKey < denseCapacity) {
+                final int stored = Unsafe.getInt(denseAddress + ((long) sourceKey << 2));
+                return stored == 0 ? NOT_FOUND : stored - 1;
+            }
+            if (sourceKey < denseLimit) {
+                // Below the dense limit but past what the array covers, so it has never been
+                // translated: put() routes every such key to the array, never to the map.
+                return NOT_FOUND;
+            }
             return map.isOpen() ? map.get(sourceKey) : NOT_FOUND;
         }
 
-        private void of(MemoryTracker memoryTracker) {
+        private void growDense(int requiredCapacity) {
+            int newCapacity = Math.max(INITIAL_DENSE_CAPACITY, denseCapacity);
+            while (newCapacity < requiredCapacity) {
+                newCapacity <<= 1;
+                if (newCapacity < 0 || newCapacity >= denseLimit) {
+                    newCapacity = denseLimit;
+                    break;
+                }
+            }
+            final long oldSize = (long) denseCapacity * Integer.BYTES;
+            final long newSize = (long) newCapacity * Integer.BYTES;
+            if (denseAddress == 0) {
+                denseAddress = Unsafe.malloc(newSize, MEMORY_TAG, memoryTracker);
+            } else {
+                denseAddress = Unsafe.realloc(denseAddress, oldSize, newSize, MEMORY_TAG, memoryTracker);
+            }
+            // Only ints live here, so growth may move the block freely; zero the new tail so every
+            // uncovered slot still reads as "not translated yet".
+            Unsafe.setMemory(denseAddress + oldSize, newSize - oldSize, (byte) 0);
+            denseCapacity = newCapacity;
+        }
+
+        private void of(MemoryTracker memoryTracker, int denseLimit) {
+            this.memoryTracker = memoryTracker;
+            this.denseLimit = denseLimit;
             map.setMemoryTracker(memoryTracker);
         }
 
         private void put(int sourceKey, int resultKey) {
             if (sourceKey < 0) {
                 throw CairoException.nonCritical().put("invalid union symbol key [key=").put(sourceKey).put(']');
+            }
+            if (sourceKey < denseLimit) {
+                if (sourceKey >= denseCapacity) {
+                    growDense(sourceKey + 1);
+                }
+                // Store resultKey + 1 so a zeroed slot reads as "not translated yet". VALUE_IS_NULL
+                // round-trips as well: Integer.MIN_VALUE + 1 is still non-zero.
+                Unsafe.putInt(denseAddress + ((long) sourceKey << 2), resultKey + 1);
+                return;
             }
             if (!map.isOpen()) {
                 map.reopen();
@@ -290,13 +347,32 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     private static class SourceColumn implements QuietCloseable {
+        // Caps the direct-indexed region so a very large source dictionary cannot grow an unbounded
+        // translation array. Keys past the cap fall back to the hash map.
+        private static final int MAX_DENSE_KEYS = 1 << 20;
         private final NativeKeyMap keyMap = new NativeKeyMap();
         @Nullable
         private final SymbolTable symbolTable;
 
         private SourceColumn(@Nullable SymbolTable symbolTable, MemoryTracker memoryTracker) {
             this.symbolTable = symbolTable;
-            keyMap.of(memoryTracker);
+            keyMap.of(memoryTracker, denseKeyLimit(symbolTable));
+        }
+
+        // A table dictionary numbers its symbols 0..getSymbolCount()-1, so a direct-indexed array
+        // translates a source key in one load instead of hashing and probing it on every row, and
+        // holds 4 bytes per key against the map's 16 at load factor 0.5. This returns a LIMIT, not
+        // a size: the array still grows on demand, so a query that touches few keys of a large
+        // dictionary charges the tracker for what it touched rather than for the whole dictionary.
+        // The limit follows CARDINALITY, never key range - a static table handing out sparse keys
+        // (see UnionSymbolCastSparseKeyTest) stays on the map, so this holds for any
+        // StaticSymbolTable rather than assuming every one of them numbers its keys densely.
+        private static int denseKeyLimit(@Nullable SymbolTable symbolTable) {
+            if (symbolTable instanceof StaticSymbolTable staticSymbolTable) {
+                final int symbolCount = staticSymbolTable.getSymbolCount();
+                return symbolCount > 0 ? Math.min(symbolCount, MAX_DENSE_KEYS) : 0;
+            }
+            return 0;
         }
 
         @Override

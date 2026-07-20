@@ -63,15 +63,25 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends SymbolFunction implements UnaryFunction {
+        private static final int CHUNK_ENTRY_SIZE = 2 * Long.BYTES;
+        private static final int INITIAL_CHUNK_CAPACITY = 4;
         private static final int INITIAL_HASH_CAPACITY = 4;
-        private static final long INITIAL_TEXT_CAPACITY = 16;
+        private static final long INITIAL_TEXT_CHUNK_SIZE = 64;
         private static final int LENGTH_OFFSET = Integer.BYTES;
+        private static final long MAX_TEXT_CHUNK_SIZE = 1 << 20;
         private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
         private static final int OFFSET_ENTRY_SIZE = Long.BYTES;
         private static final int TEXT_OFFSET = 2 * Integer.BYTES;
         private final Function arg;
         private final DirectString symbolA = new DirectString();
         private final DirectString symbolB = new DirectString();
+        private int chunkCapacity;
+        private int chunkCount;
+        private long chunkSizeHint;
+        private long chunksAddress;
+        private long currentChunkAddress;
+        private long currentChunkSize;
+        private long currentChunkUsed;
         private long hashAddress;
         private int hashCapacity;
         private int hashMask;
@@ -81,9 +91,6 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         private int next = 1;
         private long offsetsAddress;
         private int offsetsCapacity;
-        private long textAddress;
-        private long textCapacity;
-        private long textSize;
 
         public Func(Function arg) {
             this.arg = arg;
@@ -166,22 +173,20 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             // Keep every entry header int-aligned. Besides being friendlier to ARM,
             // this matches the alignment used by the other native UTF-16 maps.
             final long entrySize = (TEXT_OFFSET + ((long) len << 1) + 3) & ~3L;
-            final long requiredTextSize = textSize + entrySize;
-            if (requiredTextSize < textSize) {
-                throw CairoException.nonCritical().put("dynamic symbol dictionary size overflow");
-            }
             ensureOffsetCapacity(next);
-            ensureTextCapacity(requiredTextSize);
+            // The offsets array stores each entry's absolute address. Text chunks are never
+            // reallocated, so that address stays valid for the life of the dictionary and the
+            // flyweights valueAt() hands out survive any later intern().
+            final long entryAddress = allocateEntry(entrySize);
 
             final int key = next - 1;
-            Unsafe.putLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE, textSize);
-            Unsafe.putInt(textAddress + textSize, hash);
-            Unsafe.putInt(textAddress + textSize + LENGTH_OFFSET, len);
-            long p = textAddress + textSize + TEXT_OFFSET;
+            Unsafe.putLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE, entryAddress);
+            Unsafe.putInt(entryAddress, hash);
+            Unsafe.putInt(entryAddress + LENGTH_OFFSET, len);
+            final long p = entryAddress + TEXT_OFFSET;
             for (int i = 0; i < len; i++) {
                 Unsafe.putChar(p + ((long) i << 1), value.charAt(i));
             }
-            textSize = requiredTextSize;
             Unsafe.putInt(hashAddress + ((long) slot << 2), next++);
             return key;
         }
@@ -200,9 +205,10 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         public @Nullable SymbolTable newSymbolTable() {
             // A view owns its A/B flyweights but reads the live dictionary. Unlike copying
             // the dictionary, it needs no native allocation with an otherwise unclear owner.
-            // Note this is not the stable snapshot the old deep copy returned: the values it
-            // yields are live arena flyweights invalidated by the next intern()/getInt() on the
-            // source function (see valueAt), so a caller must not retain them across an intern.
+            // The values it yields point into append-only text chunks, so they stay valid across
+            // further intern()/getInt() calls on the source function (see valueAt) and remain
+            // readable until the dictionary is released. The view only ever grows: a key minted
+            // after the view was taken resolves through it just as well.
             return new SymbolTable() {
                 private final DirectString viewA = new DirectString();
                 private final DirectString viewB = new DirectString();
@@ -232,6 +238,41 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return valueAt(symbolKey, symbolA);
+        }
+
+        // Carves entrySize bytes out of the current text chunk, allocating a fresh chunk when it
+        // no longer fits. Chunks are append-only and never reallocated, which is what keeps every
+        // address handed to a DirectString flyweight valid until releaseDictionary().
+        private long allocateEntry(long entrySize) {
+            if (currentChunkAddress == 0 || currentChunkSize - currentChunkUsed < entrySize) {
+                newChunk(entrySize);
+            }
+            final long entryAddress = currentChunkAddress + currentChunkUsed;
+            currentChunkUsed += entrySize;
+            return entryAddress;
+        }
+
+        private void ensureChunkCapacity(int requiredCapacity) {
+            if (requiredCapacity <= chunkCapacity) {
+                return;
+            }
+            int newCapacity = Math.max(INITIAL_CHUNK_CAPACITY, chunkCapacity);
+            while (newCapacity < requiredCapacity) {
+                if (newCapacity > Integer.MAX_VALUE / 2) {
+                    throw CairoException.nonCritical().put("dynamic symbol dictionary chunk capacity overflow");
+                }
+                newCapacity *= 2;
+            }
+            final long oldSize = (long) chunkCapacity * CHUNK_ENTRY_SIZE;
+            final long newSize = (long) newCapacity * CHUNK_ENTRY_SIZE;
+            // The chunk directory only ever holds {address, size} pairs. Nothing points into it,
+            // so unlike the text chunks themselves it is safe to move on growth.
+            if (chunksAddress == 0) {
+                chunksAddress = Unsafe.malloc(newSize, MEMORY_TAG, memoryTracker);
+            } else {
+                chunksAddress = Unsafe.realloc(chunksAddress, oldSize, newSize, MEMORY_TAG, memoryTracker);
+            }
+            chunkCapacity = newCapacity;
         }
 
         private void ensureHashTable() {
@@ -266,37 +307,16 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             offsetsCapacity = newCapacity;
         }
 
-        private void ensureTextCapacity(long requiredCapacity) {
-            if (requiredCapacity <= textCapacity) {
-                return;
-            }
-            long newCapacity = Math.max(INITIAL_TEXT_CAPACITY, textCapacity);
-            while (newCapacity < requiredCapacity) {
-                final long doubled = newCapacity << 1;
-                if (doubled <= newCapacity) {
-                    newCapacity = requiredCapacity;
-                    break;
-                }
-                newCapacity = doubled;
-            }
-            if (textAddress == 0) {
-                textAddress = Unsafe.malloc(newCapacity, MEMORY_TAG, memoryTracker);
-            } else {
-                textAddress = Unsafe.realloc(textAddress, textCapacity, newCapacity, MEMORY_TAG, memoryTracker);
-            }
-            textCapacity = newCapacity;
-        }
-
         private boolean equalsValue(CharSequence value, int key, int hash) {
-            final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            if (Unsafe.getInt(textAddress + offset) != hash) {
+            final long entryAddress = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
+            if (Unsafe.getInt(entryAddress) != hash) {
                 return false;
             }
-            final int len = Unsafe.getInt(textAddress + offset + LENGTH_OFFSET);
+            final int len = Unsafe.getInt(entryAddress + LENGTH_OFFSET);
             if (len != value.length()) {
                 return false;
             }
-            final long p = textAddress + offset + TEXT_OFFSET;
+            final long p = entryAddress + TEXT_OFFSET;
             for (int i = 0; i < len; i++) {
                 if (Unsafe.getChar(p + ((long) i << 1)) != value.charAt(i)) {
                     return false;
@@ -317,8 +337,27 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         }
 
         private int hashValue(int key) {
-            final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            return Unsafe.getInt(textAddress + offset);
+            return Unsafe.getInt(Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE));
+        }
+
+        private void newChunk(long minSize) {
+            long size = chunkSizeHint == 0 ? INITIAL_TEXT_CHUNK_SIZE : chunkSizeHint;
+            chunkSizeHint = Math.min(size << 1, MAX_TEXT_CHUNK_SIZE);
+            if (size < minSize) {
+                // An entry bigger than the schedule gets a chunk of its own. It must not drag the
+                // schedule up, or one long symbol would make every later chunk that size.
+                size = minSize;
+            }
+            // Grow the directory first: a failure there must not strand a freshly malloc'd chunk.
+            ensureChunkCapacity(chunkCount + 1);
+            final long base = Unsafe.malloc(size, MEMORY_TAG, memoryTracker);
+            final long slot = chunksAddress + (long) chunkCount * CHUNK_ENTRY_SIZE;
+            Unsafe.putLong(slot, base);
+            Unsafe.putLong(slot + Long.BYTES, size);
+            chunkCount++;
+            currentChunkAddress = base;
+            currentChunkSize = size;
+            currentChunkUsed = 0;
         }
 
         private void rehash() {
@@ -362,32 +401,44 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
                     MEMORY_TAG,
                     memoryTracker
             );
-            textAddress = Unsafe.free(textAddress, textCapacity, MEMORY_TAG, memoryTracker);
+            releaseTextChunks();
             hashCapacity = 0;
             hashMask = 0;
             hashThreshold = 0;
             offsetsCapacity = 0;
-            textCapacity = 0;
-            textSize = 0;
             next = 1;
             memoryTracker = null;
             symbolA.clear();
             symbolB.clear();
         }
 
-        // Returns a flyweight over the native text arena, not a stable copy: the result points
-        // straight at textAddress and stays valid only until the next intern()/getInt() on this
-        // function, which can grow the arena (Unsafe.realloc in ensureTextCapacity) and move or
-        // free the bytes underneath it. A caller must consume or copy the value before the next
-        // intern on the same function and must never retain it across one. valueOf/valueBOf and
-        // the newSymbolTable() view all resolve through here, so the same lifetime applies to them.
+        private void releaseTextChunks() {
+            for (int i = 0; i < chunkCount; i++) {
+                final long slot = chunksAddress + (long) i * CHUNK_ENTRY_SIZE;
+                Unsafe.free(Unsafe.getLong(slot), Unsafe.getLong(slot + Long.BYTES), MEMORY_TAG, memoryTracker);
+            }
+            chunksAddress = Unsafe.free(chunksAddress, (long) chunkCapacity * CHUNK_ENTRY_SIZE, MEMORY_TAG, memoryTracker);
+            chunkCapacity = 0;
+            chunkCount = 0;
+            chunkSizeHint = 0;
+            currentChunkAddress = 0;
+            currentChunkSize = 0;
+            currentChunkUsed = 0;
+        }
+
+        // Returns a flyweight over the entry's text chunk. Chunks are append-only and never
+        // reallocated, so the result stays valid for the life of the dictionary: a caller may hold
+        // it across further intern()/getInt() calls on this function. releaseDictionary() frees the
+        // chunks and resets next, after which valueAt returns null for every key rather than
+        // pointing at freed memory. valueOf/valueBOf and the newSymbolTable() view all resolve
+        // through here, so the same lifetime applies to them.
         private CharSequence valueAt(int key, DirectString view) {
             if (key < 0 || key >= next - 1) {
                 return null;
             }
-            final long offset = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            final int len = Unsafe.getInt(textAddress + offset + LENGTH_OFFSET);
-            return view.of(textAddress + offset + TEXT_OFFSET, len);
+            final long entryAddress = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
+            final int len = Unsafe.getInt(entryAddress + LENGTH_OFFSET);
+            return view.of(entryAddress + TEXT_OFFSET, len);
         }
     }
 }

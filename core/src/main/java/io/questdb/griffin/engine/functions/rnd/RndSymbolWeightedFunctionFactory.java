@@ -177,6 +177,14 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean supportsKeyValueAccess() {
+            // The dictionary is a fixed list built once per cursor, so getInt() returns an index
+            // and valueOf() resolves it without touching text. A key consumer (QWP egress) should
+            // therefore take the key path and encode each distinct value once, not once per row.
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_symbol_weighted(");
             for (int i = 0; i < count; i++) {

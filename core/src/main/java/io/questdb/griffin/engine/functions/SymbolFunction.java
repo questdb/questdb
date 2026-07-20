@@ -271,11 +271,12 @@ public abstract class SymbolFunction implements Function, SymbolTable {
      * A function that reports {@link #supportsParallelism()} {@code == true} must return an
      * independent snapshot here, safe to read from another thread while this function keeps
      * advancing. A function that reports {@code supportsParallelism() == false} is never cloned for
-     * a parallel worker, so it MAY instead return a live view over its own (single-threaded) state:
-     * such a view is valid only for serial reads, or reads taken after the source is fully
-     * materialised, and its values must not be retained across a further {@code getInt}/read on the
-     * source function. {@link io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory.Func}
-     * returns such a live view.
+     * a parallel worker, so it MAY instead return a live view over its own (single-threaded) state.
+     * Such a view is valid only for serial reads, but like any other implementation it must return
+     * values that stay readable for the life of the table: a caller may hold a value across further
+     * reads of the source function.
+     * {@link io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory.Func} returns
+     * such a live view, backed by append-only storage so its values survive later interning.
      *
      * @return symbol table for concurrent execution (an independent snapshot when parallel, otherwise
      * possibly a live serial view)
