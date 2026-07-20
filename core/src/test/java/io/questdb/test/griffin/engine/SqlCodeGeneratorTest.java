@@ -8615,6 +8615,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("SELECT s FROM tu")
                     .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
                     .returns("s\na\nb\nc\na\n");
+
+            // Pin the created column's storage parameters, not just its type. A union carries no
+            // source symbol metadata to inherit - the set operation widens SYMBOL to STRING
+            // internally and the projection re-declares the column - so capacity, cache flag and
+            // index all come from defaults. Those choose the on-disk layout and the write cost,
+            // and they surface again through SHOW CREATE TABLE, materialized-view definitions and
+            // replicated schemas, so a silent change here is user-visible well beyond this query.
+            // A union over high-cardinality symbols therefore lands on the default 128 capacity.
+            assertQuery("SHOW COLUMNS FROM tu")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                            "s\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n");
         });
     }
 

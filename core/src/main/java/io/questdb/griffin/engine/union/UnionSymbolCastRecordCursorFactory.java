@@ -255,6 +255,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     private static class NativeKeyMap implements QuietCloseable {
+        private static final int INITIAL_DENSE_CAPACITY = 16;
         private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
         private static final int NOT_FOUND = -1;
         private final DirectIntIntHashMap map = new DirectIntIntHashMap(
@@ -265,10 +266,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 MEMORY_TAG,
                 false
         );
-        private static final int INITIAL_DENSE_CAPACITY = 16;
         private long denseAddress;
         private int denseCapacity;
         private int denseLimit;
+        private boolean isClosed;
         @Nullable
         private MemoryTracker memoryTracker;
 
@@ -282,6 +283,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                 map.close();
                 map.setMemoryTracker(null);
                 memoryTracker = null;
+                isClosed = true;
             }
         }
 
@@ -330,6 +332,13 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             if (sourceKey < 0) {
                 throw CairoException.nonCritical().put("invalid union symbol key [key=").put(sourceKey).put(']');
             }
+            if (isClosed) {
+                // close() hands the query's MemoryTracker back, so reopening here would allocate
+                // outside the per-query budget and resolve against a dictionary that was already
+                // released. Reaching this means a closed source state was retained and reused;
+                // fail loudly instead of silently escaping the limit.
+                throw CairoException.nonCritical().put("union symbol key cache reused after close");
+            }
             if (sourceKey < denseLimit) {
                 if (sourceKey >= denseCapacity) {
                     growDense(sourceKey + 1);
@@ -350,11 +359,19 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         // Caps the direct-indexed region so a very large source dictionary cannot grow an unbounded
         // translation array. Keys past the cap fall back to the hash map.
         private static final int MAX_DENSE_KEYS = 1 << 20;
+        // This column's merged dictionary, resolved once per source rather than fetched out of the
+        // function list and downcast on every row.
+        private final CastStrToSymbolFunctionFactory.Func func;
         private final NativeKeyMap keyMap = new NativeKeyMap();
         @Nullable
         private final SymbolTable symbolTable;
 
-        private SourceColumn(@Nullable SymbolTable symbolTable, MemoryTracker memoryTracker) {
+        private SourceColumn(
+                CastStrToSymbolFunctionFactory.Func func,
+                @Nullable SymbolTable symbolTable,
+                MemoryTracker memoryTracker
+        ) {
+            this.func = func;
             this.symbolTable = symbolTable;
             keyMap.of(memoryTracker, denseKeyLimit(symbolTable));
         }
@@ -388,6 +405,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         private SourceState(
                 RecordCursor sourceCursor,
                 IntList symbolColumns,
+                ObjList<Function> functions,
                 MemoryTracker memoryTracker
         ) {
             this.record = sourceCursor.getRecord();
@@ -409,7 +427,9 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
                     } catch (UnsupportedOperationException ignored) {
                         // Dynamic expressions and cursors without symbol tables use text fallback.
                     }
-                    columns.add(new SourceColumn(symbolTable, memoryTracker));
+                    // symbolColumns is built by walking the columns in order, so index i is both
+                    // this column's position here and its function index.
+                    columns.add(new SourceColumn(symbolFunction(functions.getQuick(i)), symbolTable, memoryTracker));
                 }
             } catch (RuntimeException | Error th) {
                 Misc.freeObjListIfCloseable(columns);
@@ -429,16 +449,13 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
     private static class UnionSymbolCastRecord extends DelegatingRecord {
         private final IntList columnToFunctionIndex;
         private final UnionSymbolCastRecordCursor cursor;
-        private final ObjList<Function> functions;
 
         private UnionSymbolCastRecord(
                 IntList columnToFunctionIndex,
-                UnionSymbolCastRecordCursor cursor,
-                ObjList<Function> functions
+                UnionSymbolCastRecordCursor cursor
         ) {
             this.columnToFunctionIndex = columnToFunctionIndex;
             this.cursor = cursor;
-            this.functions = functions;
         }
 
         @Override
@@ -447,11 +464,10 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             if (functionIndex < 0) {
                 return base.getInt(col);
             }
-            final CastStrToSymbolFunctionFactory.Func function = symbolFunction(functions.getQuick(functionIndex));
             final SourceState sourceState = cursor.getCurrentSourceState();
             final SourceColumn sourceColumn = sourceState.columns.getQuick(functionIndex);
             if (sourceColumn.symbolTable == null) {
-                return function.intern(base.getStrA(col));
+                return sourceColumn.func.intern(base.getStrA(col));
             }
 
             final int sourceKey = sourceState.record.getInt(col);
@@ -460,7 +476,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             }
             int resultKey = sourceColumn.keyMap.get(sourceKey);
             if (resultKey == NativeKeyMap.NOT_FOUND) {
-                resultKey = function.intern(sourceColumn.symbolTable.valueOf(sourceKey));
+                resultKey = sourceColumn.func.intern(sourceColumn.symbolTable.valueOf(sourceKey));
                 sourceColumn.keyMap.put(sourceKey, resultKey);
             }
             return resultKey;
@@ -504,7 +520,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         ) {
             this.columnToFunctionIndex = columnToFunctionIndex;
             this.functions = functions;
-            this.record = new UnionSymbolCastRecord(columnToFunctionIndex, this, functions);
+            this.record = new UnionSymbolCastRecord(columnToFunctionIndex, this);
             for (int column = 0, n = columnToFunctionIndex.size(); column < n; column++) {
                 final int functionIndex = columnToFunctionIndex.getQuick(column);
                 if (functionIndex > -1) {
@@ -638,7 +654,7 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
             if (sourceState == null) {
                 SourceState state = null;
                 try {
-                    state = new SourceState(sourceTracker.getCursor(), symbolColumns, memoryTracker);
+                    state = new SourceState(sourceTracker.getCursor(), symbolColumns, functions, memoryTracker);
                     if (testHook != null) {
                         testHook.onSourceStateRegistration();
                     }

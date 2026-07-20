@@ -64,14 +64,23 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
     public static class Func extends SymbolFunction implements UnaryFunction {
         private static final int CHUNK_ENTRY_SIZE = 2 * Long.BYTES;
+        // Every key owns a 16-byte descriptor: {long textAddress, int hash, int length}. Holding
+        // the hash and the length here rather than in a header on the text itself lets rehash()
+        // walk descriptors sequentially instead of chasing one strided read into the text chunks
+        // per key, and lets valueAt() answer from a single cache line. The chunks then carry
+        // nothing but UTF-16 payload.
+        private static final int DESCRIPTOR_ENTRY_SIZE = 2 * Long.BYTES;
+        private static final int DESCRIPTOR_HASH_OFFSET = Long.BYTES;
+        private static final int DESCRIPTOR_LENGTH_OFFSET = Long.BYTES + Integer.BYTES;
         private static final int INITIAL_CHUNK_CAPACITY = 4;
-        private static final int INITIAL_HASH_CAPACITY = 4;
-        private static final long INITIAL_TEXT_CHUNK_SIZE = 64;
-        private static final int LENGTH_OFFSET = Integer.BYTES;
+        // Sized so a small dictionary settles without reallocating: the old 4-entry / 16-byte
+        // floors could not hold a single nine-character symbol and forced a dozen growths before
+        // reaching even a modest cardinality.
+        private static final int INITIAL_DESCRIPTOR_CAPACITY = 16;
+        private static final int INITIAL_HASH_CAPACITY = 16;
+        private static final long INITIAL_TEXT_CHUNK_SIZE = 256;
         private static final long MAX_TEXT_CHUNK_SIZE = 1 << 20;
         private static final int MEMORY_TAG = MemoryTag.NATIVE_FUNC_RSS;
-        private static final int OFFSET_ENTRY_SIZE = Long.BYTES;
-        private static final int TEXT_OFFSET = 2 * Integer.BYTES;
         private final Function arg;
         private final DirectString symbolA = new DirectString();
         private final DirectString symbolB = new DirectString();
@@ -82,6 +91,8 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         private long currentChunkAddress;
         private long currentChunkSize;
         private long currentChunkUsed;
+        private long descriptorsAddress;
+        private int descriptorsCapacity;
         private long hashAddress;
         private int hashCapacity;
         private int hashMask;
@@ -89,8 +100,6 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         @Nullable
         private MemoryTracker memoryTracker;
         private int next = 1;
-        private long offsetsAddress;
-        private int offsetsCapacity;
 
         public Func(Function arg) {
             this.arg = arg;
@@ -170,22 +179,22 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             }
 
             final int len = value.length();
-            // Keep every entry header int-aligned. Besides being friendlier to ARM,
-            // this matches the alignment used by the other native UTF-16 maps.
-            final long entrySize = (TEXT_OFFSET + ((long) len << 1) + 3) & ~3L;
-            ensureOffsetCapacity(next);
-            // The offsets array stores each entry's absolute address. Text chunks are never
+            // Keep every payload int-aligned. Besides being friendlier to ARM, this matches the
+            // alignment used by the other native UTF-16 maps.
+            final long entrySize = (((long) len << 1) + 3) & ~3L;
+            ensureDescriptorCapacity(next);
+            // A descriptor holds the payload's absolute address. Text chunks are never
             // reallocated, so that address stays valid for the life of the dictionary and the
             // flyweights valueAt() hands out survive any later intern().
-            final long entryAddress = allocateEntry(entrySize);
+            final long textAddress = allocateEntry(entrySize);
 
             final int key = next - 1;
-            Unsafe.putLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE, entryAddress);
-            Unsafe.putInt(entryAddress, hash);
-            Unsafe.putInt(entryAddress + LENGTH_OFFSET, len);
-            final long p = entryAddress + TEXT_OFFSET;
+            final long descriptor = descriptorsAddress + (long) key * DESCRIPTOR_ENTRY_SIZE;
+            Unsafe.putLong(descriptor, textAddress);
+            Unsafe.putInt(descriptor + DESCRIPTOR_HASH_OFFSET, hash);
+            Unsafe.putInt(descriptor + DESCRIPTOR_LENGTH_OFFSET, len);
             for (int i = 0; i < len; i++) {
-                Unsafe.putChar(p + ((long) i << 1), value.charAt(i));
+                Unsafe.putChar(textAddress + ((long) i << 1), value.charAt(i));
             }
             Unsafe.putInt(hashAddress + ((long) slot << 2), next++);
             return key;
@@ -275,6 +284,28 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             chunkCapacity = newCapacity;
         }
 
+        private void ensureDescriptorCapacity(int requiredCapacity) {
+            if (requiredCapacity <= descriptorsCapacity) {
+                return;
+            }
+            int newCapacity = Math.max(INITIAL_DESCRIPTOR_CAPACITY, descriptorsCapacity);
+            while (newCapacity < requiredCapacity) {
+                if (newCapacity > Integer.MAX_VALUE / 2) {
+                    throw CairoException.nonCritical().put("dynamic symbol dictionary descriptor capacity overflow");
+                }
+                newCapacity *= 2;
+            }
+            final long oldSize = (long) descriptorsCapacity * DESCRIPTOR_ENTRY_SIZE;
+            final long newSize = (long) newCapacity * DESCRIPTOR_ENTRY_SIZE;
+            // Descriptors hold addresses but nothing points AT them, so growth may move the block.
+            if (descriptorsAddress == 0) {
+                descriptorsAddress = Unsafe.malloc(newSize, MEMORY_TAG, memoryTracker);
+            } else {
+                descriptorsAddress = Unsafe.realloc(descriptorsAddress, oldSize, newSize, MEMORY_TAG, memoryTracker);
+            }
+            descriptorsCapacity = newCapacity;
+        }
+
         private void ensureHashTable() {
             if (hashAddress == 0) {
                 hashCapacity = INITIAL_HASH_CAPACITY;
@@ -286,39 +317,20 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             }
         }
 
-        private void ensureOffsetCapacity(int requiredCapacity) {
-            if (requiredCapacity <= offsetsCapacity) {
-                return;
-            }
-            int newCapacity = Math.max(2, offsetsCapacity);
-            while (newCapacity < requiredCapacity) {
-                if (newCapacity > Integer.MAX_VALUE / 2) {
-                    throw CairoException.nonCritical().put("dynamic symbol dictionary offset capacity overflow");
-                }
-                newCapacity *= 2;
-            }
-            final long oldSize = (long) offsetsCapacity * OFFSET_ENTRY_SIZE;
-            final long newSize = (long) newCapacity * OFFSET_ENTRY_SIZE;
-            if (offsetsAddress == 0) {
-                offsetsAddress = Unsafe.malloc(newSize, MEMORY_TAG, memoryTracker);
-            } else {
-                offsetsAddress = Unsafe.realloc(offsetsAddress, oldSize, newSize, MEMORY_TAG, memoryTracker);
-            }
-            offsetsCapacity = newCapacity;
-        }
-
         private boolean equalsValue(CharSequence value, int key, int hash) {
-            final long entryAddress = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            if (Unsafe.getInt(entryAddress) != hash) {
+            // Hash and length both sit in the descriptor, so a mismatching candidate is rejected
+            // without touching the text chunk at all.
+            final long descriptor = descriptorsAddress + (long) key * DESCRIPTOR_ENTRY_SIZE;
+            if (Unsafe.getInt(descriptor + DESCRIPTOR_HASH_OFFSET) != hash) {
                 return false;
             }
-            final int len = Unsafe.getInt(entryAddress + LENGTH_OFFSET);
+            final int len = Unsafe.getInt(descriptor + DESCRIPTOR_LENGTH_OFFSET);
             if (len != value.length()) {
                 return false;
             }
-            final long p = entryAddress + TEXT_OFFSET;
+            final long textAddress = Unsafe.getLong(descriptor);
             for (int i = 0; i < len; i++) {
-                if (Unsafe.getChar(p + ((long) i << 1)) != value.charAt(i)) {
+                if (Unsafe.getChar(textAddress + ((long) i << 1)) != value.charAt(i)) {
                     return false;
                 }
             }
@@ -337,7 +349,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         }
 
         private int hashValue(int key) {
-            return Unsafe.getInt(Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE));
+            return Unsafe.getInt(descriptorsAddress + (long) key * DESCRIPTOR_ENTRY_SIZE + DESCRIPTOR_HASH_OFFSET);
         }
 
         private void newChunk(long minSize) {
@@ -395,9 +407,9 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
                     MEMORY_TAG,
                     memoryTracker
             );
-            offsetsAddress = Unsafe.free(
-                    offsetsAddress,
-                    (long) offsetsCapacity * OFFSET_ENTRY_SIZE,
+            descriptorsAddress = Unsafe.free(
+                    descriptorsAddress,
+                    (long) descriptorsCapacity * DESCRIPTOR_ENTRY_SIZE,
                     MEMORY_TAG,
                     memoryTracker
             );
@@ -405,7 +417,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             hashCapacity = 0;
             hashMask = 0;
             hashThreshold = 0;
-            offsetsCapacity = 0;
+            descriptorsCapacity = 0;
             next = 1;
             memoryTracker = null;
             symbolA.clear();
@@ -436,9 +448,8 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             if (key < 0 || key >= next - 1) {
                 return null;
             }
-            final long entryAddress = Unsafe.getLong(offsetsAddress + (long) key * OFFSET_ENTRY_SIZE);
-            final int len = Unsafe.getInt(entryAddress + LENGTH_OFFSET);
-            return view.of(entryAddress + TEXT_OFFSET, len);
+            final long descriptor = descriptorsAddress + (long) key * DESCRIPTOR_ENTRY_SIZE;
+            return view.of(Unsafe.getLong(descriptor), Unsafe.getInt(descriptor + DESCRIPTOR_LENGTH_OFFSET));
         }
     }
 }
