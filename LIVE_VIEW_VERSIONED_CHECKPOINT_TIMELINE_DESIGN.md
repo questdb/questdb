@@ -1403,8 +1403,23 @@ Add an explicit enterprise-consumption gate at Phase 3/9 covering the
    `LiveViewSmokeTest` (column set, eviction count, write timing, resume/boundary
    scan==emit, filtered scan>emit) and the restore path in
    `LiveViewCheckpointRestoreTest`.
-3. Build deterministic RANGE/ROWS fixtures with enough history to collapse the
-   existing ring and reproduce an older O3 boundary replay.
+3. **[DONE]** Build deterministic RANGE/ROWS fixtures with enough history to
+   collapse the existing ring and reproduce an older O3 boundary replay.
+   Added `LiveViewCheckpointRingBoundaryFixtureTest` with a partitioned
+   `sum(x)` view over a bounded RANGE frame (`'30' SECOND PRECEDING`) and over a
+   bounded ROWS frame (`3 PRECEDING`) - eligible dependency kinds under the
+   section 6 matrix, so they survive the step 4 allowlist, and bit-exact
+   (section 6.1) so a from-base recompute oracle compares with exact equality.
+   Each fixture pins `checkpoint.rows = 1` (one head per flush) and
+   `retention.count = 8`, drives 12 in-order commits so the ring collapses to
+   the budget (`checkpoint_ring_evictions = 4`, oldest surviving anchor at 50s),
+   then contrasts the two O3 paths on the same collapsed ring: an in-horizon O3
+   (55s, above the oldest anchor) resumes from that anchor
+   (`o3_resume_replay_rows > 0`, boundary untouched), while an older O3 (5s,
+   below the whole ring) finds no anchor and falls back to the O(view age)
+   boundary rebuild (`o3_boundary_replay_rows` grows, resume untouched - the two
+   paths are disjoint). The view converges to the from-base recompute with no
+   refresh fault after every step.
 4. Implement the initial CREATE-time allowlist and rejection diagnostics, move
    OSS tests/fixtures onto eligible functions, and pin the scope-cut decision:
    unanchored `row_number`/`rank`/`dense_rank` (currently accepted,
