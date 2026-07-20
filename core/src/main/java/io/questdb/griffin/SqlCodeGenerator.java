@@ -6556,14 +6556,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             Misc.free(master);
                             return factory;
                         }
-                    } else if (filter.isRuntimeConstant()) {
-                        // The const filter is a runtime constant (e.g. a scalar boolean sub-query).
-                        // Gate the join behind a single per-execution evaluation, re-evaluated at
-                        // each cursor open: false returns empty without scanning the join output,
-                        // true delegates straight to it. The generation-time filter.init above only
-                        // probed isConstant(); the gate re-inits the filter for each execution.
-                        master = new RuntimeConstGateRecordCursorFactory(master, filter);
-                        filter = null;
                     } else {
                         // make it a post-join filter (same as for post join where clause above)
                         if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
