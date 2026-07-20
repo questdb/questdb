@@ -43,6 +43,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastTest {
+    private static final int SPARSE_KEY_BASE = 1_000;
     private static final StaticSymbolTable SYMBOL_TABLE = new StaticSymbolTable() {
         @Override
         public boolean containsNullValue() {
@@ -168,14 +169,17 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     }
 
     @Test
-    public void testNativeKeyCacheBreachesQueryMemoryLimit() throws Exception {
+    public void testNativeKeyPathBreachesQueryMemoryLimit() throws Exception {
         assertMemoryLeak(() -> {
             // A tight per-query limit. The integrated native-key path charges the tracker for BOTH
             // the re-symbolising dictionary and the per-source native key cache, so interning enough
             // distinct source keys must breach the limit and surface the per-query out-of-memory
             // error rather than growing unbounded. Cursor close must then leave the tracker balanced
-            // even though the failure landed mid-iteration. 512 bytes trips only after the cache has
-            // opened and rehashed at least once (its first rehash is on the 4th distinct key).
+            // even though the failure landed mid-iteration. 512 bytes trips on the very first
+            // intern, inside the merged dictionary rather than the key cache: hash table 16*4,
+            // descriptors 16*16, chunk directory 4*16 and the first 256-byte text chunk already
+            // total 640. testNativeKeyCacheChargesTheTrackerAboveTheTextPath is what shows the
+            // cache itself is charged.
             final MemoryTracker tracker = acquireTracker(512L);
             final int distinctCount = 1000;
             final StaticSymbolTable table = denseKeySymbolTable(distinctCount);
@@ -230,20 +234,20 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
     }
 
     @Test
-    public void testNativeKeyCacheRehashesUnderTrackerAndReleases() throws Exception {
+    public void testNativeKeyCacheGrowsDenseRegionUnderTrackerAndReleases() throws Exception {
         assertMemoryLeak(() -> {
             final MemoryTracker tracker = acquireTracker();
-            // The per-source native key cache (a DirectIntIntHashMap) starts at capacity 8 / free 4,
-            // so it only rehashes once a single leg feeds more than four distinct native source keys
-            // through getInt. Drive well past that (40 distinct keys => four rehashes), then a repeat
-            // pass, to exercise the cache's tracker-charged growth and its release at cursor close -
-            // the path the smaller native-key tests (<= 2 keys/leg) never reach.
+            // denseKeySymbolTable reports getSymbolCount() == distinctCount and numbers its keys
+            // 0..n-1, so denseKeyLimit equals the count and every key routes to the direct-indexed
+            // array - the hash map is never opened here. This drives the ARRAY half: growDense
+            // reallocates 0 -> 16 -> 32 -> clamped to 40. testNativeKeyCacheRehashesMapRegion...
+            // covers the map half. A repeat pass then proves the grown array still resolves.
             final int distinctCount = 40;
             final StaticSymbolTable table = denseKeySymbolTable(distinctCount);
             final String[][] rows = new String[distinctCount * 2][];
             for (int i = 0; i < distinctCount; i++) {
-                rows[i] = new String[]{"v" + i};               // first sight: intern + cache write (grows the map)
-                rows[distinctCount + i] = new String[]{"v" + i}; // repeat: resolves from the rehashed cache
+                rows[i] = new String[]{"v" + i};               // first sight: intern + cache write (grows the array)
+                rows[distinctCount + i] = new String[]{"v" + i}; // repeat: resolves from the grown array
             }
             final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(table, rows);
             final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
@@ -262,7 +266,7 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     for (int i = 0; i < distinctCount; i++) {
                         // The repeat row resolves to the same merged key from the grown cache...
                         Assert.assertEquals(keyByRow[i], keyByRow[distinctCount + i]);
-                        // ...and every key still resolves to the right text after the rehashes. Distinct
+                        // ...and every key still resolves to the right text after the growths. Distinct
                         // text per key also proves the keys are pairwise distinct.
                         TestUtils.assertEquals("v" + i, symbolTable.valueOf(keyByRow[i]));
                     }
@@ -272,6 +276,59 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
                     Assert.assertEquals(1, base.cursor.symbolTableLookupCount);
                     Assert.assertTrue(tracker.getUsed() > 0);
                 }
+                assertCursorClosed(base, tracker, function);
+            } finally {
+                releaseTracker(tracker);
+            }
+        });
+    }
+
+    @Test
+    public void testNativeKeyCacheRehashesMapRegionUnderTrackerAndReleases() throws Exception {
+        assertMemoryLeak(() -> {
+            final MemoryTracker tracker = acquireTracker();
+            // Every key here sits above the source's cardinality, so denseKeyLimit leaves the whole
+            // translation to the DirectIntIntHashMap. It opens at capacity 8 / free 4, and rehash
+            // adds (newCapacity - oldCapacity) * loadFactor to a free that has just hit zero, so the
+            // headroom runs 4, 8, 16 and growths land on the 4th, 8th and 16th distinct key - 20
+            // keys forces three. A repeat pass then reads every key back: a rehash that dropped or
+            // misplaced an entry would re-intern the text, which internCount catches. Other tests do
+            // open the map, but none drives it past its initial capacity (the largest elsewhere
+            // feeds it two keys), so this is the only cover for the rehash path.
+            final int distinctCount = 20;
+            final StaticSymbolTable table = sparseKeySymbolTable(distinctCount, SPARSE_KEY_BASE);
+            final String[][] rows = new String[distinctCount * 2][];
+            for (int i = 0; i < distinctCount; i++) {
+                rows[i] = new String[]{"v" + i};
+                rows[distinctCount + i] = new String[]{"v" + i};
+            }
+            final StaticSymbolCursorFactory base = new StaticSymbolCursorFactory(table, rows);
+            final TrackingSymbolFunction function = new TrackingSymbolFunction(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try (UnionSymbolCastRecordCursorFactory factory = newSymbolProjection(base, functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    final int[] keyByRow = new int[rows.length];
+                    for (int i = 0; i < rows.length; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        keyByRow[i] = record.getInt(0);
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+
+                    for (int i = 0; i < distinctCount; i++) {
+                        Assert.assertEquals(keyByRow[i], keyByRow[distinctCount + i]);
+                        TestUtils.assertEquals("v" + i, symbolTable.valueOf(keyByRow[i]));
+                    }
+                    // The map served every repeat, so nothing was interned twice.
+                    Assert.assertEquals(distinctCount, function.internCount);
+                    Assert.assertEquals(1, base.cursor.symbolTableLookupCount);
+                    Assert.assertTrue(tracker.getUsed() > 0);
+                }
+                // A leaked directory - or a missed free in rehash - would strand the map's
+                // allocations and fail the tracker balance. (That the map is charged at all is what
+                // testNativeKeyCacheChargesTheTrackerAboveTheTextPath measures differentially; the
+                // open-cursor assertion above passes on the dictionary's own bytes alone.)
                 assertCursorClosed(base, tracker, function);
             } finally {
                 releaseTracker(tracker);
@@ -504,9 +561,11 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
 
     /**
      * A static source dictionary of {@code count} distinct symbols "v0".."v(count-1)", each with a
-     * distinct native key, so a single leg can feed the per-source native key cache enough distinct
-     * keys to force it to grow and rehash. keyOf recovers the key from the text without a lookup
-     * table, keeping an arbitrarily large distinct key space cheap to build.
+     * distinct native key. It reports its full cardinality, so denseKeyLimit covers every key and
+     * the per-source cache keeps them all on the direct-indexed array - a leg backed by this can
+     * force that array to grow, never the hash map. {@link #sparseKeySymbolTable(int, int)} is the
+     * mirror. keyOf recovers the key from the text without a lookup table, keeping an arbitrarily
+     * large distinct key space cheap to build.
      */
     private static StaticSymbolTable denseKeySymbolTable(int count) {
         return new StaticSymbolTable() {
@@ -547,6 +606,56 @@ public class UnionSymbolCastCursorLifecycleTest extends AbstractUnionSymbolCastT
             @Override
             public CharSequence valueOf(int key) {
                 return key >= 0 && key < count ? "v" + key : null;
+            }
+        };
+    }
+
+    /**
+     * A static source dictionary of {@code count} distinct symbols whose native keys all start at
+     * {@code keyBase}. It reports a cardinality of one, so denseKeyLimit leaves every one of those
+     * keys to the hash map - the mirror of {@link #denseKeySymbolTable(int)}, which keeps them all
+     * on the direct-indexed array.
+     */
+    private static StaticSymbolTable sparseKeySymbolTable(int count, int keyBase) {
+        return new StaticSymbolTable() {
+            @Override
+            public boolean containsNullValue() {
+                return false;
+            }
+
+            @Override
+            public int getSymbolCount() {
+                return 1;
+            }
+
+            @Override
+            public int keyOf(CharSequence value) {
+                if (value == null) {
+                    return VALUE_IS_NULL;
+                }
+                if (value.length() < 2 || value.charAt(0) != 'v') {
+                    return VALUE_NOT_FOUND;
+                }
+                int index = 0;
+                for (int i = 1, n = value.length(); i < n; i++) {
+                    final char c = value.charAt(i);
+                    if (c < '0' || c > '9') {
+                        return VALUE_NOT_FOUND;
+                    }
+                    index = index * 10 + (c - '0');
+                }
+                return index < count ? keyBase + index : VALUE_NOT_FOUND;
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                return valueOf(key);
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                final int index = key - keyBase;
+                return index >= 0 && index < count ? "v" + index : null;
             }
         };
     }

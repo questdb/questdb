@@ -145,6 +145,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 }, "query_registry_phase_two_canceller");
 
                 cancellerThread.start();
+                boolean isCancellerFinished = false;
                 try {
                     Assert.assertTrue("canceller did not reach admin authorization", cancellerInAuthorize.await(5, TimeUnit.SECONDS));
                     assertActive(queryId, entry);
@@ -152,10 +153,22 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     registry.unregister(queryId, ownerContext);
                     Assert.assertNull(registry.getEntry(queryId));
                 } finally {
+                    // Cleanup only: an assertion here would throw past the join and strand the
+                    // canceller, which parks in TestUtils.await and would outlive the test in the
+                    // shared fork. countDown is what releases it, so record whether that alone
+                    // finished it - asserting after the interrupt would pass for a canceller that
+                    // only exited because it was interrupted (TestUtils.await swallows the
+                    // InterruptedException). Waiting first also keeps the happy path from
+                    // interrupting a cancel() in flight; the interrupt covers a worker parked
+                    // somewhere the latch does not reach.
                     releaseCanceller.countDown();
-                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
+                    isCancellerFinished = cancellerDone.await(5, TimeUnit.SECONDS);
+                    if (cancellerThread.isAlive()) {
+                        cancellerThread.interrupt();
+                    }
                     cancellerThread.join(5_000);
                 }
+                Assert.assertTrue("canceller did not finish", isCancellerFinished);
                 Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
                 if (fault.get() != null) {
                     throw new AssertionError("canceller failed", fault.get());
@@ -276,6 +289,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 }, "query_registry_unregister");
 
                 cancellerThread.start();
+                boolean isCancellerFinished = false;
                 try {
                     Assert.assertTrue("canceller did not request principal", principalRequested.await(5, TimeUnit.SECONDS));
                     unregisterThread.start();
@@ -284,11 +298,22 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                             unregisterDone.await(5, TimeUnit.SECONDS)
                     );
                 } finally {
+                    // Cleanup only, both threads - see the note in
+                    // testPhaseTwoCancelReturnsFalseWhenQueryFinishesDuringChecks. unregisterDone
+                    // is not awaited here: the thread may never have started, and nothing asserts
+                    // on it - joining it is enough.
                     releasePrincipal.countDown();
+                    isCancellerFinished = cancellerDone.await(5, TimeUnit.SECONDS);
+                    if (unregisterThread.isAlive()) {
+                        unregisterThread.interrupt();
+                    }
+                    if (cancellerThread.isAlive()) {
+                        cancellerThread.interrupt();
+                    }
                     unregisterThread.join(5_000);
-                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
                     cancellerThread.join(5_000);
                 }
+                Assert.assertTrue("canceller did not finish", isCancellerFinished);
                 Assert.assertFalse("unregister thread hung", unregisterThread.isAlive());
                 Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
                 if (fault.get() != null) {
@@ -383,7 +408,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
             final AtomicInteger runningProducers = new AtomicInteger(producerCount);
             final AtomicLong cancelAttempts = new AtomicLong();
             final AtomicReference<Throwable> fault = new AtomicReference<>();
-            final AtomicBoolean stop = new AtomicBoolean();
+            final AtomicBoolean isStopped = new AtomicBoolean();
             final CyclicBarrier startBarrier = new CyclicBarrier(producerCount + cancellerCount);
             final ObjList<Thread> threads = new ObjList<>();
 
@@ -392,7 +417,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                 final Thread thread = new Thread(() -> {
                     try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                         startBarrier.await();
-                        for (int i = 0; i < iterations && fault.get() == null && !stop.get(); i++) {
+                        for (int i = 0; i < iterations && fault.get() == null && !isStopped.get(); i++) {
                             final long queryId = registry.register("SELECT " + slot, context);
                             final QueryRegistry.Entry entry = registry.getEntry(queryId);
                             final AtomicBoolean cancelledFlag = entry.getCancelled();
@@ -430,7 +455,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                         startBarrier.await();
                         int slot = seed;
-                        while (runningProducers.get() > 0 && fault.get() == null && !stop.get()) {
+                        while (runningProducers.get() > 0 && fault.get() == null && !isStopped.get()) {
                             slot = (slot + 1) % producerCount;
                             final long queryId = liveCancellableIds.get(slot);
                             if (queryId < 0) {
@@ -462,7 +487,7 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                stop.set(true);
+                isStopped.set(true);
                 for (int i = 0, n = threads.size(); i < n; i++) {
                     final Thread thread = threads.getQuick(i);
                     if (thread.isAlive()) {

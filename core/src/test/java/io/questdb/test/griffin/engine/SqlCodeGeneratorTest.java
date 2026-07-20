@@ -8601,6 +8601,45 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsCreateIndexedTableAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            // The reproduction from #6203. CREATE TABLE ... INDEX(f) validates the
+            // declaration against the SELECT's result type, so while a symbol-only union widened
+            // to STRING the clause failed with "indexes are supported only for SYMBOL columns: f"
+            // and the reporter had to re-cast the column back through a subquery.
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT 'IDX_SYMBOL'::SYMBOL AS f FROM long_sequence(3)
+                        UNION ALL
+                        SELECT 'OTHER_SYMBOL'::SYMBOL AS f FROM long_sequence(2)
+                    ), INDEX(f)""");
+
+            // Assert the index really exists rather than that the DDL merely parsed: the column
+            // has to be SYMBOL and carry a BITMAP index with a real block capacity. Note
+            // symbolCached is false here where testUnionOfSymbolColumnsCreateTableAsSelect sees
+            // true. SqlParser.parseCreateTableIndexDef mints a column model for the indexed name
+            // and never calls setSymbolCacheFlag, so the model keeps the false that clear() left,
+            // while the inferred path hardcodes true. Any CTAS with a bare INDEX(...) loses symbol
+            // caching that way, union or not, and it predates this change - so this row records
+            // today's behaviour rather than endorsing it.
+            assertQuery("SHOW COLUMNS FROM tab")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                            "f\tSYMBOL\ttrue\t256\tfalse\t128\t2\tfalse\tfalse\tBITMAP\t\n");
+
+            // And that the indexed column reads back, including through a lookup the index
+            // actually serves - which is the point of the issue, so pin the scan too.
+            assertQuery("SELECT f, count() c FROM tab ORDER BY f")
+                    .noLeakCheck().columnType(0, ColumnType.SYMBOL).expectSize()
+                    .returns("f\tc\nIDX_SYMBOL\t3\nOTHER_SYMBOL\t2\n");
+            assertQuery("SELECT count() c FROM tab WHERE f = 'IDX_SYMBOL'")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("Index forward scan on: f")
+                    .returns("c\n3\n");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsCreateTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG)");
@@ -8844,6 +8883,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionOfSymbolColumnsProjectionRequiresSerialBase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (s SYMBOL)");
+            execute("CREATE TABLE tb (s SYMBOL)");
+
+            // maybeResymboliseUnion refuses to wrap a base reporting any of the three
+            // parallel-capable flags - "union symbol projection requires a serial base cursor" -
+            // because the re-symbolising function holds a lazily built, non-thread-safe dictionary
+            // that a worker cloning the projection would read half-formed. No set factory overrides
+            // those methods, so the guard is dead code today. Make one of them report true and this
+            // test does not merely fail an assertion - compilation itself raises the guard's own
+            // CairoException, because the query below is exactly the shape that reaches it. So this
+            // pins the guard's precondition without a test seam - the guard runs the moment its
+            // trigger exists. Deleting the guard body alone still leaves these assertions. Both
+            // union factories are covered - UNION ALL builds UnionAllRecordCursorFactory and a
+            // distinct UNION builds UnionRecordCursorFactory. The third construction site, a union
+            // finalised ahead of an EXCEPT, cannot be reached this way: a set factory does not
+            // expose its inputs through getBaseFactory(), so that projection is not walkable from
+            // the compiled tree. testUnionOfSymbolColumnsFollowedByNonUnionSetOperation pins that
+            // shape instead, through the SYMBOL result type the projection is what produces.
+            assertSerialProjectionBase("SELECT s FROM ta UNION ALL SELECT s FROM tb");
+            assertSerialProjectionBase("SELECT s FROM ta UNION SELECT s FROM tb");
+        });
+    }
+
+    @Test
     public void testUnionOfSymbolColumnsSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -8942,13 +9007,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("INSERT INTO tb VALUES ('b', 3), ('a', 4)");
 
             try (RecordCursorFactory factory = select("SELECT s, v FROM ta UNION ALL SELECT s, v FROM tb")) {
-                UnionSymbolCastRecordCursorFactory projection = null;
-                for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-                    if (current instanceof UnionSymbolCastRecordCursorFactory found) {
-                        projection = found;
-                        break;
-                    }
-                }
+                final UnionSymbolCastRecordCursorFactory projection = findUnionSymbolCastFactory(factory);
                 Assert.assertNotNull(projection);
                 Assert.assertEquals(
                         "only the SYMBOL column should have a projection function",
@@ -9947,6 +10006,27 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z
                             """);
         });
+    }
+
+    private static void assertSerialProjectionBase(String sql) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            final UnionSymbolCastRecordCursorFactory projection = findUnionSymbolCastFactory(factory);
+            Assert.assertNotNull(sql + " must build a symbol projection", projection);
+            final RecordCursorFactory base = projection.getBaseFactory();
+            Assert.assertNotNull(sql + " projection must expose its base", base);
+            Assert.assertFalse(sql + " base claims page frames", base.supportsPageFrameCursor());
+            Assert.assertFalse(sql + " base claims filter stealing", base.supportsFilterStealing());
+            Assert.assertFalse(sql + " base claims time frames", base.supportsTimeFrameCursor());
+        }
+    }
+
+    private static UnionSymbolCastRecordCursorFactory findUnionSymbolCastFactory(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof UnionSymbolCastRecordCursorFactory found) {
+                return found;
+            }
+        }
+        return null;
     }
 
     private static ObjList<CastStrToSymbolFunctionFactory.Func> findUnionSymbolCasts(RecordCursorFactory factory) {

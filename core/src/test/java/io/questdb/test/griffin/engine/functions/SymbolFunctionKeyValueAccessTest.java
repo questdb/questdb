@@ -62,6 +62,52 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFixedDictionarySymbolFunctionsResolveEachKeyToItsOwnValue() throws Exception {
+        // These build their dictionary from the call's own literal arguments, so the key-to-value
+        // mapping can be read straight off the symbol table without drawing a single row. That is
+        // the guard list() lacked: its valueOf resolved through TableUtils.toIndexKey, which adds
+        // one for a leading null slot these lists do not carry, so every key returned the following
+        // value. Only the resulting out-of-bounds read on the highest key made that visible to a
+        // non-null assertion - an in-bounds shift stayed silent.
+        assertMemoryLeak(() -> {
+            assertResolvesLiteralDictionary("list('RXGZ', 'HYRX', 'ABC')", "RXGZ", "HYRX", "ABC");
+            assertResolvesLiteralDictionary("rnd_symbol('a', 'b', 'c')", "a", "b", "c");
+            assertResolvesLiteralDictionary("rnd_symbol_weighted('A', 2.5, 'B', 1.5, 'C', 1.0)", "A", "B", "C");
+            assertResolvesLiteralDictionary("rnd_symbol_zipf('A', 'B', 'C', 'D', 'E', 2.0)", "A", "B", "C", "D", "E");
+        });
+    }
+
+    @Test
+    public void testListSymbolFunctionResolvesEachKeyToItsOwnValue() throws Exception {
+        // list() is the one function above whose DRAW is deterministic - getInt() is
+        // position++ % count - so its key sequence, not just its mapping, can be pinned. (The
+        // mapping alone is pinned for the other literal-dictionary generators by
+        // testFixedDictionarySymbolFunctionsResolveEachKeyToItsOwnValue, which needs no draw.)
+        // list() is also the one that had the bug: valueOf() used to resolve through
+        // TableUtils.toIndexKey, which adds one to account for a leading null slot this list does
+        // not carry: every key returned the FOLLOWING value, and the highest ran off the end.
+        // assertKeyValueAccess only asserts non-null, so it catches the overrun but not the
+        // off-by-one underneath it - a wrong mapping that stays in bounds passes there.
+        assertMemoryLeak(() -> {
+            final List<String> expected = Arrays.asList("RXGZ", "HYRX", "ABC", "RXGZ", "HYRX", "ABC", "RXGZ", "HYRX");
+            final List<String> resolved = new ArrayList<>();
+            try (RecordCursorFactory factory = select("SELECT list('RXGZ', 'HYRX', 'ABC') s FROM long_sequence(8)")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // One accessor per row: getInt() advances the cycle, so reading the text
+                        // as well would consume a second position and desynchronise the sequence.
+                        final CharSequence value = symbolTable.valueOf(record.getInt(0));
+                        resolved.add(value == null ? null : value.toString());
+                    }
+                }
+            }
+            Assert.assertEquals("list() must resolve each key to its own value", expected, resolved);
+        });
+    }
+
+    @Test
     public void testMemoizedSymbolFunctionsKeepKeyValueAccess() throws Exception {
         // Production wraps a SYMBOL projection in SymbolFunctionMemoizer when the function asks for
         // it or its alias is referenced more than once. ALLOW_FUNCTION_MEMOIZATION defaults to true
@@ -146,6 +192,7 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
         Assert.assertEquals(sql + " read as text", expected, read(sql, columnIndex, false));
     }
 
+
     private void assertKeyValueAccess(String expression) throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("SELECT " + expression + " s FROM long_sequence(8)")) {
@@ -182,6 +229,19 @@ public class SymbolFunctionKeyValueAccessTest extends AbstractCairoTest {
     private void assertPureKeyValueAccess(String expression, List<String> expected) throws SqlException {
         Assert.assertEquals(expression + " read an unexpected number of rows", 3, expected.size());
         assertKeyAndTextMatch("SELECT " + expression + " s FROM t", 0, expected);
+    }
+
+    private void assertResolvesLiteralDictionary(String expression, String... expected) throws SqlException {
+        try (RecordCursorFactory factory = select("SELECT " + expression + " s FROM long_sequence(1)")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                for (int i = 0; i < expected.length; i++) {
+                    final CharSequence value = symbolTable.valueOf(i);
+                    Assert.assertNotNull(expression + " must resolve key " + i, value);
+                    Assert.assertEquals(expression + " resolved key " + i + " wrongly", expected[i], value.toString());
+                }
+            }
+        }
     }
 
     private void assertResolvesThroughKey(String sql, int columnIndex) throws SqlException {
