@@ -250,7 +250,10 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "lead(x, 1) over (partition by sym_a) as l_a, " +
                     "lead(x, 1) over (partition by sym_b) as l_b " +
                     "from t";
-            StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "mixed-partition-by");
+            // Two DIFFERENT partition-by clauses form two distinct window groups that a single
+            // DeferredEmitWindow cursor cannot serve, so the planner keeps this on the cached path.
+            // Opt out of the streaming plan pin; the equivalence check still validates the output.
+            StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "mixed-partition-by", false);
         });
     }
 
@@ -371,11 +374,20 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "select x, sym, lead(x, 1) over (partition by sym) as lx from t",
                     "select x, sym, lead(x, 2) over (partition by sym) as lx from t",
                     "select x, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t",
-                    "select x, sym, lead(x, 1) over (partition by sym) as ld, lag(x, 1) over (partition by sym) as lg from t",
             };
             for (String sql : queries) {
                 StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "null-partition-key");
             }
+
+            // Mixed LEAD + un-ordered LAG over the same partition: the LAG has no OVER ORDER BY so it
+            // cannot normalise to a positive-lookahead LEAD, and the group stays on the cached path.
+            // This intentionally does not stream, so opt out of the plan pin (but still assert the
+            // cached-vs-cached output is consistent under NULL partition keys).
+            StreamingLeadEquivalence.assertEquivalent(
+                    engine, sqlExecutionContext,
+                    "select x, sym, lead(x, 1) over (partition by sym) as ld, lag(x, 1) over (partition by sym) as lg from t",
+                    "null-partition-key-mixed-cached", false
+            );
         });
     }
 
@@ -516,7 +528,13 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     String ctxMsg = "BACKWARD-SCAN seed=0x" + Long.toHexString(seed)
                             + " rows=" + rows + " fn=" + fn + " lookahead=" + lookahead
                             + " dir=" + dir + " partitioned=" + partitioned;
-                    StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, ctxMsg);
+                    // Outer ORDER BY ts DESC reverses the base scan, flipping the normalisation: a
+                    // group streams when it carries a positive-lookahead function in the (reversed)
+                    // scan order, i.e. LEAD whose OVER ORDER BY is desc, or LAG whose OVER ORDER BY
+                    // is asc. The outer sort is on the designated timestamp, so it does not by itself
+                    // force the group off the streaming cursor.
+                    boolean expectStreaming = fn.equals("lead") ? dir.equals("desc") : dir.equals("asc");
+                    StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, ctxMsg, expectStreaming);
                 } catch (Throwable t) {
                     throw new AssertionError("fuzz failure BACKWARD-SCAN seed=0x" + Long.toHexString(seed), t);
                 }
@@ -903,6 +921,13 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                 + " partitioned=" + partitioned + " orderBy=" + withOrderBy
                 + " dir=" + dir + " fn=" + fn + " lookahead=" + lookahead
                 + " nulls=" + withNulls;
-        StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, ctxMsg);
+        // Forward base scan (no outer ORDER BY). A group streams only when it carries a positive-
+        // lookahead function in scan order: LEAD stays a LEAD unless its OVER ORDER BY opposes the
+        // scan (desc), and LAG becomes a streaming LEAD only when its OVER ORDER BY opposes the scan
+        // (desc). With no OVER ORDER BY, LEAD streams and LAG stays cached.
+        boolean expectStreaming = withOrderBy
+                ? (fn.equals("lead") ? dir.equals("asc") : dir.equals("desc"))
+                : fn.equals("lead");
+        StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, ctxMsg, expectStreaming);
     }
 }

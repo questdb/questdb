@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.window;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -45,6 +46,7 @@ public final class StreamingLeadEquivalence {
     // single-threaded under Surefire, so a thread-local is effectively a per-thread singleton; if
     // the runner ever moves to parallel execution each thread still gets its own sink.
     private static final ThreadLocal<StringSink> CACHED_SINK = ThreadLocal.withInitial(StringSink::new);
+    private static final ThreadLocal<StringSink> PLAN_SINK = ThreadLocal.withInitial(StringSink::new);
     private static final ThreadLocal<StringSink> STREAMING_SINK = ThreadLocal.withInitial(StringSink::new);
 
     private StreamingLeadEquivalence() {
@@ -54,8 +56,23 @@ public final class StreamingLeadEquivalence {
      * Render {@code sql} under the cached path (flag off) and the streaming path (flag on); assert
      * the header line matches verbatim and the data rows match as a sorted multiset. Caller is
      * responsible for setting up the table state before invoking.
+     * <p>
+     * Pins the streaming plan (the flag-on run must route through {@code DeferredEmitWindow}). Use
+     * the {@code expectStreaming} overload with {@code false} for shapes that intentionally fall
+     * back to the cached path, so the equivalence assertion cannot silently degrade to a vacuous
+     * cached-vs-cached comparison.
      */
     public static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg) throws Exception {
+        assertEquivalent(engine, ctx, sql, contextMsg, true);
+    }
+
+    /**
+     * Variant of {@link #assertEquivalent(CairoEngine, SqlExecutionContext, String, String)} that
+     * lets the caller declare whether the shape is expected to stream. When {@code expectStreaming}
+     * is true the flag-on plan is pinned to contain {@code DeferredEmitWindow}; a dispatch
+     * regression to the cached path then fails here instead of passing a cached-vs-cached compare.
+     */
+    public static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg, boolean expectStreaming) throws Exception {
         final StringSink cachedSink = CACHED_SINK.get();
         cachedSink.clear();
         AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "false");
@@ -65,6 +82,22 @@ public final class StreamingLeadEquivalence {
         streamingSink.clear();
         AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
         engine.print(sql, streamingSink, ctx);
+
+        if (expectStreaming) {
+            // Independent routing signal: the sorted-multiset comparison below still passes if the
+            // dispatch gate silently regressed to cached (both paths are correct). Compile the
+            // flag-on EXPLAIN plan and require the DeferredEmitWindow node so a fuzz/boundary case
+            // cannot degrade to a vacuous cached-vs-cached comparison.
+            final StringSink planSink = PLAN_SINK.get();
+            planSink.clear();
+            engine.print("explain " + sql, planSink, ctx);
+            if (!Chars.contains(planSink, "DeferredEmitWindow")) {
+                Assert.fail(
+                        "expected streaming plan (DeferredEmitWindow) but it was absent. " + contextMsg
+                                + " sql=" + sql + " plan=\n" + planSink
+                );
+            }
+        }
 
         String[] cachedLines = splitLines(cachedSink.toString());
         String[] streamingLines = splitLines(streamingSink.toString());

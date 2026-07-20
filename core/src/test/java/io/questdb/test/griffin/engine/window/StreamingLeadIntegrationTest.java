@@ -297,14 +297,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             """
             );
 
-            // Values match the cached path exactly (flag-off vs flag-on multiset equivalence).
+            // Values match the cached path exactly (flag-off vs flag-on multiset equivalence). No
+            // outer ORDER BY: the helper sorts both sides into a multiset, and an outer sort on a
+            // non-timestamp key would force the window group off the streaming cursor (making the
+            // comparison a vacuous cached-vs-cached), which the assertEquivalent plan pin now guards.
             StreamingLeadEquivalence.assertEquivalent(
                     engine,
                     sqlExecutionContext,
                     "select x, sym, " +
                             "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
                             "lead(x, 3) over (partition by sym order by ts desc) as ld " +
-                            "from t order by sym, x",
+                            "from t",
                     "streaming-variant offset 3"
             );
         });
@@ -319,13 +322,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select x, case when x % 2 = 0 then 'A' else 'B' end, x::timestamp from long_sequence(10)");
 
+            // The above-bound LAG falls back to the cached-helper LagOverPartitionFunction, but the
+            // group still streams through DeferredEmitWindow (the LEAD drives dispatch). No outer
+            // ORDER BY on a non-timestamp key, so the group stays on the streaming cursor; the
+            // helper sorts both sides for the multiset comparison, and the plan pin proves it streams.
             StreamingLeadEquivalence.assertEquivalent(
                     engine,
                     sqlExecutionContext,
                     "select x, sym, " +
                             "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
                             "lead(x, 65_537) over (partition by sym order by ts desc) as ld " +
-                            "from t order by sym, x",
+                            "from t",
                     "cached-fallback offset 65_537"
             );
         });
@@ -836,6 +843,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(30, ARRAY[5.0, 6.0], 2000)"
             );
 
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, arr, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\tarr\tlx
@@ -861,6 +873,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             """
             );
 
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, b, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\tb\tlx
@@ -885,6 +902,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(30, true,  cast(3 as byte), cast(300 as short), 'c', 2000)"
             );
 
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, bo, by, sh, ch, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\tbo\tby\tsh\tch\tlx
@@ -908,6 +930,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(20, 2.50::decimal(10,2), 1000), " +
                             "(30, 3.75::decimal(10,2), 2000)"
             );
+
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, d, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
 
             assertQueryNoLeakCheck(
                     """
@@ -936,6 +963,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(30, #u, #u2, #u2dc, #u2dcsfh8, 2000)"
             );
 
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, g_b, g_s, g_i, g_l, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\tg_b\tg_s\tg_i\tg_l\tlx
@@ -956,6 +988,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             execute("insert into t values (10, 0), (20, 1000), (30, 2000)");
 
             // INTERVAL is a synthesised type, projected via a function expression.
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, interval(0, 1000) as iv, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\tiv\tlx
@@ -979,6 +1016,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(20, '10.0.0.2', 1000), " +
                             "(30, '10.0.0.3', 2000)"
             );
+
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, ip, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
 
             assertQueryNoLeakCheck(
                     """
@@ -1004,6 +1046,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(30, 0x03, 2000)"
             );
 
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, l256, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\tl256\tlx
@@ -1028,6 +1075,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(30, 'three', 'A', 2000)"
             );
 
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, s, sym, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
             assertQueryNoLeakCheck(
                     """
                             x\ts\tsym\tlx
@@ -1051,6 +1103,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(20, '22222222-2222-2222-2222-222222222222', 1000), " +
                             "(30, '33333333-3333-3333-3333-333333333333', 2000)"
             );
+
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, u, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
 
             assertQueryNoLeakCheck(
                     """
@@ -1277,6 +1334,11 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(20, 'beta',    1000), " +
                             "(30, 'gamma',   2000)"
             );
+
+            // Pin the streaming plan so a dispatch regression to the cached path can't keep this
+            // green (which would silently retire the OutputRecord P0 guard).
+            assertQuery("select x, v, lead(x, 1) over () as lx from t")
+                    .noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
 
             assertQueryNoLeakCheck(
                     """

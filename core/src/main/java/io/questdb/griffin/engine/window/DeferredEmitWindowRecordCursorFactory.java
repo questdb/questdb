@@ -1133,11 +1133,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public Record getRecord(int col) {
-                // Function does not expose getRecord; nested-record projection is not produced by
-                // the streaming dispatch (no SELECT-list expression yields a record-typed value
-                // through any of the supported function factories), so delegating to baseRec via
-                // the cursor's own column index is fine here.
-                return baseRec.getRecord(col);
+                // Uniform with every sibling getter: resolve through the projection function by
+                // output index (a passthrough column is a Column function carrying the correct base
+                // index). Nested-record projection is not produced by the streaming dispatch today,
+                // so this getter is currently unreachable, but delegating here keeps output-index
+                // resolution consistent should a record-typed passthrough ever route through.
+                return functions.getQuick(col).extendedOps().getRecord(baseRec);
             }
 
             @Override
