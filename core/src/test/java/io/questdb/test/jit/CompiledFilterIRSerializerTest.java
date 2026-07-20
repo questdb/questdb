@@ -538,6 +538,29 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("asymbol != anothersymbol");
     }
 
+    @Test
+    public void testDirectIntLongColumnComparisonWidensAndUsesWideLane() throws Exception {
+        // A bare INT-column vs LONG-column comparison (no arithmetic, no out-of-range
+        // constant) must sign-extend the INT leaf so the four-lane AVX2 path compares it
+        // at i64 width - the LONG column loads at full width and cmp_* dispatches on a
+        // single dtype, so an un-widened INT leaf mismatches lanes.
+        int options = serialize("anint < along", false, false, true);
+        assertIR("(i64 along)(i32 anint)(sx_i64)(<)(ret)");
+        assertOptionsHint("anint < along", options, OptionsHint.WIDE_LANE);
+
+        // The reversed operand order widens the INT leaf the same way.
+        serialize("along > anint", false, false, true);
+        assertIR("(i32 anint)(sx_i64)(i64 along)(>)(ret)");
+
+        // A widening sibling (out-of-INT-range constant) flips the whole filter to
+        // four-lane; both anint leaves now carry sx_i64, so the column-vs-column
+        // comparison is no longer dragged in un-widened.
+        options = serialize("anint < along and anint < 5_000_000_000", false, false, true);
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(<)"
+                + "(i64 along)(i32 anint)(sx_i64)(<)(&&)(ret)");
+        assertOptionsHint("column vs column AND out-of-range constant", options, OptionsHint.WIDE_LANE);
+    }
+
     @Test(expected = SqlException.class)
     public void testEmptyIn() throws Exception {
         serialize("anint IN ()");

@@ -182,7 +182,13 @@ public class InLongFunctionFactory implements FunctionFactory {
      */
     private static void freeElements(ObjList<Function> args) {
         for (int i = 1, n = args.size(); i < n; i++) {
-            Misc.free(args.getQuick(i));
+            // Null the slot after closing it: FunctionParser#checkAndCreateFunction re-runs
+            // Misc.freeObjList(args) when it rejects the returned function as non-deterministic
+            // (e.g. rnd_int() IN (1, 2, 3)), and a constant IN element can now be a whole
+            // arithmetic function tree, so a second close would double-free any native memory it
+            // holds. The all-constant forms keep only the key (args[0]), so the elements are dead
+            // here.
+            args.setQuick(i, Misc.free(args.getQuick(i)));
         }
     }
 

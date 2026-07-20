@@ -147,13 +147,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
-        this.cursor = new AsyncWindowJoinRecordCursor(
-                groupByFunctions,
-                slaveFactory,
-                columnIndex,
-                columnSplit,
-                masterFilter != null
-        );
+        this.workerCount = workerCount;
 
         final int masterTsType = masterFactory.getMetadata().getTimestampType();
         final int slaveTsType = slaveFactory.getMetadata().getTimestampType();
@@ -163,61 +157,80 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             masterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
             slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
         }
-        final AsyncWindowJoinFastAtom atom = new AsyncWindowJoinFastAtom(
-                asm,
-                configuration,
-                slaveFactory,
-                joinFilter,
-                perWorkerJoinFilters,
-                masterSymbolIndex,
-                slaveSymbolIndex,
-                windowLo,
-                windowHi,
-                includePrevailing,
-                columnSplit,
-                masterFactory.getMetadata().getTimestampIndex(),
-                valueTypes,
-                groupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledMasterFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                masterFilter,
-                perWorkerMasterFilters,
-                filterUsedColumnIndexes,
-                vectorized,
-                masterTsScale,
-                slaveTsScale,
-                workerCount
-        );
-        PageFrameReducer reducer;
-        if (includePrevailing) {
-            if (masterFilter != null) {
-                reducer = atom.isVectorized()
-                        ? FILTER_AND_AGGREGATE_VECT_PREVAILING
-                        : (joinFilter == null ? FILTER_AND_AGGREGATE_PREVAILING : FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED);
+
+        // Construction is leak-safe: the atom frees every resource it was handed on its own ctor
+        // failure, the frame sequence frees the atom it adopts on its ctor failure, and the cursor
+        // frees its own state on its ctor failure. Building the cursor LAST means this catch only
+        // has to release the frame sequence - which cascades to the atom and every atom-bound
+        // resource - when the cursor ctor is what fails. masterFactory / slaveFactory / joinMetadata
+        // stay the caller's responsibility on a ctor throw.
+        PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence0 = null;
+        try {
+            final AsyncWindowJoinFastAtom atom = new AsyncWindowJoinFastAtom(
+                    asm,
+                    configuration,
+                    slaveFactory,
+                    joinFilter,
+                    perWorkerJoinFilters,
+                    masterSymbolIndex,
+                    slaveSymbolIndex,
+                    windowLo,
+                    windowHi,
+                    includePrevailing,
+                    columnSplit,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    valueTypes,
+                    groupByFunctions,
+                    perWorkerGroupByFunctions,
+                    compiledMasterFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    masterFilter,
+                    perWorkerMasterFilters,
+                    filterUsedColumnIndexes,
+                    vectorized,
+                    masterTsScale,
+                    slaveTsScale,
+                    workerCount
+            );
+            final PageFrameReducer reducer;
+            if (includePrevailing) {
+                if (masterFilter != null) {
+                    reducer = atom.isVectorized()
+                            ? FILTER_AND_AGGREGATE_VECT_PREVAILING
+                            : (joinFilter == null ? FILTER_AND_AGGREGATE_PREVAILING : FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED);
+                } else {
+                    reducer = atom.isVectorized()
+                            ? AGGREGATE_VECT_PREVAILING
+                            : (joinFilter == null ? AGGREGATE_PREVAILING : AGGREGATE_PREVAILING_JOIN_FILTERED);
+                }
             } else {
                 reducer = atom.isVectorized()
-                        ? AGGREGATE_VECT_PREVAILING
-                        : (joinFilter == null ? AGGREGATE_PREVAILING : AGGREGATE_PREVAILING_JOIN_FILTERED);
+                        ? (masterFilter != null ? FILTER_AND_AGGREGATE_VECT : AGGREGATE_VECT)
+                        : (masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE);
             }
-        } else {
-            reducer = atom.isVectorized()
-                    ? (masterFilter != null ? FILTER_AND_AGGREGATE_VECT : AGGREGATE_VECT)
-                    : (masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE);
+            frameSequence0 = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    atom,
+                    reducer,
+                    reduceTaskFactory,
+                    workerCount,
+                    PageFrameReduceTask.TYPE_WINDOW_JOIN
+            );
+            this.cursor = new AsyncWindowJoinRecordCursor(
+                    groupByFunctions,
+                    slaveFactory,
+                    columnIndex,
+                    columnSplit,
+                    masterFilter != null
+            );
+        } catch (Throwable th) {
+            Misc.free(frameSequence0, th);
+            throw th;
         }
-
-        this.frameSequence = new PageFrameSequence<>(
-                engine,
-                configuration,
-                messageBus,
-                atom,
-                reducer,
-                reduceTaskFactory,
-                workerCount,
-                PageFrameReduceTask.TYPE_WINDOW_JOIN
-        );
-        this.workerCount = workerCount;
+        this.frameSequence = frameSequence0;
     }
 
     @Override

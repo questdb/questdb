@@ -4328,6 +4328,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        // Catch-visible owner of the per-worker filters until the async factory constructor adopts
+        // them. deepClone() below can throw (Java-heap OOM from the node pool) after the per-worker
+        // filters were built but before the constructor runs; without this the enclosing catch would
+        // leak them. It must run after compileWorkerFiltersConditionally(), which restores the
+        // original filter models on filterExpr, so the order cannot be swapped.
+        ObjList<Function> perWorkerFilters = null;
         try {
             // This path applies only to the read_parquet() table function.
             // For native tables, generateTableQuery0() handles pushdown separately.
@@ -4373,6 +4379,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
                                 .$(", fd=").$(executionContext.getRequestFd())
                                 .I$();
+                        perWorkerFilters = compileWorkerFiltersConditionally(
+                                executionContext,
+                                filter,
+                                executionContext.getSharedQueryWorkerCount(),
+                                filterExpr,
+                                factory.getMetadata()
+                        );
+                        final ExpressionNode jitFilterClone = deepClone(expressionNodePool, filterExpr);
+                        // Ownership of the per-worker filters passes to the factory constructor, which
+                        // frees them on its own failure path; null the catch-visible copy so the
+                        // enclosing catch does not double-free.
+                        final ObjList<Function> jitPerWorkerFilters = perWorkerFilters;
+                        perWorkerFilters = null;
                         return new AsyncJitFilteredRecordCursorFactory(
                                 executionContext.getCairoEngine(),
                                 configuration,
@@ -4384,14 +4403,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 filterUsedColumnIndexes,
                                 reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        filterExpr,
-                                        factory.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, filterExpr),
+                                jitPerWorkerFilters,
+                                jitFilterClone,
                                 limitLoFunction,
                                 limitLoPos,
                                 executionContext.getSharedQueryWorkerCount(),
@@ -4422,6 +4435,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Use Java filter.
                 final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                perWorkerFilters = compileWorkerFiltersConditionally(
+                        executionContext,
+                        filter,
+                        executionContext.getSharedQueryWorkerCount(),
+                        filterExpr,
+                        factory.getMetadata()
+                );
+                final ExpressionNode javaFilterClone = deepClone(expressionNodePool, filterExpr);
+                final ObjList<Function> javaPerWorkerFilters = perWorkerFilters;
+                perWorkerFilters = null;
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -4430,14 +4453,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         filter,
                         filterUsedColumnIndexes,
                         reduceTaskFactory,
-                        compileWorkerFiltersConditionally(
-                                executionContext,
-                                filter,
-                                executionContext.getSharedQueryWorkerCount(),
-                                filterExpr,
-                                factory.getMetadata()
-                        ),
-                        deepClone(expressionNodePool, filterExpr),
+                        javaPerWorkerFilters,
+                        javaFilterClone,
                         limitLoFunction,
                         limitLoPos,
                         executionContext.getSharedQueryWorkerCount(),
@@ -4446,6 +4463,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return new FilteredRecordCursorFactory(factory, filter);
         } catch (Throwable e) {
+            // Non-null only when deepClone() (or another step) threw after the per-worker filters were
+            // built but before the constructor adopted them; the null-transfer above keeps the
+            // constructor's own cleanup from double-freeing.
+            Misc.freeObjList(perWorkerFilters, e);
             Misc.free(filter);
             Misc.free(factory);
             throw e;
@@ -6044,6 +6065,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
                                     if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         assert rightSymbolIndex != -1;
+                                        // Build the per-worker clones into locals first, freeing earlier
+                                        // ones if a later build throws (the factory ctor never runs to
+                                        // adopt them). Then null-transfer joinFilter / groupByFunctions,
+                                        // which the factory now frees on its own failure, so the enclosing
+                                        // catch does not double-free them. Nothing between the null-out and
+                                        // the ctor call can throw.
+                                        ObjList<Function> fastWorkerJoinFilters = null;
+                                        ObjList<ObjList<GroupByFunction>> fastWorkerGroupByFuncs = null;
+                                        final ObjList<Function> fastWorkerMasterFilters;
+                                        try {
+                                            fastWorkerJoinFilters = compileWorkerFiltersConditionally(
+                                                    executionContext,
+                                                    joinFilter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    parent,
+                                                    joinMetadata
+                                            );
+                                            fastWorkerGroupByFuncs = compileWorkerGroupByFunctionsConditionally(
+                                                    executionContext,
+                                                    isLastWindowJoin ? columns : aggregateCols,
+                                                    innerProjectionFunctions,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    joinMetadata,
+                                                    projectionFunctionFlags
+                                            );
+                                            fastWorkerMasterFilters = compileWorkerFiltersConditionally(
+                                                    executionContext,
+                                                    masterFilter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    masterFilterExpr,
+                                                    master.getMetadata()
+                                            );
+                                        } catch (Throwable th) {
+                                            Misc.freeObjList(fastWorkerJoinFilters, th);
+                                            if (fastWorkerGroupByFuncs != null) {
+                                                for (int wi = 0, wn = fastWorkerGroupByFuncs.size(); wi < wn; wi++) {
+                                                    PerWorkerFunctionList.close(fastWorkerGroupByFuncs.getQuick(wi), th);
+                                                }
+                                            }
+                                            throw th;
+                                        }
+                                        final Function fastJoinFilter = joinFilter;
+                                        final ObjList<GroupByFunction> fastGroupByFunctions = groupByFunctions;
+                                        joinFilter = null;
+                                        groupByFunctions = null;
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 configuration,
@@ -6054,40 +6120,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 master,
                                                 slaveToFree,
-                                                joinFilter,
-                                                compileWorkerFiltersConditionally(
-                                                        executionContext,
-                                                        joinFilter,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        parent,
-                                                        joinMetadata
-                                                ),
+                                                fastJoinFilter,
+                                                fastWorkerJoinFilters,
                                                 context.isIncludePrevailing(),
                                                 leftSymbolIndex,
                                                 rightSymbolIndex,
                                                 lo,
                                                 hi,
                                                 valueTypes,
-                                                groupByFunctions,
-                                                compileWorkerGroupByFunctionsConditionally(
-                                                        executionContext,
-                                                        isLastWindowJoin ? columns : aggregateCols,
-                                                        innerProjectionFunctions,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        joinMetadata,
-                                                        projectionFunctionFlags
-                                                ),
+                                                fastGroupByFunctions,
+                                                fastWorkerGroupByFuncs,
                                                 compiledFilter,
                                                 bindVarMemory,
                                                 bindVarFunctions,
                                                 masterFilter,
-                                                compileWorkerFiltersConditionally(
-                                                        executionContext,
-                                                        masterFilter,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        masterFilterExpr,
-                                                        master.getMetadata()
-                                                ),
+                                                fastWorkerMasterFilters,
                                                 masterFilterUsedColumnIndexes,
                                                 allVectorized,
                                                 reduceTaskFactory,
@@ -6108,6 +6155,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 context.getHiExpr(),
                                                 masterMetadata
                                         );
+                                        // Build the per-worker clones into locals (freeing earlier ones on
+                                        // a later build's throw), then null-transfer every owner resource
+                                        // the factory now frees on its own failure so the enclosing catch
+                                        // does not double-free them. The window-func builds above precede
+                                        // this: their throw is still covered by the enclosing catch, which
+                                        // owns them until the null-out below. Nothing between the null-out
+                                        // and the ctor call can throw.
+                                        ObjList<Function> stdWorkerJoinFilters = null;
+                                        ObjList<ObjList<GroupByFunction>> stdWorkerGroupByFuncs = null;
+                                        final ObjList<Function> stdWorkerMasterFilters;
+                                        try {
+                                            stdWorkerJoinFilters = compileWorkerFiltersConditionally(
+                                                    executionContext,
+                                                    joinFilter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    node,
+                                                    joinMetadata
+                                            );
+                                            stdWorkerGroupByFuncs = compileWorkerGroupByFunctionsConditionally(
+                                                    executionContext,
+                                                    isLastWindowJoin ? columns : aggregateCols,
+                                                    innerProjectionFunctions,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    joinMetadata,
+                                                    projectionFunctionFlags
+                                            );
+                                            stdWorkerMasterFilters = compileWorkerFiltersConditionally(
+                                                    executionContext,
+                                                    masterFilter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    masterFilterExpr,
+                                                    master.getMetadata()
+                                            );
+                                        } catch (Throwable th) {
+                                            Misc.freeObjList(stdWorkerJoinFilters, th);
+                                            if (stdWorkerGroupByFuncs != null) {
+                                                for (int wi = 0, wn = stdWorkerGroupByFuncs.size(); wi < wn; wi++) {
+                                                    PerWorkerFunctionList.close(stdWorkerGroupByFuncs.getQuick(wi), th);
+                                                }
+                                            }
+                                            throw th;
+                                        }
+                                        final Function stdJoinFilter = joinFilter;
+                                        final ObjList<GroupByFunction> stdGroupByFunctions = groupByFunctions;
+                                        final Function stdWindowLoFunc = windowLoFunc;
+                                        final Function stdWindowHiFunc = windowHiFunc;
+                                        final ObjList<Function> stdPerWorkerWindowLoFuncs = perWorkerWindowLoFuncs;
+                                        final ObjList<Function> stdPerWorkerWindowHiFuncs = perWorkerWindowHiFuncs;
+                                        joinFilter = null;
+                                        groupByFunctions = null;
+                                        windowLoFunc = null;
+                                        windowHiFunc = null;
+                                        perWorkerWindowLoFuncs = null;
+                                        perWorkerWindowHiFuncs = null;
                                         master = new AsyncWindowJoinRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 configuration,
@@ -6119,56 +6220,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 master,
                                                 slaveToFree,
                                                 context.isIncludePrevailing(),
-                                                joinFilter,
-                                                compileWorkerFiltersConditionally(
-                                                        executionContext,
-                                                        joinFilter,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        node,
-                                                        joinMetadata
-                                                ),
+                                                stdJoinFilter,
+                                                stdWorkerJoinFilters,
                                                 lo,
                                                 hi,
-                                                windowLoFunc,
-                                                windowHiFunc,
-                                                perWorkerWindowLoFuncs,
-                                                perWorkerWindowHiFuncs,
+                                                stdWindowLoFunc,
+                                                stdWindowHiFunc,
+                                                stdPerWorkerWindowLoFuncs,
+                                                stdPerWorkerWindowHiFuncs,
                                                 loSign,
                                                 hiSign,
                                                 loTimeUnit,
                                                 hiTimeUnit,
                                                 isDynamicWindow ? timestampDriver : null,
                                                 valueTypes,
-                                                groupByFunctions,
-                                                compileWorkerGroupByFunctionsConditionally(
-                                                        executionContext,
-                                                        isLastWindowJoin ? columns : aggregateCols,
-                                                        innerProjectionFunctions,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        joinMetadata,
-                                                        projectionFunctionFlags
-                                                ),
+                                                stdGroupByFunctions,
+                                                stdWorkerGroupByFuncs,
                                                 compiledFilter,
                                                 bindVarMemory,
                                                 bindVarFunctions,
                                                 masterFilter,
-                                                compileWorkerFiltersConditionally(
-                                                        executionContext,
-                                                        masterFilter,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        masterFilterExpr,
-                                                        master.getMetadata()
-                                                ),
+                                                stdWorkerMasterFilters,
                                                 masterFilterUsedColumnIndexes,
                                                 allVectorized,
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
-                                        // Factory now owns these resources.
-                                        windowLoFunc = null;
-                                        windowHiFunc = null;
-                                        perWorkerWindowLoFuncs = null;
-                                        perWorkerWindowHiFuncs = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slaveToFree.supportsTimeFrameCursor()) {
@@ -6387,27 +6464,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         IntHashSet filterUsedColumnIndexes = new IntHashSet();
                         collectColumnIndexes(sqlNodeStack, master.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        filterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, filterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
+                        // deepClone() runs after compileWorkerFiltersConditionally() (which restores the
+                        // filter models) and can throw a node-pool OOM before the constructor adopts the
+                        // filter and per-worker filters. The outer catch only frees master (the base), so
+                        // free those here; the null-transfer keeps the constructor's own failure-path
+                        // cleanup from double-freeing the per-worker filters.
+                        ObjList<Function> postFilterPerWorkerFilters = null;
+                        try {
+                            postFilterPerWorkerFilters = compileWorkerFiltersConditionally(
+                                    executionContext,
+                                    filter,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    filterExpr,
+                                    master.getMetadata()
+                            );
+                            final ExpressionNode postFilterClone = deepClone(expressionNodePool, filterExpr);
+                            final ObjList<Function> postFilterPerWorkerFilters0 = postFilterPerWorkerFilters;
+                            postFilterPerWorkerFilters = null;
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    postFilterPerWorkerFilters0,
+                                    postFilterClone,
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } catch (Throwable th) {
+                            Misc.freeObjList(postFilterPerWorkerFilters, th);
+                            Misc.free(filter, th);
+                            throw th;
+                        }
                     } else {
                         master = new FilteredRecordCursorFactory(
                                 master,
@@ -6463,27 +6556,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         IntHashSet filterUsedColumnIndexes = new IntHashSet();
                         collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        constFilterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, constFilterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
+                        // See the post-join-filter path above: deepClone() can throw a node-pool OOM
+                        // after the per-worker filters were built but before the constructor adopts the
+                        // filter and per-worker filters, and the outer catch frees only master.
+                        ObjList<Function> constFilterPerWorkerFilters = null;
+                        try {
+                            constFilterPerWorkerFilters = compileWorkerFiltersConditionally(
+                                    executionContext,
+                                    filter,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    constFilterExpr,
+                                    master.getMetadata()
+                            );
+                            final ExpressionNode constFilterClone = deepClone(expressionNodePool, constFilterExpr);
+                            final ObjList<Function> constFilterPerWorkerFilters0 = constFilterPerWorkerFilters;
+                            constFilterPerWorkerFilters = null;
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    constFilterPerWorkerFilters0,
+                                    constFilterClone,
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } catch (Throwable th) {
+                            Misc.freeObjList(constFilterPerWorkerFilters, th);
+                            Misc.free(filter, th);
+                            throw th;
+                        }
                     } else {
                         master = new FilteredRecordCursorFactory(master, filter);
                     }
@@ -12043,27 +12150,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     IntHashSet filterUsedColumnIndexes = new IntHashSet();
                     collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
-                    return new AsyncFilteredRecordCursorFactory(
-                            executionContext.getCairoEngine(),
-                            configuration,
-                            executionContext.getMessageBus(),
-                            coveringFactory,
-                            filter,
-                            filterUsedColumnIndexes,
-                            reduceTaskFactory,
-                            compileWorkerFiltersConditionally(
-                                    executionContext,
-                                    filter,
-                                    executionContext.getSharedQueryWorkerCount(),
-                                    filterExpr,
-                                    queryMeta
-                            ),
-                            deepClone(expressionNodePool, filterExpr),
-                            asyncLimitLoFunction,
-                            limitLoPos,
-                            executionContext.getSharedQueryWorkerCount(),
-                            SqlHints.hasEnablePreTouchHint(model, model.getName())
-                    );
+                    // deepClone() runs after compileWorkerFiltersConditionally() (which restores the
+                    // filter models) and can throw a node-pool OOM before the constructor adopts the
+                    // per-worker filters. The outer catch frees filter/coveringFactory but not these,
+                    // so free them here; the null-transfer avoids double-freeing on a constructor
+                    // failure, where the constructor already releases them.
+                    ObjList<Function> coveringPerWorkerFilters = null;
+                    try {
+                        coveringPerWorkerFilters = compileWorkerFiltersConditionally(
+                                executionContext,
+                                filter,
+                                executionContext.getSharedQueryWorkerCount(),
+                                filterExpr,
+                                queryMeta
+                        );
+                        final ExpressionNode coveringFilterClone = deepClone(expressionNodePool, filterExpr);
+                        final ObjList<Function> coveringPerWorkerFilters0 = coveringPerWorkerFilters;
+                        coveringPerWorkerFilters = null;
+                        return new AsyncFilteredRecordCursorFactory(
+                                executionContext.getCairoEngine(),
+                                configuration,
+                                executionContext.getMessageBus(),
+                                coveringFactory,
+                                filter,
+                                filterUsedColumnIndexes,
+                                reduceTaskFactory,
+                                coveringPerWorkerFilters0,
+                                coveringFilterClone,
+                                asyncLimitLoFunction,
+                                limitLoPos,
+                                executionContext.getSharedQueryWorkerCount(),
+                                SqlHints.hasEnablePreTouchHint(model, model.getName())
+                        );
+                    } catch (Throwable th) {
+                        Misc.freeObjList(coveringPerWorkerFilters, th);
+                        throw th;
+                    }
                 }
                 // Serial fallback owns no limit function; drop the one we created so
                 // it does not leak (generateLimit wraps the result in its own

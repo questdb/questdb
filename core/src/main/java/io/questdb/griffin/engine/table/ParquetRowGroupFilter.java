@@ -58,10 +58,6 @@ public final class ParquetRowGroupFilter {
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 3;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
-    // 2^53. A double represents every integer below this exactly, and 2^53 + 1 is the first one it
-    // cannot; at or above it a 64-bit column no longer round-trips through the double width the
-    // row-level filter compares at.
-    private static final double MAX_EXACT_INTEGRAL_DOUBLE = 9007199254740992d;
     // How far tryPutFloatFromDouble / tryPutDoubleFromDouble / putDoubleEq may walk a widened bound
     // outward before they give up and decline the pushdown. A couple of steps cover every bound whose
     // magnitude puts the value spacing above the comparison tolerance; below that (a FLOAT bound
@@ -69,6 +65,10 @@ public final class ParquetRowGroupFilter {
     // cancels) every neighbouring value is tolerance-equal to the bound and no reachable bound is
     // safe, so declining is the answer.
     private static final int MAX_BOUND_STEPS = 4;
+    // 2^53. A double represents every integer below this exactly, and 2^53 + 1 is the first one it
+    // cannot; at or above it a 64-bit column no longer round-trips through the double width the
+    // row-level filter compares at.
+    private static final double MAX_EXACT_INTEGRAL_DOUBLE = 9_007_199_254_740_992d;
     private static final AtomicInteger rowGroupsSkipped = new AtomicInteger();
 
     /**
@@ -677,9 +677,10 @@ public final class ParquetRowGroupFilter {
     // Numbers.equals() is inclusive (|l - d| <= tolerance) while the compiled filter's
     // double_cmp_epsilon (jit/impl/x86.h) is strict (|l - d| < tolerance), so at |l - d| ==
     // tolerance exactly they disagree - "<" drops the row on the Java filter and keeps it on the
-    // compiled one. A parquet frame is evaluated by the Java filter today, but pruning is an
-    // unconditional drop that no later filter can undo, so certify against BOTH rather than depend
-    // on which one runs: count the row as kept when EITHER keeps it. The strict test decides the ops
+    // compiled one. A parquet frame runs the compiled filter unless it has column tops or type
+    // casts, in which case it falls back to the Java filter, and pruning is an unconditional drop
+    // that no later filter can undo, so certify against BOTH rather than depend on which one runs:
+    // count the row as kept when EITHER keeps it. The strict test decides the ops
     // that exclude equality, the inclusive one the ops that include it. It costs nothing - the bound
     // this yields is identical for every constant clear of the tolerance band of the bound.
     private static boolean isRowKept(double l, double d, int opType) {

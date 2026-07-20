@@ -2428,6 +2428,67 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideLaneIntColumnVsLongColumn() throws Exception {
+        // A bare INT-column vs LONG-column comparison (no arithmetic, no out-of-range
+        // constant) is wide-lane eligible, but nothing sign-extended its INT leaf. A
+        // widening sibling conjunct (i32 < 5_000_000_000, or an inexact-float compare)
+        // flips the whole filter to four-lane AVX2, dragging the un-widened comparison
+        // into a vector compare whose operands differ in width - the INT column loads as
+        // 4x32 in the low XMM and the LONG column as 4x64 in the YMM - so the lanes are
+        // scrambled and the JIT returns the wrong rows. Standalone the comparison stayed
+        // on the correct mixed-size scalar path, so only the sibling-flipped shape
+        // regressed. Now serializeColumn sign-extends the narrow leaf (markWidthSemantics),
+        // so the four-lane compare runs at i64 width and matches the Java filter.
+        assertMemoryLeak(() -> {
+            // Deterministic all-match pin: every row satisfies both conjuncts, so the Java
+            // filter keeps all rows; the pre-fix JIT ran i32 < i64 in four-lane mode without
+            // widening i32 and dropped SIMD-body rows (count < N).
+            execute("create table allmatch as (select timestamp_sequence(0, 1_000_000) k," +
+                    " 1::int i32, 3_000_000_000L i64" +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)");
+            assertJitMatchesJava("select count() from allmatch where i32 < i64 and i32 < 5_000_000_000",
+                    true, "count\n" + N_SIMD_WITH_SCALAR_TAIL + "\n");
+
+            // Batch-length + sign-extension-boundary parity, exercising both widening-sibling
+            // shapes (out-of-INT-range integer constant and inexact float) and the reversed
+            // operand order.
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists wide_cc");
+                if (rowCount == 0) {
+                    execute("create table wide_cc (i8 byte, i16 short, i32 int, i64 long, f32 float)");
+                } else {
+                    execute("create table wide_cc as (select "
+                            + "cast(case x when 1 then null when 2 then 127 when 3 then -127 else x - 5 end as byte) i8, "
+                            + "cast(case x when 1 then null when 2 then 32_000 when 3 then -32_000 else x - 5 end as short) i16, "
+                            + "cast(case x when 1 then null when 2 then 2_147_483_647 "
+                            + "when 3 then -2_147_483_647 when 4 then 0 else x - 5 end as int) i32, "
+                            + "cast(case x when 1 then null when 2 then 5_000_000_000 "
+                            + "when 3 then -5_000_000_000 else x * 1_000_000_000 end as long) i64, "
+                            + "cast(case x when 1 then null else 2.5 end as float) f32 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+                // Out-of-INT-range integer constant flips the filter to four-lane.
+                assertJitMatchesJava("wide_cc where i32 < i64 and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("wide_cc where i32 = i64 and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("wide_cc where i64 > i32 and i32 < 5_000_000_000", true);
+                // Inexact-float sibling flips the filter to four-lane.
+                assertJitMatchesJava("wide_cc where i32 < i64 and f32 < 1.00000003", true);
+                // Control: standalone mixed-width comparison stays on the scalar path and was
+                // always correct.
+                assertJitMatchesJava("wide_cc where i32 < i64", true);
+                assertJitMatchesJava("select count() from wide_cc where i32 < i64 and i32 < 5_000_000_000", true);
+                // BYTE / SHORT columns are never wide-lane eligible, so a narrow-vs-LONG
+                // comparison stays scalar whether or not a widening sibling is present; the
+                // added sign-extension must not disturb that correct scalar path.
+                assertJitMatchesJava("wide_cc where i8 < i64", true);
+                assertJitMatchesJava("wide_cc where i16 < i64", true);
+                assertJitMatchesJava("wide_cc where i8 < i64 and i32 < 5_000_000_000", true);
+                assertJitMatchesJava("wide_cc where i16 = i64 and i32 < 5_000_000_000", true);
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnsCount() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +

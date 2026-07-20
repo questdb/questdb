@@ -66,8 +66,9 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean getBool(Record record) {
-        // summed 1s for true and -1s for false. if 0, tiebreak and say true
-        return record.getLong(0) >= 0;
+        // summed 1s for true and -1s for false. if 0, tiebreak and say true. Read this function's
+        // own accumulator slot (valueIndex); a preceding aggregate shifts it off slot 0.
+        return record.getLong(valueIndex) >= 0;
     }
 
     @Override
