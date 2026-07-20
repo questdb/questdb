@@ -11451,13 +11451,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 unionSymbolProjectionTestHook.onProjectionConstruction();
             }
             // The re-symbolising CastStrToSymbol function builds its dictionary lazily and is not
-            // thread-safe. That is safe only because a union base is serial: it supports neither page
-            // frames, filter stealing nor time frames, so no parallel operator (async filter, parallel
-            // GROUP BY) ever clones or snapshots this projection. Guard the invariant so a future
-            // page-frame-capable union trips here instead of shipping a stale, empty dictionary snapshot.
-            assert !unionFactory.supportsPageFrameCursor()
-                    && !unionFactory.supportsFilterStealing()
-                    && !unionFactory.supportsTimeFrameCursor();
+            // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
+            // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
+            // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
+            // Enforce the invariant unconditionally rather than with an assert: -ea strips asserts in
+            // production, and a future page-frame-capable union must fail loudly here instead of shipping
+            // a stale, empty dictionary snapshot to a worker.
+            if (unionFactory.supportsPageFrameCursor()
+                    || unionFactory.supportsFilterStealing()
+                    || unionFactory.supportsTimeFrameCursor()) {
+                throw CairoException.critical(0).put("union symbol projection requires a serial base cursor");
+            }
             final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
             final IntList columnToFunctionIndex = new IntList(columnCount);
             functions = new ObjList<>();
@@ -11485,8 +11489,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 UnionSymbolProjectionTestHook.BASE_COLUMN
                         );
                         functions.setQuick(functionIndex, baseColumn);
-                    }
-                    if (unionSymbolProjectionTestHook != null) {
                         unionSymbolProjectionTestHook.onFunctionRegistered(UnionSymbolProjectionTestHook.BASE_COLUMN);
                     }
                     Function function = new CastStrToSymbolFunctionFactory.Func(baseColumn);

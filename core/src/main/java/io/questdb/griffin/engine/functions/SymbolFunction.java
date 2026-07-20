@@ -265,11 +265,20 @@ public abstract class SymbolFunction implements Function, SymbolTable {
     public abstract boolean isSymbolTableStatic();
 
     /**
-     * A clone of function's symbol table to enable concurrent SQL execution.
-     * During such execution symbol table clones will be assigned to individual executing
-     * thread.
+     * A symbol table to enable concurrent SQL execution. During such execution the returned
+     * tables are assigned to individual executing threads.
+     * <p>
+     * A function that reports {@link #supportsParallelism()} {@code == true} must return an
+     * independent snapshot here, safe to read from another thread while this function keeps
+     * advancing. A function that reports {@code supportsParallelism() == false} is never cloned for
+     * a parallel worker, so it MAY instead return a live view over its own (single-threaded) state:
+     * such a view is valid only for serial reads, or reads taken after the source is fully
+     * materialised, and its values must not be retained across a further {@code getInt}/read on the
+     * source function. {@link io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory.Func}
+     * returns such a live view.
      *
-     * @return clone of symbol table
+     * @return symbol table for concurrent execution (an independent snapshot when parallel, otherwise
+     * possibly a live serial view)
      */
     public SymbolTable newSymbolTable() {
         return null;
