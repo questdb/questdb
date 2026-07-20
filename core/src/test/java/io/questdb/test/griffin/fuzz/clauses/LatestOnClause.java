@@ -51,26 +51,17 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * full-scan storage shadow (only a {@code LIMIT} without a fully
  * disambiguating {@code ORDER BY} downgrades to a row-count compare).
  * <p>
- * {@code LATEST ON} always names the source's designated timestamp - the
- * engine rejects any other column with "latest by over a table requires
- * designated TIMESTAMP" - so the caller routes here only when the source
- * carries one. The clause skips the table alias (like {@link SampleByClause})
- * so the timestamp literal and the bare key list stay unqualified. Partition
- * keys are drawn from the columns the engine accepts as latest-by keys (see
- * {@link ColumnKind#isLatestByKey()}) other than the timestamp, biased to none
- * in particular so every accepted key type (SYMBOL, STRING, the numeric and
- * temporal families, BOOLEAN, CHAR, the identifier family) gets exercised;
- * DECIMAL and ARRAY are not among them - the code generator rejects both - so
- * drawing one would only emit SQL that fails to compile. When the table happens
- * to expose no accepted key column the timestamp itself is used, which is a
- * valid if degenerate single-row-per-partition key.
- * The {@code WHERE} is woven the usual way, so the FUNCTION fault rides it; the
- * latest-by cursors filter serially (no parallel reduce), so a fired fault
+ * {@code LATEST ON} always names the source's designated timestamp, so the caller routes here only
+ * when the source carries one. The clause skips the table alias (like {@link SampleByClause}) so the
+ * timestamp literal and the bare key list stay unqualified. Partition keys are drawn from the columns
+ * the engine accepts as latest-by keys (see {@link ColumnKind#isLatestByKey()}) other than the
+ * timestamp; DECIMAL and ARRAY are excluded because the code generator rejects them. When the table
+ * exposes no accepted key column the timestamp itself is used - a valid if degenerate single-row-per-
+ * partition key. The latest-by cursors filter serially, so a fault fired from the woven {@code WHERE}
  * always surfaces rather than being discarded on a worker.
  * <p>
- * As with the other clauses, every main-{@code rnd} draw is independent of the
- * {@link BindContext}, so the literal and bind passes build the same tree
- * shape; only the constant leaves rendered through {@code ctx} differ.
+ * As with the other clauses, every main-{@code rnd} draw is independent of the {@link BindContext}, so
+ * the literal and bind passes build the same tree shape; only the constant leaves differ.
  */
 public final class LatestOnClause {
 

@@ -166,11 +166,17 @@ public final class DecimalParser {
         // measure the given precision/scale.
         int dot = -1;
         boolean digitFound = false;
+        // Position of the first non-zero digit, or -1 if the mantissa is all zeros. Tracked in this
+        // same validation pass so the zero check below needs no separate scan over the digits.
+        int firstNonZeroDigit = -1;
         int digitLo = lo;
         for (; lo < hi; lo++) {
             char c = cs.charAt(lo);
             if (isDigit(c)) {
                 digitFound = true;
+                if (firstNonZeroDigit == -1 && c != '0') {
+                    firstNonZeroDigit = lo;
+                }
                 continue;
             } else if (c == '.' && dot == -1) {
                 dot = lo;
@@ -268,13 +274,12 @@ public final class DecimalParser {
         // inflate the precision, or 0 would be uncastable to DECIMAL(p, p) either. The floor of 1
         // keeps a single digit for a zero with no scale.
         int pow = literalDigits + exp;
-        boolean isZero = true;
-        for (int i = digitLo; i < digitHi; i++) {
-            if (i != dot && cs.charAt(i) != '0') {
-                isZero = false;
-                break;
-            }
-        }
+        // The value is zero when it has no non-zero digit within the final digit range. The first
+        // non-zero digit was located during the validation pass; the value is zero when there was
+        // none, or when a trailing-zero or lossy scale reduction moved digitHi to or before it (so it
+        // no longer contributes). This must use the final digitHi, hence it is computed here rather
+        // than during the validation pass.
+        boolean isZero = firstNonZeroDigit == -1 || firstNonZeroDigit >= digitHi;
         final int finalPrecision = isZero ? Math.max(scale, 1) : Math.max(pow, scale);
         if (precision != -1 && finalPrecision > precision) {
             throw NumericException.instance()

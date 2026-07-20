@@ -201,7 +201,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
-            if (rowsRemaining > maxNegativeLimit) {
+            // A negative limit is negated above; -Long.MIN_VALUE overflows back to a negative value,
+            // so reject rowsRemaining < 0 too instead of letting it slip past the maxNegativeLimit
+            // bound and produce an empty cursor.
+            if (rowsRemaining < 0 || rowsRemaining > maxNegativeLimit) {
                 throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }
             if (negativeLimitRows == null) {

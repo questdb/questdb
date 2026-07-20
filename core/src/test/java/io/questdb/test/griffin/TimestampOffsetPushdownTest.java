@@ -1864,6 +1864,60 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnsatisfiableKeyWithRuntimeBoundFreesModel() throws Exception {
+        // A contradictory symbol key makes the WHERE clause unsatisfiable, so SqlCodeGenerator returns
+        // an empty factory early (intrinsicModel.intrinsicValue == FALSE) before it builds the interval
+        // model (which would transfer ownership of interval-bound functions) or clears the interval
+        // filters. A runtime-constant timestamp bound already compiled into the interval builder is then
+        // orphaned. alloc_ts() makes the leak observable via its tracked native buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES ('a', 100, '2020-01-01T12:00:00.000000Z');");
+            assertQuery("SELECT * FROM trades " +
+                    "WHERE timestamp > alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) " +
+                    "AND sym = 'a' AND sym = 'b'")
+                    .timestamp("timestamp")
+                    .returns("sym\tprice\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testUnsatisfiableKeyWithRuntimeBoundLatestOnFreesModel() throws Exception {
+        // LATEST ON variant of testUnsatisfiableKeyWithRuntimeBoundFreesModel: the same unsatisfiable
+        // key path with a latest-by clause must also free the runtime interval bound.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES ('a', 100, '2020-01-01T12:00:00.000000Z');");
+            assertQuery("SELECT * FROM trades " +
+                    "WHERE timestamp > alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) " +
+                    "AND sym = 'a' AND sym = 'b' " +
+                    "LATEST ON timestamp PARTITION BY sym")
+                    .timestamp("timestamp")
+                    .returns("sym\tprice\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testConstantFalseResidualWithRuntimeBoundLatestOnFreesModel() throws Exception {
+        // Companion to testUnsatisfiableKeyWithRuntimeBoundFreesModel for the OTHER early return: with
+        // a latest-by clause, a residual filter that folds to a compile-time constant false (here
+        // "1 = 2", which the intrinsic parser leaves as a residual rather than absorbing) makes
+        // SqlCodeGenerator return an empty factory before buildIntervalModel() transfers ownership of
+        // the interval-bound functions. The runtime timestamp bound compiled into the interval builder
+        // must be freed here too. alloc_ts() makes the leak observable via its tracked native buffer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL INDEX, price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES ('a', 100, '2020-01-01T12:00:00.000000Z');");
+            assertQuery("SELECT * FROM trades " +
+                    "WHERE timestamp > alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) " +
+                    "AND 1 = 2 " +
+                    "LATEST ON timestamp PARTITION BY sym")
+                    .timestamp("timestamp")
+                    .returns("sym\tprice\ttimestamp\n");
+        });
+    }
+
+    @Test
     public void testExtractThrowAfterRuntimeBoundFreesModel() throws Exception {
         // extract() analyses an AND's rhs before its lhs, so the rhs bound is already compiled into the
         // model when the lhs conjunct throws. The exception unwound past the model and nothing freed it,

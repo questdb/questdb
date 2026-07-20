@@ -1884,6 +1884,21 @@ public class LimitTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                 Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
             }
+
+            // Long.MIN_VALUE is the pathological negative limit: negating it overflows back to
+            // Long.MIN_VALUE, which slips past the maxNegativeLimit bound and would otherwise yield an
+            // empty cursor. It must be rejected like any other over-limit value. A bind variable feeds
+            // the exact value without the parser rejecting the out-of-range literal first.
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setLong("lim", Long.MIN_VALUE);
+            String minQuery = "select * from y where i > 0 limit :lim";
+            try (final RecordCursorFactory factory = select(minQuery)) {
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                }
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            }
         });
     }
 

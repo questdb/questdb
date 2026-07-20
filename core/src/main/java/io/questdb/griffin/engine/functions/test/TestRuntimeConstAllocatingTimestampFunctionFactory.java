@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -63,7 +64,18 @@ public class TestRuntimeConstAllocatingTimestampFunctionFactory implements Funct
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0).getTimestamp(null));
+        final Function arg = args.getQuick(0);
+        try {
+            return new Func(arg.getTimestamp(null));
+        } finally {
+            // Func retains only the timestamp value, not the argument function. FunctionParser
+            // transfers argument ownership to the returned function, so free the consumed argument
+            // here to honor that contract. The signature requires a TIMESTAMP constant, so this frees
+            // no native memory today, but it keeps this leak-testing helper correct if it is ever
+            // handed a native-memory-owning argument. Null the slot so the parser's error-path
+            // freeObjList cannot double-free it.
+            args.setQuick(0, Misc.free(arg));
+        }
     }
 
     private static class Func extends TimestampFunction {

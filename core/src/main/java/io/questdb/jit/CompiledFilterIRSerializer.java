@@ -1770,19 +1770,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void markWidthSemantics(
-            ExpressionNode node,
-            boolean isFoldActive,
-            boolean isFoldUnderLong,
-            boolean isWrapActive,
-            boolean isWrapUnderLong,
-            boolean isWrapNarrowResolved,
-            boolean isFloatActive,
-            boolean isFloatUnderLong
-    ) {
+    private void markWidthSemantics(ExpressionNode node, WidthCtx w) {
         if (node == null) {
             return;
         }
+        final boolean isFoldActive = w.isFoldActive;
+        final boolean isFoldUnderLong = w.isFoldUnderLong;
+        final boolean isWrapActive = w.isWrapActive;
+        final boolean isWrapUnderLong = w.isWrapUnderLong;
+        final boolean isWrapNarrowResolved = w.isWrapNarrowResolved;
+        final boolean isFloatActive = w.isFloatActive;
+        final boolean isFloatUnderLong = w.isFloatUnderLong;
         markNarrowConstCmpWidenNode(node);
         final boolean isIn = node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token);
         if (node.type != ExpressionNode.OPERATION && !isIn) {
@@ -1809,40 +1807,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int exprType = isFloatActive ? arithExprType(node) : UNDEFINED_CODE;
             final boolean isFloatLong = isFloatActive && (isFloatUnderLong || exprType == I8_TYPE);
 
+            final WidthCtx childCtx = new WidthCtx(
+                    isFoldChildActive,
+                    isFoldLong,
+                    isWrapActive,
+                    isWrapLong,
+                    isChildNarrowResolved,
+                    isFloatActive,
+                    isFloatLong
+            );
             if (isUnaryMinus) {
-                markWidthSemantics(
-                        node.rhs != null ? node.rhs : node.lhs,
-                        isFoldChildActive,
-                        isFoldLong,
-                        isWrapActive,
-                        isWrapLong,
-                        isChildNarrowResolved,
-                        isFloatActive,
-                        isFloatLong
-                );
+                markWidthSemantics(node.rhs != null ? node.rhs : node.lhs, childCtx);
             } else {
-                markWidthSemanticsOperand(
-                        node.lhs,
-                        exprType,
-                        isFoldChildActive,
-                        isFoldLong,
-                        isWrapActive,
-                        isWrapLong,
-                        isChildNarrowResolved,
-                        isFloatActive,
-                        isFloatLong
-                );
-                markWidthSemanticsOperand(
-                        node.rhs,
-                        exprType,
-                        isFoldChildActive,
-                        isFoldLong,
-                        isWrapActive,
-                        isWrapLong,
-                        isChildNarrowResolved,
-                        isFloatActive,
-                        isFloatLong
-                );
+                markWidthSemanticsOperand(node.lhs, exprType, childCtx);
+                markWidthSemanticsOperand(node.rhs, exprType, childCtx);
             }
             return;
         }
@@ -1855,25 +1833,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 final boolean isPairLong = foldCmpType(keyType, element) == I8_TYPE;
                 markWidthSemantics(
                         element,
-                        isFoldActive,
-                        isPairLong,
-                        false,
-                        false,
-                        false,
-                        isFloatActive,
-                        isPairLong
+                        new WidthCtx(isFoldActive, isPairLong, false, false, false, isFloatActive, isPairLong)
                 );
             }
-            markWidthSemantics(
-                    key,
-                    isFoldActive,
-                    false,
-                    false,
-                    false,
-                    false,
-                    isFloatActive,
-                    false
-            );
+            markWidthSemantics(key, new WidthCtx(isFoldActive, false, false, false, false, isFloatActive, false));
             return;
         }
 
@@ -1904,24 +1867,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             maybeWidenCmpConstOperand(node.lhs, node.rhs);
             maybeWidenCmpConstOperand(node.rhs, node.lhs);
         }
-        markWidthSemantics(node.lhs, isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
-        markWidthSemantics(node.rhs, isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
+        final WidthCtx cmpCtx = new WidthCtx(isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
+        markWidthSemantics(node.lhs, cmpCtx);
+        markWidthSemantics(node.rhs, cmpCtx);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            markWidthSemantics(node.args.getQuick(i), isFoldActive, isCmpLong, isWrapActive, isCmpLong, false, isFloatActive, isCmpLong);
+            markWidthSemantics(node.args.getQuick(i), cmpCtx);
         }
     }
 
-    private void markWidthSemanticsOperand(
-            ExpressionNode child,
-            int parentType,
-            boolean isFoldActive,
-            boolean isFoldUnderLong,
-            boolean isWrapActive,
-            boolean isWrapUnderLong,
-            boolean isWrapNarrowResolved,
-            boolean isFloatActive,
-            boolean isFloatUnderLong
-    ) {
+    private void markWidthSemanticsOperand(ExpressionNode child, int parentType, WidthCtx w) {
+        final boolean isFoldActive = w.isFoldActive;
+        final boolean isFoldUnderLong = w.isFoldUnderLong;
+        final boolean isWrapActive = w.isWrapActive;
+        final boolean isWrapUnderLong = w.isWrapUnderLong;
+        final boolean isWrapNarrowResolved = w.isWrapNarrowResolved;
+        final boolean isFloatActive = w.isFloatActive;
+        final boolean isFloatUnderLong = w.isFloatUnderLong;
         boolean isWrapChildActive = isWrapActive;
         if (isWrapActive && !isWrapUnderLong && isWidenableLeaf(child)) {
             final int childType = arithExprType(child);
@@ -1942,13 +1903,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         markWidthSemantics(
                 child,
-                isFoldActive,
-                isFoldUnderLong,
-                isWrapChildActive,
-                isWrapUnderLong,
-                isWrapNarrowResolved,
-                isFloatChildActive,
-                isFloatUnderLong
+                new WidthCtx(
+                        isFoldActive,
+                        isFoldUnderLong,
+                        isWrapChildActive,
+                        isWrapUnderLong,
+                        isWrapNarrowResolved,
+                        isFloatChildActive,
+                        isFloatUnderLong
+                )
         );
     }
 
@@ -3531,7 +3494,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // One top-down pass installs all per-comparison width marks. It keeps
                     // independent context for fold widening, INT wrapping, and FLOAT-suppressed
                     // widening so pruning one concern never hides work needed by another.
-                    markWidthSemantics(node, true, false, true, false, false, hasFloatInPredicate, false);
+                    markWidthSemantics(node, new WidthCtx(true, false, true, false, false, hasFloatInPredicate, false));
                 }
                 if (topLevelBooleanColumn) {
                     columnType = ColumnType.BOOLEAN;
@@ -3786,6 +3749,41 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         boolean hasMixedSizes() {
             return typesObserver.hasMixedSizes();
+        }
+    }
+
+    /**
+     * Immutable bundle of the width-semantics flags {@link #markWidthSemantics} threads down the
+     * predicate tree. Each of the three rewrite passes carries an {@code active} flag plus an
+     * {@code underLong} flag (whether the subtree already sits under a LONG-width parent), and the
+     * wrap pass additionally tracks whether a narrower width has already been resolved. Grouping them
+     * in one value keeps the recursive signatures to two parameters instead of eight adjacent booleans.
+     */
+    private static final class WidthCtx {
+        final boolean isFloatActive;
+        final boolean isFloatUnderLong;
+        final boolean isFoldActive;
+        final boolean isFoldUnderLong;
+        final boolean isWrapActive;
+        final boolean isWrapNarrowResolved;
+        final boolean isWrapUnderLong;
+
+        WidthCtx(
+                boolean isFoldActive,
+                boolean isFoldUnderLong,
+                boolean isWrapActive,
+                boolean isWrapUnderLong,
+                boolean isWrapNarrowResolved,
+                boolean isFloatActive,
+                boolean isFloatUnderLong
+        ) {
+            this.isFoldActive = isFoldActive;
+            this.isFoldUnderLong = isFoldUnderLong;
+            this.isWrapActive = isWrapActive;
+            this.isWrapUnderLong = isWrapUnderLong;
+            this.isWrapNarrowResolved = isWrapNarrowResolved;
+            this.isFloatActive = isFloatActive;
+            this.isFloatUnderLong = isFloatUnderLong;
         }
     }
 }

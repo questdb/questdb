@@ -2920,6 +2920,45 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullPruningInclusiveDouble() throws Exception {
+        // Inclusive DOUBLE bounds (<= and >=) push down over a parquet row group that mixes NULL and
+        // non-NULL values. NULLs are excluded from the row-group min/max stats and never match an
+        // inclusive comparison, so the parquet-pruned result must equal the native result, and a group
+        // clear of the bound is still pruned. Existing NULL pruning coverage exercised equality only.
+        // The parquet row group holds {null, 6, 7}; the native partition holds {null, 2, 9}.
+        assertMemoryLeak(() -> {
+            createNullMixedPartialParquet("DOUBLE", "6.0", "7.0", "2.0", "9.0");
+
+            // c6 <= 5.0 clears the parquet group (min 6 > 5); only the native 2.0 matches.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 <= 5.0", "c6\n2.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // c6 >= 8.0 clears the parquet group (max 7 < 8); only the native 9.0 matches.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 >= 8.0", "c6\n9.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testNullPruningInclusiveFloat() throws Exception {
+        // FLOAT counterpart of testNullPruningInclusiveDouble: the inclusive bound narrows through
+        // tryPutFloatFromDouble over a parquet row group that mixes NULL and non-NULL values.
+        assertMemoryLeak(() -> {
+            createNullMixedPartialParquet("FLOAT", "6.5", "7.5", "2.5", "9.5");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 <= 5.0", "c6\n2.5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 >= 8.0", "c6\n9.5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testNullPruningInt() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5162,6 +5201,27 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO tn VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("INSERT INTO tp VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    // Builds a native tn and a partial-parquet tp for inclusive-bound NULL pruning tests. Both tables
+    // hold the same two partitions; the first (2024-01-01, values pq1/pq2 plus a NULL) is converted to
+    // parquet while the second (2024-01-02, values nat1/nat2 plus a NULL) stays native. Only the first
+    // partition is a parquet row group the pruner can skip, so a bound clear of pq1/pq2 exercises the
+    // skip path, while the differential tn-vs-tp check confirms NULLs (absent from the min/max stats
+    // and never matching an inclusive comparison) do not leak into the result.
+    private void createNullMixedPartialParquet(String columnType, String pq1, String pq2, String nat1, String nat2) throws Exception {
+        execute("CREATE TABLE tn (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        final String rows = " VALUES"
+                + " (null, '2024-01-01T00:00:00.000000Z'),"
+                + " (" + pq1 + ", '2024-01-01T01:00:00.000000Z'),"
+                + " (" + pq2 + ", '2024-01-01T02:00:00.000000Z'),"
+                + " (null, '2024-01-02T00:00:00.000000Z'),"
+                + " (" + nat1 + ", '2024-01-02T01:00:00.000000Z'),"
+                + " (" + nat2 + ", '2024-01-02T02:00:00.000000Z')";
+        execute("INSERT INTO tn" + rows);
+        execute("INSERT INTO tp" + rows);
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 

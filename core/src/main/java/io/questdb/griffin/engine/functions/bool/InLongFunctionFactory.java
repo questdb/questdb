@@ -79,7 +79,17 @@ public class InLongFunctionFactory implements FunctionFactory {
         // Every other narrow key - a column, a cast, a constant, a CASE, a bind variable -
         // reports isIntWidthStable(), and its two reads are the same number; then one set
         // holds every element and getBool probes it once per row.
-        final boolean isSplitKey = isNarrowIntKey && !args.getQuick(0).isIntWidthStable();
+        //
+        // Splitting reads the key at both widths, which is only safe when the two reads carry
+        // consistent values. A non-deterministic key (e.g. rnd_int() + 0) breaks that: getInt()
+        // and getLong() would draw two different random values for one row, and the row would be
+        // probed against the two width sets with two unrelated keys. Treat such a key as
+        // non-split so getBool reads it exactly once per row (at long width); every element then
+        // lands in the long-width set. This is correct because a non-deterministic INT key has no
+        // single stable value to wrap anyway, and it matches how a width-stable key behaves.
+        final boolean isSplitKey = isNarrowIntKey
+                && !args.getQuick(0).isIntWidthStable()
+                && !args.getQuick(0).isNonDeterministic();
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -182,12 +192,10 @@ public class InLongFunctionFactory implements FunctionFactory {
      */
     private static void freeElements(ObjList<Function> args) {
         for (int i = 1, n = args.size(); i < n; i++) {
-            // Null the slot after closing it: FunctionParser#checkAndCreateFunction re-runs
-            // Misc.freeObjList(args) when it rejects the returned function as non-deterministic
-            // (e.g. rnd_int() IN (1, 2, 3)), and a constant IN element can now be a whole
-            // arithmetic function tree, so a second close would double-free any native memory it
-            // holds. The all-constant forms keep only the key (args[0]), so the elements are dead
-            // here.
+            // Null each slot after closing it: a constant IN element can now be a whole arithmetic
+            // function tree (see FunctionParser#functionToConstant0) holding native memory, so
+            // nulling keeps any later pass over args from double-freeing it. The all-constant forms
+            // keep only the key (args[0]), so the elements are dead here.
             args.setQuick(i, Misc.free(args.getQuick(i)));
         }
     }

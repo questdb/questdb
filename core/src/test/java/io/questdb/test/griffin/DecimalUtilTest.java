@@ -1031,6 +1031,28 @@ public class DecimalUtilTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParseDecimalConstantScientificZero() throws SqlException {
+        // Scientific-notation zero fits even a tight precision: a zero carries no significant digits,
+        // so it needs only precision 1 regardless of the exponent. This is the accepted-zero path.
+        ConstantFunction zero = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "0e3", 1, 0);
+        Assert.assertTrue(zero instanceof Decimal8Constant);
+        Assert.assertEquals(0, zero.getDecimal8(null));
+
+        ConstantFunction negZero = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-0e3", 1, 0);
+        Assert.assertTrue(negZero instanceof Decimal8Constant);
+        Assert.assertEquals(0, negZero.getDecimal8(null));
+
+        // Contrast with the precision-overflow path: a non-zero value with the same exponent requires
+        // the full digit count and is rejected against the same precision limit.
+        try {
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "1e3", 1, 0);
+            Assert.fail("Expected SqlException");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "requires precision of 4 but is limited to 1");
+        }
+    }
+
+    @Test
     public void testParseDecimalConstantSignAndDot() {
         try {
             DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-.", -1, -1);

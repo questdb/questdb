@@ -10806,6 +10806,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // the WHERE clause is unsatisfiable, so the result is empty; clear the latest-by nodes
                 // so the later generateLatestBy() becomes a no-op
                 model.getLatestBy().clear();
+                // this early return skips buildIntervalModel(), which is what would otherwise transfer
+                // ownership of any interval-bound functions (e.g. a runtime timestamp bound) out of the
+                // builder; free them here so they are not orphaned
+                intrinsicModel.clearIntervalFilters();
                 return new EmptyTableRecordCursorFactory(queryMeta);
             }
 
@@ -10816,6 +10820,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // nodes so the later generateLatestBy() becomes a no-op
                     model.getLatestBy().clear();
                     Misc.free(filter);
+                    // like the unsatisfiable-WHERE early return above, this bails out before
+                    // buildIntervalModel() transfers ownership of the interval-bound functions, so free
+                    // them here instead of orphaning them
+                    intrinsicModel.clearIntervalFilters();
                     return new EmptyTableRecordCursorFactory(queryMeta);
                 }
 

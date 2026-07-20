@@ -4963,6 +4963,74 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinKeyedIndexAmortizationNonVectorized() throws Exception {
+        // Companion to testWindowJoinKeyedIndexAmortization, which pins the slave-index rebuild count
+        // only for the vectorized keyed cursor (WindowJoinFastVectRecordCursor, the INDEX_COMPLETE gate
+        // in WindowJoinFastRecordCursorFactory) via sum(p.x) EXCLUDE/INCLUDE PREVAILING. The other three
+        // keyed cursors each carry their own copy of that gate and were unpinned:
+        //   - WindowJoinFastRecordCursor                            (non-vectorized, EXCLUDE)
+        //   - WindowJoinWithPrevailingFastRecordCursor              (non-vectorized, INCLUDE)
+        //   - WindowJoinWithPrevailingAndJoinFilterFastRecordCursor (non-vectorized, INCLUDE + join filter)
+        // The gate is identical across all four - a rebuild re-derives the same index from the same slave
+        // rows over the same lookahead horizon - so with the same slave (prices, one row/min from 00:00),
+        // the same master timestamps (trades, one row/min from 04:00) and the same 4 h window, every shape
+        // must rebuild exactly 5 times, matching the vectorized shape. Only the cursor shape differs, which
+        // the rebuild gate is deliberately blind to.
+        //
+        // Two levers drive the query off the vectorized cursor: sum(p.x + t.m) reads a MASTER column t.m,
+        // which the aggregate-vectorization check rejects; a join filter beyond the symbol equality forces
+        // non-vectorization unconditionally. EXCLUDE vs INCLUDE PREVAILING and the presence of a join filter
+        // then pick the exact cursor.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            // trades gains a LONG column m so an aggregate can read a master column; m does not affect the
+            // master timestamps or the slave, so the slave-index behavior - and the rebuild count - is
+            // unchanged from testWindowJoinKeyedIndexAmortization.
+            execute("CREATE TABLE trades (sym SYMBOL, m LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            execute("INSERT INTO trades SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            // Non-vectorized cursor, EXCLUDE PREVAILING (WindowJoinFastRecordCursor). sum(p.x + t.m) reads
+            // master column t.m -> non-vectorized; EXCLUDE + no join filter routes here.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    5
+            );
+
+            // Non-vectorized cursor, INCLUDE PREVAILING, no join filter (WindowJoinWithPrevailingFastRecordCursor).
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x + t.m) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    5
+            );
+
+            // Non-vectorized cursor, INCLUDE PREVAILING, WITH a join filter
+            // (WindowJoinWithPrevailingAndJoinFilterFastRecordCursor). The extra ON predicate p.x > -1 (always
+            // true, non-constant) is the join filter -> non-vectorized; it keeps every slave row, so the index
+            // behavior is unchanged.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    5
+            );
+
+            // Same join filter, EXCLUDE PREVAILING: routes back to WindowJoinFastRecordCursor, which applies
+            // the join filter inline. Pins that the join-filter path shares the same gate.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) AND p.x > -1 " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    5
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinKeyedIndexAmortizationOverEmptyWindows() throws Exception {
         // The index scan looks for its first slave row up to the lookahead horizon, not merely up to
         // the window's own upper bound. That distinction only shows when the window itself is empty:

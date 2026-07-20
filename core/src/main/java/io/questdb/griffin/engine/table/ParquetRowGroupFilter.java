@@ -726,23 +726,30 @@ public final class ParquetRowGroupFilter {
      * is empty, and NULL rows do not reach the min/max stats at all.
      */
     private static int putDoubleEq(MemoryCARWImpl filterValues, ObjList<Function> valueFunctions, int valueCount) {
+        // Evaluate and append each bound exactly once, certifying it in the same pass. On the exact
+        // path the appended values ARE the result; on the single-bound rewrite path below the one
+        // appended value is rolled back and replaced with the tolerance band; on the multi-value
+        // decline the caller rolls filterValues back to the offset it captured before this call.
+        final long startOffset = filterValues.getAppendOffset();
         boolean isExact = true;
+        double d = Double.NaN;
         for (int i = 0; i < valueCount; i++) {
-            if (!isExactEqDouble(valueFunctions.getQuick(i).getDouble(null))) {
+            d = valueFunctions.getQuick(i).getDouble(null);
+            filterValues.putDouble(d);
+            if (!isExactEqDouble(d)) {
                 isExact = false;
                 break;
             }
         }
         if (isExact) {
-            for (int i = 0; i < valueCount; i++) {
-                filterValues.putDouble(valueFunctions.getQuick(i).getDouble(null));
-            }
             return valueCount;
         }
         if (valueCount != 1) {
             return -1;
         }
-        final double d = valueFunctions.getQuick(0).getDouble(null);
+        // Single inexact bound: drop the value just appended and replace it with the tolerance band.
+        // d already holds valueFunctions.getQuick(0).getDouble(null) from the loop above.
+        filterValues.jumpTo(startOffset);
         // The native BETWEEN prunes a group when max < lo or min > hi, so the first double each end
         // would drop is the one just past it (nextDown(lo) / nextUp(hi)). Certify against the
         // inclusive row filter (the widest of the two, so a superset of what the strict one keeps).

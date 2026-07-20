@@ -404,6 +404,50 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonDeterministicSplitKeyEvaluatedOncePerRow() throws SqlException {
+        // A split key - an INT function that computes at long width under getLong() - is normally
+        // read at both widths so an INT-width element wraps against getInt() and a LONG-width one
+        // widens against getLong(). That is correct for a deterministic key, whose two width reads
+        // carry consistent values. But when the key is non-deterministic (e.g. rnd_int() + 0),
+        // getInt() and getLong() draw two different random values for the SAME row, so probing the
+        // two width sets against those two draws produces incoherent results: a row can match on a
+        // draw it never "really" had. The factory must therefore evaluate a non-deterministic split
+        // key exactly once per row - reading it at a single width - instead of once per width.
+        //
+        // The list below mixes widths on purpose (an INT element and a LONG one), which is precisely
+        // what makes a deterministic split key read both widths. The key value 11 misses both
+        // elements, so a split key would fall through to the second width; a correctly single-read
+        // key touches exactly one width. Assert the total number of key reads is 1, across every
+        // list shape that reaches a distinct InLong function.
+        try (CountingIntKey key = new CountingIntKey(11)) {
+            key.nonDeterministic = true;
+
+            // two-constant path -> InLongTwoConstFunction
+            try (Function f = newInFunction(key, new IntConstant(7), new LongConstant(5_000_000_000L))) {
+                Assert.assertFalse(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls + key.longCalls);
+                Assert.assertEquals(0, key.intCalls);
+            }
+
+            // constant-set path (>= 3 elements) -> InLongConstFunction
+            key.reset();
+            try (Function f = newInFunction(key, new IntConstant(7), new IntConstant(8), new LongConstant(5_000_000_000L))) {
+                Assert.assertFalse(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls + key.longCalls);
+                Assert.assertEquals(0, key.intCalls);
+            }
+
+            // variable path (a non-constant element) -> InLongVarFunction
+            key.reset();
+            try (Function f = newInFunction(key, new NonConstIntElement(7), new LongConstant(5_000_000_000L))) {
+                Assert.assertFalse(f.getBool(null));
+                Assert.assertEquals(1, key.intCalls + key.longCalls);
+                Assert.assertEquals(0, key.intCalls);
+            }
+        }
+    }
+
+    @Test
     public void testNonNumericStringConstElementReadsAsNull() throws Exception {
         // Harmonize the all-constant IN path with the runtime path: a non-numeric string element
         // reads as LONG_NULL (via parseLongQuiet) instead of throwing, so "k IN ('abc', 5)" agrees
@@ -619,6 +663,7 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     private static class CountingIntKey extends IntFunction {
         int intCalls;
         long longCalls;
+        boolean nonDeterministic;
         int value;
 
         CountingIntKey(int value) {
@@ -640,6 +685,11 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isIntWidthStable() {
             return false;
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return nonDeterministic;
         }
 
         @Override
