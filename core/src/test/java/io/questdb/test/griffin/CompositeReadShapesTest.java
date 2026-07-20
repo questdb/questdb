@@ -263,18 +263,12 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
     }
 
     /**
-     * WINDOW JOIN is a PRE-EXISTING (not composite-related) hard requirement: every one of its three
-     * implementations -- async/parallel, fast-sync, and even the "light"-looking sync
-     * {@code WindowJoinRecordCursorFactory} (label "Window Join") -- is gated on
-     * {@code slave.supportsTimeFrameCursor()} (SqlCodeGenerator's window-join generator, the
-     * {@code parallelWindowJoinEnabled && ... && slave.supportsTimeFrameCursor()} / {@code else if
-     * (slave.supportsTimeFrameCursor())} / final {@code else} three-way split). There is no
-     * getCursor()-only fallback at all, so a composite slave (whose
-     * {@code supportsTimeFrameCursor()} is false by 6a design) hits the final {@code else} and throws
-     * "right side of window join must be a table, not sub-query" -- a clear, pre-existing,
-     * NON-composite-specific SqlException, not a silent-wrong result and not a new gate Task 6b needed
-     * to add. A composite MASTER has no such restriction (the join only ever calls
-     * {@code master.getCursor()}) and must equal the plain twin.
+     * WINDOW JOIN with a composite SLAVE: gated off by 6a design (composite
+     * {@code supportsTimeFrameCursor()} was false, so the slave hit the "right side of window join must be
+     * a table" throw). Task 3 wires the merged per-day time-frame cursor into the composite factory, so the
+     * slave now takes the SERIAL, non-fast {@code WindowJoinRecordCursorFactory} (which walks the cursor
+     * through its own ordered frame/row space -- range aggregation, tie-break-insensitive) and equals the
+     * plain twin. A composite MASTER was always allowed and is re-confirmed here too.
      */
     @Test
     public void testWindowJoinEqualsPlainTwin() throws Exception {
@@ -286,19 +280,20 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
                     "order by m.ts, m.sym";
             final String oracle = String.format(q, "pm", "ps");
             assertSqlCursors(oracle, String.format(q, "cm", "ps")); // master composite: correct
-
-            assertQuery(String.format(q, "pm", "cs")).noLeakCheck()
-                    .failsWith("right side of window join must be a table, not sub-query");
+            // Composite SLAVE (Task 3): plain and composite master alike equal the plain-slave twin.
+            assertSqlCursors(oracle, String.format(q, "pm", "cs"));
+            assertSqlCursors(oracle, String.format(q, "cm", "cs"));
+            // ...via the SERIAL window join (the keyed "Window Fast Join" is fine over composite -- it
+            // range-aggregates, never pick-one), never the ASYNC one (null concurrent cursor).
             assertQuery(String.format(q, "cm", "cs")).noLeakCheck()
-                    .failsWith("right side of window join must be a table, not sub-query");
+                    .assertsPlanNotContaining("Async");
         });
     }
 
     /**
-     * HORIZON JOIN has the identical PRE-EXISTING hard requirement: {@code generateHorizonJoinFactory}
-     * throws "right-hand side of HORIZON JOIN can only be a table with an optional filter" whenever
-     * {@code !slaveFactory.supportsTimeFrameCursor()}, unconditionally (not just on the parallel path).
-     * Same conclusion as WINDOW JOIN above: composite-as-slave is already loud, not a Task 6b gap.
+     * HORIZON JOIN mirrors WINDOW JOIN above: the composite-slave gate 6a threw on is lifted by Task 3's
+     * merged time-frame cursor, so a composite slave now takes the SERIAL horizon join and equals the plain
+     * twin. Horizon aggregates per offset bucket, so it is tie-break-insensitive just like WINDOW.
      */
     @Test
     public void testHorizonJoinEqualsPlainTwin() throws Exception {
@@ -312,11 +307,11 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
                     "order by h.offset";
             final String oracle = String.format(q, "pm", "ps");
             assertSqlCursors(oracle, String.format(q, "cm", "ps")); // master composite: correct
-
-            assertQuery(String.format(q, "pm", "cs")).noLeakCheck()
-                    .failsWith("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            // Composite SLAVE (Task 3): plain and composite master alike equal the plain-slave twin.
+            assertSqlCursors(oracle, String.format(q, "pm", "cs"));
+            assertSqlCursors(oracle, String.format(q, "cm", "cs"));
             assertQuery(String.format(q, "cm", "cs")).noLeakCheck()
-                    .failsWith("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                    .assertsPlanNotContaining("Async");
         });
     }
 

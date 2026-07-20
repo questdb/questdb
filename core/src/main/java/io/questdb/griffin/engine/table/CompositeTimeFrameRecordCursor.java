@@ -122,6 +122,11 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     // (mirrors CompositeMergePartitionRecordCursor's probeRecord / recordA split).
     private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    // Caller-facing random-access record B (getRecordB()), independent of recordA -- used by the ASOF / LT
+    // fast join when a composite table is the slave (probing recordA vs. the matched output recordB). Shares
+    // RECORD_B_LETTER with probeRecord, which is harmless: the composite is NATIVE-only, so the pool's
+    // per-letter usage mask (parquet buffer pinning) is inert, and each record tracks its own frame index.
+    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private final int timestampIndex;
     private int cellCount;
@@ -186,6 +191,7 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         Misc.free(dayFrameIndexes);
         Misc.free(probeRecord);
         Misc.free(recordA);
+        Misc.free(recordB);
     }
 
     /**
@@ -257,6 +263,15 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         return recordA;
     }
 
+    /**
+     * @return the second random-access record (positioned independently of {@link #getRecord()} via
+     * {@link #recordAt}); required by the ASOF / LT fast join when a composite table is the slave.
+     */
+    @Override
+    public Record getRecordB() {
+        return recordB;
+    }
+
     @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return frameCursor.getSymbolTable(columnIndex);
@@ -308,6 +323,7 @@ public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
         frameMemoryPool.of(frameAddressCache);
         probeRecord.of(frameCursor);
         recordA.of(frameCursor);
+        recordB.of(frameCursor);
         this.circuitBreaker = executionContext.getCircuitBreaker();
         isPermutationBuilt = false;
         timeFrame.clear();

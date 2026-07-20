@@ -246,6 +246,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        // Delegate so a composite (no concurrent twin) stays off the async join path through a projection.
+        return base.supportsConcurrentTimeFrameCursor();
+    }
+
+    @Override
     public boolean supportsTimeFrameCursor() {
         return base.supportsTimeFrameCursor();
     }

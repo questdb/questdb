@@ -434,6 +434,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if this factory's time-frame cursor is a full <em>physical</em> cursor whose frames and
+     * rowIds correspond to the table's real partitions and native rows &mdash; the contract the "advanced"
+     * time-frame join paths rely on: the async/parallel WINDOW/HORIZON joins (per-worker cursors via
+     * {@link #newTimeFrameCursor()}) AND the fast ASOF/LT/window joins (which address the slave by native
+     * rowIds / symbol-index positions and {@link TimeFrameCursor#jumpTo} by physical frame index).
+     * <p>
+     * Defaults to {@link #supportsTimeFrameCursor()} so ordinary (physical) time-frame factories keep their
+     * existing fast/parallel behavior unchanged. A factory whose {@link #getTimeFrameCursor} returns a
+     * <em>merged / synthetic</em> cursor &mdash; e.g. the composite cross-cell merge scan, whose frames are
+     * per-day merges and whose rowIds are merge ordinals, not physical cells, and whose
+     * {@link #newTimeFrameCursor()} is null &mdash; must override this to false. The code generator then
+     * routes it to the SERIAL, non-fast WINDOW/HORIZON join (which walks the cursor purely through its own
+     * ordered frame/row space) and to the LIGHT ASOF/LT join, never the async or fast factories, which would
+     * NPE on the null concurrent cursor or mis-address the synthetic frames.
+     *
+     * @return true if a physical (fast/async-capable) time-frame cursor is available
+     */
+    default boolean supportsConcurrentTimeFrameCursor() {
+        return supportsTimeFrameCursor();
+    }
+
+    /**
      * Returns true if the factory supports UPDATE row ID for the given table.
      *
      * @param tableName the table token

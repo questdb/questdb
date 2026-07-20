@@ -4461,6 +4461,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && masterFactory.supportsFilterStealing()
                 && masterFactory.getBaseFactory().supportsPageFrameCursor();
         supportsParallelism |= canStealFilter;
+        // A composite slave supports a serial (getTimeFrameCursor) but NOT a concurrent (newTimeFrameCursor)
+        // time-frame cursor, so force the serial HorizonJoinRecordCursorFactory path: the async atom would
+        // NPE on the null per-worker cursor. Harmless for a slave with no time-frame cursor at all -- that
+        // still throws the slave-must-be-a-table error below.
+        supportsParallelism &= slaveFactory.supportsConcurrentTimeFrameCursor();
 
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
@@ -5036,7 +5041,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
-                    if (slave.supportsTimeFrameCursor()) {
+                    // supportsConcurrentTimeFrameCursor(): the fast ASOF factories address the slave by
+                    // native rowIds / frame indices (from its symbol index and time frames). A merged
+                    // composite cursor's frames/rowIds are synthetic (per-day merge, not physical cells),
+                    // so it answers false and falls through to the light join below (matching 6a's
+                    // deliberate "composite ASOF uses the light join" design). No-op for a plain slave.
+                    if (slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                         boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
@@ -5262,7 +5272,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // reaching this point means the join is non-keyed
             if (!hasLinearHint) {
-                if (slave.supportsTimeFrameCursor()) {
+                // supportsConcurrentTimeFrameCursor(): exclude a merged composite cursor from the fast
+                // (native-rowId) no-key ASOF path -> light join. No-op for a plain slave.
+                if (slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                     return new AsOfJoinNoKeyFastRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -5410,7 +5422,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
-            if (!hasLinearHint && slave.supportsTimeFrameCursor()) {
+            // supportsConcurrentTimeFrameCursor(): exclude a merged composite cursor from the fast
+            // (native-rowId) no-key LT path -> light join. No-op for a plain slave.
+            if (!hasLinearHint && slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                 return new LtJoinNoKeyFastRecordCursorFactory(
                         configuration,
                         joinMetadata,
@@ -5952,7 +5966,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
-                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slave.supportsTimeFrameCursor()) {
+                                // supportsConcurrentTimeFrameCursor(): a composite slave supports a serial
+                                // (getTimeFrameCursor) but NOT a concurrent (newTimeFrameCursor) cursor, so it must
+                                // fall through to the serial WindowJoinRecordCursorFactory below rather than the
+                                // async factory, whose atom would NPE on the null per-worker cursor.
+                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -6903,10 +6921,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
-                if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
+                final RecordCursorFactory slaveFactory = slaveFactories.getQuick(s);
+                if (!slaveFactory.supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
                             .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
+                // If ANY slave lacks a concurrent (per-worker) time-frame cursor -- e.g. a composite
+                // cross-cell merge scan, whose newTimeFrameCursor() is null -- force the serial
+                // MultiHorizonJoinRecordCursorFactory path so the async atom never dereferences a null cursor.
+                supportsParallelism &= slaveFactory.supportsConcurrentTimeFrameCursor();
             }
 
             // Build combined metadata: [master cols] [offset, timestamp] [slave0 cols] [slave1 cols] ...

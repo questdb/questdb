@@ -58,16 +58,17 @@ import org.junit.Test;
  * ts}, since ts is not a total order, but OBSERVABLE to ASOF/LT join semantics per the 6a review) never
  * arises here -- every comparison against the plain twin is unambiguous.
  * <p>
- * <b>Task 6b's loud gates, UPDATED by Task 5b</b>: an indexed WHERE predicate against a composite table
- * on an ORDINARY (non-dimension) indexed symbol column (6b's own {@code CompositeReadShapesTest} tests)
- * and WINDOW/HORIZON JOIN with a composite table on the SLAVE side (a pre-existing, non-composite-specific
- * hard requirement -- see {@link #testWindowJoinCompositeSlaveThrowsClearError}/{@link
- * #testHorizonJoinCompositeSlaveThrowsClearError}) both still throw a CLEAR, documented exception --
- * never silently wrong, never silently dropped -- so this capstone documents the current boundary rather
- * than papering over it. An indexed WHERE predicate on the DIMENSION column ITSELF, previously gated the
- * same way, is Task 5b's whole point: it now resolves to CELL PRUNING and succeeds instead -- see {@link
- * #testIndexedDimensionWherePrunesAndMatchesPlainTwin}, updated alongside 5b (it used to assert the
- * throw for exactly this shape). The dimension-equality filter used throughout the rest of this class
+ * <b>Task 6b's loud gate, UPDATED by Tasks 5b and 3</b>: an indexed WHERE predicate against a composite
+ * table on an ORDINARY (non-dimension) indexed symbol column (6b's own {@code CompositeReadShapesTest}
+ * tests) still throws a CLEAR, documented exception -- never silently wrong, never silently dropped -- so
+ * this capstone documents the current boundary rather than papering over it. WINDOW/HORIZON JOIN with a
+ * composite table on the SLAVE side, previously gated the same way, is Task 3's whole point: it now
+ * resolves to a SERIAL merged-time-frame join and succeeds instead, matching the plain twin -- see {@link
+ * #testWindowJoinCompositeSlaveMatchesPlainTwin}/{@link #testHorizonJoinCompositeSlaveMatchesPlainTwin}
+ * (they used to assert the throw for exactly these shapes). An indexed WHERE predicate on the DIMENSION
+ * column ITSELF, previously gated the same way, is Task 5b's whole point: it now resolves to CELL PRUNING
+ * and succeeds instead -- see {@link #testIndexedDimensionWherePrunesAndMatchesPlainTwin}, updated
+ * alongside 5b (it used to assert the throw for exactly this shape). The dimension-equality filter used throughout the rest of this class
  * ({@code where exch = 'X'} / {@code where upper(region) = 'US'}) deliberately does NOT hit the
  * indexed-WHERE mechanism at all (the dimension source column there is a plain, non-indexed
  * {@code symbol}) -- unaffected by 5b either way, it was always a residual filter over the merged scan.
@@ -341,34 +342,32 @@ public class CompositeReadEndToEndTest extends AbstractCairoTest {
     }
 
     /**
-     * WINDOW JOIN with a composite table on the SLAVE side is a PRE-EXISTING, non-composite-specific
-     * hard requirement (every implementation is gated on {@code slave.supportsTimeFrameCursor()}, which
-     * a composite factory's {@code CompositePageFrameRecordCursorFactory} always answers false by 6a
-     * design) -- not a new Task 6c gate, but re-confirmed here as this capstone's own self-contained
-     * proof of the boundary. A composite MASTER has no such restriction and must equal the plain twin.
+     * WINDOW JOIN with a composite table on the SLAVE side was gated off by 6a design (a composite
+     * factory answered {@code supportsTimeFrameCursor()} false and the slave gate threw). Task 3 wires
+     * the merged per-day time-frame cursor into that factory, so the composite slave now takes the SERIAL
+     * window-join path and must equal the plain twin -- for both a plain and a composite master. (A
+     * composite MASTER was always allowed and is re-confirmed here too.)
      */
     @Test
-    public void testWindowJoinCompositeSlaveThrowsClearError() throws Exception {
+    public void testWindowJoinCompositeSlaveMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createIdentityLifecycleTwins();
             createSlaveTwinsForJoinGates();
             final String q = "select m.ts, m.sym, sum(s.price) wp from %s m window join %s s on (m.sym = s.sym) " +
                     "range between 1 hour preceding and 1 hour following order by m.ts, m.sym";
             assertSqlCursors(String.format(q, "p", "ps2"), String.format(q, "c", "ps2")); // composite master: correct
-
-            assertQuery(String.format(q, "p", "cs2")).noLeakCheck()
-                    .failsWith("right side of window join must be a table, not sub-query");
-            assertQuery(String.format(q, "c", "cs2")).noLeakCheck()
-                    .failsWith("right side of window join must be a table, not sub-query");
+            // Composite SLAVE (Task 3): plain and composite master alike equal the plain-slave twin.
+            assertSqlCursors(String.format(q, "p", "ps2"), String.format(q, "p", "cs2"));
+            assertSqlCursors(String.format(q, "p", "ps2"), String.format(q, "c", "cs2"));
         });
     }
 
     /**
-     * HORIZON JOIN has the identical pre-existing hard requirement as WINDOW JOIN above -- re-confirmed
-     * here for this capstone's own self-contained proof of the boundary.
+     * HORIZON JOIN mirrors WINDOW JOIN above: the composite-slave gate that 6a threw on is lifted by
+     * Task 3's merged time-frame cursor, so a composite slave now matches the plain twin.
      */
     @Test
-    public void testHorizonJoinCompositeSlaveThrowsClearError() throws Exception {
+    public void testHorizonJoinCompositeSlaveMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             createIdentityLifecycleTwins();
             createSlaveTwinsForJoinGates();
@@ -377,11 +376,9 @@ public class CompositeReadEndToEndTest extends AbstractCairoTest {
                     "range from -10m to 10m step 5m as h " +
                     "order by h.offset";
             assertSqlCursors(String.format(q, "p", "ps2"), String.format(q, "c", "ps2")); // composite master: correct
-
-            assertQuery(String.format(q, "p", "cs2")).noLeakCheck()
-                    .failsWith("right-hand side of HORIZON JOIN can only be a table with an optional filter");
-            assertQuery(String.format(q, "c", "cs2")).noLeakCheck()
-                    .failsWith("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            // Composite SLAVE (Task 3): plain and composite master alike equal the plain-slave twin.
+            assertSqlCursors(String.format(q, "p", "ps2"), String.format(q, "p", "cs2"));
+            assertSqlCursors(String.format(q, "p", "ps2"), String.format(q, "c", "cs2"));
         });
     }
 
