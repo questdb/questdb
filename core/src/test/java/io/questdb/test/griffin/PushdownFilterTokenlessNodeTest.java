@@ -1,24 +1,25 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-// Red regression test for claim C1: a retained filter containing a tokenless
-// (subquery) node must not NPE in PushdownFilterExtractor when the table has
-// parquet-format partitions; instead the query must fail with the same clean
-// type-mismatch error the native path produces.
+// Regression test for claim C1: a retained filter containing a tokenless
+// (sub-query) node must not NPE in PushdownFilterExtractor when the table has
+// parquet-format partitions. Extraction skips the tokenless node (best-effort;
+// fewer extracted conditions is always safe) and the filter evaluates normally.
 public class PushdownFilterTokenlessNodeTest extends AbstractCairoTest {
+
+    private static final String BOTH_ROWS = "v\tts\n1\t2018-01-01T00:00:00.000000Z\n2\t2018-01-02T00:00:00.000000Z\n";
 
     @Test
     public void testTokenlessOrOperandOnParquetPartitionNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // pre-existing on master too (never reaches interval extraction)
-            assertExceptionNoLeakCheck(
-                    "select * from p where v = 1 or (select b from x limit 1)",
-                    32,
-                    "expression type mismatch, expected: BOOLEAN, actual: CURSOR"
-            );
+            printSql("select * from p where v = 1 or (select b from x limit 1)");
+            TestUtils.assertEquals(BOTH_ROWS, sink);
+            printSql("select * from p where v = 1 or (select b from x_false limit 1)");
+            TestUtils.assertEquals("v\tts\n1\t2018-01-01T00:00:00.000000Z\n", sink);
         });
     }
 
@@ -26,12 +27,11 @@ public class PushdownFilterTokenlessNodeTest extends AbstractCairoTest {
     public void testTokenlessOrOperandOnParquetPartitionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // the exact retained-filter shape produced by the PR's WhereClauseParser fix
-            assertExceptionNoLeakCheck(
-                    "select * from p where ts = '2018-01-01' or (select b from x limit 1)",
-                    44,
-                    "expression type mismatch, expected: BOOLEAN, actual: CURSOR"
-            );
+            // the retained-filter shape produced by the WhereClauseParser tokenless-node fix
+            printSql("select * from p where ts = '2018-01-01' or (select b from x limit 1)");
+            TestUtils.assertEquals(BOTH_ROWS, sink);
+            printSql("select * from p where ts = '2018-01-01' or (select b from x_false limit 1)");
+            TestUtils.assertEquals("v\tts\n1\t2018-01-01T00:00:00.000000Z\n", sink);
         });
     }
 
@@ -40,6 +40,8 @@ public class PushdownFilterTokenlessNodeTest extends AbstractCairoTest {
         execute("INSERT INTO p VALUES (1, '2018-01-01T00:00:00.000000Z'), (2, '2018-01-02T00:00:00.000000Z')");
         execute("CREATE TABLE x (b BOOLEAN)");
         execute("INSERT INTO x VALUES (true)");
+        execute("CREATE TABLE x_false (b BOOLEAN)");
+        execute("INSERT INTO x_false VALUES (false)");
         execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '2018-01-01'");
     }
 }
