@@ -115,6 +115,22 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnWhereOrSubQueryPredicateWithWithinOptimisation() throws Exception {
+        setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("""
+                    SELECT * FROM t
+                    WHERE v = 5 OR (SELECT b FROM x_true LIMIT 1)
+                    LATEST ON ts PARTITION BY sym
+                    """)
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(THE_ROW);
+        });
+    }
+
+    @Test
     public void testLatestOnWhereSubQueryPredicate() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
