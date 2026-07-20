@@ -267,7 +267,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         if (reducer == AGGREGATE_VECT_PREVAILING) return "AGGREGATE_VECT_PREVAILING";
         if (reducer == FILTER_AND_AGGREGATE) return "FILTER_AND_AGGREGATE";
         if (reducer == FILTER_AND_AGGREGATE_PREVAILING) return "FILTER_AND_AGGREGATE_PREVAILING";
-        if (reducer == FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED) return "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED";
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED)
+            return "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED";
         if (reducer == FILTER_AND_AGGREGATE_VECT) return "FILTER_AND_AGGREGATE_VECT";
         if (reducer == FILTER_AND_AGGREGATE_VECT_PREVAILING) return "FILTER_AND_AGGREGATE_VECT_PREVAILING";
         throw new AssertionError("reducer is not one of " + getClass().getSimpleName() + "'s constants");
