@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.std.ObjHashSet;
 import io.questdb.test.AbstractCairoTest;
@@ -35,14 +36,17 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Isolates the ENTRY-TIME closing abort in {@link CairoEngine#hydrateMatViewStateStore}:
- * a close that already won the flag-publication race must see the loader abort BEFORE its
- * first engine-state read (the {@code getTableTokens} registry walk). The per-token poll
- * inside the loop witnesses the same abort one iteration later, so this test pins the
- * ordering specifically -- a revert of only the entry check stays green under the existing
- * poll witnesses but fails here on the recorded registry walk.
+ * Isolates the two closing aborts in {@link CairoEngine#hydrateMatViewStateStore}, each
+ * against a revert the other would mask. Entry-time: a close that already won the
+ * flag-publication race must see the loader abort BEFORE its first engine-state read (the
+ * {@code getTableTokens} registry walk) -- a revert of only the entry check stays green
+ * under the per-token poll but fails on the recorded registry walk. Per-token: a close
+ * landing MID-walk must abort the remaining iterations -- every entry-check witness
+ * publishes closing before the walk starts, so a revert of only the poll stays green
+ * everywhere except here, where closing flips after the first view has already loaded.
  */
 public class MatViewHydrateClosingAbortTest extends AbstractCairoTest {
 
@@ -76,6 +80,59 @@ public class MatViewHydrateClosingAbortTest extends AbstractCairoTest {
                 Assert.assertFalse(
                         "the entry-time abort must fire BEFORE the first registry read",
                         registryWalked.get());
+                closing.set(false);
+            }
+        });
+    }
+
+    @Test
+    public void perTokenPollAbortsWalkWhenCloseLandsMidHydrate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym string, price double, ts timestamp) " +
+                    "timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) price, ts from base_price sample by 1h) partition by DAY");
+            execute("create materialized view price_1d as (" +
+                    "select sym, last(price) price, ts from base_price sample by 1d) partition by DAY");
+            drainWalQueue();
+
+            final AtomicBoolean closing = new AtomicBoolean();
+            final AtomicBoolean registryWalked = new AtomicBoolean();
+            final AtomicInteger created = new AtomicInteger();
+            // Counting target: the first view load flips closing, so the abort can only come
+            // from the per-token poll -- the entry check has already passed by then. With two
+            // views on disk, whatever the token order, at least one iteration follows the
+            // first createViewState, so the poll always gets its chance to fire.
+            final NoOpMatViewStateStore countingTarget = new NoOpMatViewStateStore() {
+                @Override
+                public void createViewState(MatViewDefinition viewDefinition) {
+                    created.incrementAndGet();
+                    closing.set(true);
+                }
+            };
+            try (CairoEngine closingEngine = new CairoEngine(configuration) {
+                @Override
+                public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
+                    registryWalked.set(true);
+                    super.getTableTokens(bucket, includeDropped);
+                }
+
+                @Override
+                public boolean isClosing() {
+                    // Armed only by the counting target above: boot-time hydration inside the
+                    // constructor runs against the real flag.
+                    return closing.get() || super.isClosing();
+                }
+            }) {
+                registryWalked.set(false);
+                try {
+                    closingEngine.hydrateMatViewStateStore(countingTarget);
+                    Assert.fail("hydrate must abort when the engine starts closing mid-walk");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "engine is closing; mat-view hydration aborted");
+                }
+                Assert.assertTrue("the walk must have started -- the entry check passed", registryWalked.get());
+                Assert.assertEquals("the poll must abort the walk before the second view loads", 1, created.get());
                 closing.set(false);
             }
         });
