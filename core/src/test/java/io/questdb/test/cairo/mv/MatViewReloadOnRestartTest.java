@@ -31,6 +31,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.client.Sender;
@@ -205,6 +206,57 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         capture.stop();
         super.tearDown();
         LogFactory.disableGuaranteedLogging(LineHttpProcessorState.class);
+    }
+
+    @Test
+    public void testBootInvalidatesChainedMatViewOnParentInvalidation() throws Exception {
+        // Boot-path (buildViewGraphs) sibling of the truncate boot test: a chained mat-view B whose base
+        // mat-view A is durably invalid (type-4 in A's WAL) but whose cascade INVALIDATE was lost (here:
+        // severed by holding B's lock) must reload INVALID after a restart -- proving the fix self-heals across
+        // a restart, not only on a promote.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
+                execute(main1, "create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+                execute(main1, "create materialized view mv_a as (select ts, count() cnt from base sample by 1h) partition by DAY");
+                execute(main1, "create materialized view mv_b as (select ts, sum(cnt) cnt from mv_a sample by 1d) partition by DAY");
+                execute(main1, "insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+
+                final CairoEngine engine = main1.getEngine();
+                final TableToken viewA = engine.verifyTableName("mv_a");
+                final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+                final MatViewState stateB = store.getViewState(engine.verifyTableName("mv_b"));
+
+                // Durably invalidate A while keeping B valid on disk: hold B's lock so its cascade defers.
+                Assert.assertTrue(stateB.tryLock());
+                try {
+                    store.enqueueInvalidate(viewA, "forced for test");
+                    try (var refreshJob = createMatViewRefreshJob(engine)) {
+                        drainWalAndMatViewQueues(refreshJob, engine);
+                    }
+                } finally {
+                    stateB.markAsValid();
+                    stateB.unlock();
+                }
+                Assert.assertTrue("precondition: parent durably invalid", store.getViewState(viewA).isInvalid());
+                Assert.assertFalse("precondition: child still valid on disk", stateB.isInvalid());
+            }
+
+            // Restart: main2's boot runs buildViewGraphs, detects A's type-4 in B's base WAL gap (and/or
+            // re-cascades from invalid A), and invalidates B with reason "base materialized view is invalidated".
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
+                try (var refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                }
+                assertSql(
+                        main2,
+                        "view_status\tinvalidation_reason\ninvalid\tbase materialized view is invalidated\n",
+                        "select view_status, invalidation_reason from materialized_views where view_name = 'mv_b'"
+                );
+            }
+        });
     }
 
     @Test

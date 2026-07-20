@@ -46,6 +46,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
     private final WalEventReader walEventReader;
+    private boolean hasMatViewInvalidate;
     private boolean hasTruncate;
     private long maxTimestamp;
     private long minTimestamp;
@@ -66,6 +67,14 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    // True when the last load() scan saw a base materialized view's own MAT_VIEW_INVALIDATE (with
+    // invalid=true) in the scanned (txnLo, txnHi] range. Like a truncate it carries no data interval but
+    // is an invalidating barrier: a child mat-view must not resume an incremental refresh past its base
+    // view's invalidation. A reset-to-valid (invalid=false) shares the txn type and does not set this flag.
+    public boolean hasMatViewInvalidate() {
+        return hasMatViewInvalidate;
     }
 
     // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range.
@@ -105,6 +114,7 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
+        hasMatViewInvalidate = false;
         hasTruncate = false;
 
         try (WalEventReader eventReader = walEventReader) {
@@ -156,6 +166,14 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             // invalidating non-data txn in the gap as a barrier is a tracked follow-up.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
+                            } else if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE
+                                    && walEventCursor.getMatViewInvalidationInfo().isInvalid()) {
+                                // A base materialized view recorded its own invalidation in this gap. Like a
+                                // truncate it carries no data interval, but a child resuming an incremental
+                                // refresh past it would keep stale rows derived from the now-invalid parent.
+                                // Flag it so the load-time backstop invalidates the child. A reset-to-valid
+                                // (invalid=false) shares this txn type and must NOT trip the flag.
+                                hasMatViewInvalidate = true;
                             }
                             continue;
                         }
