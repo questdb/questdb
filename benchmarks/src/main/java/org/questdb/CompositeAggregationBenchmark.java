@@ -68,10 +68,22 @@ import java.util.concurrent.TimeUnit;
  * {@code partition by day, exch}) against a byte-for-byte identical PLAIN twin ({@code partition by
  * day} only), across SUM / multi-aggregate / COUNT / keyed GROUP BY.
  * <p>
- * Composite reads currently bypass the vectorized/parallel aggregation path that plain tables use,
- * so every {@code *_composite} method here is expected to be visibly slower than its {@code *_plain}
- * counterpart -- that gap is exactly what the follow-up frame-vectorization work is meant to close.
- * This benchmark exists to quantify the gap, not to assert a threshold on it.
+ * Two query SHAPES are measured, because a composite table reaches its cross-cell merge factory
+ * ({@code CompositePageFrameRecordCursorFactory}) ONLY when the query carries a timestamp predicate:
+ * <ul>
+ *   <li>BARE full-scan ({@code sum_composite}, {@code multiAgg_composite}, {@code count_composite},
+ *   {@code groupByKeyed_composite}): no WHERE, so the designated timestamp is never referenced and the
+ *   read BYPASSES the merge factory to the plain per-cell factories (nothing to merge on). Its
+ *   composite-vs-plain gap is a structural frame-count effect -- {@link #NUM_EXCH} cells/day hand the
+ *   same vectorized machinery many more, smaller page frames than the plain twin's contiguous source --
+ *   NOT the serial-merge cost, and frame-vectorization does not touch it.</li>
+ *   <li>WINDOWED ({@code sumWindowed_composite}/{@code _plain}, {@code groupByKeyedWindowed_composite}/
+ *   {@code _plain}): a ts-bounded WHERE (see {@link #WINDOW_PRED}) routes a composite table THROUGH the
+ *   merge factory. This is the shape frame-vectorization optimizes: before that work the merged path
+ *   aggregated serially; after it, vectorized/parallel (a measured ~20x on this shape). The
+ *   composite-vs-plain gap here is the real serial-vs-vectorized signal the perf work closes.</li>
+ * </ul>
+ * This benchmark quantifies both gaps; it does not assert a threshold on either.
  * <p>
  * Twin tables {@code ci} (composite) and {@code pi} (plain) are built ONCE in {@link #main}, seeded
  * with identical rows via a single {@code insert ... select ... from long_sequence(N)} per table, then
@@ -117,6 +129,13 @@ public class CompositeAggregationBenchmark {
     private static final int WORKERS = Integer.getInteger("composite.bench.workers", 8);
     private static final long ROWS = Long.getLong("composite.bench.rows", 5_000_000L);
     private static final String ROOT = System.getProperty("java.io.tmpdir") + java.io.File.separator + "composite-agg-bench";
+    // A ts-bounded predicate covering an inner sub-window of the seeded range (days 2..19 of the 20
+    // seeded from 2024-01-01). Its mere presence puts the designated timestamp into the scan's interval
+    // model, which routes a COMPOSITE table through the cross-cell merge factory -- the path
+    // frame-vectorization optimizes. The bare *_composite methods, lacking any ts predicate, instead
+    // bypass that factory (see the class javadoc), so only the *Windowed_* pairs exercise the fix.
+    private static final String WINDOW_PRED =
+            " where ts >= '2024-01-02T00:00:00.000000Z' and ts < '2024-01-20T00:00:00.000000Z'";
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(ROOT) {
         @Override
         public int getSqlPageFrameMaxRows() {
@@ -148,6 +167,12 @@ public class CompositeAggregationBenchmark {
     private RecordCursorFactory countPlainFactory;
     private RecordCursorFactory groupByKeyedCompositeFactory;
     private RecordCursorFactory groupByKeyedPlainFactory;
+    // Windowed (ts-bounded) variants: these route the composite table through the merge factory that
+    // frame-vectorization optimizes, so their composite-vs-plain ratio is the serial-vs-vectorized win.
+    private RecordCursorFactory sumWindowedCompositeFactory;
+    private RecordCursorFactory sumWindowedPlainFactory;
+    private RecordCursorFactory groupByKeyedWindowedCompositeFactory;
+    private RecordCursorFactory groupByKeyedWindowedPlainFactory;
 
     public static void main(String[] args) throws Exception {
         // The engine requires its root directory to exist before it opens.
@@ -244,6 +269,26 @@ public class CompositeAggregationBenchmark {
         drain(groupByKeyedPlainFactory, bh);
     }
 
+    @Benchmark
+    public void sumWindowed_composite(Blackhole bh) throws SqlException {
+        drain(sumWindowedCompositeFactory, bh);
+    }
+
+    @Benchmark
+    public void sumWindowed_plain(Blackhole bh) throws SqlException {
+        drain(sumWindowedPlainFactory, bh);
+    }
+
+    @Benchmark
+    public void groupByKeyedWindowed_composite(Blackhole bh) throws SqlException {
+        drain(groupByKeyedWindowedCompositeFactory, bh);
+    }
+
+    @Benchmark
+    public void groupByKeyedWindowed_plain(Blackhole bh) throws SqlException {
+        drain(groupByKeyedWindowedPlainFactory, bh);
+    }
+
     @Setup(Level.Trial)
     public void setUp() throws Exception {
         ensureEngine();
@@ -259,6 +304,15 @@ public class CompositeAggregationBenchmark {
                 "select sym, sum(px) from ci group by sym", ctx).getRecordCursorFactory();
         groupByKeyedPlainFactory = compiler.compile(
                 "select sym, sum(px) from pi group by sym", ctx).getRecordCursorFactory();
+        // Windowed (ts-bounded) variants -- these reach the composite merge factory.
+        sumWindowedCompositeFactory = compiler.compile(
+                "select sum(px) from ci" + WINDOW_PRED, ctx).getRecordCursorFactory();
+        sumWindowedPlainFactory = compiler.compile(
+                "select sum(px) from pi" + WINDOW_PRED, ctx).getRecordCursorFactory();
+        groupByKeyedWindowedCompositeFactory = compiler.compile(
+                "select sym, sum(px) from ci" + WINDOW_PRED + " group by sym", ctx).getRecordCursorFactory();
+        groupByKeyedWindowedPlainFactory = compiler.compile(
+                "select sym, sum(px) from pi" + WINDOW_PRED + " group by sym", ctx).getRecordCursorFactory();
     }
 
     @TearDown(Level.Trial)
@@ -273,6 +327,10 @@ public class CompositeAggregationBenchmark {
         countPlainFactory = Misc.free(countPlainFactory);
         groupByKeyedCompositeFactory = Misc.free(groupByKeyedCompositeFactory);
         groupByKeyedPlainFactory = Misc.free(groupByKeyedPlainFactory);
+        sumWindowedCompositeFactory = Misc.free(sumWindowedCompositeFactory);
+        sumWindowedPlainFactory = Misc.free(sumWindowedPlainFactory);
+        groupByKeyedWindowedCompositeFactory = Misc.free(groupByKeyedWindowedCompositeFactory);
+        groupByKeyedWindowedPlainFactory = Misc.free(groupByKeyedWindowedPlainFactory);
     }
 
     private static void drain(RecordCursorFactory factory, Blackhole bh) throws SqlException {
