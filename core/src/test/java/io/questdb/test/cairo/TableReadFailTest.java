@@ -144,13 +144,17 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.jumpTo(offset);
                 mem.close();
 
-                // this should time out
+                // The corruption leaves a STABLE version pointing at a torn primary area (record txn no longer
+                // matches) and an uninitialised fallback area -- permanent corruption, not a concurrent
+                // mid-commit whose version would keep churning. The branch's _txn A/B body-checksum guard
+                // fail-fasts on that (correct fail-loud) rather than spinning to a spin-lock timeout. (The
+                // retry/timeout path still applies when the version actually changes under the reader.)
                 try {
                     spinLockTimeout = 100;
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "timeout");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "checksum mismatch");
                 }
 
                 // restore txn file to its former glory
@@ -158,6 +162,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 2);
+                mem.putLong(recOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
                 mem.jumpTo(offset);
                 mem.close();
                 mem.close();
