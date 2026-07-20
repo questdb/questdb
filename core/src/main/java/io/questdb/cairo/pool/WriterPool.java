@@ -116,7 +116,8 @@ public class WriterPool extends AbstractPool {
             if (owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("table is still busy [table=").$(e.writer.getTableToken())
+                final TableWriter w = e.writer;
+                LOG.info().$("table is still busy [table=").$(w != null ? w.getTableToken() : null)
                         .$(", owner=").$(owner)
                         .I$();
             }
@@ -428,7 +429,7 @@ public class WriterPool extends AbstractPool {
             checkClosed();
             LOG.info().$("open [table=").$(tableToken)
                     .$(", thread=").$(thread).I$();
-            e.writer = new TableWriter(
+            final TableWriter w = new TableWriter(
                     configuration,
                     tableToken,
                     engine.getMessageBus(),
@@ -440,6 +441,7 @@ public class WriterPool extends AbstractPool {
                     engine
             );
             e.ownershipReason = lockReason;
+            Unsafe.putObjectVolatile(e, ENTRY_WRITER, w);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             final LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
@@ -785,7 +787,8 @@ public class WriterPool extends AbstractPool {
         }
 
         public TableToken getTableToken() {
-            return writer != null ? writer.getTableToken() : null;
+            final TableWriter w = writer;
+            return w != null ? w.getTableToken() : null;
         }
 
         public TableWriter goodbye() {
