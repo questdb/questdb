@@ -81,6 +81,8 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 h.assertPredecessor(51);  // -> (50, 502)
                 h.assertPredecessor(90);  // -> (50, 502)
                 h.assertPredecessor(91);  // -> (90, 900)
+                h.assertSuccessor(50);    // -> (50, 500), first checkpoint in tie
+                h.assertSuccessor(51);    // -> (90, 900)
 
                 // A range that starts exactly on the tie must include all three.
                 h.assertRange(50, 51);
@@ -97,6 +99,7 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             try (Harness h = new Harness(4, 4)) {
                 Assert.assertEquals(0, h.reader.size(h.root));
                 Assert.assertFalse(h.reader.predecessor(h.root, 100, h.out));
+                Assert.assertFalse(h.reader.successor(h.root, 100, h.out));
                 h.assertRange(0, 1_000);
                 h.assertIterateAll();
                 Assert.assertFalse(h.reader.findExact(h.root, 5, 5, h.out));
@@ -124,6 +127,8 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 for (int i = 0; i <= n; i++) {
                     h.assertPredecessor(i * 10L);      // exactly a key boundary
                     h.assertPredecessor(i * 10L - 5);  // strictly between keys / below min
+                    h.assertSuccessor(i * 10L);
+                    h.assertSuccessor(i * 10L - 5);
                 }
                 // Point lookup hits every stored key and misses the gaps.
                 for (int i = 0; i < n; i++) {
@@ -174,6 +179,7 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 for (int q = 0; q < 300; q++) {
                     final long c = rnd.nextLong(160) - 40;
                     h.assertPredecessor(c);
+                    h.assertSuccessor(c);
                     final long lo = rnd.nextLong(160) - 40;
                     final long hi = lo + rnd.nextLong(60);
                     h.assertRange(lo, hi);
@@ -195,6 +201,9 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 Assert.assertEquals(1, h.reader.size(h.root));
                 Assert.assertFalse(h.reader.predecessor(h.root, 42, h.out)); // strict: nothing below 42
                 h.assertPredecessor(43);
+                h.assertSuccessor(42);
+                h.assertSuccessor(41);
+                h.assertSuccessor(43);
                 h.assertFindExact(42, 7);
                 h.assertFindExactMissing(42, 8);
                 h.assertRange(42, 43);
@@ -366,6 +375,17 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             }
         }
 
+        void assertSuccessor(long timestamp) {
+            final long[] expected = oracleSuccessor(timestamp);
+            final boolean found = reader.successor(root, timestamp, out);
+            if (expected == null) {
+                Assert.assertFalse("expected no successor for timestamp=" + timestamp, found);
+                return;
+            }
+            Assert.assertTrue("expected a successor for timestamp=" + timestamp, found);
+            assertEntry(expected, out);
+        }
+
         @Override
         public void close() {
             writer.close();
@@ -459,6 +479,16 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 }
             }
             return best;
+        }
+
+        private long[] oracleSuccessor(long timestamp) {
+            for (int i = 0; i < oracle.size(); i++) {
+                final long[] e = oracle.get(i);
+                if (e[0] >= timestamp) {
+                    return e;
+                }
+            }
+            return null;
         }
 
         private long[] snapshot(LiveViewCheckpointTimelineEntry e) {

@@ -155,6 +155,34 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEveryNewestSlotByteCorruptionFallsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0 fallback
+            publish(2); // slot 1 newest
+            for (int byteOffset = 0; byteOffset < LiveViewCheckpointSuperblock.SLOT_SIZE; byteOffset++) {
+                final long offset = LiveViewCheckpointSuperblock.SLOT_SIZE + byteOffset;
+                final byte original;
+                try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                    original = mem.getByte(offset);
+                    mem.putByte(offset, (byte) (original ^ 1));
+                }
+                try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                    try (Path dir = new Path()) {
+                        sb.of(checkpointsDir(dir));
+                    }
+                    Assert.assertEquals("corrupt byte " + byteOffset, 0, sb.getSelectedSlot());
+                    assertFields(sb, 1);
+                }
+                try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                    mem.putByte(offset, original);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFirstPublishRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
@@ -261,6 +289,38 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
                 Assert.assertFalse(sb.segmentDirectoryRootRef.isNull());
                 Assert.assertEquals(9, sb.segmentDirectoryRootRef.getSegmentId());
                 Assert.assertEquals(24, sb.segmentDirectoryRootRef.getLength());
+            }
+        });
+    }
+
+    @Test
+    public void testPublishRejectsNonAdvancingGenerationWithoutTouchingFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1);
+            publish(2);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                setFields(sb, 2);
+                try {
+                    sb.publish();
+                    Assert.fail("expected non-advancing generation rejection");
+                } catch (io.questdb.cairo.CairoException e) {
+                    Assert.assertTrue(e.getFlyweightMessage().toString().contains("generation must advance"));
+                }
+                Assert.assertEquals(1, sb.getSelectedSlot());
+            }
+            // Both original slots remain intact, including generation 1 fallback.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                corruptGenerationNoCrcFix(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+                try (Path dir = new Path()) {
+                    sb.of(checkpointsDir(dir));
+                }
+                assertFields(sb, 1);
             }
         });
     }

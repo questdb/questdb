@@ -217,6 +217,20 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
     }
 
     /**
+     * Finds the least entry whose {@code maxTimestamp} is greater than or equal to
+     * {@code timestamp}. Timestamp ties return their lowest checkpoint id. This is
+     * the timestamp-dimension successor paired with {@link #predecessor}; it is
+     * {@code O(log N)} because only one candidate search path and, when necessary,
+     * its next subtree are visited.
+     */
+    public boolean successor(@NotNull LiveViewCheckpointPageRef rootRef, long timestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
+        if (rootRef.isNull()) {
+            return false;
+        }
+        return successorRec(rootRef.getSegmentId(), rootRef.getOffset(), rootRef.getLength(), timestamp, out, 0);
+    }
+
+    /**
      * Decodes the node located at {@code (segmentId, offset, length)} into
      * {@code node}, using the shared segment-reader cache. Package-private so the
      * writer can read old pages while copying a search path.
@@ -312,6 +326,28 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
             total += sizeRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], depth + 1);
         }
         return total;
+    }
+
+    private boolean successorRec(long seg, long off, long len, long timestamp, LiveViewCheckpointTimelineEntry out, int depth) {
+        final LiveViewCheckpointTimelineNode node = nodeAt(depth);
+        openAndDecode(seg, off, len, node);
+        final int c = node.count();
+        if (node.isLeaf()) {
+            final int index = node.leafLowerBoundByTimestamp(timestamp);
+            if (index == c) {
+                return false;
+            }
+            node.copyEntryTo(index, out);
+            return true;
+        }
+        final int lowerBound = node.internalLowerBoundByTimestamp(timestamp);
+        final int firstChild = Math.max(0, lowerBound - 1);
+        for (int i = firstChild; i < c; i++) {
+            if (successorRec(node.childSegmentId[i], node.childOffset[i], node.childLength[i], timestamp, out, depth + 1)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

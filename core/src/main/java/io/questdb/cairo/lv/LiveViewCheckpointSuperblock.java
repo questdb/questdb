@@ -130,6 +130,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     private final FilesFacade ff;
     private final MemoryMARW mem;
     private final Path path = new Path();
+    private long generationFloor = Long.MIN_VALUE;
     private boolean isOpen;
     private int selectedSlot = NO_SLOT;
 
@@ -146,6 +147,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         // file to zero and destroy both slots.
         mem.close(false);
         Misc.free(path);
+        generationFloor = Long.MIN_VALUE;
         isOpen = false;
         selectedSlot = NO_SLOT;
         resetFields();
@@ -202,12 +204,46 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      */
     public void publish() {
         ensureOpen();
+        if (generation < 0 || generation <= generationFloor) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint generation must advance [current=")
+                    .put(generationFloor == Long.MIN_VALUE ? -1 : generationFloor)
+                    .put(", next=").put(generation).put(']');
+        }
         final int target = selectedSlot == 0 ? 1 : 0;
         storeSlot((long) target * SLOT_SIZE);
         if (commitMode != CommitMode.NOSYNC) {
             mem.sync(commitMode == CommitMode.ASYNC);
         }
         selectedSlot = select();
+    }
+
+    /**
+     * Selects the other independently valid slot after bounded validation of the
+     * current slot's referenced root pages failed. This is package-private because
+     * only {@link LiveViewCheckpointMetaStore} may fall back: once a generation has
+     * been exposed through a pin, late corruption invalidates a root version rather
+     * than switching the whole live view to an older generation.
+     *
+     * @return true when the other slot is structurally valid and was selected
+     */
+    boolean selectFallbackSlot() {
+        ensureOpen();
+        final int fallback = selectedSlot == 0 ? 1 : 0;
+        if (fallback >= 0 && isSlotValid((long) fallback * SLOT_SIZE)) {
+            selectedSlot = fallback;
+            loadSlot((long) fallback * SLOT_SIZE);
+            return true;
+        }
+        selectedSlot = NO_SLOT;
+        resetFields();
+        return false;
+    }
+
+    void clearSelection() {
+        ensureOpen();
+        selectedSlot = NO_SLOT;
+        resetFields();
     }
 
     private void ensureOpen() {
@@ -264,6 +300,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     private int select() {
         int best = NO_SLOT;
         long bestGeneration = Long.MIN_VALUE;
+        generationFloor = Long.MIN_VALUE;
         for (int slot = 0; slot < 2; slot++) {
             final long base = (long) slot * SLOT_SIZE;
             if (isSlotValid(base)) {
@@ -272,6 +309,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     best = slot;
                     bestGeneration = gen;
                 }
+                generationFloor = Math.max(generationFloor, gen);
             }
         }
         if (best == NO_SLOT) {
