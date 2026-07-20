@@ -2096,7 +2096,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOpenParquetMetadataOpensSidecarOnce() throws Exception {
+    public void testOpenParquetMetadataOpensSidecarOnceAndReleasesResolver() throws Exception {
         // Opening a parquet partition must open its _pm sidecar exactly once:
         // the committed size is read from the same fd that is then mmapped,
         // not via a size-reading open followed by a second open to map.
@@ -2139,6 +2139,10 @@ public class TableReaderTest extends AbstractCairoTest {
                 pmOpenCount.set(0);
                 reader.openPartition(0);
                 Assert.assertEquals(1, pmOpenCount.get());
+                Assert.assertFalse(
+                        "the temporary footer resolver must not outlive the _pm open operation",
+                        reader.isParquetMetaReaderOpen()
+                );
             }
         });
     }

@@ -700,6 +700,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tempMem8b != 0;
     }
 
+    @TestOnly
+    public boolean isParquetMetaReaderOpen() {
+        return parquetMetaReader.isOpen();
+    }
+
     @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
@@ -1411,11 +1416,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
 
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
-        if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
-            throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
+        try {
+            parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
+            if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
+            }
+            return parquetMetaReader.getParquetFileSize();
+        } finally {
+            // resolveFooter retains a native reader that borrows parquetMetaMem. This reader is
+            // only needed to resolve the size, so destroy it before any later close or remap can
+            // invalidate the mmap it references.
+            parquetMetaReader.clear();
         }
-        return parquetMetaReader.getParquetFileSize();
     }
 
     private long openPartition0(int partitionIndex) {

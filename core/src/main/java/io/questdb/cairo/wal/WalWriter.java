@@ -260,6 +260,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public long appendCustomEvent(byte txnType, WalEventPayloadWriter payload) {
+        if (!WalTxnType.isDownstreamType(txnType)) {
+            throw new IllegalArgumentException(
+                    "custom event types must be in reserved range 64..127, got: " + txnType
+            );
+        }
         try {
             // A custom event is an ordering barrier. Publish any rows appended before it as a
             // DATA transaction first; otherwise the custom event would receive the earlier

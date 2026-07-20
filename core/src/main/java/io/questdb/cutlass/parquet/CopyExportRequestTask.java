@@ -49,6 +49,7 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -73,6 +74,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private CopyExportContext.ExportTaskEntry entry;
     private ParquetExportMode exportMode;
     private CharSequence fileName;
+    private @Nullable MemoryTracker memoryTracker;
     private RecordMetadata metadata;
     private long now;
     private int nowTimestampType;
@@ -150,6 +152,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         writeCallback = null;
         metadata = null;
         streamPartitionParquetExporter.clear();
+        memoryTracker = null;
         descending = false;
         bloomFilterColumns = null;
         bloomFilterColumnsPosition = -1;
@@ -165,6 +168,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
         Misc.free(streamPartitionParquetExporter);
+        memoryTracker = null;
     }
 
     public @Nullable BindVariableService getBindVariableService() {
@@ -221,6 +225,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     public long getNow() {
@@ -331,6 +339,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setCreateOp(@Nullable CreateTableOperation createOp) {
         this.createOp = createOp;
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+        streamPartitionParquetExporter.setMemoryTracker(memoryTracker);
     }
 
     public void setSelectFactory(RecordCursorFactory selectFactory) {
@@ -469,6 +482,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             Misc.free(bloomFilterColumnIndexes);
             Misc.free(decodeColumns);
             Misc.free(decodeRowGroupBuffers);
+            decodeRowGroupBuffers.setMemoryTracker(null);
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
@@ -481,13 +495,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         @Override
         public void close() {
             closeWriter();
+            decodeColumns = Misc.free(decodeColumns);
+            decodeRowGroupBuffers = Misc.free(decodeRowGroupBuffers);
             freeOwnedPageFrameCursor();
             columnNames = Misc.free(columnNames);
             columnData = Misc.free(columnData);
             columnMetadata = Misc.free(columnMetadata);
             bloomFilterColumnIndexes = Misc.free(bloomFilterColumnIndexes);
-            decodeColumns = Misc.free(decodeColumns);
-            decodeRowGroupBuffers = Misc.free(decodeRowGroupBuffers);
         }
 
         public void finishExport() throws Exception {
@@ -557,6 +571,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         public void setCurrentPartitionIndex(long currentPartitionIndex, long frameRowCount) {
             this.currentPartitionIndex = currentPartitionIndex;
             this.currentFrameRowCount = frameRowCount;
+        }
+
+        public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+            decodeRowGroupBuffers.close();
+            decodeRowGroupBuffers.setMemoryTracker(memoryTracker);
         }
 
         public void setUp() {

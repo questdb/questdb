@@ -150,6 +150,48 @@ public class WalCustomEventTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCustomEventRejectsInvalidTypeBeforeCommittingPendingRows() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable("custom_invalid_type");
+            final boolean[] payloadInvoked = {false};
+            final long seqTxnBefore = engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
+            int walId;
+            long customSeqTxn;
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walId = walWriter.getWalId();
+                appendOneRow(walWriter, 1);
+
+                IllegalArgumentException error = assertThrows(
+                        IllegalArgumentException.class,
+                        () -> walWriter.appendCustomEvent(WalTxnType.SQL, mem -> payloadInvoked[0] = true)
+                );
+                assertFalse("an invalid type must be rejected before invoking its payload", payloadInvoked[0]);
+                assertFalse("an invalid argument must not distress the WAL writer", walWriter.isDistressed());
+                assertEquals(
+                        "an invalid type must not commit rows appended before the call",
+                        seqTxnBefore,
+                        engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn()
+                );
+                assertTrue(error.getMessage(), error.getMessage().contains("reserved range 64..127"));
+
+                customSeqTxn = walWriter.appendCustomEvent(CUSTOM_TYPE_LONG, mem -> mem.putLong(42L));
+            }
+
+            assertEquals(seqTxnBefore + 2, customSeqTxn);
+            try (Path path = new Path();
+                 WalEventReader reader = new WalEventReader(configuration)) {
+                segmentPath(path, tableToken, walId);
+                WalEventCursor cursor = reader.of(path, 0);
+                assertEquals(WalTxnType.DATA, cursor.getType());
+                assertTrue(cursor.hasNext());
+                assertEquals(CUSTOM_TYPE_LONG, cursor.getType());
+                assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
     public void testCustomEventEmptyPayloadRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable("custom_empty");

@@ -71,10 +71,10 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public void close() {
-        reader = Misc.free(reader);
         Misc.free(parquetTimestampFinder);
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
+        reader = Misc.free(reader);
     }
 
     @Override
@@ -102,6 +102,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        parquetTimestampFinder.setMemoryTracker(sqlExecutionContext != null ? sqlExecutionContext.getMemoryTracker() : null);
         this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
         calculateRanges(reader, intervals);
         this.reader = reader;

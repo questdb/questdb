@@ -1688,6 +1688,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
+        if row_count < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row count must not be negative: {}",
+                row_count
+            ));
+        }
         let row_count = row_count as usize;
         if row_count > 0 {
             use crate::parquet_read::RowGroupBuffers;
@@ -1761,16 +1768,58 @@ fn convert_row_group_buffers_to_partition(
     let mut symbol_data_idx = 0;
 
     for (i, column_template) in partition_template.columns.iter().enumerate() {
-        let col_buf = &column_bufs[i];
+        let col_buf = column_bufs.get(i).ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "decoded column index {} out of range [0,{})",
+                i,
+                column_bufs.len()
+            )
+        })?;
+        if col_buf.column_top > row_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "decoded column top {} exceeds row count {}, column index: {}",
+                col_buf.column_top,
+                row_count,
+                i
+            ));
+        }
         let mut column = *column_template;
         column.row_count = row_count;
-        column.column_top = 0;
-        // SAFETY: `col_buf.data_ptr` points to decoded row group data owned by `row_group_bufs`,
-        // which remains alive as long as the partition references it.
-        column.primary_data =
-            unsafe { slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) };
+        // A _pm-backed decoder may elide a known all-null chunk entirely. Materialized
+        // buffers already contain their column-top null rows, so only the empty layout
+        // becomes a writer column top; forwarding the decode annotation unconditionally
+        // would apply those rows twice.
+        column.column_top = if col_buf.data_size != 0 || col_buf.aux_size != 0 {
+            0
+        } else {
+            row_count
+        };
+        column.primary_data = if col_buf.data_size == 0 {
+            &[]
+        } else {
+            if col_buf.data_ptr.is_null() {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decoded primary data pointer is null with non-zero size {}, column index: {}",
+                    col_buf.data_size,
+                    i
+                ));
+            }
+            // SAFETY: `col_buf.data_ptr` points to decoded row group data owned by
+            // `row_group_bufs`, which remains alive as long as the partition references it.
+            unsafe { slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) }
+        };
 
         if column.data_type.tag() == ColumnTypeTag::Symbol {
+            if symbol_data_idx + 4 > symbol_data.len() {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "symbol metadata is missing, column index: {}",
+                    i
+                ));
+            }
             let values_ptr = symbol_data[symbol_data_idx] as *const u8;
             let values_size = symbol_data[symbol_data_idx + 1] as usize;
             let offsets_ptr = symbol_data[symbol_data_idx + 2] as *const u64;
@@ -1792,10 +1841,21 @@ fn convert_row_group_buffers_to_partition(
                 column.symbol_offsets = &[];
             }
         } else {
-            // SAFETY: `col_buf.aux_ptr` points to decoded row group auxiliary data owned by
-            // `row_group_bufs`, which remains alive as long as the partition references it.
-            column.secondary_data =
-                unsafe { slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size) };
+            column.secondary_data = if col_buf.aux_size == 0 {
+                &[]
+            } else {
+                if col_buf.aux_ptr.is_null() {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "decoded auxiliary data pointer is null with non-zero size {}, column index: {}",
+                        col_buf.aux_size,
+                        i
+                    ));
+                }
+                // SAFETY: `col_buf.aux_ptr` points to decoded row group auxiliary data owned by
+                // `row_group_bufs`, which remains alive as long as the partition references it.
+                unsafe { slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size) }
+            };
             column.symbol_offsets = &[];
         }
 
