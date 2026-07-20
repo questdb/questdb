@@ -289,12 +289,12 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
-
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final SimpleMapValue value = atom.getMapValue(slotId);
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final SimpleMapValue value = atom.getMapValue(slotId);
             record.setRowIndex(0);
             long rowId = record.getRowId();
             for (long r = 0; r < frameRowCount; r++) {
@@ -347,13 +347,12 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-
-        final SimpleMapValue value = atom.getMapValue(slotId);
-        final int[] batchColumnIndexes = atom.getBatchColumnIndexes();
-        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
-        final int functionCount = functions.size();
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            final SimpleMapValue value = atom.getMapValue(slotId);
+            final int[] batchColumnIndexes = atom.getBatchColumnIndexes();
+            final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+            final int functionCount = functions.size();
             if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
@@ -461,27 +460,26 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
-        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
-        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
-
-        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
-
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final SimpleMapValue value = atom.getMapValue(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
         try {
+            final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+            final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+            final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+            rows.clear();
+
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final SimpleMapValue value = atom.getMapValue(slotId);
+            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final Function filter = filterCtx.getFilter(slotId);
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);

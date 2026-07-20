@@ -404,6 +404,32 @@ public class WalCustomEventTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadRejectsCustomEventFrameShorterThanHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable("corrupt_custom_event_length");
+            int walId;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walId = walWriter.getWalId();
+                walWriter.appendCustomEvent(CUSTOM_TYPE_LONG, mem -> mem.putLong(1L));
+            }
+
+            // A custom frame must contain [length:int][txn:long][type:byte]. Setting its
+            // length to 12 makes the declared end precede the already-consumed type byte.
+            corruptFirstRecordLength(tableToken, walId, Integer.BYTES + Long.BYTES);
+            try (Path path = new Path();
+                 WalEventReader reader = new WalEventReader(configuration)) {
+                segmentPath(path, tableToken, walId);
+                CairoException ex = assertThrows(CairoException.class, () -> reader.of(path, 0));
+                assertEquals(CairoException.METADATA_VALIDATION, ex.getErrno());
+                assertEquals(
+                        "[-100] corrupt WAL event frame, payload size is negative [offset=21, nextOffset=20]",
+                        ex.getMessage()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testReadRejectsUnknownTypeBelowDownstreamRange() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable("corrupt_event_type");
@@ -448,6 +474,25 @@ public class WalCustomEventTest extends AbstractCairoTest {
         TableWriter.Row row = walWriter.newRow(0);
         row.putByte(0, (byte) v);
         row.append();
+    }
+
+    private static void corruptFirstRecordLength(TableToken tableToken, int walId, int newLength) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            segmentPath(path, tableToken, walId).concat(WalUtils.EVENT_FILE_NAME);
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            try {
+                final long fileSize = ff.length(fd);
+                final long mem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putInt(mem + WalUtils.WALE_HEADER_SIZE, newLength);
+                } finally {
+                    ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 
     private static void corruptFirstRecordType(TableToken tableToken, int walId, byte newType) {
