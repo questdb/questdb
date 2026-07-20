@@ -6517,60 +6517,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     filter = coerced;
                 }
-                filter.init(null, executionContext);
-                if (filter.isConstant()) {
-                    boolean filterValue = filter.getBool(null);
-                    Misc.free(filter);
-                    if (!filterValue) {
-                        // do not copy metadata here
-                        // this would have been JoinRecordMetadata, which is new instance anyway
-                        // we have to make sure that this metadata is safely transitioned
-                        // to empty cursor factory
-                        RecordMetadata metadata = master.getMetadata();
-                        if (metadata instanceof JoinRecordMetadata that) {
-                            that.incrementRefCount();
+                // From here on `filter` must be freed on every path that does not hand it to a
+                // retained/returned factory. The enclosing catch only frees `master`, so a throw
+                // from filter.init() (or any pre-adoption step below) would otherwise leak the
+                // filter. Null out `filter` once it is freed or adopted so this catch never
+                // double-frees an already-freed or now-owned filter.
+                try {
+                    filter.init(null, executionContext);
+                    if (filter.isConstant()) {
+                        boolean filterValue = filter.getBool(null);
+                        filter = Misc.free(filter);
+                        if (!filterValue) {
+                            // do not copy metadata here
+                            // this would have been JoinRecordMetadata, which is new instance anyway
+                            // we have to make sure that this metadata is safely transitioned
+                            // to empty cursor factory
+                            RecordMetadata metadata = master.getMetadata();
+                            if (metadata instanceof JoinRecordMetadata that) {
+                                that.incrementRefCount();
+                            }
+                            RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                            Misc.free(master);
+                            return factory;
                         }
-                        RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
-                        Misc.free(master);
-                        return factory;
-                    }
-                } else if (filter.isRuntimeConstant()) {
-                    // The const filter is a runtime constant (e.g. a scalar boolean sub-query).
-                    // Gate the join behind a single per-execution evaluation, re-evaluated at
-                    // each cursor open: false returns empty without scanning the join output,
-                    // true delegates straight to it. The generation-time filter.init above only
-                    // probed isConstant(); the gate re-inits the filter for each execution.
-                    master = new RuntimeConstGateRecordCursorFactory(master, filter);
-                } else {
-                    // make it a post-join filter (same as for post join where clause above)
-                    if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
-                        IntHashSet filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
-
-                        master = new AsyncFilteredRecordCursorFactory(
-                                executionContext.getCairoEngine(),
-                                configuration,
-                                executionContext.getMessageBus(),
-                                master,
-                                filter,
-                                filterUsedColumnIndexes,
-                                reduceTaskFactory,
-                                compileWorkerFiltersConditionally(
-                                        executionContext,
-                                        filter,
-                                        executionContext.getSharedQueryWorkerCount(),
-                                        constFilterExpr,
-                                        master.getMetadata()
-                                ),
-                                deepClone(expressionNodePool, constFilterExpr),
-                                null,
-                                0,
-                                executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
-                        );
+                    } else if (filter.isRuntimeConstant()) {
+                        // The const filter is a runtime constant (e.g. a scalar boolean sub-query).
+                        // Gate the join behind a single per-execution evaluation, re-evaluated at
+                        // each cursor open: false returns empty without scanning the join output,
+                        // true delegates straight to it. The generation-time filter.init above only
+                        // probed isConstant(); the gate re-inits the filter for each execution.
+                        master = new RuntimeConstGateRecordCursorFactory(master, filter);
+                        filter = null;
                     } else {
-                        master = new FilteredRecordCursorFactory(master, filter);
+                        // make it a post-join filter (same as for post join where clause above)
+                        if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                            collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
+
+                            master = new AsyncFilteredRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    master,
+                                    filter,
+                                    filterUsedColumnIndexes,
+                                    reduceTaskFactory,
+                                    compileWorkerFiltersConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedQueryWorkerCount(),
+                                            constFilterExpr,
+                                            master.getMetadata()
+                                    ),
+                                    deepClone(expressionNodePool, constFilterExpr),
+                                    null,
+                                    0,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    SqlHints.hasEnablePreTouchHint(model, masterAlias)
+                            );
+                        } else {
+                            master = new FilteredRecordCursorFactory(master, filter);
+                        }
+                        filter = null;
                     }
+                } catch (Throwable e) {
+                    Misc.free(filter);
+                    throw e;
                 }
             }
             return master;
