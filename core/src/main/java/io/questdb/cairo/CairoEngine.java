@@ -486,6 +486,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put(f.getName())
                     .put("(); incremental snapshot is not supported for this function yet");
         }
+        if (f.checkpointFunctionIdentity() == null || f.checkpointDependency() == null) {
+            throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
+                    .put(f.getName()).put("()");
+        }
     }
 
     /**
@@ -4814,4 +4818,3 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
 }
-

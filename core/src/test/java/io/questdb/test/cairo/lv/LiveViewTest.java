@@ -1180,6 +1180,20 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRejectSnapshotCapableWindowFunctionWithoutCompilerMetadata() {
+        try {
+            CairoEngine.validateLiveViewWindowFunction(new SnapshotWindowFunctionWithoutMetadata(), 43);
+            Assert.fail("expected SqlException for missing checkpoint compiler metadata");
+        } catch (SqlException e) {
+            Assert.assertEquals(43, e.getPosition());
+            Assert.assertTrue(
+                    e.getMessage(),
+                    e.getMessage().contains("live view checkpoint compiler metadata is missing for window function test_no_metadata()")
+            );
+        }
+    }
+
+    @Test
     public void testRejectUnpartitionedAggregateWindowFunction() throws Exception {
         // An un-partitioned aggregate window (no PARTITION BY) is ZERO_PASS but has no
         // partition Map to snapshot, so it is not live-view-eligible and stays rejected
@@ -1909,6 +1923,36 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+    }
+
+    private static final class SnapshotWindowFunctionWithoutMetadata extends BaseWindowFunction {
+        SnapshotWindowFunctionWithoutMetadata() {
+            super(null);
+        }
+
+        @Override
+        public String getName() {
+            return "test_no_metadata";
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return true;
         }
     }
 }

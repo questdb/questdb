@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -41,10 +43,22 @@ public abstract class BaseWindowFunction implements WindowFunction {
     // instance; readArgValue caches it here to avoid re-deriving the tag from arg.getType() per row.
     protected final boolean argIsDate;
     protected int columnIndex;
+    private LiveViewCheckpointDependency checkpointDependency;
+    private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
 
     public BaseWindowFunction(Function arg) {
         this.arg = arg;
         this.argIsDate = arg != null && ColumnType.tagOf(arg.getType()) == ColumnType.DATE;
+    }
+
+    @Override
+    public LiveViewCheckpointDependency checkpointDependency() {
+        return checkpointDependency;
+    }
+
+    @Override
+    public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+        return checkpointFunctionIdentity;
     }
 
     @Override
@@ -101,6 +115,18 @@ public abstract class BaseWindowFunction implements WindowFunction {
 
     @Override
     public void reset() {
+    }
+
+    @Override
+    public void setCheckpointCompilerMetadata(
+            LiveViewCheckpointFunctionIdentity identity,
+            LiveViewCheckpointDependency dependency
+    ) {
+        if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+            throw new IllegalStateException("live view checkpoint compiler metadata already set");
+        }
+        this.checkpointFunctionIdentity = identity;
+        this.checkpointDependency = dependency;
     }
 
     @Override

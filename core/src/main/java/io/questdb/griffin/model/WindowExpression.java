@@ -96,6 +96,11 @@ public final class WindowExpression extends QueryColumn {
     // For OVER window_name syntax - stores the referenced window name
     private CharSequence windowName;
     private int windowNamePosition;
+    // Compiler-only identity retained after the optimizer expands OVER window_name
+    // and clears windowName. This survives cloning so checkpoint identities do not
+    // depend on optimizer object traversal.
+    private CharSequence resolvedWindowName;
+    private boolean resolvedWindowAnchored;
 
     private WindowExpression() {
     }
@@ -137,6 +142,8 @@ public final class WindowExpression extends QueryColumn {
         nullsDescPos = 0;
         windowName = null;
         windowNamePosition = 0;
+        resolvedWindowName = null;
+        resolvedWindowAnchored = false;
     }
 
     /**
@@ -201,6 +208,8 @@ public final class WindowExpression extends QueryColumn {
         dst.baseWindowNamePosition = this.baseWindowNamePosition;
         dst.windowName = this.windowName;
         dst.windowNamePosition = this.windowNamePosition;
+        dst.resolvedWindowName = this.resolvedWindowName;
+        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
         return dst;
     }
 
@@ -288,6 +297,10 @@ public final class WindowExpression extends QueryColumn {
         return rowsLo;
     }
 
+    public CharSequence getResolvedWindowName() {
+        return resolvedWindowName;
+    }
+
     public ExpressionNode getRowsLoExpr() {
         return rowsLoExpr;
     }
@@ -332,6 +345,10 @@ public final class WindowExpression extends QueryColumn {
         // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
         // anything other than that is custom
         return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
+    }
+
+    public boolean isResolvedWindowAnchored() {
+        return resolvedWindowAnchored;
     }
 
     @Override
@@ -413,6 +430,11 @@ public final class WindowExpression extends QueryColumn {
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setResolvedWindow(CharSequence resolvedWindowName, boolean resolvedWindowAnchored) {
+        this.resolvedWindowName = resolvedWindowName;
+        this.resolvedWindowAnchored = resolvedWindowAnchored;
     }
 
     public void setWindowName(CharSequence windowName, int windowNamePosition) {

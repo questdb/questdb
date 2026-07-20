@@ -27,6 +27,10 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -35,8 +39,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.lv.LiveViewStatePageWriter;
-import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,6 +60,24 @@ public interface WindowFunction extends Function {
     int ONE_PASS = 1;
     int TWO_PASS = 2;
     int ZERO_PASS = 0;
+
+    /**
+     * Returns the compiler-produced localized-repair dependency descriptor, or
+     * {@code null} outside a live-view compile / for a function that does not
+     * support checkpoint state.
+     */
+    @Nullable
+    default LiveViewCheckpointDependency checkpointDependency() {
+        return null;
+    }
+
+    /**
+     * Returns the stable identity persisted in the timeline function directory.
+     */
+    @Nullable
+    default LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+        return null;
+    }
 
     default void computeNext(Record record) {
     }
@@ -530,6 +550,21 @@ public interface WindowFunction extends Function {
      * Direct callers (e.g. unit tests) must reopen() before use.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    /**
+     * Called exactly once by the SQL compiler for a checkpoint-capable function
+     * in a live-view SELECT. Implementations must retain these immutable values;
+     * the default fails closed so an eligible function cannot silently fall back
+     * to positional/object identity.
+     */
+    default void setCheckpointCompilerMetadata(
+            LiveViewCheckpointFunctionIdentity identity,
+            LiveViewCheckpointDependency dependency
+    ) {
+        throw new UnsupportedOperationException(
+                "checkpoint compiler metadata not supported by " + getClass().getName()
+        );
     }
 
     /**

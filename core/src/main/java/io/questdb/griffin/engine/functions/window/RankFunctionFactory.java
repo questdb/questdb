@@ -36,7 +36,11 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -49,8 +53,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.lv.LiveViewStatePageWriter;
-import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
@@ -365,6 +367,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private final String name;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
+        private LiveViewCheckpointDependency checkpointDependency;
+        private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
         // Subset of mapValueTypes covering the chain-prefix slots [0, chainTypeIndex).
         // Populated when this function compiles for a live view so the snapshot
         // codec can read the chain bytes back from MapValue at restore time;
@@ -424,6 +428,16 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             Misc.free(compactionScratch);
             Misc.freeObjList(partitionByRecord.getFunctions());
             Misc.freeObjList(rankMaps);
+        }
+
+        @Override
+        public LiveViewCheckpointDependency checkpointDependency() {
+            return checkpointDependency;
+        }
+
+        @Override
+        public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+            return checkpointFunctionIdentity;
         }
 
         @Override
@@ -776,6 +790,18 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setCheckpointCompilerMetadata(
+                LiveViewCheckpointFunctionIdentity identity,
+                LiveViewCheckpointDependency dependency
+        ) {
+            if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+                throw new IllegalStateException("live view checkpoint compiler metadata already set");
+            }
+            checkpointFunctionIdentity = identity;
+            checkpointDependency = dependency;
         }
 
         @Override

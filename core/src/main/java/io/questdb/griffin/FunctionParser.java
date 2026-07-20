@@ -159,6 +159,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
+    private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -224,7 +225,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public void clear() {
         this.positionStack.clear();
         this.functionStack.clear();
+        this.lastFunctionFactorySignature = null;
         this.sqlExecutionContext = null;
+    }
+
+    /**
+     * Signature of the factory that produced the most recent top-level parsed
+     * function. Consumed immediately by the SQL code generator for checkpoint
+     * identity, so the selected overload is not inferred from a runtime class.
+     */
+    public String getLastFunctionFactorySignature() {
+        return lastFunctionFactorySignature;
     }
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
@@ -307,6 +318,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             SqlExecutionContext executionContext
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
+        this.lastFunctionFactorySignature = null;
 
         if (this.metadata != null) {
             metadataStack.push(this.metadata);
@@ -657,6 +669,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
+        lastFunctionFactorySignature = factory.getSignature();
         return function;
     }
 

@@ -30,7 +30,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,8 +44,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.lv.LiveViewStatePageWriter;
-import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -133,6 +135,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         // -1 outside live-view mode; index of the BYTE tombstone slot in LV mode.
         private final int tombstoneValueIndex;
         private final ColumnTypes valueColumnTypes;
+        private LiveViewCheckpointDependency checkpointDependency;
+        private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
         private int columnIndex;
         // Reusable second map for the live-view frontier sweep; ping-pongs with map
         // so a sweep never allocates. Allocated once on the first sweep.
@@ -173,6 +177,16 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             Misc.free(map);
             Misc.free(compactionScratch);
             Misc.freeObjList(partitionByRecord.getFunctions());
+        }
+
+        @Override
+        public LiveViewCheckpointDependency checkpointDependency() {
+            return checkpointDependency;
+        }
+
+        @Override
+        public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+            return checkpointFunctionIdentity;
         }
 
         @Override
@@ -344,6 +358,18 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void setCheckpointCompilerMetadata(
+                LiveViewCheckpointFunctionIdentity identity,
+                LiveViewCheckpointDependency dependency
+        ) {
+            if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+                throw new IllegalStateException("live view checkpoint compiler metadata already set");
+            }
+            checkpointFunctionIdentity = identity;
+            checkpointDependency = dependency;
+        }
+
+        @Override
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             // Retain the tracker so retainPartitions can charge the compaction scratch
             // to it, and bind it on the lazily-allocated map before the cursor's
@@ -395,12 +421,24 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     }
 
     private static class SequenceRowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
+        private LiveViewCheckpointDependency checkpointDependency;
+        private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
         private int columnIndex;
         private long rowNumber = 0;
 
         @Override
         public void computeNext(Record record) {
             ++rowNumber;
+        }
+
+        @Override
+        public LiveViewCheckpointDependency checkpointDependency() {
+            return checkpointDependency;
+        }
+
+        @Override
+        public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
+            return checkpointFunctionIdentity;
         }
 
         @Override
@@ -442,6 +480,18 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setCheckpointCompilerMetadata(
+                LiveViewCheckpointFunctionIdentity identity,
+                LiveViewCheckpointDependency dependency
+        ) {
+            if (checkpointFunctionIdentity != null || checkpointDependency != null) {
+                throw new IllegalStateException("live view checkpoint compiler metadata already set");
+            }
+            checkpointFunctionIdentity = identity;
+            checkpointDependency = dependency;
         }
 
         @Override
