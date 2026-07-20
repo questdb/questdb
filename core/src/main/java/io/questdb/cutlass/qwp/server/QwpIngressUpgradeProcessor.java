@@ -72,6 +72,15 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
+    // Upper bound on socket.recv() calls per resumeRecv dispatch while draining a
+    // post-CLOSE connection. The drain loop discards inbound bytes until the
+    // socket would-block or the peer closes; without a per-dispatch cap a peer
+    // that keeps the socket continuously readable spins that loop unbounded,
+    // monopolizing the HTTP worker and starving the drain deadline -- which is
+    // only re-evaluated on dispatch entry, never mid-loop. On hitting the cap we
+    // yield via PeerIsSlowToWriteException so the worker can service other
+    // connections and the next dispatch re-checks isCloseDrainExpired().
+    private static final int CLOSE_DRAIN_MAX_RECV_PER_DISPATCH = 32;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
@@ -484,14 +493,28 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             try {
                 int drained;
+                int recvCount = 0;
                 while ((drained = socket.recv(recvBuffer, recvBufferSize)) > 0) {
                     // discard
+                    if (++recvCount == CLOSE_DRAIN_MAX_RECV_PER_DISPATCH) {
+                        // Per-dispatch drain quantum exhausted while the socket is
+                        // still readable. Yield rather than keep looping: PISW
+                        // re-arms the fd for read and re-fires on the bytes still
+                        // buffered (edge-triggered epoll), matching the
+                        // forceRecvFragmentationChunkSize reschedule in the main
+                        // recv path below. Returning to the dispatcher lets this
+                        // worker run other connections and makes the next dispatch
+                        // re-check isCloseDrainExpired() above, so a continuously
+                        // readable peer can no longer monopolize the worker or
+                        // outlive the drain deadline.
+                        throw PeerIsSlowToWriteException.INSTANCE;
+                    }
                 }
                 if (drained < 0) {
                     LOG.debug().$("peer closed during close drain [fd=").$(context.getFd()).I$();
                     throw ServerDisconnectException.INSTANCE;
                 }
-            } catch (ServerDisconnectException e) {
+            } catch (ServerDisconnectException | PeerIsSlowToWriteException e) {
                 throw e;
             } catch (Throwable e) {
                 throw ServerDisconnectException.INSTANCE;
