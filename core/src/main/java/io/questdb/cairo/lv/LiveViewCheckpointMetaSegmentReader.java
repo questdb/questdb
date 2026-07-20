@@ -115,6 +115,14 @@ public class LiveViewCheckpointMetaSegmentReader implements Closeable {
     }
 
     /**
+     * Reads one byte at {@code payloadOffset} within the currently open page.
+     */
+    public byte getByte(long payloadOffset) {
+        boundsCheck(payloadOffset, Byte.BYTES);
+        return mem.getByte(pagePayloadFileOffset + payloadOffset);
+    }
+
+    /**
      * Reads a signed 32-bit field at {@code payloadOffset} within the currently
      * open page, bounds-checked against the page payload length.
      */
