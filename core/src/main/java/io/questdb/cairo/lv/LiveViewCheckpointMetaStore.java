@@ -57,24 +57,24 @@ public class LiveViewCheckpointMetaStore implements Closeable {
 
     private final Path checkpointsDir = new Path();
     private final LiveViewCheckpointGenerationTracker generationTracker = new LiveViewCheckpointGenerationTracker();
-    private final LiveViewCheckpointMetaSegmentReader rootPageReader;
     private final LiveViewCheckpointRowPositionDeltaReader rowPositionDeltaReader;
+    private final LiveViewCheckpointSegmentDirectory segmentDirectory;
     private final LiveViewCheckpointSuperblock superblock;
     private final LiveViewCheckpointTimelineReader timelineReader;
     private boolean isOpen;
 
     public LiveViewCheckpointMetaStore(@NotNull CairoConfiguration configuration) {
         superblock = new LiveViewCheckpointSuperblock(configuration);
+        segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
         timelineReader = new LiveViewCheckpointTimelineReader(configuration);
         rowPositionDeltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
-        rootPageReader = new LiveViewCheckpointMetaSegmentReader(configuration);
     }
 
     @Override
     public void close() {
         generationTracker.close();
-        Misc.free(rootPageReader);
         Misc.free(rowPositionDeltaReader);
+        Misc.free(segmentDirectory);
         Misc.free(timelineReader);
         Misc.free(superblock);
         Misc.free(checkpointsDir);
@@ -157,13 +157,6 @@ public class LiveViewCheckpointMetaStore implements Closeable {
         );
     }
 
-    private void validateRootPage(@NotNull LiveViewCheckpointPageRef ref) {
-        if (!ref.isNull()) {
-            rootPageReader.of(checkpointsDir, ref.getSegmentId());
-            rootPageReader.openPage(ref);
-        }
-    }
-
     private void validateSelectedRoots() {
         // Decoding the root verifies both the page CRC/framing and the tree node's
         // kind/count bounds, but intentionally does not follow child references.
@@ -173,8 +166,7 @@ public class LiveViewCheckpointMetaStore implements Closeable {
         if (!superblock.rowPositionDeltaRootRef.isNull()) {
             rowPositionDeltaReader.rootChildCount(superblock.rowPositionDeltaRootRef);
         }
-        // Phase 2 defines the segment-directory page schema. Phase 1 can still
-        // boundedly validate its reference, page framing, and checksum when present.
-        validateRootPage(superblock.segmentDirectoryRootRef);
+        // Decode the bounded catalogue root, but do not open or scan data files.
+        segmentDirectory.of(checkpointsDir, superblock.segmentDirectoryRootRef);
     }
 }

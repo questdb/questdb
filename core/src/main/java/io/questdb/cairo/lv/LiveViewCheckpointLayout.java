@@ -170,6 +170,32 @@ public final class LiveViewCheckpointLayout {
     }
 
     /**
+     * Points {@code dst} at {@code <checkpointsDir>/data}.
+     */
+    public static Path dataDirPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(DATA_DIR_NAME);
+    }
+
+    /**
+     * Points {@code dst} at {@code <checkpointsDir>/data/d.<segmentId>}.
+     */
+    public static Path dataSegmentPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir, long segmentId) {
+        dataDirPath(dst, checkpointsDir).slash();
+        dst.put(DATA_SEGMENT_PREFIX);
+        appendPaddedSegmentId(dst, segmentId);
+        return dst;
+    }
+
+    /**
+     * Points {@code dst} at {@code <checkpointsDir>/data/d.<segmentId>.tmp}.
+     */
+    public static Path dataSegmentTmpPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir, long segmentId) {
+        dataSegmentPath(dst, checkpointsDir, segmentId);
+        dst.put(TMP_SUFFIX);
+        return dst;
+    }
+
+    /**
      * Points {@code dst} at {@code <checkpointsDir>/meta}.
      */
     public static Path metaDirPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
