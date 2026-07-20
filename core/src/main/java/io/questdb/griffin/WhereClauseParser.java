@@ -3161,6 +3161,11 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn,
             TableReader reader
     ) throws SqlException {
+        if (node.token == null) {
+            // tokenless node, e.g. a sub-query used directly as a boolean predicate;
+            // not an intrinsic, keep it as a regular filter
+            return false;
+        }
         return switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN ->
                     analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
@@ -3176,7 +3181,7 @@ public final class WhereClauseParser implements Mutable {
                     analyzeEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT_EQ ->
                     analyzeNotEquals(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
-            case INTRINSIC_OP_NOT -> (
+            case INTRINSIC_OP_NOT -> node.rhs != null && node.rhs.token != null && ((
                     isInKeyword(node.rhs.token) && analyzeNotIn(
                             timestampDriver,
                             translator,
@@ -3202,7 +3207,7 @@ public final class WhereClauseParser implements Mutable {
                             latestByMultiColumn,
                             reader
                     )
-            );
+            ));
             case INTRINSIC_OP_BETWEEN ->
                     analyzeBetween(timestampDriver, translator, model, node, m, functionParser, metadata, executionContext);
             case INTRINSIC_OP_AND_OFFSET ->

@@ -3215,6 +3215,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotWithTokenlessSubQueryOperand() throws Exception {
+        // sub-query expression nodes carry a null token; the NOT intrinsic arm
+        // must not dereference it (used to throw NPE)
+        IntrinsicModel m = modelOf("not (select * from x)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testAndOffsetWithTokenlessSubQueryPredicate() throws Exception {
+        // and_offset recurses into its predicate argument; a sub-query predicate
+        // has a null token and must not be treated as an intrinsic (used to throw NPE)
+        IntrinsicModel m = modelOf("and_offset((select * from x), 'h', 1)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
     public void testNotInIntervalIntersect() throws Exception {
         IntrinsicModel m = modelOf("timestamp not between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z' and timestamp in '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
