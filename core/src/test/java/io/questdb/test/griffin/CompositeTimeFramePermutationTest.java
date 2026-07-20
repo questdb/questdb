@@ -175,12 +175,9 @@ public class CompositeTimeFramePermutationTest extends AbstractCairoTest {
             long observedLo = Long.MIN_VALUE;
             long observedHi = Long.MIN_VALUE;
             for (long ord = 0; ord < rowCount; ord++) {
-                final long packed = cursor.getPermutationEntry(dayIndex, ord);
-                cursor.recordAt(
-                        record,
-                        CompositeTimeFrameRecordCursor.unpackFrameIndex(packed),
-                        CompositeTimeFrameRecordCursor.unpackRowIndex(packed)
-                );
+                // recordAt now takes (dayFrameIndex, mergedOrdinal) and re-navigates via the day's
+                // permutation -- the TimeFrameCursor contract added in task 2.
+                cursor.recordAt(record, dayIndex, ord);
                 final long ts = record.getTimestamp(tsIndex);
                 final double v = record.getDouble(vIndex);
 

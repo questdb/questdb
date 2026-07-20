@@ -37,14 +37,19 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntLongSortedList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -86,10 +91,17 @@ import org.jetbrains.annotations.NotNull;
  * Thread-unsafe, single query lifetime -- {@link #of} rearms the cursor for a fresh (lazy) build;
  * not safe to share across threads or queries concurrently.
  */
-public class CompositeTimeFrameRecordCursor implements QuietCloseable {
+public class CompositeTimeFrameRecordCursor implements TimeFrameCursor {
     private final ObjList<CellIter> cellPool = new ObjList<>();
     // Per-day (indexed by dayIndex): the day's ESTIMATED exclusive upper timestamp bound.
     private final LongList dayCeiling = new LongList();
+    // Per-day: the day's partition FLOOR timestamp (midnight) -- the estimate-lo mirror of a plain
+    // table's partitionTimestamps (ConcurrentTimeFrameCursor#populatePartitionTimestamps); distinct
+    // from the ACTUAL first-row ts (dayTsLo) that open() publishes.
+    private final LongList dayEstimateLo = new LongList();
+    // Identity map dayIndex -> dayIndex, so TimeFrameCursor.findSeekEstimate (which indexes ceilings
+    // via a frame->partition table) can be reused verbatim over the per-day ceilings.
+    private final DirectIntList dayFrameIndexes;
     // Per-day: offset of the day's first entry in `permutation`.
     private final LongList dayOffset = new LongList();
     // Per-day: number of entries (rows) belonging to the day.
@@ -110,11 +122,16 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
     // (mirrors CompositeMergePartitionRecordCursor's probeRecord / recordA split).
     private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final TimeFrame timeFrame = new TimeFrame();
     private final int timestampIndex;
     private int cellCount;
     private SqlExecutionCircuitBreaker circuitBreaker;
     // The day group most recently loaded by loadNextDayGroup() -- its own partition timestamp.
     private long currentDayTs;
+    // The day (time-frame) most recently opened / positioned via recordAt -- the day whose permutation
+    // recordAtRowIndex re-navigates within. Consecutive ordinals of a day may live in DIFFERENT cells,
+    // so a bare setRowIndex (as the plain twin does) would read the wrong cell.
+    private int currentOpenDay = -1;
     private int dayCount;
     private int frameCount;
     private TablePageFrameCursor frameCursor;
@@ -140,6 +157,7 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
             // Deferred allocation (keepClosed=true); buildPermutation() reopen()s on first use,
             // mirroring TimeFrameCursorImpl's frameRowCounts/framePartitionIndexes.
             this.permutation = new DirectLongList(1024, MemoryTag.NATIVE_DEFAULT, true);
+            this.dayFrameIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
             throw th;
@@ -165,6 +183,7 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
         Misc.free(frameMemoryPool);
         Misc.free(frameAddressCache);
         Misc.free(permutation);
+        Misc.free(dayFrameIndexes);
         Misc.free(probeRecord);
         Misc.free(recordA);
     }
@@ -233,8 +252,52 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
     /**
      * @return the record {@link #recordAt(Record, int, long)} is typically called with.
      */
+    @Override
     public Record getRecord() {
         return recordA;
+    }
+
+    @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+        return frameCursor.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public TimeFrame getTimeFrame() {
+        return timeFrame;
+    }
+
+    @Override
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    @Override
+    public void jumpTo(int frameIndex) {
+        buildPermutation();
+        if (frameIndex < 0 || frameIndex >= dayCount) {
+            throw CairoException.nonCritical().put("frame index out of bounds [frameIndex=").put(frameIndex)
+                    .put(", frameCount=").put(dayCount).put(']');
+        }
+        timeFrame.ofEstimate(frameIndex, dayEstimateLo.getQuick(frameIndex), dayCeiling.getQuick(frameIndex));
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return frameCursor.newSymbolTable(columnIndex);
+    }
+
+    @Override
+    public boolean next() {
+        buildPermutation();
+        int frameIndex = timeFrame.getFrameIndex();
+        if (++frameIndex < dayCount) {
+            timeFrame.ofEstimate(frameIndex, dayEstimateLo.getQuick(frameIndex), dayCeiling.getQuick(frameIndex));
+            return true;
+        }
+        // Park the index one past the end so a subsequent prev() resumes at the last day.
+        timeFrame.ofEstimate(dayCount, Long.MIN_VALUE, Long.MIN_VALUE);
+        return false;
     }
 
     public CompositeTimeFrameRecordCursor of(TablePageFrameCursor frameCursor, SqlExecutionContext executionContext) {
@@ -247,19 +310,94 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
         recordA.of(frameCursor);
         this.circuitBreaker = executionContext.getCircuitBreaker();
         isPermutationBuilt = false;
+        timeFrame.clear();
+        currentOpenDay = -1;
         return this;
     }
 
-    /**
-     * Positions {@code record} at the given frame/row: the read mechanism a permutation entry
-     * decodes to (mirrors {@link CompositeMergePartitionRecordCursor#hasNext()}'s OUTPUT bind --
-     * read-only, zero-copy, since native addresses live in the query-lifetime {@link
-     * PageFrameAddressCache}).
-     */
+    @Override
+    public long open() {
+        final int frameIndex = timeFrame.getFrameIndex();
+        if (frameIndex < 0 || frameIndex >= dayCount) {
+            throw CairoException.nonCritical().put("open call on uninitialized time frame");
+        }
+        // The whole day is already resident in the permutation, so there's nothing to open lazily;
+        // just publish the day's ACTUAL first/last timestamps and its [0, rowCount) row range. A
+        // registered day always has rowCount > 0 (buildPermutation() skips empty day groups), so the
+        // zero-row branch only mirrors TimeFrameCursorImpl.open()'s defensive fallback.
+        currentOpenDay = frameIndex;
+        final long rowCount = dayRowCount.getQuick(frameIndex);
+        if (rowCount > 0) {
+            // +1 makes the upper timestamp bound exclusive, exactly as TimeFrameCursorImpl.open() does.
+            timeFrame.ofOpen(dayTsLo.getQuick(frameIndex), dayTsHi.getQuick(frameIndex) + 1, 0, rowCount);
+            return rowCount;
+        }
+        timeFrame.ofOpen(timeFrame.getTimestampEstimateLo(), timeFrame.getTimestampEstimateHi(), 0, 0);
+        return 0;
+    }
+
+    @Override
+    public boolean prev() {
+        buildPermutation();
+        int frameIndex = timeFrame.getFrameIndex();
+        if (--frameIndex >= 0) {
+            timeFrame.ofEstimate(frameIndex, dayEstimateLo.getQuick(frameIndex), dayCeiling.getQuick(frameIndex));
+            return true;
+        }
+        // Park the index before the start so a subsequent next() resumes at day 0.
+        timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+        return false;
+    }
+
+    @Override
+    public void recordAt(Record record, long rowId) {
+        // frameIndex bits = dayIndex, localRowID bits = mergedOrdinal; decode, then re-navigate via
+        // the day's permutation through the two-arg form below.
+        recordAt(record, Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+    }
+
+    @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(rowIndex);
+        // THE PRINCIPAL TRAP: frameIndex is the DAY, rowIndex is the mergedOrdinal WITHIN that day --
+        // NOT a raw cell row. Re-navigate through the permutation to the ordinal's true (cellFrameIndex,
+        // cellRowIndex): a bare setRowIndex(rowIndex) would read the wrong cell whenever a day
+        // interleaves cells.
+        buildPermutation();
+        currentOpenDay = frameIndex;
+        final long packed = permutation.get(dayOffset.getQuick(frameIndex) + rowIndex);
+        navigateToCell(record, unpackFrameIndex(packed), unpackRowIndex(packed));
+    }
+
+    @Override
+    public void recordAtRowIndex(Record record, long rowIndex) {
+        // Unlike the plain twin (which bare-setRowIndexes because one frame is one contiguous cell),
+        // consecutive ordinals of a composite day may live in DIFFERENT cells, so re-navigate via the
+        // permutation of the currently open day (established by the preceding open()/recordAt()).
+        final long packed = permutation.get(dayOffset.getQuick(currentOpenDay) + rowIndex);
+        navigateToCell(record, unpackFrameIndex(packed), unpackRowIndex(packed));
+    }
+
+    @Override
+    public void seekEstimate(long timestamp) {
+        buildPermutation();
+        // Reuse the stock binary search over the per-day ceilings; the identity dayFrameIndexes map
+        // lets it index dayCeiling/dayEstimateLo by day exactly as it would index by partition.
+        TimeFrameCursor.findSeekEstimate(
+                timestamp,
+                dayCount,
+                dayFrameIndexes,
+                dayCeiling,
+                dayEstimateLo,
+                timeFrame
+        );
+    }
+
+    @Override
+    public void toTop() {
+        // The permutation is built once and memoized (buildPermutation() rewinds the frame cursor
+        // itself), so a rewind only has to reset the navigation cursor over the day array.
+        timeFrame.clear();
+        currentOpenDay = -1;
     }
 
     private CellIter acquireCell() {
@@ -281,11 +419,14 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
         }
         permutation.reopen();
         permutation.clear();
+        dayFrameIndexes.reopen();
+        dayFrameIndexes.clear();
         dayOffset.clear();
         dayRowCount.clear();
         dayTsLo.clear();
         dayTsHi.clear();
         dayCeiling.clear();
+        dayEstimateLo.clear();
         dayCount = 0;
         cellCount = 0;
         heap.clear();
@@ -330,6 +471,8 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
                 dayTsLo.add(tsLo);
                 dayTsHi.add(tsHi);
                 dayCeiling.add(TimeFrameCursorImpl.estimatePartitionHi(ceilMethod, dayTs, nextDayTs));
+                dayEstimateLo.add(dayTs);
+                dayFrameIndexes.add(dayCount);
                 dayCount++;
             }
             // !any: every sibling cell of this day group was empty -- skip, matching
@@ -377,6 +520,19 @@ public class CompositeTimeFrameRecordCursor implements QuietCloseable {
             }
         }
         return true;
+    }
+
+    /**
+     * Positions {@code record} at a raw (cellFrameIndex, cellRowIndex) -- the read mechanism a
+     * permutation entry decodes to (mirrors {@link CompositeMergePartitionRecordCursor#hasNext()}'s
+     * OUTPUT bind -- read-only, zero-copy, since native addresses live in the query-lifetime {@link
+     * PageFrameAddressCache}). Reached only through the day/ordinal re-navigation in {@link
+     * #recordAt(Record, int, long)} / {@link #recordAtRowIndex(Record, long)}.
+     */
+    private void navigateToCell(Record record, int cellFrameIndex, long cellRowIndex) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(cellFrameIndex, frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(cellRowIndex);
     }
 
     // Fetches the next frame into the pulledXxx scratch, registering it in the address cache under
