@@ -38,6 +38,7 @@ import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -115,11 +116,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     // (startOffset, firstIdx, count) inline in the cursor's MapValue and skip a second hash probe.
     private static final int PARTITION_VALUE_BASE_LONGS = 5;
     private static final int PARTITION_VALUE_LONGS_PER_LAG = 3;
-    // Upfront partition slices to pre-allocate when a partitioned cursor first opens. Trades a small
-    // amount of overcommit (most queries materialise under this many partitions) for elimination of
-    // doubling reallocs in the typical case. Capped by maxPartitions inside of() so a deliberately
-    // low cap is honoured.
-    private static final long PENDING_MEM_PREALLOC_PARTITIONS = 256L;
     private static final int ROWID_BYTES = 8;
     private static final int ROWID_OFFSET = 0;
     private final RecordCursorFactory base;
@@ -556,6 +552,15 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // but does not re-call of(), so the B record we hold remains valid against the same
             // baseCursor.
             this.baseRecordForEmit = baseCursor.getRecordB();
+            // Emission reads base columns via recordAt(rowid). Non-partitioned streaming resolves
+            // rows in near base-scan order (a small lookahead delay), so the row ids climb almost
+            // monotonically; partitioned streaming emits in partition-major resolution order, so the
+            // row ids are scattered. Give the base cursor the matching Parquet decode-budget hint,
+            // mirroring CachedWindowLight (which always scatters). A wrong hint only costs decode
+            // throughput on Parquet-backed bases; it is never a correctness issue.
+            baseCursor.setParquetDecodeHint(partitionByRecord == null
+                    ? ParquetDecodeHint.MONOTONIC
+                    : ParquetDecodeHint.SCATTERED);
             this.circuitBreaker = executionContext.getCircuitBreaker();
             // Bind the per-query memory tracker on the two native structures that grow with the
             // input (the partition-state map and the pending-slot ring) so their allocations count
@@ -576,23 +581,14 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             if (pendingMem == null) {
                 // Page size = one partition's slice. In non-partitioned mode there is exactly one
                 // page; in partitioned mode each new partition extends pendingMem by one page via
-                // jumpTo(), which triggers Unsafe.realloc and memcpys the existing region. To bound
-                // the cumulative memcpy traffic on high-cardinality partition workloads, pre-extend
-                // the region up to a budget of PENDING_MEM_PREALLOC_PARTITIONS partitions on first
-                // allocation. The budget is capped at maxPartitions so a query with maxPartitions=1
-                // does not allocate beyond what the cap permits.
+                // jumpTo(), which triggers Unsafe.realloc. MemoryCARWImpl grows its backing
+                // geometrically on extension, so a per-partition jumpTo amortises to O(1) copies
+                // and no upfront reserve is needed. Reserving a fixed slab here would instead charge
+                // hundreds of unused slices to the per-query tracker up front, failing empty and
+                // one-partition queries under a tight limit that only ever needs a single slice.
                 final long pageBytes = Math.max(16L, (long) slotBytes * ringCapacity);
                 pendingMem = Vm.getCARWInstance(pageBytes, Integer.MAX_VALUE, MemoryTag.NATIVE_WINDOW_PENDING);
                 pendingMem.setMemoryTracker(memoryTracker);
-                if (partitionByRecord != null && maxPartitions > 1) {
-                    final long prealloc = Math.min(PENDING_MEM_PREALLOC_PARTITIONS, maxPartitions) * pageBytes;
-                    pendingMem.jumpTo(prealloc);
-                    pendingMem.jumpTo(0);
-                    // Refresh pendingBaseAddr defensively. allocatePartitionSlice refreshes it on
-                    // first partition touch today, but any caller (e.g. Function.init below) that
-                    // routed through getAddress() before then would dereference 0.
-                    pendingBaseAddr = pendingMem.getPageAddress(0);
-                }
             } else {
                 pendingMem.setMemoryTracker(memoryTracker);
             }
@@ -753,6 +749,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         private void processBaseRow(Record baseRow) {
             final MapValue mapValue;
+            final long mapValueAddr;
             final long slotsOff;
             long ringHead;
             long ringTail;
@@ -761,6 +758,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             if (partitionByRecord == null) {
                 mapValue = null;
+                mapValueAddr = 0L;
                 slotsOff = singlePartitionState[0];
                 ringHead = singlePartitionState[1];
                 ringTail = singlePartitionState[2];
@@ -781,18 +779,21 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                                 .put("DeferredEmitWindowRecordCursor partition cap exceeded: maxPartitions=").put(maxPartitions);
                     }
                 }
+                // Resolve the value address once. createValue/findValue may resize the map, but from
+                // here to the end of processBaseRow nothing else mutates partitionMap, so the address
+                // stays valid for both the read below and the step-4 write-back (asserted there).
+                mapValueAddr = mapValue.getAddress(0);
                 if (mapValue.isNew()) {
                     slotsOff = allocatePartitionSlice();
-                    mapValue.putLong(0, slotsOff);
-                    mapValue.putLong(1, 0L);
-                    mapValue.putLong(2, 0L);
-                    mapValue.putLong(3, 0L);
-                    mapValue.putLong(4, 0L);
-                    // Zero the per-LAG slots so streaming LAG variants see a clean (0,0,0) tuple
-                    // on first touch. Map.createValue's memset covers the value region but writing
-                    // explicitly makes the contract local to the LAG dispatch.
+                    // Only slotsOff (offset 0) and the per-LAG triples need initialisation here.
+                    // ringHead/ringTail/ringCount/pendingFilled (offsets 1..4) are written back
+                    // unconditionally at step 4 below before any reader sees them, so zeroing them
+                    // now would be dead stores. The per-LAG triples must be zeroed because streaming
+                    // LAG variants detect first-touch via (count==0 && startOffset==0) and OrderedMap
+                    // does not zero value memory on createValue.
+                    Unsafe.getUnsafe().putLong(mapValueAddr, slotsOff);
                     for (int j = 0, m = lagFunctionsArr.length * PARTITION_VALUE_LONGS_PER_LAG; j < m; j++) {
-                        mapValue.putLong(PARTITION_VALUE_BASE_LONGS + j, 0L);
+                        Unsafe.getUnsafe().putLong(mapValueAddr + (long) (PARTITION_VALUE_BASE_LONGS + j) * Long.BYTES, 0L);
                     }
                     ringHead = 0L;
                     ringTail = 0L;
@@ -801,18 +802,13 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 } else {
                     // Read the partition's state tuple through direct Unsafe to skip 5 interface
                     // dispatches and 5 column-offset array indirections per existing-partition row.
-                    // The flyweight invariant is the same one the write-back at step 4 relies on:
-                    // nothing between here and the end of processBaseRow mutates partitionMap.
-                    final long addr = mapValue.getAddress(0);
-                    slotsOff = Unsafe.getUnsafe().getLong(addr);
-                    ringHead = Unsafe.getUnsafe().getLong(addr + Long.BYTES);
-                    ringTail = Unsafe.getUnsafe().getLong(addr + 2L * Long.BYTES);
-                    ringCount = Unsafe.getUnsafe().getLong(addr + 3L * Long.BYTES);
-                    pendingFilled = Unsafe.getUnsafe().getLong(addr + 4L * Long.BYTES);
+                    slotsOff = Unsafe.getUnsafe().getLong(mapValueAddr);
+                    ringHead = Unsafe.getUnsafe().getLong(mapValueAddr + Long.BYTES);
+                    ringTail = Unsafe.getUnsafe().getLong(mapValueAddr + 2L * Long.BYTES);
+                    ringCount = Unsafe.getUnsafe().getLong(mapValueAddr + 3L * Long.BYTES);
+                    pendingFilled = Unsafe.getUnsafe().getLong(mapValueAddr + 4L * Long.BYTES);
                 }
             }
-
-            final long mapValueAddr = mapValue != null ? mapValue.getAddress(0) : 0;
 
             // 1) Back-fill: for each LEAD function with offset k_i, find the entry at age k_i
             //    (i.e., enqueued k_i partition-local rows ago) and write LEAD's value into its slot.

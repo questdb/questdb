@@ -100,6 +100,59 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadStreamsOverParquetBackedBase() throws Exception {
+        // C18: emission resolves base columns via baseCursor.recordAt(rowid) on a Parquet-backed
+        // frame; the cursor sets the Parquet decode-budget hint (MONOTONIC non-partitioned,
+        // SCATTERED partitioned). Prove both routes still stream through DeferredEmitWindow and
+        // return correct rows against a converted partition.
+        assertMemoryLeak(() -> {
+            execute("create table tnp (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into tnp values (10, 0), (20, 1000), (30, 2000), (40, 3000), (50, 4000)");
+            execute("alter table tnp convert partition to parquet where ts >= 0");
+
+            assertPlanNoLeakCheck(
+                    "select x, lead(x, 1) over () as lx from tnp",
+                    """
+                            DeferredEmitWindow
+                              functions: [lead(x, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tnp
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t20
+                            20\t30
+                            30\t40
+                            40\t50
+                            50\tnull
+                            """,
+                    "select x, lead(x, 1) over () as lx from tnp",
+                    null, false, true
+            );
+
+            execute("create table tp (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into tp values (10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000), (40, 'B', 3000)");
+            execute("alter table tp convert partition to parquet where ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tlx
+                            10\tA\t30
+                            20\tB\t40
+                            30\tA\tnull
+                            40\tB\tnull
+                            """,
+                    "select x, sym, lead(x, 1) over (partition by sym) as lx from tp order by x",
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testLeadOneStreamsWithDefaultLong() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");

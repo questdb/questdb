@@ -211,7 +211,10 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void computeNext(Record record) {
             if (computeNext0(record)) {
-                loIdx = (int) ((loIdx + 1) % offset);
+                // loIdx is always in [0, offset-1] here, so a single compare-and-reset wraps it
+                // exactly like (loIdx + 1) % offset without the per-row long division.
+                int next = loIdx + 1;
+                loIdx = next == offset ? 0 : next;
                 count++;
             }
         }
@@ -335,7 +338,9 @@ public class LeadLagWindowFunctionFactoryHelper {
                 count++;
             }
             mapValue.putLong(0, startOffset);
-            mapValue.putLong(1, firstIdx % offset);
+            // firstIdx is in [0, offset] after the increment above, so a single compare-and-reset
+            // wraps it exactly like firstIdx % offset without the per-row long division.
+            mapValue.putLong(1, firstIdx == offset ? 0L : firstIdx);
             mapValue.putLong(2, count);
         }
 
@@ -458,7 +463,10 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (doPass1(record, recordOffset, spi)) {
-                loIdx = (int) ((loIdx + 1) % offset);
+                // loIdx is always in [0, offset-1] here, so a single compare-and-reset wraps it
+                // exactly like (loIdx + 1) % offset without the per-row long division.
+                int next = loIdx + 1;
+                loIdx = next == offset ? 0 : next;
                 count++;
             }
         }
@@ -625,7 +633,9 @@ public class LeadLagWindowFunctionFactoryHelper {
             }
 
             mapValue.putLong(0, startOffset);
-            mapValue.putLong(1, firstIdx % offset);
+            // firstIdx is in [0, offset] after the increment above, so a single compare-and-reset
+            // wraps it exactly like firstIdx % offset without the per-row long division.
+            mapValue.putLong(1, firstIdx == offset ? 0L : firstIdx);
             mapValue.putLong(2, count);
         }
 
