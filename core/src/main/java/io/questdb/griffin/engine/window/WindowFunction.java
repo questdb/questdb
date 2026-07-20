@@ -35,8 +35,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -259,14 +259,14 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * @return the partition-key {@link ColumnTypes} the live-view snapshot framework
+     * @return the partition-key {@link ColumnTypes} the live-view checkpoint framework
      * writes into the FUNCTION_SNAPSHOT key-shape header and validates on restore.
      * Returns {@code null} for scalar (no-map) functions, which the framework treats
      * as a single keyless partition. Partitioned functions override to return their
      * own partition-key types.
      */
     @Nullable
-    default ColumnTypes getSnapshotKeyColumnTypes() {
+    default ColumnTypes getCheckpointKeyColumnTypes() {
         return null;
     }
 
@@ -277,7 +277,7 @@ public interface WindowFunction extends Function {
      * {@link io.questdb.cairo.lv.LiveViewSnapshotKeyCodec#writeKey} when emitting a
      * partition's key. Default {@code 0}; partitioned functions override.
      */
-    default int getSnapshotKeyStartIndex() {
+    default int getCheckpointKeyStartIndex() {
         return 0;
     }
 
@@ -313,7 +313,7 @@ public interface WindowFunction extends Function {
 
     /**
      * @return the number of tombstoned (logically-evicted) partitions currently in
-     * the partition-state {@link Map}. The live-view snapshot framework uses it to
+     * the partition-state {@link Map}. The live-view checkpoint framework uses it to
      * pick the cheap {@code map.size()} live-count when no entry is tombstoned, and
      * the two-pass count otherwise. Default {@code 0}; functions that track a
      * per-partition tombstone bit override.
@@ -405,13 +405,13 @@ public interface WindowFunction extends Function {
     /**
      * Resets this function's per-partition state to empty before the live-view
      * snapshot framework rehydrates partitions via
-     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}. Partitioned
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}. Partitioned
      * functions clear their {@link Map} and zero the tombstone counter here;
      * native-memory-backed ring/deque functions also truncate their backing
      * arena and clear their free list. Default no-op (scalar functions hold a
-     * single field that {@code restorePartitionState} overwrites directly).
+     * single field that {@code restoreCheckpointState} overwrites directly).
      */
-    default void onSnapshotRestoreBegin() {
+    default void onCheckpointRestoreBegin() {
     }
 
     /**
@@ -471,7 +471,7 @@ public interface WindowFunction extends Function {
 
     /**
      * Rehydrates ONE partition's accumulator state previously written by
-     * {@link #snapshotPartitionState(MemoryA, MapValue)}. The live-view snapshot
+     * {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)}. The live-view snapshot
      * framework owns iteration: it has already read the partition key and called
      * {@code createValue()}, passing the fresh {@code value} here; for scalar
      * (no-map) functions {@code value} is {@code null}. The function reads its own
@@ -479,14 +479,14 @@ public interface WindowFunction extends Function {
      * advanced offset just past them. Native-memory-backed functions allocate the
      * partition's ring/deque from their arena here.
      * <p>
-     * The default throws — only window functions that {@link #supportsSnapshot()}
+     * The default throws — only window functions that {@link #supportsCheckpointState()}
      * override.
      *
      * @return the offset just past this partition's consumed state bytes
      */
-    default long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+    default long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
         throw new UnsupportedOperationException(
-                "restorePartitionState not implemented for " + getClass().getName()
+                "restoreCheckpointState not implemented for " + getClass().getName()
         );
     }
 
@@ -533,9 +533,9 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * @return the snapshot layout version this build writes. The framework records this in the
+     * @return the checkpoint state layout version this build writes. The framework records this in the
      * FUNCTION_SNAPSHOT block header so future builds can dispatch through
-     * {@link #restorePartitionState(MemoryR, long, MapValue, int)} to the correct decoder. Bump
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)} to the correct decoder. Bump
      * on any state-layout change.
      * <p>
      * This doubles as the highest version this build can <em>read</em>: a build that could decode
@@ -543,48 +543,48 @@ public interface WindowFunction extends Function {
      * value rather than decoding foreign bytes with the current layout - the case a downgraded
      * binary hits when a newer binary left a CRC-valid head checkpoint behind.
      */
-    default int snapshotFormatVersion() {
+    default int checkpointStateFormatVersion() {
         return 0;
     }
 
     /**
-     * @return the lowest snapshot {@code formatVersion} this build can
-     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}.
+     * @return the lowest checkpoint state {@code formatVersion} this build can
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}.
      * A head checkpoint whose recorded version is strictly less than this value cannot be replayed;
      * the live view layer surfaces it as {@code "checkpoint format version unsupported"} via the
      * unified invalidation path.
      */
-    default int snapshotMinSupportedVersion() {
+    default int checkpointStateMinSupportedVersion() {
         return 0;
     }
 
     /**
      * Serialises ONE partition's accumulator state into {@code sink} for later
-     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}. The live-view
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}. The live-view
      * snapshot framework owns iteration and the FUNCTION_SNAPSHOT key-shape header:
      * it has already written this partition's key, so the function writes only its
      * own value bytes from {@code value} (the partition's {@link MapValue}; for
      * scalar no-map functions {@code value} is {@code null} and the function reads
      * its single field directly).
      * <p>
-     * The default throws — only window functions that {@link #supportsSnapshot()}
+     * The default throws — only window functions that {@link #supportsCheckpointState()}
      * override.
      */
-    default void snapshotPartitionState(MemoryA sink, MapValue value) {
+    default void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
         throw new UnsupportedOperationException(
-                "snapshotPartitionState not implemented for " + getClass().getName()
+                "freezeCheckpointState not implemented for " + getClass().getName()
         );
     }
 
     /**
-     * Reports whether {@link #snapshotPartitionState(MemoryA, MapValue)} /
-     * {@link #restorePartitionState(MemoryR, long, MapValue, int)} are implemented.
+     * Reports whether {@link #freezeCheckpointState(LiveViewStatePageWriter, MapValue)} /
+     * {@link #restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)} are implemented.
      * The live view refresh worker ANDs this across every window function in the compiled SELECT
      * at first refresh; the LV's per-instance {@code snapshotCapability} flag is the result.
      * Default {@code false} keeps unmigrated functions out of the checkpoint pipeline without
      * a try/catch — the cheaper probe.
      */
-    default boolean supportsSnapshot() {
+    default boolean supportsCheckpointState() {
         return false;
     }
 

@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -253,12 +253,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return valueColumnTypes.getColumnCount();
         }
 
@@ -299,7 +299,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void onSnapshotRestoreBegin() {
+        public void onCheckpointRestoreBegin() {
             // The map starts closed (lazy) and the live-view restore path can run
             // before any cursor of()/ofIncremental reopens it, so reopen() first;
             // it allocates the backing when closed and is a no-op when already open.
@@ -329,7 +329,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             value.putLong(ROW_NUMBER_VALUE_INDEX, source.getLong(offset));
             offset += Long.BYTES;
             if (tombstoneValueIndex >= 0) {
@@ -353,22 +353,22 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             // tombstoneValueIndex >= 0 marks a live-view compile; this class has no
             // dedicated liveView flag, so it stands in for the guard the other
             // window families carry.
@@ -434,7 +434,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             rowNumber = source.getLong(offset);
             return offset + Long.BYTES;
         }
@@ -445,22 +445,22 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(rowNumber);
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return true;
         }
 

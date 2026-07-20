@@ -39,8 +39,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -377,12 +377,12 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : EMA_COLUMN_TYPES.getColumnCount();
@@ -424,7 +424,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putLong(1, source.getLong(offset));
@@ -438,24 +438,24 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putDouble(value.getDouble(0));
             sink.putLong(value.getLong(1));
             sink.putLong(value.getLong(2));
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
@@ -622,12 +622,12 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : EMA_COLUMN_TYPES.getColumnCount();
@@ -669,7 +669,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putLong(1, source.getLong(offset));
@@ -683,24 +683,24 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putDouble(value.getDouble(0));
             sink.putLong(value.getLong(1));
             sink.putLong(value.getLong(2));
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);

@@ -2358,7 +2358,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // The fix resyncs instance.leadRowCount to the untouched slot.
         //
         // CREATE rejects every non-snapshot-capable window shape (each
-        // WindowFunction.supportsSnapshot() folds in the anchor key type check), so a
+        // WindowFunction.supportsCheckpointState() folds in the anchor key type check), so a
         // freshly-validated view never reaches the non-capable branch - it is a
         // defensive path for a runtime-non-capable view (e.g. a restored view whose
         // function lost snapshot support). This test forces that state directly via

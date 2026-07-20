@@ -200,7 +200,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     // Not yet migrated to the live-view snapshot contract: unlike the narrower
     // widths (which extend BaseLagOverPartitionFunction and inherit its LV
     // hooks), this class manages its own ring layout and keeps the default
-    // supportsSnapshot() == false, so CREATE LIVE VIEW rejects lag(DECIMAL128)
+    // supportsCheckpointState() == false, so CREATE LIVE VIEW rejects lag(DECIMAL128)
     // over a partitioned frame up front (CairoEngine.validateLiveViewWindowFunction)
     // while lag(DECIMAL64 and narrower) is accepted. Fails safe; migrate the
     // snapshot/restore + tombstone hooks to lift the restriction.

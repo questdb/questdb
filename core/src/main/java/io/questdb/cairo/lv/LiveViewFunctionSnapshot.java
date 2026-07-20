@@ -43,8 +43,8 @@ import io.questdb.griffin.engine.window.WindowFunction;
  * everything after it: the key-shape header, the partition count, and the
  * per-partition key + state iteration. Each window function contributes only ONE
  * partition's state via
- * {@link WindowFunction#snapshotPartitionState(MemoryA, MapValue)} /
- * {@link WindowFunction#restorePartitionState(MemoryR, long, MapValue, int)}.
+ * {@link WindowFunction#freezeCheckpointState(LiveViewStatePageWriter, MapValue)} /
+ * {@link WindowFunction#restoreCheckpointState(LiveViewStatePageReader, long, MapValue, int)}.
  * <p>
  * Payload layout (mirrors the WINDOW_ANCHOR block's self-describing header so a
  * stored-vs-running key-shape mismatch is caught before any state byte is decoded):
@@ -54,7 +54,8 @@ import io.questdb.griffin.engine.window.WindowFunction;
  *   partitionCount: LONG
  *   per partition:
  *     per key column: keyValue   (LiveViewSnapshotKeyCodec)
- *     state bytes                (function: one partition)
+ *     statePageLength: LONG
+ *     statePageBytes            (function: one partition, exact length)
  * </pre>
  * Scalar (no-map) functions write {@code partitionKeyColumnCount=0},
  * {@code partitionCount=1}, then their single state record with a {@code null}
@@ -76,7 +77,7 @@ public final class LiveViewFunctionSnapshot {
      * After the last partition the consumed byte count must reconcile with
      * {@code payloadLength} - the restore-side mirror of the writer's
      * emitted-vs-live-count check. A function-level offset drift (a
-     * restorePartitionState that reads more or fewer bytes than its writer
+     * restoreCheckpointState that reads more or fewer bytes than its writer
      * emitted) would otherwise silently decode the next partition or block
      * from the wrong offset.
      *
@@ -88,9 +89,18 @@ public final class LiveViewFunctionSnapshot {
      * @param formatVersion the per-function snapshot version recorded in the prelude
      */
     public static void restore(MemoryR source, long offset, long payloadLength, WindowFunction f, int formatVersion) {
+        if (offset < 0 || payloadLength < 0 || offset > source.size() || payloadLength > source.size() - offset) {
+            throw CairoException.critical(0)
+                    .put("live view function checkpoint payload out of bounds")
+                    .put(" [offset=").put(offset)
+                    .put(", length=").put(payloadLength)
+                    .put(", sourceSize=").put(source.size()).put(']');
+        }
         final long payloadStart = offset;
-        final ColumnTypes keyTypes = f.getSnapshotKeyColumnTypes();
+        final long payloadEnd = payloadStart + payloadLength;
+        final ColumnTypes keyTypes = f.getCheckpointKeyColumnTypes();
         final int expectedKeyColumnCount = keyTypes == null ? 0 : keyTypes.getColumnCount();
+        ensureAvailable(offset, Integer.BYTES, payloadEnd, "key column count");
         final int storedKeyColumnCount = source.getInt(offset);
         offset += Integer.BYTES;
         if (storedKeyColumnCount != expectedKeyColumnCount) {
@@ -102,6 +112,7 @@ public final class LiveViewFunctionSnapshot {
                     .put(']');
         }
         for (int i = 0; i < storedKeyColumnCount; i++) {
+            ensureAvailable(offset, Integer.BYTES, payloadEnd, "key column type");
             final int storedType = source.getInt(offset);
             offset += Integer.BYTES;
             final int expectedType = keyTypes.getColumnType(i);
@@ -116,12 +127,13 @@ public final class LiveViewFunctionSnapshot {
                         .put(']');
             }
         }
+        ensureAvailable(offset, Long.BYTES, payloadEnd, "partition count");
         final long partitionCount = source.getLong(offset);
         offset += Long.BYTES;
         // Reject a negative count BEFORE any state mutation: the map path would clear state
         // then zero-iterate, and a header-only payload crafted to match payloadLength would
         // pass the final length check - silently restoring empty state from a corrupt (but
-        // CRC-valid) checkpoint. Guard before onSnapshotRestoreBegin so the running state is
+        // CRC-valid) checkpoint. Guard before onCheckpointRestoreBegin so the running state is
         // untouched on rejection.
         if (partitionCount < 0) {
             throw CairoException.critical(0)
@@ -129,12 +141,12 @@ public final class LiveViewFunctionSnapshot {
                     .put(partitionCount)
                     .put(']');
         }
-        // Reject a count that cannot fit in the remaining payload BEFORE onSnapshotRestoreBegin
+        // Reject a count that cannot fit in the remaining payload BEFORE onCheckpointRestoreBegin
         // mutates state: each entry consumes at least one byte, so a crafted (CRC-valid) count
         // larger than the bytes left would otherwise drive an out-of-bounds / long-running read
         // that only the final length check catches - after the running state was already wiped.
         final long remainingBytes = payloadLength - (offset - payloadStart);
-        if (remainingBytes < 0 || partitionCount > remainingBytes) {
+        if (remainingBytes < 0 || partitionCount > remainingBytes / Long.BYTES) {
             throw CairoException.critical(0)
                     .put("live view function snapshot partition count exceeds payload [count=")
                     .put(partitionCount)
@@ -142,8 +154,6 @@ public final class LiveViewFunctionSnapshot {
                     .put(remainingBytes)
                     .put(']');
         }
-
-        f.onSnapshotRestoreBegin();
 
         final Map map = f.getPartitionMap();
         if (map == null) {
@@ -156,13 +166,22 @@ public final class LiveViewFunctionSnapshot {
                         .put(partitionCount)
                         .put(']');
             }
-            offset = f.restorePartitionState(source, offset, null, formatVersion);
+        }
+
+        // Validate all framework-owned framing before clearing or otherwise mutating the
+        // running function. The decoder itself remains bounded independently below.
+        validateEntries(source, offset, payloadEnd, map == null ? null : keyTypes, partitionCount);
+
+        final LiveViewStatePageReader pageReader = new LiveViewStatePageReader();
+        f.onCheckpointRestoreBegin();
+        if (map == null) {
+            offset = restoreStatePage(pageReader, source, offset, payloadEnd, f, null, formatVersion);
         } else {
             for (long p = 0; p < partitionCount; p++) {
                 final MapKey key = map.withKey();
                 offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyTypes);
                 final MapValue value = key.createValue();
-                offset = f.restorePartitionState(source, offset, value, formatVersion);
+                offset = restoreStatePage(pageReader, source, offset, payloadEnd, f, value, formatVersion);
             }
         }
         final long consumed = offset - payloadStart;
@@ -176,6 +195,127 @@ public final class LiveViewFunctionSnapshot {
         }
     }
 
+    private static void ensureAvailable(long offset, long bytes, long limit, CharSequence field) {
+        if (offset < 0 || bytes < 0 || offset > limit || bytes > limit - offset) {
+            throw CairoException.critical(0)
+                    .put("live view function checkpoint ").put(field).put(" exceeds payload")
+                    .put(" [offset=").put(offset)
+                    .put(", read=").put(bytes)
+                    .put(", limit=").put(limit).put(']');
+        }
+    }
+
+    private static void validateEntries(
+            MemoryR source,
+            long offset,
+            long payloadEnd,
+            ColumnTypes keyTypes,
+            long partitionCount
+    ) {
+        for (long p = 0; p < partitionCount; p++) {
+            if (keyTypes != null) {
+                offset = validateKey(source, offset, payloadEnd, keyTypes);
+            }
+            ensureAvailable(offset, Long.BYTES, payloadEnd, "state page length");
+            final long pageLength = source.getLong(offset);
+            offset += Long.BYTES;
+            if (pageLength < 0 || pageLength > LiveViewStatePageWriter.MAX_PAGE_SIZE) {
+                throw CairoException.critical(0)
+                        .put("live view function checkpoint state page length invalid, length=")
+                        .put(pageLength);
+            }
+            ensureAvailable(offset, pageLength, payloadEnd, "state page");
+            offset += pageLength;
+        }
+        if (offset != payloadEnd) {
+            throw CairoException.critical(0)
+                    .put("live view function snapshot payload length mismatch [expectedEnd=")
+                    .put(payloadEnd)
+                    .put(", actualEnd=")
+                    .put(offset)
+                    .put(']');
+        }
+    }
+
+    private static long restoreStatePage(
+            LiveViewStatePageReader pageReader,
+            MemoryR source,
+            long offset,
+            long payloadEnd,
+            WindowFunction function,
+            MapValue value,
+            int formatVersion
+    ) {
+        ensureAvailable(offset, Long.BYTES, payloadEnd, "state page length");
+        final long pageLength = source.getLong(offset);
+        offset += Long.BYTES;
+        if (pageLength < 0 || pageLength > LiveViewStatePageWriter.MAX_PAGE_SIZE) {
+            throw CairoException.critical(0)
+                    .put("live view function checkpoint state page length invalid, length=")
+                    .put(pageLength);
+        }
+        ensureAvailable(offset, pageLength, payloadEnd, "state page");
+        pageReader.of(source, offset, pageLength);
+        final long consumed = function.restoreCheckpointState(pageReader, 0, value, formatVersion);
+        if (consumed != pageLength) {
+            throw CairoException.critical(0)
+                    .put("live view function checkpoint state page length mismatch")
+                    .put(" [expected=").put(pageLength)
+                    .put(", consumed=").put(consumed).put(']');
+        }
+        return offset + pageLength;
+    }
+
+    private static long validateKey(MemoryR source, long offset, long payloadEnd, ColumnTypes keyTypes) {
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
+            final int bytes;
+            switch (type) {
+                case ColumnType.BYTE:
+                case ColumnType.BOOLEAN:
+                case ColumnType.GEOBYTE:
+                    bytes = Byte.BYTES;
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.CHAR:
+                case ColumnType.GEOSHORT:
+                    bytes = Short.BYTES;
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.IPv4:
+                case ColumnType.GEOINT:
+                case ColumnType.FLOAT:
+                    bytes = Integer.BYTES;
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                case ColumnType.DOUBLE:
+                    bytes = Long.BYTES;
+                    break;
+                case ColumnType.STRING:
+                    ensureAvailable(offset, Integer.BYTES, payloadEnd, "string key length");
+                    final int strLen = source.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (strLen >= 0) {
+                        final long stringBytes = (long) strLen * Character.BYTES;
+                        ensureAvailable(offset, stringBytes, payloadEnd, "string key");
+                        offset += stringBytes;
+                    }
+                    continue;
+                default:
+                    throw CairoException.critical(0)
+                            .put("live view function checkpoint key type unsupported, type=")
+                            .put(ColumnType.nameOf(type));
+            }
+            ensureAvailable(offset, bytes, payloadEnd, "key");
+            offset += bytes;
+        }
+        return offset;
+    }
+
     /**
      * Writes the key-shape header, the live partition count, and each live
      * partition's key + state. Tombstoned partitions are skipped. A live-count vs
@@ -185,16 +325,17 @@ public final class LiveViewFunctionSnapshot {
      * @param f    the function whose per-partition state to serialise
      */
     public static void write(MemoryA sink, WindowFunction f) {
+        final LiveViewStatePageWriter pageWriter = new LiveViewStatePageWriter();
         final Map map = f.getPartitionMap();
         if (map == null) {
             // Scalar no-map function: a single keyless partition.
             sink.putInt(0);
             sink.putLong(1);
-            f.snapshotPartitionState(sink, null);
+            writeStatePage(pageWriter, sink, f, null);
             return;
         }
 
-        final ColumnTypes keyTypes = f.getSnapshotKeyColumnTypes();
+        final ColumnTypes keyTypes = f.getCheckpointKeyColumnTypes();
         final int keyColumnCount = keyTypes.getColumnCount();
         sink.putInt(keyColumnCount);
         for (int i = 0; i < keyColumnCount; i++) {
@@ -219,7 +360,7 @@ public final class LiveViewFunctionSnapshot {
         }
         sink.putLong(liveCount);
 
-        final int keyStartIndex = f.getSnapshotKeyStartIndex();
+        final int keyStartIndex = f.getCheckpointKeyStartIndex();
         long emitted = 0;
         while (cursor.hasNext()) {
             final MapValue value = record.getValue();
@@ -227,7 +368,7 @@ public final class LiveViewFunctionSnapshot {
                 continue;
             }
             LiveViewSnapshotKeyCodec.writeKey(sink, record, keyTypes, keyStartIndex);
-            f.snapshotPartitionState(sink, value);
+            writeStatePage(pageWriter, sink, f, value);
             emitted++;
         }
         if (emitted != liveCount) {
@@ -238,5 +379,22 @@ public final class LiveViewFunctionSnapshot {
                     .put(emitted)
                     .put(']');
         }
+    }
+
+    private static void writeStatePage(
+            LiveViewStatePageWriter pageWriter,
+            MemoryA sink,
+            WindowFunction function,
+            MapValue value
+    ) {
+        final long lengthOffset = sink.getAppendOffset();
+        sink.putLong(0);
+        pageWriter.of(sink);
+        function.freezeCheckpointState(pageWriter, value);
+        final long pageLength = pageWriter.size();
+        final long appendOffset = sink.getAppendOffset();
+        sink.jumpTo(lengthOffset);
+        sink.putLong(pageLength);
+        sink.jumpTo(appendOffset);
     }
 }

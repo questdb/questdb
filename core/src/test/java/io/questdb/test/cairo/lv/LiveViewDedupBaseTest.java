@@ -566,7 +566,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         // window state from a checkpoint whose anchor map is keyed by the PARTITION BY
         // columns. A key type the snapshot codec cannot persist (here UUID) must be
         // rejected at CREATE rather than pass and then serve wrong results at the first
-        // replay. The reject is enforced by the per-function supportsSnapshot() check,
+        // replay. The reject is enforced by the per-function supportsCheckpointState() check,
         // which folds in LiveViewSnapshotKeyCodec.isAllTypesSupported over the same
         // partition keys and runs for every view. This test pins the observable contract:
         // such a view does not silently create over a dedup base.

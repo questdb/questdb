@@ -126,10 +126,10 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     /**
      * Empties the partition-state map and zeroes the tombstone counter before the
      * live-view snapshot framework rehydrates partitions. Mirrors
-     * {@link BasePartitionedWindowFunction#onSnapshotRestoreBegin()}.
+     * {@link BasePartitionedWindowFunction#onCheckpointRestoreBegin()}.
      */
     @Override
-    public void onSnapshotRestoreBegin() {
+    public void onCheckpointRestoreBegin() {
         Misc.clear(map);
         tombstoneCount = 0;
     }

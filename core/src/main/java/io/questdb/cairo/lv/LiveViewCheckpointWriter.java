@@ -86,7 +86,7 @@ public class LiveViewCheckpointWriter implements Closeable {
      */
     public static final String CHECKPOINT_DIR_NAME = "_checkpoints";
 
-    public static final int FILE_FORMAT_VERSION = 1;
+    public static final int FILE_FORMAT_VERSION = 2;
     public static final int FILE_HEADER_BLOCK_COUNT_OFFSET = 8;
     public static final int FILE_HEADER_SIZE = 16;
     public static final int FILE_MAGIC = 0x4C56_4350;

@@ -41,9 +41,9 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -400,12 +400,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : LAG_COLUMN_TYPES.getColumnCount();
@@ -438,8 +438,8 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
-        public void onSnapshotRestoreBegin() {
-            super.onSnapshotRestoreBegin();
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
             memory.truncate();
         }
 
@@ -472,7 +472,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             final long ringBytes = this.offset * RING_SLOT_BYTES;
             final long firstIdx = source.getLong(offset);
             offset += Long.BYTES;
@@ -499,17 +499,17 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(1)); // firstIdx
             sink.putLong(value.getLong(2)); // count
             final long startOffset = value.getLong(0);
@@ -519,7 +519,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);

@@ -37,8 +37,8 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
@@ -174,7 +174,7 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
     @Test
     public void testFunctionSnapshotRejectsCountExceedingPayload() throws Exception {
         // m9: an oversized (but positive, CRC-valid) partition count must be rejected up front,
-        // before onSnapshotRestoreBegin mutates state - the guard runs ahead of the scalar
+        // before onCheckpointRestoreBegin mutates state - the guard runs ahead of the scalar
         // count != 1 check, so a scalar stub still exercises it (pre-fix, the scalar check
         // rejects with a different message; the guard is what makes the map path safe too).
         assertMemoryLeak(() -> {
@@ -198,9 +198,50 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFunctionStatePageRejectsCorruptLengthAndDecoderOverread() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MemoryCARWImpl buf = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                final ScalarStub f = new ScalarStub();
+                LiveViewFunctionSnapshot.write(buf, f);
+                final long payloadLength = buf.getAppendOffset();
+
+                // key column count (4) + partition count (8), then the exact state-page length.
+                final long pageLengthOffset = Integer.BYTES + Long.BYTES;
+                buf.jumpTo(pageLengthOffset);
+                buf.putLong(Long.BYTES + 1L);
+                try {
+                    LiveViewFunctionSnapshot.restore(buf, 0, payloadLength, f, 0);
+                    Assert.fail("state page extending past the function payload must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "state page exceeds payload");
+                }
+                Assert.assertEquals(0, f.restoreBeginCount);
+
+                buf.jumpTo(pageLengthOffset);
+                buf.putLong(Long.BYTES);
+                f.overread = true;
+                // Place readable bytes immediately after the declared payload. The page cursor
+                // must still reject the buggy decoder instead of consuming this adjacent value.
+                buf.jumpTo(payloadLength);
+                buf.putLong(0x1122_3344_5566_7788L);
+                try {
+                    LiveViewFunctionSnapshot.restore(buf, 0, payloadLength, f, 0);
+                    Assert.fail("function decoder must not read past its state page");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "state page read out of bounds");
+                }
+                f.close();
+            }
+        });
+    }
+
     // A scalar (no-map) window function that round-trips a single state long, enough to drive
     // LiveViewFunctionSnapshot.write / restore without a real partition map.
     private static class ScalarStub extends BaseWindowFunction {
+        private boolean overread;
+        private int restoreBeginCount;
+
         private ScalarStub() {
             super(null);
         }
@@ -208,6 +249,11 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
         @Override
         public String getName() {
             return "scalar";
+        }
+
+        @Override
+        public void onCheckpointRestoreBegin() {
+            restoreBeginCount++;
         }
 
         @Override
@@ -220,12 +266,16 @@ public class LiveViewCheckpointCountValidationTest extends AbstractCairoTest {
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
+            source.getLong(offset);
+            if (overread) {
+                source.getByte(offset + Long.BYTES);
+            }
             return offset + Long.BYTES;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(42L);
         }
     }

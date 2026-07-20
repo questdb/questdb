@@ -90,7 +90,7 @@ import static io.questdb.cairo.lv.LiveViewCheckpointWriter.FILE_TRAILER_SIZE;
 public class LiveViewCheckpointReader implements Closeable {
 
     public static final int SUPPORTED_VERSION_MAX = FILE_FORMAT_VERSION;
-    public static final int SUPPORTED_VERSION_MIN = 1;
+    public static final int SUPPORTED_VERSION_MIN = FILE_FORMAT_VERSION;
 
     private final BlockCursor cursor = new BlockCursor();
     private final FilesFacade ff;

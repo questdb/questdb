@@ -1184,7 +1184,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         // An un-partitioned aggregate window (no PARTITION BY) is ZERO_PASS but has no
         // partition Map to snapshot, so it is not live-view-eligible and stays rejected
         // by nature - unlike the per-type migration train, this shape is never migratable.
-        // It clears the pass-count check and hits the supportsSnapshot() reject in
+        // It clears the pass-count check and hits the supportsCheckpointState() reject in
         // validateLiveViewWindowFunction, exercising the real-SQL path the stub-driven
         // testRejectNonSnapshotCapableWindowFunction cannot reach. Adding a PARTITION BY to
         // the same query is accepted (the partitioned ZERO_PASS aggregate shapes are
@@ -1886,7 +1886,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     // A ZERO_PASS window function that does not support snapshots. No such GA function
-    // exists, so this stub is the only way to reach (and pin) the supportsSnapshot reject.
+    // exists, so this stub is the only way to reach (and pin) the supportsCheckpointState reject.
     private static final class NonSnapshotWindowFunction extends BaseWindowFunction {
         NonSnapshotWindowFunction() {
             super(null);

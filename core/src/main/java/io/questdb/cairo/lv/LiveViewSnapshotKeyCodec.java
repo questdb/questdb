@@ -52,7 +52,7 @@ import io.questdb.cairo.vm.api.MemoryR;
  * partition columns as resolved STRING values (see {@code LiveViewWindow.build}
  * and the live-view path in {@code SqlCodeGenerator.generateSelectWindow}),
  * so the live-view partition-key key types end up as STRING for any LV that
- * partitions by SYMBOL. Callers should gate {@code supportsSnapshot()} on
+ * partitions by SYMBOL. Callers should gate {@code supportsCheckpointState()} on
  * {@link #isAllTypesSupported(ColumnTypes)}.
  * <p>
  * Format is type-dispatched and grows from {@code offset} byte-by-byte:
@@ -98,7 +98,7 @@ public final class LiveViewSnapshotKeyCodec {
      * exception. {@link MapValue} exposes no STRING slot setter, so value-slot
      * ranges restored via {@link #readValueSlots} must be fixed-width only;
      * callers that snapshot value slots (e.g. the rank function's
-     * chain-prefix) must gate {@code supportsSnapshot()} on this method, not
+     * chain-prefix) must gate {@code supportsCheckpointState()} on this method, not
      * on {@link #isAllTypesSupported(ColumnTypes)}.
      */
     public static boolean isAllTypesFixedWidth(ColumnTypes types) {
@@ -327,6 +327,124 @@ public final class LiveViewSnapshotKeyCodec {
                     break;
                 case ColumnType.STRING:
                     sink.putStr(record.getStrA(columnIndex));
+                    break;
+                default:
+                    throw unsupportedType(type);
+            }
+        }
+    }
+
+    public static long readValueSlots(
+            MapValue dst,
+            int slotStartIndex,
+            LiveViewStatePageReader source,
+            long offset,
+            ColumnTypes slotTypes
+    ) {
+        for (int i = 0, n = slotTypes.getColumnCount(); i < n; i++) {
+            final int slotIndex = slotStartIndex + i;
+            final int type = ColumnType.tagOf(slotTypes.getColumnType(i));
+            switch (type) {
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    dst.putByte(slotIndex, source.getByte(offset));
+                    offset += Byte.BYTES;
+                    break;
+                case ColumnType.BOOLEAN:
+                    dst.putBool(slotIndex, source.getByte(offset) != 0);
+                    offset += Byte.BYTES;
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                    dst.putShort(slotIndex, source.getShort(offset));
+                    offset += Short.BYTES;
+                    break;
+                case ColumnType.CHAR:
+                    dst.putChar(slotIndex, (char) source.getShort(offset));
+                    offset += Character.BYTES;
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.IPv4:
+                case ColumnType.GEOINT:
+                    dst.putInt(slotIndex, source.getInt(offset));
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.FLOAT:
+                    dst.putFloat(slotIndex, Float.intBitsToFloat(source.getInt(offset)));
+                    offset += Float.BYTES;
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.GEOLONG:
+                    dst.putLong(slotIndex, source.getLong(offset));
+                    offset += Long.BYTES;
+                    break;
+                case ColumnType.TIMESTAMP:
+                    dst.putTimestamp(slotIndex, source.getLong(offset));
+                    offset += Long.BYTES;
+                    break;
+                case ColumnType.DATE:
+                    dst.putDate(slotIndex, source.getLong(offset));
+                    offset += Long.BYTES;
+                    break;
+                case ColumnType.DOUBLE:
+                    dst.putDouble(slotIndex, source.getDouble(offset));
+                    offset += Double.BYTES;
+                    break;
+                default:
+                    throw unsupportedType(type);
+            }
+        }
+        return offset;
+    }
+
+    /** Page-aware fixed-width value-slot writer used by ranking state. */
+    public static void writeKey(LiveViewStatePageWriter sink, Record record, ColumnTypes types, int startIndex) {
+        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
+            final int columnIndex = startIndex + i;
+            final int type = ColumnType.tagOf(types.getColumnType(i));
+            switch (type) {
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    sink.putByte(record.getByte(columnIndex));
+                    break;
+                case ColumnType.BOOLEAN:
+                    sink.putByte((byte) (record.getBool(columnIndex) ? 1 : 0));
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                    sink.putShort(record.getShort(columnIndex));
+                    break;
+                case ColumnType.CHAR:
+                    sink.putShort((short) record.getChar(columnIndex));
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                    sink.putInt(record.getInt(columnIndex));
+                    break;
+                case ColumnType.IPv4:
+                    sink.putInt(record.getIPv4(columnIndex));
+                    break;
+                case ColumnType.GEOINT:
+                    sink.putInt(record.getGeoInt(columnIndex));
+                    break;
+                case ColumnType.FLOAT:
+                    sink.putInt(Float.floatToRawIntBits(record.getFloat(columnIndex)));
+                    break;
+                case ColumnType.LONG:
+                    sink.putLong(record.getLong(columnIndex));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sink.putLong(record.getTimestamp(columnIndex));
+                    break;
+                case ColumnType.DATE:
+                    sink.putLong(record.getDate(columnIndex));
+                    break;
+                case ColumnType.GEOLONG:
+                    sink.putLong(record.getGeoLong(columnIndex));
+                    break;
+                case ColumnType.DOUBLE:
+                    sink.putDouble(record.getDouble(columnIndex));
                     break;
                 default:
                     throw unsupportedType(type);

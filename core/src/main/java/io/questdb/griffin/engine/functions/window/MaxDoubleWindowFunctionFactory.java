@@ -40,9 +40,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -789,12 +789,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
@@ -803,8 +803,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void onSnapshotRestoreBegin() {
-            super.onSnapshotRestoreBegin();
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
             memory.truncate();
             freeList.clear();
             if (dequeMemory != null) {
@@ -869,7 +869,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
             final long size = source.getLong(offset);
@@ -923,17 +923,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             final long startOffset = value.getLong(1);
             final long size = value.getLong(2);
@@ -967,7 +967,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
@@ -1228,12 +1228,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : (frameLoBounded
@@ -1242,8 +1242,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void onSnapshotRestoreBegin() {
-            super.onSnapshotRestoreBegin();
+        public void onCheckpointRestoreBegin() {
+            super.onCheckpointRestoreBegin();
             memory.truncate();
             if (dequeMemory != null) {
                 dequeMemory.truncate();
@@ -1299,7 +1299,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             final long ringBytes = (long) bufferSize * Double.BYTES;
             final long dequeBytes = (long) dequeBufferSize * Double.BYTES;
             final long loIdx = source.getLong(offset);
@@ -1351,17 +1351,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putLong(value.getLong(0));
             final long startOffset = value.getLong(1);
             if (frameLoBounded) {
@@ -1383,7 +1383,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
@@ -2025,12 +2025,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : MAX_COLUMN_TYPES.getColumnCount();
@@ -2072,7 +2072,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
             value.putByte(1, source.getByte(offset));
@@ -2084,23 +2084,23 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putDouble(value.getDouble(0));
             sink.putByte(value.getByte(1));
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             return liveView
                     && keyColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);

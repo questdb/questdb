@@ -575,7 +575,7 @@ public class LiveViewInstance implements QuietCloseable {
     // committed after the snapshot from seedSweepSeqTxn + 1. LONG_NULL until the
     // sweep's first turn pins it; reset to LONG_NULL when the reader is released.
     private long seedSweepSeqTxn = Numbers.LONG_NULL;
-    // AND of every compiled window function's WindowFunction.supportsSnapshot().
+    // AND of every compiled window function's WindowFunction.supportsCheckpointState().
     // Computed once on the first refresh cycle after the LV's compiled factory
     // is ready, then cached. False means the flush cycle emits no checkpoints
     // (every restart / O3 falls back to the head-miss replay path); the LV's
@@ -1485,7 +1485,7 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * @return the cached AND of every compiled window function's
-     * {@code supportsSnapshot()}. Meaningful only when
+     * {@code supportsCheckpointState()}. Meaningful only when
      * {@link #isSnapshotCapabilityComputed()} returns {@code true}.
      */
     public boolean isSnapshotCapability() {
@@ -2085,7 +2085,7 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Caches the AND of every compiled window function's
-     * {@code supportsSnapshot()}, evaluated once after the LV's compiled
+     * {@code supportsCheckpointState()}, evaluated once after the LV's compiled
      * factory becomes available. Subsequent refresh cycles short-circuit on
      * {@link #isSnapshotCapabilityComputed()} and read the cached
      * {@link #isSnapshotCapability()} value. Setting writes both fields in

@@ -61,7 +61,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
     // Live-view head .cp restore observed a function snapshot block whose
     // formatVersion falls outside the function's supported range
-    // [snapshotMinSupportedVersion(), snapshotFormatVersion()]. Signals a real
+    // [checkpointStateMinSupportedVersion(), checkpointStateFormatVersion()]. Signals a real
     // compatibility break (not a structural corruption); the caller invalidates
     // the LV instead of falling into head-miss replay.
     public static final int LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH = SEQUENCER_METADATA_OPEN_FAILED - 1;

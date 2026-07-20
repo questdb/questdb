@@ -142,15 +142,15 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
      * Empties the partition-state map and zeroes the tombstone counter before the
      * live-view snapshot framework rehydrates partitions. Native-memory-backed
      * subclasses (ring/deque functions) override to also reset their backing arena
-     * and free list, calling {@code super.onSnapshotRestoreBegin()}.
+     * and free list, calling {@code super.onCheckpointRestoreBegin()}.
      */
     @Override
-    public void onSnapshotRestoreBegin() {
+    public void onCheckpointRestoreBegin() {
         if (map != null) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
             // of()/ofIncremental reopens it. reopen() allocates the backing when
-            // closed and is a no-op when already open, so restorePartitionState's
+            // closed and is a no-op when already open, so restoreCheckpointState's
             // createValue() always has a live map. The subsequent first
             // ofIncremental reopen() is then a no-op and preserves this state.
             map.reopen();

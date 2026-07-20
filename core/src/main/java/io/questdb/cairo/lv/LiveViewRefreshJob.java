@@ -2876,7 +2876,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // and nothing has applied to the LV table since (this branch does not commit).
             //
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
-            // WindowFunction.supportsSnapshot() folds in the anchor key type check),
+            // WindowFunction.supportsCheckpointState() folds in the anchor key type check),
             // and o3Replay recomputes capability above, so a freshly-validated view
             // never reaches this branch. It fires only for a view that is
             // non-capable at runtime (e.g. a restored view whose function lost
@@ -4280,7 +4280,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * exists yet).
      * <p>
      * Capability gate: AND of every compiled window function's
-     * {@code supportsSnapshot()} plus, when the LV has an anchored window,
+     * {@code supportsCheckpointState()} plus, when the LV has an anchored window,
      * codec support for the partition-key column shape. Computed once and
      * cached on the {@link LiveViewInstance}. A {@code false} cap stays false
      * for the LV's lifetime and the hook is a permanent no-op: the LV emits
@@ -4427,7 +4427,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (fnBlocksToOmit > 0) {
                 int capable = 0;
                 for (int i = 0, m = functions.size(); i < m; i++) {
-                    if (functions.getQuick(i).supportsSnapshot()) {
+                    if (functions.getQuick(i).supportsCheckpointState()) {
                         capable++;
                     }
                 }
@@ -4436,17 +4436,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             int fnBlocksWritten = 0;
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final WindowFunction f = functions.getQuick(i);
-                if (!f.supportsSnapshot() || fnBlocksWritten >= fnBlockWriteLimit) {
+                if (!f.supportsCheckpointState() || fnBlocksWritten >= fnBlockWriteLimit) {
                     continue;
                 }
                 final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
                 fnSink.putStr(windowName);
                 fnSink.putStr(snapshotFactoryName(f));
-                fnSink.putInt(f.snapshotFormatVersion());
-                // The snapshot payload is implicitly length-bounded by the
-                // enclosing FUNCTION_SNAPSHOT block. A future change that
-                // packs multiple payloads into a single block would need an
-                // explicit LONG length prefix here.
+                fnSink.putInt(f.checkpointStateFormatVersion());
+                // LiveViewFunctionSnapshot frames every scalar or partition state as an
+                // exact-length page; the enclosing block independently bounds the whole function.
                 LiveViewFunctionSnapshot.write(fnSink, f);
                 checkpointWriter.endBlock();
                 fnBlocksWritten++;
@@ -4732,7 +4730,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             for (int i = restoreFunctionCursor, n = functions.size(); i < n; i++) {
                 final WindowFunction unmatched = functions.getQuick(i);
-                if (unmatched.supportsSnapshot()) {
+                if (unmatched.supportsCheckpointState()) {
                     throw CairoException.critical(0)
                             .put("fewer live view function snapshot blocks than snapshot-capable functions [firstMissingPosition=")
                             .put(i)
@@ -5509,11 +5507,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         offset += Integer.BYTES;
 
         // Advance to the next snapshot-capable function, mirroring the writer's
-        // !supportsSnapshot() skip so the positional pairing stays aligned.
+        // !supportsCheckpointState() skip so the positional pairing stays aligned.
         WindowFunction match = null;
         while (restoreFunctionCursor < functions.size()) {
             final WindowFunction candidate = functions.getQuick(restoreFunctionCursor++);
-            if (candidate.supportsSnapshot()) {
+            if (candidate.supportsCheckpointState()) {
                 match = candidate;
                 break;
             }
@@ -5536,23 +5534,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put(storedFactoryName)
                     .put(']');
         }
-        // A version outside [snapshotMinSupportedVersion(), snapshotFormatVersion()]
+        // A version outside [checkpointStateMinSupportedVersion(), checkpointStateFormatVersion()]
         // signals a real compatibility break (operator DROP+CREATE is the
         // recovery), not structural corruption. Tag the throws so the catch site
         // invalidates the LV rather than unlinking and replaying from head-miss.
         // Mirrors the file-level range check in LiveViewCheckpointReader.of().
-        if (formatVersion < match.snapshotMinSupportedVersion()) {
+        if (formatVersion < match.checkpointStateMinSupportedVersion()) {
             throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
                     .put("live view function snapshot version too old, factory=")
                     .put(storedFactoryName)
                     .put(", read=")
                     .put(formatVersion)
                     .put(", minSupported=")
-                    .put(match.snapshotMinSupportedVersion());
+                    .put(match.checkpointStateMinSupportedVersion());
         }
-        if (formatVersion > match.snapshotFormatVersion()) {
+        if (formatVersion > match.checkpointStateFormatVersion()) {
             // A newer writer laid this state out to a shape this build has no
-            // decoder for - restorePartitionState() reads the current fixed
+            // decoder for - restoreCheckpointState() reads the current fixed
             // layout and never dispatches on a higher version. Accepting the
             // block would silently rehydrate the accumulators from foreign
             // bytes. A downgraded binary reaches exactly this: the newer
@@ -5563,7 +5561,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put(", read=")
                     .put(formatVersion)
                     .put(", maxSupported=")
-                    .put(match.snapshotFormatVersion());
+                    .put(match.checkpointStateFormatVersion());
         }
 
         final long payloadStart = offset;
@@ -5586,7 +5584,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Computes the AND of (a) anchor-map key codec support and (b) every
-     * compiled window function's {@code supportsSnapshot()}. Called once
+     * compiled window function's {@code supportsCheckpointState()}. Called once
      * per LV lifetime on the first refresh after the compiled factory is
      * available; subsequent calls short-circuit on the cached flag.
      */
@@ -5597,7 +5595,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsSnapshot()) {
+            if (!functions.getQuick(i).supportsCheckpointState()) {
                 return false;
             }
         }
@@ -6428,7 +6426,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (fnBlocksToOmit > 0) {
                 int capable = 0;
                 for (int i = 0, m = functions.size(); i < m; i++) {
-                    if (functions.getQuick(i).supportsSnapshot()) {
+                    if (functions.getQuick(i).supportsCheckpointState()) {
                         capable++;
                     }
                 }
@@ -6437,13 +6435,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             int fnBlocksWritten = 0;
             for (int i = 0, n = functions.size(); i < n; i++) {
                 final WindowFunction f = functions.getQuick(i);
-                if (!f.supportsSnapshot() || fnBlocksWritten >= fnBlockWriteLimit) {
+                if (!f.supportsCheckpointState() || fnBlocksWritten >= fnBlockWriteLimit) {
                     continue;
                 }
                 final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
                 fnSink.putStr(windowName);
                 fnSink.putStr(snapshotFactoryName(f));
-                fnSink.putInt(f.snapshotFormatVersion());
+                fnSink.putInt(f.checkpointStateFormatVersion());
                 LiveViewFunctionSnapshot.write(fnSink, f);
                 checkpointWriter.endBlock();
                 fnBlocksWritten++;

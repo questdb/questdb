@@ -451,7 +451,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * the incremental refresh path cannot drive. Extracted so the reject contract can be
      * unit-tested directly.
      * <p>
-     * The {@code !supportsSnapshot()} reject fires for real functions: an un-partitioned
+     * The {@code !supportsCheckpointState()} reject fires for real functions: an un-partitioned
      * aggregate window (e.g. {@code avg(x) OVER (ORDER BY ts ROWS ...)} with no
      * {@code PARTITION BY}) is {@link WindowFunction#ZERO_PASS} but has no partition Map to
      * snapshot, so it clears the pass-count check and is rejected here - and, lacking a
@@ -461,7 +461,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code rank()} / {@code dense_rank()} whose ORDER BY key is a wide-fixed type
      * (UUID / LONG256 / DECIMAL) also reaches this reject: its chain-prefix slots restore
      * through MapValue setters that cover only narrow fixed-width types, so
-     * {@code supportsSnapshot()} stays false even though it does carry a partition Map. The
+     * {@code supportsCheckpointState()} stays false even though it does carry a partition Map. The
      * pass-count reject, by contrast, is
      * defensive - multi-pass / lead / percent_rank shapes compile to a cached factory and
      * are caught upstream by {@link #validateLiveViewFactory}, so no GA function reaches
@@ -481,7 +481,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (f.getPassCount() != WindowFunction.ZERO_PASS) {
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
         }
-        if (!f.supportsSnapshot()) {
+        if (!f.supportsCheckpointState()) {
             throw SqlException.$(position, "live view select cannot use window function ")
                     .put(f.getName())
                     .put("(); incremental snapshot is not supported for this function yet");

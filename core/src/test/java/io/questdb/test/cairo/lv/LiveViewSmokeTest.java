@@ -373,7 +373,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -431,7 +431,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -485,7 +485,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -537,7 +537,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -702,7 +702,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -754,7 +754,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -804,7 +804,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -860,7 +860,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -991,7 +991,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -1159,7 +1159,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -1211,7 +1211,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -1263,7 +1263,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -1310,7 +1310,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -1456,7 +1456,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -7865,7 +7865,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorAvgDecimalRestoresRunningStateAcrossRestart() throws Exception {
         // The migrated avg(DECIMAL) unbounded-partition-rows variant must write
         // its [acc, count] accumulator into the head .cp via
-        // snapshotPartitionState and rehydrate it via restorePartitionState on
+        // freezeCheckpointState and rehydrate it via restoreCheckpointState on
         // restart, so the running average continues across a restart instead of
         // restarting from the post-restart rows. Uses an INT partition key to
         // side-step the per-WAL-segment SYMBOL index collision.
@@ -7898,7 +7898,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.buildViewGraphs();
 
             // Pure-restore tick (no new commits) fires tryRestoreFromHead, which
-            // must rehydrate the function accumulator through restorePartitionState.
+            // must rehydrate the function accumulator through restoreCheckpointState.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
@@ -8200,7 +8200,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorMaxDecimal128RestoresRunningStateAcrossRestart() throws Exception {
         // Restart-restore for the DECIMAL128 snapshot payload (16-byte value).
         // The running max must survive a checkpoint and rehydrate via
-        // restorePartitionState so a later, smaller value does not lower it.
+        // restoreCheckpointState so a later, smaller value does not lower it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -8854,7 +8854,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorSumDecimal128RestoresRunningStateAcrossRestart() throws Exception {
         // Restart-restore for the DECIMAL256-acc snapshot payload (DECIMAL128
         // input). The running sum must survive a checkpoint and rehydrate via
-        // restorePartitionState so the sum continues across a restart.
+        // restoreCheckpointState so the sum continues across a restart.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -9027,7 +9027,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -9090,7 +9090,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -13419,7 +13419,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
+                Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -14389,7 +14389,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -14439,7 +14439,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -14931,7 +14931,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -14985,7 +14985,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15037,7 +15037,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15089,7 +15089,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15143,7 +15143,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15198,7 +15198,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15250,7 +15250,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15303,7 +15303,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15359,7 +15359,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -15413,7 +15413,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Assert.assertTrue(nvFunc.supportsCheckpointState());
                 Map fnMap = nvFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -16361,7 +16361,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestoreFunctionVersionTooNewInvalidatesView() throws Exception {
         // A FUNCTION_SNAPSHOT block whose formatVersion sits ABOVE the version
-        // this build writes cannot be decoded: restorePartitionState() reads a
+        // this build writes cannot be decoded: restoreCheckpointState() reads a
         // fixed layout and no forward decoder exists. Accepting such a block
         // rehydrates the accumulators from bytes a newer writer laid out to a
         // different shape. A downgraded binary reaches this on a CRC-valid .cp
@@ -16399,8 +16399,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 fnFactoryName = (enclosing != null ? enclosing : fnClass).getName();
                 // One above what this build writes - the version a future
                 // writer would stamp after bumping the state layout.
-                fnTooNewVersion = fn.snapshotFormatVersion() + 1;
-                final ColumnTypes keyTypes = fn.getSnapshotKeyColumnTypes();
+                fnTooNewVersion = fn.checkpointStateFormatVersion() + 1;
+                final ColumnTypes keyTypes = fn.getCheckpointKeyColumnTypes();
                 Assert.assertNotNull(keyTypes);
                 for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
                     keyColumnTypes.add(keyTypes.getColumnType(i));
@@ -16440,7 +16440,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
                     fnSink.putStr("w");
                     fnSink.putStr(fnFactoryName);
-                    fnSink.putInt(fnTooNewVersion); // above snapshotFormatVersion()
+                    fnSink.putInt(fnTooNewVersion); // above checkpointStateFormatVersion()
                     fnSink.putInt(keyColumnTypes.size());
                     for (int i = 0, n = keyColumnTypes.size(); i < n; i++) {
                         fnSink.putInt(keyColumnTypes.getQuick(i));
@@ -16499,7 +16499,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRestoreVersionMismatchInvalidatesView() throws Exception {
         // A FUNCTION_SNAPSHOT block whose formatVersion is below the
-        // function's current snapshotMinSupportedVersion is a real
+        // function's current checkpointStateMinSupportedVersion is a real
         // compatibility break, not structural corruption. The restore path
         // must mark the LV INVALID (operators recover with DROP+CREATE)
         // instead of unlinking the .cp and falling into head-miss replay.
@@ -16556,7 +16556,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
                     fnSink.putStr("w");
                     fnSink.putStr(fnFactoryName);
-                    fnSink.putInt(0); // intentionally below snapshotMinSupportedVersion
+                    fnSink.putInt(0); // intentionally below checkpointStateMinSupportedVersion
                     w.endBlock();
                     w.commit(Numbers.LONG_NULL);
                 }
@@ -16632,7 +16632,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // Stamp the function's CURRENT (valid) snapshot version so the
                 // restore clears the version gate and reaches the key-shape
                 // header check below.
-                fnFormatVersion = fn.snapshotFormatVersion();
+                fnFormatVersion = fn.checkpointStateFormatVersion();
             }
 
             // The LV has already materialised the cumulative sums to its
@@ -16917,7 +16917,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
             WindowFunction rankFn = lv.getAnchorWindow().getFunctions().getQuick(0);
-            Assert.assertTrue("rank reports snapshot capability after 2b.1b", rankFn.supportsSnapshot());
+            Assert.assertTrue("rank reports snapshot capability after 2b.1b", rankFn.supportsCheckpointState());
             Assert.assertEquals(2L, rankFn.getPartitionMap().size());
 
             try (MemoryCARW s1 = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -16929,7 +16929,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // rebuild the rank, count, and chain-prefix bytes from the image.
                 rankFn.toTop();
                 Assert.assertEquals(0L, rankFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, rankFn, rankFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, rankFn, rankFn.checkpointStateFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -16986,7 +16986,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction rnFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(rnFunc.supportsSnapshot());
+                Assert.assertTrue(rnFunc.supportsCheckpointState());
                 Map fnMap = rnFunc.getPartitionMap();
                 Assert.assertEquals(2L, fnMap.size());
 
@@ -17123,7 +17123,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
             WindowFunction lagFn = lv.getAnchorWindow().getFunctions().getQuick(0);
-            Assert.assertTrue("lag reports snapshot capability after 2b.2a", lagFn.supportsSnapshot());
+            Assert.assertTrue("lag reports snapshot capability after 2b.2a", lagFn.supportsCheckpointState());
             Assert.assertEquals(2L, lagFn.getPartitionMap().size());
 
             try (MemoryCARW s1 = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -17133,7 +17133,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 lagFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, lagFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, lagFn, lagFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, lagFn, lagFn.checkpointStateFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,

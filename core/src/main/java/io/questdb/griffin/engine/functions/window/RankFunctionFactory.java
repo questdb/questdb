@@ -49,8 +49,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
@@ -512,12 +512,12 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public ColumnTypes getSnapshotKeyColumnTypes() {
+        public ColumnTypes getCheckpointKeyColumnTypes() {
             return keyColumnTypes;
         }
 
         @Override
-        public int getSnapshotKeyStartIndex() {
+        public int getCheckpointKeyStartIndex() {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : chainTypeIndex + 2;
@@ -712,7 +712,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void onSnapshotRestoreBegin() {
+        public void onCheckpointRestoreBegin() {
             map.clear();
             tombstoneCount = 0;
         }
@@ -761,7 +761,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value, int formatVersion) {
             offset = LiveViewSnapshotKeyCodec.readValueSlots(value, 0, source, offset, chainColumnTypes);
             value.putLong(chainTypeIndex, source.getLong(offset));
             offset += Long.BYTES;
@@ -790,24 +790,24 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public int snapshotFormatVersion() {
+        public int checkpointStateFormatVersion() {
             return 1;
         }
 
         @Override
-        public int snapshotMinSupportedVersion() {
+        public int checkpointStateMinSupportedVersion() {
             return 1;
         }
 
         @Override
-        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             LiveViewSnapshotKeyCodec.writeKey(sink, value, chainColumnTypes, 0);
             sink.putLong(value.getLong(chainTypeIndex));
             sink.putLong(value.getLong(chainTypeIndex + 1));
         }
 
         @Override
-        public boolean supportsSnapshot() {
+        public boolean supportsCheckpointState() {
             // The chain-prefix restores through MapValue slot setters, which have no
             // STRING variant - the chain types must be fixed-width, not merely
             // codec-supported (the codec admits STRING for partition keys only).
