@@ -13878,7 +13878,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // ordinal see a stable shape. The documented columns come first;
         // the three head_checkpoint_* columns, the two o3_*_replay_rows
         // columns and the five checkpoint_ring_* columns trail as debug
-        // surface.
+        // surface, and the four baseline cost columns
+        // (head_checkpoint_write_micros, head_checkpoint_restore_micros,
+        // checkpoint_ring_evictions, o3_replay_scan_rows) trail last.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -13894,7 +13896,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "o3_resume_replay_rows\to3_boundary_replay_rows\t"
                         + "checkpoint_ring_recovered_entries\tcheckpoint_ring_manifest_generation\t"
                         + "checkpoint_ring_manifest_covered_seqtxn\tcheckpoint_ring_manifest_dirty\t"
-                        + "checkpoint_ring_recovery_fallback_count\n");
+                        + "checkpoint_ring_recovery_fallback_count\t"
+                        + "head_checkpoint_write_micros\thead_checkpoint_restore_micros\t"
+                        + "checkpoint_ring_evictions\to3_replay_scan_rows\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -18357,6 +18361,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     Assert.assertTrue("retained checkpoint file must remain", filesFacade.exists(cpPath.$()));
                     previousLvSeqTxn = currentLvSeqTxn;
                 }
+                // Baseline observability. Two of the three checkpoints (at 20 and 30)
+                // each evicted the entry below them - the 1-byte budget keeps a single
+                // ring entry - so the lifetime eviction counter reads 2.
+                assertQuery("SELECT checkpoint_ring_evictions FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_ring_evictions\n2\n");
+                // Every .cp write stamps its elapsed time (0 under the frozen test
+                // clock, but never NULL once a checkpoint has been written).
+                Assert.assertTrue(
+                        "the head-checkpoint write time must be stamped",
+                        engine.getLiveViewRegistry().getViewInstance("lv").getHeadCheckpointWriteMicros() != Numbers.LONG_NULL
+                );
             }
             execute("DROP LIVE VIEW lv");
         });
@@ -19520,6 +19536,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // did not happen.
             Assert.assertEquals("no older entry was resumed from", 0, reloaded.getO3ResumeReplayRows());
             Assert.assertEquals("the whole view rebuilt from its lower bound", 3, reloaded.getO3BoundaryReplayRows());
+            // Baseline observability. No WHERE filter, so the boundary rebuild scans
+            // exactly the rows it re-emits, and the restart restore stamped its
+            // elapsed time (0 under the frozen test clock, but never NULL once a
+            // restore has run).
+            Assert.assertEquals("no filter, so scan equals the boundary emit", 3, reloaded.getO3ReplayScanRows());
+            Assert.assertTrue(
+                    "the restart restore must stamp its elapsed time",
+                    reloaded.getHeadCheckpointRestoreMicros() != Numbers.LONG_NULL
+            );
             Assert.assertFalse("a CRC failure is corruption, not a version break", reloaded.isInvalid());
             Assert.assertTrue("the boundary rebuild completes the restore", reloaded.isCheckpointRestoreSucceeded());
             // The rebuild retires the ring whole and seals one fresh head in its
@@ -19563,6 +19588,89 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                             "2026-11-01T00:00:20.000000Z\t20\t2\n" +
                             "2026-11-01T00:00:30.000000Z\t30\t3\n" +
                             "2026-11-01T00:00:40.000000Z\t40\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ReplayScanRowsCountsFilteredRowsInBoundaryRebuild() throws Exception {
+        // Baseline observability: o3_replay_scan_rows counts every base row an O3
+        // replay pulls, including rows the WHERE filter drops, so with a filter it
+        // strictly exceeds the emit count o3_boundary_replay_rows. The view keeps
+        // x > 0 and the base carries one x <= 0 row in the frame; a corrupt-head
+        // restart forces a boundary rebuild that scans all three base rows but
+        // re-emits only the two that pass the filter.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            final long headLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Kept, dropped, kept - all inside the eventual replay frame.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:10.000000Z', 10)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', -1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:30.000000Z', 30)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                // The dropped x=-1 row produced no LV row, so only two checkpoints exist.
+                Assert.assertEquals(2, lv.getRetainedCheckpointCount());
+                headLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+            }
+
+            // Corrupt the head .cp payload so the restart restore trips its CRC and
+            // falls back to a full boundary rebuild from the lower bound.
+            try (Path cpPath = new Path()) {
+                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(lv.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                overwriteByteInFile(
+                        engine.getConfiguration(),
+                        cpPath,
+                        LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8,
+                        (byte) 0xAB
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            // The rebuild scans all three base rows but re-emits only the two that
+            // pass x > 0, so scan strictly exceeds emit by the one dropped row.
+            assertQuery("SELECT o3_boundary_replay_rows, o3_replay_scan_rows FROM live_views()")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("o3_boundary_replay_rows\to3_replay_scan_rows\n2\t3\n");
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-11-01T00:00:10.000000Z\t10\t1\n" +
+                            "2026-11-01T00:00:30.000000Z\t30\t2\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -22044,9 +22152,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-11-01T00:00:20.000000Z\t20\t3\n" +
                         "2026-11-01T00:00:25.000000Z\t25\t4\n" +
                         "2026-11-01T00:00:30.000000Z\t30\t5\n");
-                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
+                // This view has no WHERE filter, so the resume replay scans exactly
+                // the rows it re-emits: o3_replay_scan_rows equals o3_resume_replay_rows.
+                assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows, o3_replay_scan_rows FROM live_views()")
                         .noLeakCheck().noRandomAccess()
-                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n4\t0\n");
+                        .returns("o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n4\t0\t4\n");
                 Assert.assertEquals(5L, lv.getLvRowsTotal());
                 Assert.assertEquals(5L, lv.getStateReader().getLvConsumedSeqTxn());
                 // The ahead row retires stale anchors 20 and 30; 10 and the

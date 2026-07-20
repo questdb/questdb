@@ -1389,8 +1389,20 @@ Add an explicit enterprise-consumption gate at Phase 3/9 covering the
    `DependencyKind` matrix, the `HighBoundTag`, the `RepairPublicationStage`
    ordering, and the floating tolerance) and frozen under test in
    `LiveViewCheckpointContractsTest`.
-2. Add metrics for current checkpoint bytes, write time, restore time, ring
-   evictions, O3 scan rows, and replay bounds to establish a baseline.
+2. **[DONE]** Add metrics for current checkpoint bytes, write time, restore
+   time, ring evictions, O3 scan rows, and replay bounds to establish a baseline.
+   Current checkpoint bytes (`head_checkpoint_state_bytes`) and replay bounds
+   (`o3_resume_replay_rows` / `o3_boundary_replay_rows`, splitting bounded resume
+   from unbounded boundary rebuild) already existed. Added four `live_views()`
+   baseline columns wired to live per-instance values: `head_checkpoint_write_micros`
+   and `head_checkpoint_restore_micros` (elapsed write/restore-from-head durations,
+   NULL until the event first runs), `checkpoint_ring_evictions` (retention-budget
+   evictions over the LV lifetime, counting only budget-driven pruning), and
+   `o3_replay_scan_rows` (base rows the O3 replay paths scanned, `>=` the emit
+   counters; a WHERE filter makes scan exceed emit). Covered by
+   `LiveViewSmokeTest` (column set, eviction count, write timing, resume/boundary
+   scan==emit, filtered scan>emit) and the restore path in
+   `LiveViewCheckpointRestoreTest`.
 3. Build deterministic RANGE/ROWS fixtures with enough history to collapse the
    existing ring and reproduce an older O3 boundary replay.
 4. Implement the initial CREATE-time allowlist and rejection diagnostics, move

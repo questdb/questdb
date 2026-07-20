@@ -3145,6 +3145,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long committedSeqTxn = commitSeqTxn;
         boolean readerAttached = false;
         long appendedRows = 0;
+        long o3ScanRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
         try {
             engine.detachReader(reader);
@@ -3227,6 +3228,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             row.append();
                             appendedRows++;
                         }
+                        // Capture base rows scanned before the cursor chain closes:
+                        // FilteringRecordCursor.close() (cascaded from windowCursor)
+                        // resets its counter. No filter -> scan equals emit; a filter
+                        // makes scan exceed emit by the rows it dropped.
+                        o3ScanRows = filter != null ? filteringCursor.getBaseRowsConsumed() : appendedRows;
                     }
                     // The REPLACE_RANGE is unconditional, including when the replay
                     // produced no row at all. Zero rows means the base no longer has
@@ -3293,6 +3299,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Counted separately from the boundary rebuild so live_views() can show how
         // much O3 work stays cheap versus the residual unbounded fallbacks.
         instance.bumpO3ResumeReplayRows(appendedRows);
+        // Baseline scan-cost signal: base rows this resume replay pulled (>= emit).
+        instance.bumpO3ReplayScanRows(o3ScanRows);
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
         // (0 on the common path); the anchor fields record which sealed checkpoint the
         // resume rolled back to, so a wide gap or a distant anchor is diagnosable.
@@ -3381,6 +3389,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long effectiveSeqTxn = reader.getSeqTxn();
         boolean readerAttached = false;
         long appendedRows = 0;
+        long o3ScanRows = 0;
         // True when the zero-surviving-row path issued a pure-delete
         // REPLACE_RANGE to clear ghost rows (appendedRows stays 0 there, but the
         // apply + on-disk row-count re-read below still have to run).
@@ -3511,6 +3520,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 row.append();
                                 appendedRows++;
                             }
+                            // Capture base rows scanned before the cursor chain closes
+                            // (FilteringRecordCursor.close() resets its counter). No
+                            // filter -> scan equals emit; a filter makes scan exceed
+                            // emit by the rows it dropped.
+                            o3ScanRows = filter != null ? filteringCursor.getBaseRowsConsumed() : appendedRows;
                         }
 
                         if (appendedRows > 0) {
@@ -3629,6 +3643,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // separately from the resume path so a growing value in live_views() flags a
         // view the ring is failing to bound.
         instance.bumpO3BoundaryReplayRows(appendedRows);
+        // Baseline scan-cost signal: base rows this boundary rebuild pulled (>= emit).
+        instance.bumpO3ReplayScanRows(o3ScanRows);
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
         // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
         // sealed anchor sits below the ahead range's minimum in-view ts.
@@ -4494,6 +4510,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // check on restart and falls back to the highest .cp, which is the
             // outcome a run that never published one gets anyway.
             unlinkCheckpointFiles(instance, evictedCheckpoints);
+            // Baseline observability: elapsed micros of this head-checkpoint write
+            // (manifest + snapshots + commit + ring publish + evicted-file unlink),
+            // measured from the cadence-gate clock read above. Surfaced via
+            // live_views().head_checkpoint_write_micros.
+            instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
         } catch (Throwable t) {
             LOG.critical().$("could not write live view head checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
@@ -7068,7 +7089,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         reconcileAppliedFloorAfterRestart(instance);
                         if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
                                 || needsHeadlessRestartRecovery(instance, leadReconstruction)) {
+                            // Baseline observability: time the whole restore (rehydrate
+                            // ring, restore the .cp, replay-to-applied). Recorded once
+                            // per LV lifetime regardless of outcome. Surfaced via
+                            // live_views().head_checkpoint_restore_micros.
+                            final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             tryRestoreFromHead(instance, getWindowFactory(instance));
+                            instance.recordCheckpointRestoreMicros(
+                                    engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
+                            );
                             if (instance.hasPendingInvalidationReason()) {
                                 // The restore could not rebuild a consistent window
                                 // state (replay-to-applied failed mid-gap leaving the

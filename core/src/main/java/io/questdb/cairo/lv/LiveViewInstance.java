@@ -175,6 +175,22 @@ public class LiveViewInstance implements QuietCloseable {
     // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES /
     // _BASE_SEQ_TXN.
     private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
+    // Elapsed wall-clock (micros) of the most recent restart restore-from-head
+    // (tryRestoreFromHead: rehydrate the ring, restore the .cp, and
+    // replay-to-applied). Numbers.LONG_NULL until a restore runs, which is
+    // single-shot per LV lifetime, so it stays NULL for a view that never
+    // restored. Baseline restore-cost signal for the current ring architecture
+    // (the versioned checkpoint timeline replaces this restore path). Mutated
+    // only on the refresh worker under the refresh latch; volatile for the
+    // catalogue thread. Surfaced via live_views().head_checkpoint_restore_micros.
+    private volatile long headCheckpointRestoreMicros = Numbers.LONG_NULL;
+    // Elapsed wall-clock (micros) of the most recent head-checkpoint write
+    // (maybeWriteHeadCheckpoint: manifest + snapshots + commit + ring publish +
+    // evicted-file unlink). Numbers.LONG_NULL until the first .cp is written.
+    // Baseline write-cost signal for the current ring architecture. Mutated only
+    // on the refresh worker under the refresh latch; volatile for the catalogue
+    // thread. Surfaced via live_views().head_checkpoint_write_micros.
+    private volatile long headCheckpointWriteMicros = Numbers.LONG_NULL;
     // Key (data-cursor row offset) of the current rolling seed checkpoint
     // _checkpoints/<key>.scp, or Numbers.LONG_NULL when none exists. Stamped by
     // the startup recovery sweep for a view loaded in SEEDING state, updated
@@ -226,6 +242,18 @@ public class LiveViewInstance implements QuietCloseable {
     // only on the refresh worker under the refresh latch;
     // volatile for the catalogue thread. See lastPublishedRingGeneration.
     private volatile boolean checkpointRingDirty;
+    // Cumulative count of retained-checkpoint ring entries evicted by the
+    // count / max.bytes / event-time retention budget over the LV's lifetime -
+    // the baseline cost signal the versioned checkpoint timeline is designed to
+    // remove (the timeline keeps every logical checkpoint instead of size-capping
+    // the ring). Bumped only on the refresh worker under the refresh latch inside
+    // pruneRetainedCheckpoints; volatile so the catalogue thread reads a current
+    // value. In-memory only - resets to 0 on restart (an observability signal,
+    // not durable state). Surfaced via live_views().checkpoint_ring_evictions.
+    // Counts only budget-driven eviction, never correctness-driven retirement
+    // (an O3 unseal or an equal-ts supersede), which invalidateRetainedCheckpointsFrom
+    // and removeRetainedCheckpoint handle without touching this counter.
+    private volatile long checkpointRingEvictions;
     // Number of entries restart rehydrated into the retained-checkpoint ring from
     // a trusted _checkpoints/_ring manifest, after pruning it to the running
     // retention budget. Numbers.LONG_NULL until the restore decides, which covers
@@ -418,6 +446,17 @@ public class LiveViewInstance implements QuietCloseable {
     // below the bound via the O3 path: in-WAL order guarantees
     // ts >= latestSeenTs >= viewLowerBoundTimestamp.
     private volatile long o3RejectedCount;
+    // Cumulative count of base rows the O3 replay paths (replayFromAnchor resume
+    // and o3HeadMissReplay boundary rebuild) SCANNED - every base row the source
+    // cursor pulled, including rows a WHERE filter dropped. Distinct from the
+    // emit counters o3ResumeReplayRows / o3BoundaryReplayRows, which count only
+    // rows re-emitted: with a filter, scan exceeds emit by the dropped rows; with
+    // no filter the two are equal. The baseline scan-cost signal the localized O3
+    // repair is designed to bound to [L, H). Bumped only on the refresh-worker
+    // thread at replay completion; volatile so the catalogue query thread reads a
+    // current value. In-memory only - resets to 0 on restart. Surfaced via
+    // live_views().o3_replay_scan_rows.
+    private volatile long o3ReplayScanRows;
     // Cumulative count of live-view rows re-emitted by bounded resume-from-anchor O3
     // replays (replayFromAnchor - both the head-hit tail re-eval and the bounded-miss
     // resume from an older sealed checkpoint). Surfaced via
@@ -703,6 +742,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Accumulates {@code n} base rows an O3 replay (resume or boundary) scanned -
+     * every source row pulled, including rows a WHERE filter dropped. Called from
+     * the refresh worker at replay completion; the value is exposed via
+     * {@code live_views().o3_replay_scan_rows}. Distinct from the emit counters
+     * {@link #bumpO3ResumeReplayRows(long)} / {@link #bumpO3BoundaryReplayRows(long)}:
+     * with a filter it exceeds the emit count, without one it equals it.
+     */
+    public void bumpO3ReplayScanRows(long n) {
+        o3ReplayScanRows += n;
+    }
+
+    /**
      * Accumulates {@code n} live-view rows re-emitted by a bounded
      * resume-from-anchor O3 replay (head-hit tail re-eval or bounded-miss resume
      * from an older sealed checkpoint). Called from the refresh worker at replay
@@ -831,6 +882,13 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * See {@link #checkpointRingEvictions}.
+     */
+    public long getCheckpointRingEvictions() {
+        return checkpointRingEvictions;
+    }
+
+    /**
      * See {@link #checkpointRingRecoveredEntries}.
      */
     public long getCheckpointRingRecoveredEntries() {
@@ -956,6 +1014,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return elapsed micros of the most recent restart restore-from-head, or
+     * {@link Numbers#LONG_NULL} when this view has not restored. See
+     * {@link #headCheckpointRestoreMicros}.
+     */
+    public long getHeadCheckpointRestoreMicros() {
+        return headCheckpointRestoreMicros;
+    }
+
+    /**
      * Atomic read of the {@code (lvSeqTxn, maxTs)} pair the O3 head-hit
      * eligibility check needs. Returns a stable two-element array
      * {@code [lvSeqTxn, maxTs]} so callers cannot observe a torn pair across
@@ -968,6 +1035,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getHeadCheckpointStateBytes() {
         return headCheckpoint[HEAD_CHECKPOINT_STATE_BYTES];
+    }
+
+    /**
+     * @return elapsed micros of the most recent head-checkpoint write, or
+     * {@link Numbers#LONG_NULL} when this view has not written one. See
+     * {@link #headCheckpointWriteMicros}.
+     */
+    public long getHeadCheckpointWriteMicros() {
+        return headCheckpointWriteMicros;
     }
 
     public long getHeadSeedCpKey() {
@@ -1127,6 +1203,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getO3RejectedCount() {
         return o3RejectedCount;
+    }
+
+    public long getO3ReplayScanRows() {
+        return o3ReplayScanRows;
     }
 
     public long getO3ResumeReplayRows() {
@@ -1543,12 +1623,25 @@ public class LiveViewInstance implements QuietCloseable {
             }
             totalBytes -= getRetainedCheckpointStateBytes(0);
             retainedCheckpoints.removeIndexBlock(0, RETAINED_CHECKPOINT_RECORD_SIZE);
+            // Baseline observability: count every budget-driven eviction over the
+            // LV's lifetime. Surfaced via live_views().checkpoint_ring_evictions.
+            checkpointRingEvictions++;
         }
         // The loop only ever drops the oldest and stops at one entry, so the
         // newest cannot move here. Mirror anyway: every ring mutator calling
         // this is a rule that stays correct under later edits, where "only the
         // mutators that can move the tail" is one refactor away from being wrong.
         mirrorRingNewestBaseSeqTxn();
+    }
+
+    /**
+     * Stamps the elapsed micros of the restart restore-from-head that just ran.
+     * Single-shot per LV lifetime, called by the refresh worker after
+     * {@code tryRestoreFromHead} returns (regardless of outcome). See
+     * {@link #headCheckpointRestoreMicros}.
+     */
+    public void recordCheckpointRestoreMicros(long durationUs) {
+        this.headCheckpointRestoreMicros = durationUs;
     }
 
     /**
@@ -1606,6 +1699,16 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordCheckpointRingRecoveryFallback() {
         checkpointRingRecoveredEntries = 0;
         checkpointRingRecoveryFallbackCount++;
+    }
+
+    /**
+     * Stamps the elapsed micros of the head-checkpoint write that just completed.
+     * Called by the refresh worker at the tail of {@code maybeWriteHeadCheckpoint}
+     * after the {@code .cp} commit, ring publish, and evicted-file unlink. See
+     * {@link #headCheckpointWriteMicros}.
+     */
+    public void recordCheckpointWriteMicros(long durationUs) {
+        this.headCheckpointWriteMicros = durationUs;
     }
 
     /**
