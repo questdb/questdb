@@ -78,6 +78,21 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testDeltaSymbolDictContiguousAppendAccepted() throws Exception {
+        // The exact boundary the gap check sits on: deltaStartId == size() adds
+        // no hole and must be accepted. An off-by-one here would reject every
+        // incremental delta a healthy client sends, i.e. the whole feature.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 2, "sym_c"));
+            Assert.assertEquals(3, dict.size());
+            Assert.assertEquals("sym_c", dict.getQuick(2));
+        });
+    }
+
+    @Test
     public void testDeltaSymbolDictExcessiveStartId() throws Exception {
         // A malicious client sends deltaStartId = 100_001, deltaCount = 0.
         // The while loop in parseDeltaSymbolDict() grows connectionSymbolDict
@@ -113,6 +128,31 @@ public class QwpSymbolDecoderTest {
             } finally {
                 Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictGapRejected() throws Exception {
+        // A delta starting above the server's coverage leaves ids
+        // [size, deltaStartId) undefined. The parser used to null-pad them,
+        // which inflated size() past the referencing index and so slipped the
+        // frame through QwpSymbolColumnCursor's idx >= dictLimit guard -- the
+        // row then read back null and landed a NULL symbol instead of failing.
+        // Reject it at parse time, while it is still attributable.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            Assert.assertFalse(decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b"));
+
+            try {
+                decodeDeltaDict(cursor, dict, 3, "sym_d"); // id 2 was never defined
+                Assert.fail("Expected QwpParseException for a gapped delta symbol dictionary");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("delta symbol dictionary gap"));
+            }
+            // The rejected frame must not have grown the dictionary on its way out.
+            Assert.assertEquals(2, dict.size());
         });
     }
 
@@ -154,6 +194,27 @@ public class QwpSymbolDecoderTest {
                 }
             } finally {
                 Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictLeavesNoNullEntries() throws Exception {
+        // The invariant the gap check buys: because deltaStartId <= size(),
+        // every slot the pre-sizing appends falls inside the range the entry
+        // loop then overwrites, so a parsed connection dictionary can never
+        // hold a null. A surviving null is indistinguishable from a defined
+        // symbol to QwpSymbolColumnCursor's bounds check and reads back as a
+        // NULL value. Covers a pure append and an overlap-plus-extend.
+        assertMemoryLeak(() -> {
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            ObjList<String> dict = new ObjList<>();
+            decodeDeltaDict(cursor, dict, 0, "sym_a", "sym_b");
+            decodeDeltaDict(cursor, dict, 2, "sym_c");
+            decodeDeltaDict(cursor, dict, 1, "sym_b2", "sym_c2", "sym_d");
+            Assert.assertEquals(4, dict.size());
+            for (int i = 0; i < dict.size(); i++) {
+                Assert.assertNotNull("dictionary slot " + i + " must be defined", dict.getQuick(i));
             }
         });
     }

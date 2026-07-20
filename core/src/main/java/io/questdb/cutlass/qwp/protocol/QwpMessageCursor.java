@@ -242,6 +242,31 @@ public class QwpMessageCursor implements Mutable {
             );
         }
         int requiredSize = (int) requiredSizeLong;
+        // A delta must extend the dictionary contiguously. A deltaStartId past
+        // the current size leaves ids [size, deltaStartId) undefined, and the
+        // pre-sizing below would fill them with nulls -- which INFLATES size()
+        // and so silently defeats the idx >= dictLimit guard in
+        // QwpSymbolColumnCursor.of(): a row referencing one of those ids passes
+        // the bounds check and then reads back null, landing a NULL symbol
+        // instead of failing the frame. Reject the gap here, where it is still
+        // attributable, rather than letting it become unattributable data.
+        //
+        // Only a client bug or a torn store-and-forward dictionary can produce
+        // one: the ingestion client refuses to send a frame whose delta starts
+        // above the coverage it has registered. PARSE_ERROR is the right
+        // outcome for it -- a gapped frame is deterministic under replay, so
+        // retrying it cannot help; the sender must re-register from an id the
+        // server actually holds.
+        if (deltaStartId > connectionSymbolDict.size()) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
+                    "delta symbol dictionary gap: deltaStartId " + deltaStartId
+                            + " exceeds dictionary size " + connectionSymbolDict.size()
+            );
+        }
+        // With the gap rejected, deltaStartId <= size(), so every slot this
+        // pre-sizing appends falls inside [deltaStartId, requiredSize) and the
+        // loop below overwrites it. No null can survive this method.
         while (connectionSymbolDict.size() < requiredSize) {
             connectionSymbolDict.add(null);
         }
