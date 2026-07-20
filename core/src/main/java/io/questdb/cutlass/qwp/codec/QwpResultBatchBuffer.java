@@ -323,8 +323,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * scratch, and populates the per-column hot-path caches read by {@link #appendRow}.
      * {@code connDict} is the connection-scoped SYMBOL dictionary: SYMBOL columns
      * append new UTF-8 bytes to it on first sight per native key and emit the
-     * returned conn-id straight into the wire. When {@code symbolTables} is null or
-     * doesn't expose a table for a given column, {@code appendRow} falls back to
+     * returned conn-id straight into the wire. When {@code symbolTables} is null,
+     * doesn't expose a table for a given column, or exposes one that does not answer
+     * {@link SymbolTable#supportsKeyValueAccess()}, {@code appendRow} falls back to
      * {@code record.getSymA} and the connection dictionary's bytes-keyed dedup.
      */
     public void beginBatch(

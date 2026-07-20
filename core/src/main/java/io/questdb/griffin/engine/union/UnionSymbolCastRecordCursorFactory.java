@@ -300,7 +300,17 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         private void growDense(int requiredCapacity) {
-            int newCapacity = Math.max(INITIAL_DENSE_CAPACITY, denseCapacity);
+            // put() routes a key here only when it is below denseLimit, so requiredCapacity never
+            // exceeds denseLimit and denseLimit is at least 1.
+            assert denseLimit > 0 && requiredCapacity <= denseLimit;
+            // Never size past denseLimit. get() claims every key below denseCapacity for the array
+            // while put() sends every key from denseLimit up to the map, so an array wider than the
+            // limit strands the keys in between: written to the map, looked up in the array. They
+            // then never resolve from the cache and the record re-interns their text on every row.
+            // Without the clamp the INITIAL_DENSE_CAPACITY floor opens that window for any
+            // dictionary of fewer than INITIAL_DENSE_CAPACITY symbols that hands out a key inside
+            // it. Clamping cannot under-size the array, given requiredCapacity <= denseLimit.
+            int newCapacity = Math.min(denseLimit, Math.max(INITIAL_DENSE_CAPACITY, denseCapacity));
             while (newCapacity < requiredCapacity) {
                 newCapacity <<= 1;
                 if (newCapacity < 0 || newCapacity >= denseLimit) {

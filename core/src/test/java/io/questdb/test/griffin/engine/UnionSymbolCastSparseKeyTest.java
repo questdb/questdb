@@ -39,9 +39,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
-    // A static source dictionary whose keys straddle the translation cache's dense/map boundary.
+    // A static source dictionary whose keys cover all three regions of the translation cache.
     // getSymbolCount() bounds the direct-indexed region, so keys below it translate through the
-    // array and keys above it through the hash map - one source column, both code paths.
+    // array and keys above it through the hash map - one source column, both code paths. "gap5"
+    // sits in the window between the cardinality bound and the array's INITIAL_DENSE_CAPACITY
+    // floor, which the array must leave to the map.
+    private static final int MIXED_GAP_KEY = 5;
     private static final int MIXED_SYMBOL_COUNT = 3;
     private static final StaticSymbolTable MIXED_TABLE = new StaticSymbolTable() {
         @Override
@@ -65,6 +68,9 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
             if ("dense2".contentEquals(value)) {
                 return 2;
             }
+            if ("gap5".contentEquals(value)) {
+                return MIXED_GAP_KEY;
+            }
             if ("beyond500".contentEquals(value)) {
                 return 500;
             }
@@ -81,6 +87,7 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
             return switch (key) {
                 case 0 -> "dense0";
                 case 2 -> "dense2";
+                case MIXED_GAP_KEY -> "gap5";
                 case 500 -> "beyond500";
                 case 501 -> "beyond501";
                 default -> null;
@@ -117,6 +124,45 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
             return key == SPARSE_SOURCE_KEY ? "sparse" : null;
         }
     };
+
+    // A source key that sits above the dictionary's cardinality but below the dense array's initial
+    // capacity belongs to the map. Sizing the array past the cardinality bound leaves put() writing
+    // such a key to the map while get() reads the array, so it never resolves from the cache and the
+    // record re-interns its text on every row. Interning is idempotent, so the values stay correct
+    // and only the intern count exposes the miss.
+    @Test
+    public void testKeyAboveCardinalityBelowDenseFloorStaysCached() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] rows = {{"dense0"}, {"gap5"}, {"gap5"}, {"gap5"}, {"gap5"}};
+            final InternCountingFunc function = new InternCountingFunc(new StrColumn(0));
+            final ObjList<Function> functions = functions(function);
+            try (RecordCursorFactory factory = newSymbolProjection(new StaticSymbolCursorFactory(MIXED_TABLE, rows), functions)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final SymbolTable symbolTable = cursor.getSymbolTable(0);
+                    final int[] keys = new int[rows.length];
+                    for (int i = 0; i < rows.length; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        keys[i] = record.getInt(0);
+                        TestUtils.assertEquals(rows[i][0], symbolTable.valueOf(keys[i]));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                    // The repeated key must collapse onto one merged key, as it does either side of
+                    // the boundary.
+                    Assert.assertEquals(keys[1], keys[2]);
+                    Assert.assertEquals(keys[1], keys[3]);
+                    Assert.assertEquals(keys[1], keys[4]);
+                    Assert.assertNotEquals(keys[0], keys[1]);
+                }
+            }
+            Assert.assertEquals(
+                    "each distinct source text must be interned once; a key stranded between the dense"
+                            + " array and the map re-interns on every row",
+                    2,
+                    function.internCount
+            );
+        });
+    }
 
     // Source keys either side of the dense/map boundary must translate to the same merged key for
     // the same text, and to distinct keys for distinct text. A boundary that routed a key to the
@@ -214,5 +260,19 @@ public class UnionSymbolCastSparseKeyTest extends AbstractUnionSymbolCastTest {
 
     private static StaticSymbolCursorFactory newSourceFactory() {
         return new StaticSymbolCursorFactory(SPARSE_TABLE, new String[][]{{"sparse"}});
+    }
+
+    private static class InternCountingFunc extends CastStrToSymbolFunctionFactory.Func {
+        private int internCount;
+
+        private InternCountingFunc(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public int intern(CharSequence value) {
+            internCount++;
+            return super.intern(value);
+        }
     }
 }
