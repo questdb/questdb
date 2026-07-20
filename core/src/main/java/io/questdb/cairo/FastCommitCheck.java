@@ -51,7 +51,7 @@ import io.questdb.std.str.Utf8s;
  * detected we therefore DISABLE the batched path and fall back to the proven per-file
  * {@code msync(MS_SYNC)} baseline (slower, but durable everywhere).
  *
- * <h3>The detectable signal (and its reliability)</h3>
+ * <h2>The detectable signal (and its reliability)</h2>
  * {@code fast_commit} is an ext4 <em>superblock</em> incompat feature, NOT a
  * {@code /proc/mounts} mount option, so the {@link WriteBarrierCheck} approach of parsing
  * mount options does not directly find it (and {@code dumpe2fs}/raw superblock reads need

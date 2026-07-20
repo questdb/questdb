@@ -51,7 +51,7 @@ import io.questdb.std.str.Path;
  * {@code _txn}/{@code _cv} to the durable cut and re-deriving the rest from the durable WAL rebuilds
  * exactly the lost rows.
  *
- * <h3>Why this is safe and idempotent</h3>
+ * <h2>Why this is safe and idempotent</h2>
  * <ul>
  *   <li><b>Restore-before-rely (audit #5):</b> the copied {@code _txn}/{@code _cv} are fsync'd, and
  *       the table dir is fsync'd, BEFORE recovery returns — so a crash immediately after recovery

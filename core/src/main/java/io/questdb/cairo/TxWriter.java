@@ -226,7 +226,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * mapping then fsync the fd. Used by the adaptive durable-epoch cut
      * ({@link TableWriter#fsyncMaterializedState()}) to make the visibility pointer survive a crash,
      * strictly AFTER the column data and {@code _cv} are durable (data-before-pointer ordering).
-     * Under NOSYNC/ADAPTIVE the last {@link #commit()} did not sync, so both calls are required.
+     * Under NOSYNC/ADAPTIVE the last {@link #commit(io.questdb.std.ObjList)} did not sync, so both calls are required.
      */
     public void fsync() {
         txMemBase.sync(false);

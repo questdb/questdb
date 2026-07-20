@@ -37,7 +37,7 @@ import java.io.Closeable;
 /**
  * Per-table on-disk epoch marker file {@code _snapshot} recording the last durably committed epoch.
  *
- * <h3>Format</h3>
+ * <h2>Format</h2>
  * The file uses an A/B-versioned slot layout mirroring {@code _cv}/{@code _txn}:
  * <pre>
  * [0,  8)  = version (long): bumped on each write; (version &amp; 1) == 1 => slot B is live, else slot A
@@ -64,7 +64,7 @@ import java.io.Closeable;
  * Total slot = {@link #SLOT_SIZE} = 44 bytes.
  * Total file = {@link #FILE_SIZE} = 8 + 2 * 44 = 96 bytes.
  *
- * <h3>Write protocol (mirrors _cv doCommit)</h3>
+ * <h2>Write protocol (mirrors _cv doCommit)</h2>
  * <ol>
  *   <li>Write new epoch values into the INACTIVE slot (body fields + MAGIC + checksum).</li>
  *   <li>{@code Unsafe.storeFence()} — ensure body bytes are globally visible before the version bump.</li>
@@ -75,7 +75,7 @@ import java.io.Closeable;
  *       This is what makes the epoch marker a hard crash boundary.</li>
  * </ol>
  *
- * <h3>Read protocol (mirrors TxReader A/B fallback)</h3>
+ * <h2>Read protocol (mirrors TxReader A/B fallback)</h2>
  * <ol>
  *   <li>Read version; select live slot by (version &amp; 1).</li>
  *   <li>Verify MAGIC + checksum of the live slot body.</li>
