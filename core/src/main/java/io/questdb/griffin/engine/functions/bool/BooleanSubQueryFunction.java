@@ -123,6 +123,15 @@ public class BooleanSubQueryFunction extends BooleanFunction implements UnaryFun
     }
 
     @Override
+    public boolean isRuntimeConstant() {
+        // The sub-query executes once per query execution in init() and its single value is
+        // cached, so the predicate is constant across every row of one execution - yet its
+        // value is unknown at compile time (it may differ between executions), so it is a
+        // runtime constant, not a compile-time constant.
+        return true;
+    }
+
+    @Override
     public void offerStateTo(Function that) {
         // state moves only between clones compiled from the same expression
         if (that instanceof BooleanSubQueryFunction thatF) {

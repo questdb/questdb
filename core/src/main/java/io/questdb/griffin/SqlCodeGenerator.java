@@ -320,6 +320,7 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -4397,6 +4398,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         try {
+            if (filter.isRuntimeConstant()) {
+                // The whole predicate is a runtime constant (e.g. a scalar boolean sub-query used
+                // directly, or its negation). Gate the outer scan behind a single per-execution
+                // evaluation instead of an async/serial per-row filter: false returns an empty
+                // cursor without opening the base, true delegates straight to the base.
+                return new RuntimeConstGateRecordCursorFactory(factory, filter);
+            }
+
             // This path applies only to the read_parquet() table function.
             // For native tables, generateTableQuery0() handles pushdown separately.
             if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
@@ -6525,6 +6534,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.free(master);
                         return factory;
                     }
+                } else if (filter.isRuntimeConstant()) {
+                    // The const filter is a runtime constant (e.g. a scalar boolean sub-query).
+                    // Gate the join behind a single per-execution evaluation, re-evaluated at
+                    // each cursor open: false returns empty without scanning the join output,
+                    // true delegates straight to it. The generation-time filter.init above only
+                    // probed isConstant(); the gate re-inits the filter for each execution.
+                    master = new RuntimeConstGateRecordCursorFactory(master, filter);
                 } else {
                     // make it a post-join filter (same as for post join where clause above)
                     if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
