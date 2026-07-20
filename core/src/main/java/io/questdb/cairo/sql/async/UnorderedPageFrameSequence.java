@@ -341,10 +341,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     }
 
     /**
-     * Returns the strategy a post-aggregation phase should bind its own counter to. That is the
-     * unwrapped base, never the reduce-phase instance: a test-gated reduce strategy waits on a latch
-     * that only a reducer counts down, so a later phase binding it would park on a gate nothing can
-     * open. The two are the same object for every production query.
+     * Returns the single work-stealing strategy this sequence uses for every phase. There is one
+     * strategy instance per query: the reduce phase already bound its counter to this same object,
+     * and a post-aggregation caller rebinds its own counter through {@code of()} before calling
+     * {@code shouldSteal}. This getter returns that instance as-is; it does not unwrap anything.
+     * <p>
+     * A latch-gated test strategy (see {@code SlotGatedWorkStealingStrategy}) is a subclass, so it is
+     * returned here too. Such a test must ensure the acquire latch reaches zero during reduce, before
+     * post-aggregation calls {@code shouldSteal} on this same instance; otherwise that phase parks on
+     * a gate nothing will open.
      */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;

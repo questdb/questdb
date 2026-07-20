@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Numbers;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 

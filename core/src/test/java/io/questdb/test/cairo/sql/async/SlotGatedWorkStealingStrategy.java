@@ -58,13 +58,6 @@ import java.util.concurrent.TimeUnit;
  * leave this in place.
  */
 public class SlotGatedWorkStealingStrategy extends AdaptiveWorkStealingStrategy {
-    private final StatefulAtom atom;
-
-    public SlotGatedWorkStealingStrategy(int noStealingThreshold, long spinTimeoutNanos, StatefulAtom atom) {
-        super(noStealingThreshold, spinTimeoutNanos);
-        this.atom = atom;
-    }
-
     /**
      * Returns a factory provider that gates every parallel query it hands a strategy to. Assign it
      * to {@code AbstractCairoTest.factoryProvider} from a {@code @Before} running before
@@ -76,6 +69,13 @@ public class SlotGatedWorkStealingStrategy extends AdaptiveWorkStealingStrategy 
      */
     public static FactoryProvider newFactoryProvider() {
         return new SlotGatedFactoryProvider();
+    }
+
+    private final StatefulAtom atom;
+
+    public SlotGatedWorkStealingStrategy(int noStealingThreshold, long spinTimeoutNanos, StatefulAtom atom) {
+        super(noStealingThreshold, spinTimeoutNanos);
+        this.atom = atom;
     }
 
     @Override

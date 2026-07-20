@@ -29,8 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.async.PageFrameReducer;
-import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -43,9 +41,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the parallel
@@ -529,7 +524,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
             Assert.assertEquals(
                     "query routed to a different reducer: " + query,
                     expectedReducer,
-                    reducerName(joinFactory)
+                    joinFactory.getReducerName()
             );
         }
         TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
@@ -591,7 +586,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
             Assert.assertEquals(
                     "query routed to a different reducer: " + query,
                     expectedReducer,
-                    reducerName(joinFactory)
+                    joinFactory.getReducerName()
             );
         }
         TestUtils.assertNoSlotLeakOnBreach(compiler, ctx, query);
@@ -659,33 +654,6 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                 "INSERT INTO trades SELECT (x * 1_000_000)::timestamp, (x % " + symbols + ")::symbol, x::double FROM long_sequence(" + rows + ")",
                 ctx
         );
-    }
-
-    /**
-     * Names the reduce phase a factory routed to, by matching the reducer its frame sequence holds
-     * against the factory's own reducer constants. A slot-leak test needs it: each reducer owns its
-     * acquire/release pair, which one runs follows from compile-time flags the query's output never
-     * reveals, and a test pinning only the factory class would follow the optimizer silently onto a
-     * reducer other than the one it meant to cover. Reading the field name rather than a name the
-     * factory carries keeps the two from drifting apart.
-     */
-    private static String reducerName(RecordCursorFactory factory) {
-        try {
-            final Field frameSequenceField = factory.getClass().getDeclaredField("frameSequence");
-            frameSequenceField.setAccessible(true);
-            final PageFrameReducer reducer = ((PageFrameSequence<?>) frameSequenceField.get(factory)).getReducer();
-            for (Field field : factory.getClass().getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers()) && PageFrameReducer.class.isAssignableFrom(field.getType())) {
-                    field.setAccessible(true);
-                    if (field.get(null) == reducer) {
-                        return field.getName();
-                    }
-                }
-            }
-            throw new AssertionError("reducer is not one of " + factory.getClass().getSimpleName() + "'s constants");
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError("cannot resolve the reducer of " + factory.getClass().getSimpleName(), e);
-        }
     }
 
 }

@@ -190,8 +190,8 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         final int slots = 3;
         final int rounds = 2_000;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, slots);
-        // Counts every acquire the run is expected to make, so a lost CAS or a double count shows
-        // up as a latch that never reached zero (or went past it).
+        // Counts every acquire the run is expected to make, so a lost CAS leaves the latch above
+        // zero when the run ends.
         final CountDownLatch allAcquired = new CountDownLatch(threads * rounds);
         locks.setTestAcquireLatch(allAcquired);
         final AtomicIntegerArray owners = new AtomicIntegerArray(slots);

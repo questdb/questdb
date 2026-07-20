@@ -284,6 +284,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } finally {
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 recordB.clear();
                 frameMemoryPool.releaseParquetBuffers();
@@ -334,6 +335,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } finally {
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 recordB.clear();
                 frameMemoryPool.releaseParquetBuffers();

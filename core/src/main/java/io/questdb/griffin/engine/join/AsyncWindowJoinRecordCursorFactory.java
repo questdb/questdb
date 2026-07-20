@@ -289,6 +289,28 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
+    @TestOnly
+    public String getReducerName() {
+        final PageFrameReducer reducer = frameSequence.getReducer();
+        if (reducer == AGGREGATE) return "AGGREGATE";
+        if (reducer == AGGREGATE_DYNAMIC) return "AGGREGATE_DYNAMIC";
+        if (reducer == AGGREGATE_DYNAMIC_PREVAILING) return "AGGREGATE_DYNAMIC_PREVAILING";
+        if (reducer == AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED) return "AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED";
+        if (reducer == AGGREGATE_PREVAILING) return "AGGREGATE_PREVAILING";
+        if (reducer == AGGREGATE_PREVAILING_JOIN_FILTERED) return "AGGREGATE_PREVAILING_JOIN_FILTERED";
+        if (reducer == AGGREGATE_VECT) return "AGGREGATE_VECT";
+        if (reducer == AGGREGATE_VECT_PREVAILING) return "AGGREGATE_VECT_PREVAILING";
+        if (reducer == FILTER_AND_AGGREGATE) return "FILTER_AND_AGGREGATE";
+        if (reducer == FILTER_AND_AGGREGATE_DYNAMIC) return "FILTER_AND_AGGREGATE_DYNAMIC";
+        if (reducer == FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING) return "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING";
+        if (reducer == FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED) return "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED";
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING) return "FILTER_AND_AGGREGATE_PREVAILING";
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED) return "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED";
+        if (reducer == FILTER_AND_AGGREGATE_VECT) return "FILTER_AND_AGGREGATE_VECT";
+        if (reducer == FILTER_AND_AGGREGATE_VECT_PREVAILING) return "FILTER_AND_AGGREGATE_VECT_PREVAILING";
+        throw new AssertionError("reducer is not one of " + getClass().getSimpleName() + "'s constants");
+    }
+
     @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();

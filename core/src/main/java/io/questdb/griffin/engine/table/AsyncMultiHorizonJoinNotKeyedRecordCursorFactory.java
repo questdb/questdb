@@ -309,6 +309,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     slotId
             );
         } finally {
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 if (frameMemoryPool != null) {
                     frameMemoryPool.releaseParquetBuffers();
@@ -464,6 +465,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     slotId
             );
         } finally {
+            // Release the slot even if buffer cleanup throws; a stranded slot never returns (PerWorkerLocks has no reset).
             try {
                 if (frameMemoryPool != null) {
                     frameMemoryPool.releaseParquetBuffers();
