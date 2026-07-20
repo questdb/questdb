@@ -2361,6 +2361,11 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // Adaptive holds the base WAL purge floor at the last durable epoch; a full refresh reads
+            // base_price but does not write it, so its epoch never advances past the tail. Close the
+            // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
+            // base WAL is reclaimed.
+            engine.releaseInactive();
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2443,6 +2448,11 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // Adaptive holds the base WAL purge floor at the last durable epoch; a full refresh reads
+            // base_price but does not write it, so its epoch never advances past the tail. Close the
+            // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
+            // base WAL is reclaimed.
+            engine.releaseInactive();
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2502,6 +2512,12 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6264,6 +6280,12 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6383,6 +6405,12 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
