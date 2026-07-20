@@ -640,6 +640,19 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * True while a crash armed by {@link #armCrashAt(int)} is still pending — i.e. the target durability op
+     * has NOT yet been reached. The arm is one-shot: reaching it resets the arm (back to disarmed), so after
+     * a commit phase {@code !isCrashArmed()} proves the armed op actually fired, EVEN when the resulting
+     * {@link CrashSimulationError} was best-effort-swallowed by the engine (a durable-epoch advance after an
+     * already-committed convert) rather than propagated or turned into a table suspend. The sweep uses this
+     * to distinguish "the crash fired but was safely absorbed" from a genuine op-count drift (arm never
+     * consumed).
+     */
+    public boolean isCrashArmed() {
+        return crashAtOp > 0;
+    }
+
+    /**
      * Number of durability ops (fsync/fsyncAndClose/msync) observed so far.
      */
     public int durabilityOpCount() {

@@ -203,7 +203,15 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         // reclaimed (a real power loss's process death would close it; the live JVM cannot).
         final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
 
-        // ---- 2. SWEEP: crash at commit-phase durability op k, recover, run the oracle for k. ----
+        // ---- 2. SWEEP: crash at each atomic-commit durability op k, recover, run the oracle for k. ----
+        // A workload's commit phase may append BEST-EFFORT durability ops that run AFTER the transaction is
+        // already durable (e.g. convertPartitionNativeToParquet advances the durable epoch post-commit inside
+        // a log-and-swallow try/catch: the convert stays durable via the WAL, the epoch/purge just falls back
+        // to async). Those ops cannot lose committed data, and — for the convert — leave a committed parquet
+        // partition whose raw-fd-written _pm/data.parquet the crash model does not track. The count pass counts
+        // them in N, so the sweep detects the first such op (crash fired but neither propagated nor suspended)
+        // as the atomic-commit boundary and stops there.
+        int atomicCommitOps = sweptPoints;
         for (int k = 1; k <= sweptPoints; k++) {
             final TableToken[] tokens = workload.setup(k);
             // Fresh, count-stable baseline: everything on disk NOW (prior tables + this table's pre-commit
@@ -222,6 +230,25 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
                 // WAL-apply path: ApplyWal2TableJob swallowed the Error into a table suspend.
                 fired = anyTableSuspended(tokens);
             }
+            if (!fired && !crashFf.isCrashArmed()) {
+                // The one-shot arm was CONSUMED (the op fired) yet the crash neither propagated out of the
+                // commit NOR suspended the table: we have reached a BEST-EFFORT post-commit durability op
+                // (see the loop's block comment). The atomic transaction is already durable, so every
+                // remaining op is best-effort cleanup that cannot lose committed data; the sweepable range
+                // ends at k-1. Stop here — running the oracle for k would read the committed parquet
+                // partition whose raw-fd-written _pm the crash model cannot roll back (spurious "invalid size
+                // header"). The natural commit boundary, logged (never a silent cap). A genuine cross-pass
+                // op-count drift is DISTINCT: its arm is never consumed (isCrashArmed() stays true), so it
+                // falls through to the assertion below and fails.
+                LOG.info().$("[forEachAdaptiveCrashPoint] best-effort post-commit durability op at k=").$(k)
+                        .$(" (atomic commit already durable); swept atomic-commit crash points 1..").$(k - 1)
+                        .$(" of N=").$(n).$(" -> stopping").I$();
+                atomicCommitOps = k - 1;
+                workload.teardown();
+                releaseEngineHandles();
+                reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+                break;
+            }
             Assert.assertTrue(
                     "crash point k=" + k + " never fired — the commit phase's durability-op count is not "
                             + "stable/deterministic across passes (expected op " + (base + k) + ")",
@@ -236,7 +263,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             reclaimLingeringNonCacheFds(nonCacheFdBaseline);
         }
 
-        return new SweepResult(n, cap, sweptPoints, truncated, recoveredByK);
+        return new SweepResult(n, cap, atomicCommitOps, truncated, recoveredByK);
     }
 
     /**
