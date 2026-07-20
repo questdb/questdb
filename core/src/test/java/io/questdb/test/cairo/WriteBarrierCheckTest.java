@@ -32,7 +32,7 @@ import org.junit.Test;
 
 /**
  * Tests for {@link WriteBarrierCheck#classify(CharSequence, CharSequence)}.
- *
+ * <p>
  * All cases use injected /proc/mounts content so they are fully deterministic,
  * require no real filesystem access, and run on all platforms.
  */
@@ -47,8 +47,8 @@ public class WriteBarrierCheckTest {
         // ext4 mounted with nobarrier → BARRIERS_DISABLED
         String mounts =
                 "sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0\n" +
-                "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
-                "/dev/sdb1 /data ext4 rw,relatime,nobarrier,data=ordered 0 0\n";
+                        "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime,nobarrier,data=ordered 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -58,7 +58,7 @@ public class WriteBarrierCheckTest {
         // ext4 mounted with barrier=0 (older kernel syntax) → BARRIERS_DISABLED
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
-                "/dev/sdb1 /data ext4 rw,relatime,barrier=0 0 0\n";
+                        "/dev/sdb1 /data ext4 rw,relatime,barrier=0 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -68,7 +68,7 @@ public class WriteBarrierCheckTest {
         // ext4 with default options (no barrier token) → BARRIERS_PRESUMED_ENABLED
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,errors=remount-ro 0 0\n" +
-                "/dev/sdb1 /data ext4 rw,relatime,data=ordered 0 0\n";
+                        "/dev/sdb1 /data ext4 rw,relatime,data=ordered 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_PRESUMED_ENABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -78,7 +78,7 @@ public class WriteBarrierCheckTest {
         // xfs default (barriers on, not advertised in options) → BARRIERS_PRESUMED_ENABLED
         String mounts =
                 "/dev/sda1 / xfs rw,relatime,attr2,inode64,noquota 0 0\n" +
-                "/dev/nvme0n1p1 /data xfs rw,relatime,attr2,inode64,noquota 0 0\n";
+                        "/dev/nvme0n1p1 /data xfs rw,relatime,attr2,inode64,noquota 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_PRESUMED_ENABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -93,7 +93,7 @@ public class WriteBarrierCheckTest {
         // Longest prefix = /data → PRESUMED_ENABLED (the specific, safe mount wins).
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,nobarrier 0 0\n" +
-                "/dev/sdb1 /data ext4 rw,relatime,data=ordered 0 0\n";
+                        "/dev/sdb1 /data ext4 rw,relatime,data=ordered 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_PRESUMED_ENABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -104,7 +104,7 @@ public class WriteBarrierCheckTest {
         // Longest prefix = /data → BARRIERS_DISABLED.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime,data=ordered 0 0\n" +
-                "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
+                        "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -114,7 +114,7 @@ public class WriteBarrierCheckTest {
         // Mount exactly equal to dbRoot.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
-                "/dev/sdb1 /data/qdb ext4 rw,relatime,nobarrier 0 0\n";
+                        "/dev/sdb1 /data/qdb ext4 rw,relatime,nobarrier 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/data/qdb"));
     }
@@ -129,7 +129,7 @@ public class WriteBarrierCheckTest {
         // but /data is not a path-component prefix of /database.
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
-                "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
+                        "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
         // /database is not under /data, so we should fall back to / which has no nobarrier.
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_PRESUMED_ENABLED,
                 WriteBarrierCheck.classify(mounts, "/database"));
@@ -185,8 +185,8 @@ public class WriteBarrierCheckTest {
     public void testCommentLinesIgnored() {
         String mounts =
                 "# This is a comment\n" +
-                "\n" +
-                "/dev/sda1 / ext4 rw,relatime,nobarrier 0 0\n";
+                        "\n" +
+                        "/dev/sda1 / ext4 rw,relatime,nobarrier 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/var/qdb"));
     }
@@ -226,7 +226,7 @@ public class WriteBarrierCheckTest {
         // Mountpoint with a space encoded as \040 — /data\040qdb = "/data qdb"
         String mounts =
                 "/dev/sda1 / ext4 rw,relatime 0 0\n" +
-                "/dev/sdb1 /data\\040qdb ext4 rw,relatime,nobarrier 0 0\n";
+                        "/dev/sdb1 /data\\040qdb ext4 rw,relatime,nobarrier 0 0\n";
         Assert.assertEquals(WriteBarrierCheck.BARRIERS_DISABLED,
                 WriteBarrierCheck.classify(mounts, "/data qdb"));
     }

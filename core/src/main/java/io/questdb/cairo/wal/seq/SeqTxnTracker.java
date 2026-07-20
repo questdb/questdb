@@ -146,42 +146,58 @@ public class SeqTxnTracker {
         return localDurableSeqTxn;
     }
 
-    /** Returns the in-memory recovery incarnation counter (incremented each time recovery actually roll-forwarded this table). */
+    /**
+     * Returns the in-memory recovery incarnation counter (incremented each time recovery actually roll-forwarded this table).
+     */
     public long getRecoveryIncarnation() {
         return recoveryIncarnation;
     }
 
-    /** Increments the in-memory recovery incarnation counter (called by RecoveryCoordinator on a successful epoch restore). */
+    /**
+     * Increments the in-memory recovery incarnation counter (called by RecoveryCoordinator on a successful epoch restore).
+     */
     public void bumpRecoveryIncarnation() {
         recoveryIncarnation++;
     }
 
-    /** Wall-clock ms of the last durable epoch (adaptive cadence gate); 0 if none yet. */
+    /**
+     * Wall-clock ms of the last durable epoch (adaptive cadence gate); 0 if none yet.
+     */
     public long getLastEpochTs() {
         return lastEpochTs;
     }
 
-    /** Rows applied since the last durable epoch (adaptive backlog gate). Apply-worker-only. */
+    /**
+     * Rows applied since the last durable epoch (adaptive backlog gate). Apply-worker-only.
+     */
     public long getRowsSinceEpoch() {
         return rowsSinceEpoch;
     }
 
-    /** Adds to the un-epoched applied-row count (adaptive backlog gate). Apply-worker-only. */
+    /**
+     * Adds to the un-epoched applied-row count (adaptive backlog gate). Apply-worker-only.
+     */
     public void addRowsSinceEpoch(long rows) {
         rowsSinceEpoch += rows;
     }
 
-    /** Resets the un-epoched applied-row count; called when an epoch publishes. Apply-worker-only. */
+    /**
+     * Resets the un-epoched applied-row count; called when an epoch publishes. Apply-worker-only.
+     */
     public void resetRowsSinceEpoch() {
         rowsSinceEpoch = 0;
     }
 
-    /** The epoch txn currently pinned in the scoreboard, or -1 if none. */
+    /**
+     * The epoch txn currently pinned in the scoreboard, or -1 if none.
+     */
     public long getPinnedEpochTxn() {
         return pinnedEpochTxn;
     }
 
-    /** Which ping-pong slot holds the current epoch pin: true => EPOCH_ID_A, false => EPOCH_ID_B. */
+    /**
+     * Which ping-pong slot holds the current epoch pin: true => EPOCH_ID_A, false => EPOCH_ID_B.
+     */
     public boolean isPinnedEpochSlotA() {
         return pinnedEpochSlotIsA;
     }
@@ -336,7 +352,9 @@ public class SeqTxnTracker {
         }
     }
 
-    /** Record the wall-clock ms of the last durable epoch (adaptive cadence gate). */
+    /**
+     * Record the wall-clock ms of the last durable epoch (adaptive cadence gate).
+     */
     public void setLastEpochTs(long lastEpochTs) {
         this.lastEpochTs = lastEpochTs;
     }

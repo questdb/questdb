@@ -41,7 +41,9 @@ import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
  */
 public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
 
-    /** Number of consecutive aux entries to zero (simulates multi-entry tail loss). */
+    /**
+     * Number of consecutive aux entries to zero (simulates multi-entry tail loss).
+     */
     private static final int ZEROED_ENTRY_COUNT = 4;
 
     // -------------------------------------------------------------------------
@@ -96,7 +98,7 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
             // Key assertion: NO exception — the proposed guard is a no-op (DROP confirmed).
             Assert.assertFalse(
                     "STRING: an exception was thrown, meaning some guard DID fire. " +
-                    "If it's the multi-page guard, the DROP decision is wrong — re-investigate.",
+                            "If it's the multi-page guard, the DROP decision is wrong — re-investigate.",
                     exceptionThrown
             );
         });
@@ -146,7 +148,7 @@ public class MultiPageTornAuxTailTest extends AbstractCrashConsistencyTest {
             // Key assertion: NO exception — the proposed guard is a no-op (DROP confirmed).
             Assert.assertFalse(
                     "ARRAY: an exception was thrown, meaning some guard DID fire. " +
-                    "If it's the multi-page guard, the DROP decision is wrong — re-investigate.",
+                            "If it's the multi-page guard, the DROP decision is wrong — re-investigate.",
                     exceptionThrown
             );
         });

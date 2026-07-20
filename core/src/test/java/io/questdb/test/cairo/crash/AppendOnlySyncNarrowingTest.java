@@ -186,7 +186,9 @@ public class AppendOnlySyncNarrowingTest {
         });
     }
 
-    /** FilesFacade that records every msync's (addr, len) and counts them. */
+    /**
+     * FilesFacade that records every msync's (addr, len) and counts them.
+     */
     private static final class RecordingFilesFacade extends TestFilesFacadeImpl {
         final List<long[]> msyncs = new ArrayList<>();
         long lastMsyncAddr = -1;

@@ -116,11 +116,17 @@ import java.util.Set;
  */
 public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
-    /** Pre-epoch base rows: a durable epoch is taken after these (interval=0), for base AND mv. */
+    /**
+     * Pre-epoch base rows: a durable epoch is taken after these (interval=0), for base AND mv.
+     */
     private static final int LAZY_K = 4;
-    /** Post-epoch base rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into. */
+    /**
+     * Post-epoch base rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     */
     private static final int LAZY_M = 5;
-    /** Total committed base rows once the whole gap is applied. */
+    /**
+     * Total committed base rows once the whole gap is applied.
+     */
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
@@ -222,9 +228,13 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
      * {@code commit} phase applies the M lazily-applied base rows, each driving a lazy mv refresh.
      */
     private final class MatViewLazyGapWorkload implements AdaptiveCrashWorkload {
-        /** Crash points whose view came back VALID post-recovery (the phantom check ran there). */
+        /**
+         * Crash points whose view came back VALID post-recovery (the phantom check ran there).
+         */
         int validViewPoints;
-        /** Crash points whose view came back INVALID post-recovery (reconciled via a full refresh). */
+        /**
+         * Crash points whose view came back INVALID post-recovery (reconciled via a full refresh).
+         */
         int invalidViewPoints;
         private TableToken baseTt;
         private TableToken mvTt;
@@ -535,13 +545,17 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
         execute("insert into base values ('" + String.format("2024-10-01T%02d:00:00.000000Z", hour) + "', " + v + ")");
     }
 
-    /** True iff the mat-view's in-memory refresh state reports invalid (null state treated as not-invalid). */
+    /**
+     * True iff the mat-view's in-memory refresh state reports invalid (null state treated as not-invalid).
+     */
     private boolean viewInvalid(TableToken mvTt) {
         final MatViewState st = engine.getMatViewStateStore().getViewState(mvTt);
         return st != null && st.isInvalid();
     }
 
-    /** count(*) on base — the committed row count from metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) on base — the committed row count from metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {

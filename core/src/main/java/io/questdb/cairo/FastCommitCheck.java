@@ -87,11 +87,17 @@ import io.questdb.std.str.Utf8s;
  */
 public final class FastCommitCheck {
 
-    /** ext4 fast_commit (per-inode journaling) is enabled on the DB-root mount. */
+    /**
+     * ext4 fast_commit (per-inode journaling) is enabled on the DB-root mount.
+     */
     public static final int FAST_COMMIT_ENABLED = 2;
-    /** The DB-root mount was found and fast_commit is NOT present (shared journal / safe). */
+    /**
+     * The DB-root mount was found and fast_commit is NOT present (shared journal / safe).
+     */
     public static final int FAST_COMMIT_NOT_DETECTED = 1;
-    /** Could not determine (non-Linux, non-ext4, container, unresolvable device, IO error). */
+    /**
+     * Could not determine (non-Linux, non-ext4, container, unresolvable device, IO error).
+     */
     public static final int UNKNOWN = 0;
 
     private static final Log LOG = LogFactory.getLog(FastCommitCheck.class);
@@ -228,7 +234,9 @@ public final class FastCommitCheck {
         return null;
     }
 
-    /** True if the comma/newline/whitespace-delimited ext4 options text contains a {@code fast_commit} token. */
+    /**
+     * True if the comma/newline/whitespace-delimited ext4 options text contains a {@code fast_commit} token.
+     */
     public static boolean hasFastCommitToken(CharSequence options) {
         // The /proc/fs/ext4/<dev>/options file lists one option token per line; mount-option
         // strings elsewhere are comma-delimited. Accept either: split on newline AND comma and
@@ -463,10 +471,14 @@ public final class FastCommitCheck {
      * symlink-deref mapping is unit-testable without a real {@code /dev} or {@code /proc/fs/ext4}.
      */
     public interface DeviceProbe {
-        /** True if {@code /proc/fs/ext4/<devName>} exists. */
+        /**
+         * True if {@code /proc/fs/ext4/<devName>} exists.
+         */
         boolean procEntryExists(String devName);
 
-        /** Resolve {@code devicePath} as a symlink, returning its (possibly relative-resolved) target, or {@code null}. */
+        /**
+         * Resolve {@code devicePath} as a symlink, returning its (possibly relative-resolved) target, or {@code null}.
+         */
         String resolveSymlink(String devicePath);
     }
 

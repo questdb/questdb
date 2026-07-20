@@ -472,7 +472,9 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
         });
     }
 
-    /** Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn, writer NOT released). */
+    /**
+     * Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn, writer NOT released).
+     */
     private static void commitRow(WalWriter w, long ts, long v) {
         TableWriter.Row row = w.newRow(ts);
         row.putLong(1, v);

@@ -207,7 +207,9 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
         }
     }
 
-    /** After the crash, assert every surviving row carries exactly the values written for its timestamp. */
+    /**
+     * After the crash, assert every surviving row carries exactly the values written for its timestamp.
+     */
     private void assertAllRowsCorrect(long expectedRows) {
         final String sql = "select ts, f0, s1, s2, v, sym1, sym2 from w order by ts";
         try (RecordCursorFactory f = select(sql)) {

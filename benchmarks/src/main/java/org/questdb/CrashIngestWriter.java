@@ -54,60 +54,60 @@ import java.nio.file.StandardOpenOption;
 
 /**
  * INGEST WRITER FOR CRASH-CONSISTENCY AND POWER-CUT DURABILITY HARNESSES
- *
+ * <p>
  * PURPOSE: Ingest rows into QuestDB in configurable commit mode, recording an acknowledged-commit
  * watermark after every successful commit(). The process is then hard-killed (kill -9) or power-cut
  * (dm-flakey drop_writes) by the harness script, and CrashVerifier reopens the DB to verify
  * consistency / durability.
- *
+ * <p>
  * COMMIT MODE (via -DcommitMode=SYNC|NOSYNC|adaptive, default SYNC):
- *   SYNC:   msync(MS_SYNC) is called on all dirty mmap pages before the _txn commit record
- *           is written.  On a real block device this pushes data to stable storage before
- *           the commit is acknowledged — surviving both process crashes AND power cuts.
- *           Uses the NON-WAL (bypass wal) direct-TableWriter path (the existing, proven harness).
- *   NOSYNC: commits are acknowledged without forcing pages to stable storage.  Data lives
- *           in the OS page cache and survives a process kill (page cache persists), but is
- *           LOST on a power cut (page cache discarded).  Also the NON-WAL path.
- *   adaptive: the WAL path (CommitMode.ADAPTIVE). Rows flow through a WalWriter into the WAL
- *           sequencer; the apply job (ApplyWal2TableJob + CheckWalTransactionsJob) materializes
- *           them and fires durable epochs; the group-commit window (cairo.adaptive.commit.group.window)
- *           batches the WAL device flush. After each commit the writer records BOTH the committed
- *           sequencer txn (C) and the durable-ack frontier localDurableSeqTxn (Wm). CrashVerifier
- *           reopens, runs the production recovery triple, and asserts the adaptive durability oracle
- *           (see the SP-D4 protocol spec) against (C, Wm).
- *
+ * SYNC:   msync(MS_SYNC) is called on all dirty mmap pages before the _txn commit record
+ * is written.  On a real block device this pushes data to stable storage before
+ * the commit is acknowledged — surviving both process crashes AND power cuts.
+ * Uses the NON-WAL (bypass wal) direct-TableWriter path (the existing, proven harness).
+ * NOSYNC: commits are acknowledged without forcing pages to stable storage.  Data lives
+ * in the OS page cache and survives a process kill (page cache persists), but is
+ * LOST on a power cut (page cache discarded).  Also the NON-WAL path.
+ * adaptive: the WAL path (CommitMode.ADAPTIVE). Rows flow through a WalWriter into the WAL
+ * sequencer; the apply job (ApplyWal2TableJob + CheckWalTransactionsJob) materializes
+ * them and fires durable epochs; the group-commit window (cairo.adaptive.commit.group.window)
+ * batches the WAL device flush. After each commit the writer records BOTH the committed
+ * sequencer txn (C) and the durable-ack frontier localDurableSeqTxn (Wm). CrashVerifier
+ * reopens, runs the production recovery triple, and asserts the adaptive durability oracle
+ * (see the SP-D4 protocol spec) against (C, Wm).
+ * <p>
  * ADAPTIVE KNOBS:
- *   -Dgroup.window.us=<W>   -> cairo.adaptive.commit.group.window (0 = synchronous/zero-loss;
- *                              >0 = batched WAL fdatasync bounded to W microseconds, RPO<=W).
- *   -Depoch.interval.ms=<n> -> cairo.adaptive.epoch.interval (min interval between durable epochs
- *                              per table; default 1000ms, production default; 0 epochs every apply batch).
- *
+ * -Dgroup.window.us=<W>   -> cairo.adaptive.commit.group.window (0 = synchronous/zero-loss;
+ * >0 = batched WAL fdatasync bounded to W microseconds, RPO<=W).
+ * -Depoch.interval.ms=<n> -> cairo.adaptive.epoch.interval (min interval between durable epochs
+ * per table; default 1000ms, production default; 0 epochs every apply batch).
+ * <p>
  * HARNESS #1 — PROCESS-CRASH-CONSISTENCY (crash-consistency-pkill.sh):
- *   kill -9 tests that QuestDB's recovery path leaves a CONSISTENT state after an abrupt mid-write kill.
- *   Page cache is NOT discarded by a kill, so BOTH SYNC and NOSYNC survive process kills.
- *
+ * kill -9 tests that QuestDB's recovery path leaves a CONSISTENT state after an abrupt mid-write kill.
+ * Page cache is NOT discarded by a kill, so BOTH SYNC and NOSYNC survive process kills.
+ * <p>
  * HARNESS #2 — POWER-CUT DURABILITY (power-cut-dmflakey.sh):
- *   dm-flakey with drop_writes discards un-fsync'd writes at the block layer, exactly
- *   modelling a power failure.  SYNC- / adaptive-durable data should survive; NOSYNC data may be lost.
- *
+ * dm-flakey with drop_writes discards un-fsync'd writes at the block layer, exactly
+ * modelling a power failure.  SYNC- / adaptive-durable data should survive; NOSYNC data may be lost.
+ * <p>
  * SCHEMA: t (id long, v long, s symbol index, ts timestamp) partition by DAY.
- *   NON-WAL (bypass wal) for SYNC/NOSYNC; WAL for adaptive. Same deterministic values either way.
- *
+ * NON-WAL (bypass wal) for SYNC/NOSYNC; WAL for adaptive. Same deterministic values either way.
+ * <p>
  * DETERMINISTIC VALUES:
- *   row[i].id = i
- *   row[i].v  = i * 2654435761L  (Knuth multiplicative hash — easy to verify)
- *   row[i].s  = SYMBOLS[i % SYMBOLS.length]  (exercises symbol maps + .k/.v index files)
- *   row[i].ts = BASE_TS + i * 1_000_000L (1 second per row → multiple partitions)
- *
+ * row[i].id = i
+ * row[i].v  = i * 2654435761L  (Knuth multiplicative hash — easy to verify)
+ * row[i].s  = SYMBOLS[i % SYMBOLS.length]  (exercises symbol maps + .k/.v index files)
+ * row[i].ts = BASE_TS + i * 1_000_000L (1 second per row → multiple partitions)
+ * <p>
  * WATERMARK (_progress, atomic tmp→fsync→rename→dir-fsync so it is never half-written):
- *   NON-WAL: a single bare number = committed row count (unchanged; the pkill harness parses this).
- *   adaptive: first line = committed row count, then "C=<committedSeqTxn>" and "Wm=<localDurableSeqTxn>".
- *             The first line stays the bare row count so `head -1 _progress` works in all modes.
- *
+ * NON-WAL: a single bare number = committed row count (unchanged; the pkill harness parses this).
+ * adaptive: first line = committed row count, then "C=<committedSeqTxn>" and "Wm=<localDurableSeqTxn>".
+ * The first line stays the bare row count so `head -1 _progress` works in all modes.
+ * <p>
  * Usage: java -cp benchmarks/target/benchmarks.jar \
- *            [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dgroup.window.us=W] [-Depoch.interval.ms=N] \
- *            [-Dmax.rows=N] \
- *            org.questdb.CrashIngestWriter <db-root>
+ * [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dgroup.window.us=W] [-Depoch.interval.ms=N] \
+ * [-Dmax.rows=N] \
+ * org.questdb.CrashIngestWriter <db-root>
  */
 public class CrashIngestWriter {
 

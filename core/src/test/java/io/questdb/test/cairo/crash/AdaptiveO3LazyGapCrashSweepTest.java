@@ -78,11 +78,17 @@ import java.util.Set;
  */
 public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
-    /** Pre-epoch O3 rows: a durable epoch is taken after these (interval=0 on the first applied batch). */
+    /**
+     * Pre-epoch O3 rows: a durable epoch is taken after these (interval=0 on the first applied batch).
+     */
     private static final int LAZY_K = 4;
-    /** Post-epoch O3 rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into. */
+    /**
+     * Post-epoch O3 rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     */
     private static final int LAZY_M = 5;
-    /** Total committed rows once the whole gap is applied. */
+    /**
+     * Total committed rows once the whole gap is applied.
+     */
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
@@ -340,7 +346,9 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                 + "', " + v + ")");
     }
 
-    /** count(*) — the committed row count from table metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
@@ -374,7 +382,9 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
         return out;
     }
 
-    /** True iff {@code rows}, in order, is exactly the identity sequence 0,1,2,... */
+    /**
+     * True iff {@code rows}, in order, is exactly the identity sequence 0,1,2,...
+     */
     private boolean isIdentityPrefix(List<Long> rows) {
         for (int i = 0; i < rows.size(); i++) {
             if (rows.get(i) == null || rows.get(i) != (long) i) {

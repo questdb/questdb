@@ -434,7 +434,9 @@ public class RecoveryCoordinator {
         }
     }
 
-    /** Copy {@code <fileName>.epoch} over {@code <fileName>} in the table dir (O_TRUNC replace). */
+    /**
+     * Copy {@code <fileName>.epoch} over {@code <fileName>} in the table dir (O_TRUNC replace).
+     */
     private void restoreFile(TableToken token, Path src, Path dst, CharSequence fileName) {
         epochCopyPath(src, token, fileName);
         tablePath(dst, token).concat(fileName);
@@ -445,7 +447,9 @@ public class RecoveryCoordinator {
         }
     }
 
-    /** fsync a single table-dir file by path (open RW, fsync, close). */
+    /**
+     * fsync a single table-dir file by path (open RW, fsync, close).
+     */
     private void fsyncFile(TableToken token, Path dst, CharSequence fileName) {
         tablePath(dst, token).concat(fileName);
         final long fd = TableUtils.openRW(ff, dst.$(), LOG, configuration.getWriterFileOpenOpts());
@@ -461,7 +465,9 @@ public class RecoveryCoordinator {
         }
     }
 
-    /** fsync the table directory entry so the restored file sizes/names are journaled. */
+    /**
+     * fsync the table directory entry so the restored file sizes/names are journaled.
+     */
     private void fsyncDir(TableToken token, Path dir) {
         if (Os.isWindows()) {
             return; // no directory fsync on Windows (mirrors TableWriter's dir-sync guards)

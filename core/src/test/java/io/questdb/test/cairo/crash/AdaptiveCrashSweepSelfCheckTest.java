@@ -233,7 +233,9 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
-    /** count(*) — the committed row count from table metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {

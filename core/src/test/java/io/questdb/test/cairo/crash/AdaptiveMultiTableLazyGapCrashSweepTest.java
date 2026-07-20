@@ -92,11 +92,17 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private static final String T1 = "mt_lazygap_1";
     private static final String T2 = "mt_lazygap_2";
 
-    /** Pre-epoch rows PER TABLE: a durable epoch is taken after these (interval=0 on the first applied batch). */
+    /**
+     * Pre-epoch rows PER TABLE: a durable epoch is taken after these (interval=0 on the first applied batch).
+     */
     private static final int LAZY_K = 4;
-    /** Post-epoch rows PER TABLE applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into. */
+    /**
+     * Post-epoch rows PER TABLE applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     */
     private static final int LAZY_M = 5;
-    /** Total committed rows PER TABLE once the whole gap is applied (each table's own independent v: 0..ROWS-1). */
+    /**
+     * Total committed rows PER TABLE once the whole gap is applied (each table's own independent v: 0..ROWS-1).
+     */
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
@@ -286,7 +292,9 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
         }
     }
 
-    /** Paired t1/t2 recovered-row snapshots for the negative-control comparison. */
+    /**
+     * Paired t1/t2 recovered-row snapshots for the negative-control comparison.
+     */
     private static final class TwoTableRows {
         final List<Long> t1;
         final List<Long> t2;
@@ -502,7 +510,9 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 + "', " + v + ")");
     }
 
-    /** count(*) — the committed row count from table metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {

@@ -388,8 +388,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // disabled.
         Utf8Sequence durableAckConfirmToken = !durableAckEnabled ? null
                 : (requestedTier == DurabilityTier.DEFAULT
-                        ? QwpIngressHttpProcessor.RESPONSE_DURABLE_ACK_TOKEN_ENABLED
-                        : DurabilityTier.responseToken(grantedTier));
+                   ? QwpIngressHttpProcessor.RESPONSE_DURABLE_ACK_TOKEN_ENABLED
+                   : DurabilityTier.responseToken(grantedTier));
 
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,

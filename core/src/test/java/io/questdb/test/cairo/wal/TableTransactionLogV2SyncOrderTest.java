@@ -213,7 +213,9 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
             return syncOrder;
         }
 
-        /** Drop all tracked state (fd, addr, and sync order). For full reset between test phases. */
+        /**
+         * Drop all tracked state (fd, addr, and sync order). For full reset between test phases.
+         */
         public void reset() {
             addrToPath.clear();
             fdToPath.clear();

@@ -110,27 +110,37 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
         }
     }
 
-    /** sym1 value for row i (7 distinct -> exercises a multi-key index). */
+    /**
+     * sym1 value for row i (7 distinct -> exercises a multi-key index).
+     */
     private static String sym1Of(int i) {
         return "s1v" + (i % 7);
     }
 
-    /** sym2 value for row i (3 distinct). */
+    /**
+     * sym2 value for row i (3 distinct).
+     */
     private static String sym2Of(int i) {
         return "s2v" + (i % 3);
     }
 
-    /** Varchar value for row i; >9 bytes so it takes the split (out-of-line) varchar layout. */
+    /**
+     * Varchar value for row i; >9 bytes so it takes the split (out-of-line) varchar layout.
+     */
     private static String vOf(int i) {
         return "varchar-payload-" + String.format("%08d", i);
     }
 
-    /** First string for row i. */
+    /**
+     * First string for row i.
+     */
     private static String s1Of(int i) {
         return "s1-" + String.format("%08d", i);
     }
 
-    /** Second string for row i (different length so aux offsets vary). */
+    /**
+     * Second string for row i (different length so aux offsets vary).
+     */
     private static String s2Of(int i) {
         return "second-string-value-" + String.format("%010d", i);
     }
@@ -158,7 +168,9 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
         }
     }
 
-    /** Point-lookup on the index: every row with sym1='s1v3' must carry its correct f0 (=ts/1e6). */
+    /**
+     * Point-lookup on the index: every row with sym1='s1v3' must carry its correct f0 (=ts/1e6).
+     */
     private void assertIndexedRowsCorrect() {
         final String sql = "select ts, f0, sym1 from w where sym1 = 's1v3' order by ts";
         try (RecordCursorFactory f = select(sql)) {

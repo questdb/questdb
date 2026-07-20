@@ -171,7 +171,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                             .$(" seqTxn=").$(restarted.getTableSequencerAPI().getTxnTracker(rtb).getSeqTxn()).I$();
                     // DECISIVE: a fresh process resets the floor to 0 exactly like the in-process reset.
                     Assert.assertEquals("B: a REAL fresh-process restart resets the purge floor to 0 too "
-                            + "(durableEpochSeqTxn is in-memory, not restored on boot) — identical to in-process",
+                                    + "(durableEpochSeqTxn is in-memory, not restored on boot) — identical to in-process",
                             0L, bFreshFloorAfterBoot);
 
                     // B1: purge right after boot (quiescent). RETAINS — identical to the in-process arm.
@@ -190,7 +190,7 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                     bFreshAfterIngest = listWalDirs(tb);
                     LOG.info().$("[EXP] B2 fresh-engine +ingest+epoch+purge: wals=").$(bFreshAfterIngest.toString()).I$();
                     Assert.assertTrue("B2 (DECISIVE): after a REAL reboot + resumed ingest, the purge RECLAIMS "
-                            + "the orphan — orphans self-heal and do NOT accumulate across reboots",
+                                    + "the orphan — orphans self-heal and do NOT accumulate across reboots",
                             bFreshAfterIngest.isEmpty());
 
                     restarted.releaseInactive();
@@ -259,7 +259,9 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
         return (int) rowCount(name);
     }
 
-    /** Resume ingest on {@code eng}: PREFIX_ROWS more contiguous rows, applied (fires a new durable epoch). */
+    /**
+     * Resume ingest on {@code eng}: PREFIX_ROWS more contiguous rows, applied (fires a new durable epoch).
+     */
     private void resumeIngest(CairoEngine eng, TableToken tt, int startId) {
         int id = startId;
         try (WalWriter w = eng.getWalWriter(tt)) {
@@ -284,7 +286,9 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
         return tr.getDurableEpochSeqTxn();
     }
 
-    /** Sorted list of {@code walN} directory names on disk for {@code tt} (the reboot-orphan enumeration). */
+    /**
+     * Sorted list of {@code walN} directory names on disk for {@code tt} (the reboot-orphan enumeration).
+     */
     private List<String> listWalDirs(TableToken tt) {
         final List<String> out = new ArrayList<>();
         final File td = new File(engine.getConfiguration().getDbRoot().toString(), tt.getDirName());
@@ -308,7 +312,9 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                 .$(" writerTxn=").$(tr.getWriterTxn()).I$();
     }
 
-    /** Run the WAL broad-sweep to completion on {@code eng} with a strictly-increasing clock (see the soak). */
+    /**
+     * Run the WAL broad-sweep to completion on {@code eng} with a strictly-increasing clock (see the soak).
+     */
     private void forceWalPurge(CairoEngine eng) {
         eng.releaseAllWalWriters();
         final long step = eng.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;

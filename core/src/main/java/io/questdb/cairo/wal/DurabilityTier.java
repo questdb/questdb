@@ -49,7 +49,9 @@ public final class DurabilityTier {
     private DurabilityTier() {
     }
 
-    /** Parse the X-QWP-Request-Durable-Ack header value into a request intent. */
+    /**
+     * Parse the X-QWP-Request-Durable-Ack header value into a request intent.
+     */
     public static int fromHeaderValue(@Nullable Utf8Sequence v) {
         if (v == null) {
             return NONE;
@@ -66,7 +68,9 @@ public final class DurabilityTier {
         return NONE;
     }
 
-    /** The confirmation token echoed for an explicitly-granted tier, or null. */
+    /**
+     * The confirmation token echoed for an explicitly-granted tier, or null.
+     */
     public static @Nullable Utf8String responseToken(int tier) {
         switch (tier) {
             case LOCAL:

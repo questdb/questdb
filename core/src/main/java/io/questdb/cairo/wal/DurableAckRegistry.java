@@ -97,7 +97,9 @@ public interface DurableAckRegistry {
         return false;
     }
 
-    /** The strongest tier this server can offer, or {@link DurabilityTier#NONE}. */
+    /**
+     * The strongest tier this server can offer, or {@link DurabilityTier#NONE}.
+     */
     default int strongestAvailableTier() {
         if (isTierAvailable(DurabilityTier.REPLICATED)) {
             return DurabilityTier.REPLICATED;

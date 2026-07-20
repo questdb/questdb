@@ -319,7 +319,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         }
     }
 
-    /** Open RW, allocate SIZE bytes, mmap MAP_RW via the facade, and fill the region with {@code value}. */
+    /**
+     * Open RW, allocate SIZE bytes, mmap MAP_RW via the facade, and fill the region with {@code value}.
+     */
     private static Mapped mapAndFill(CrashFaultFilesFacade ff, Path path, byte value) {
         long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
         Assert.assertTrue("openRW failed, fd=" + fd, fd > 0);
@@ -339,7 +341,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         ff.close(m.fd);
     }
 
-    /** Reopen RO and assert every byte equals {@code expected}. */
+    /**
+     * Reopen RO and assert every byte equals {@code expected}.
+     */
     private static void assertAllBytes(String msg, CrashFaultFilesFacade ff, Path path, byte expected) {
         byte[] got = readBack(ff, path);
         for (int i = 0; i < SIZE; i++) {
@@ -347,7 +351,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         }
     }
 
-    /** Reopen RO and assert NOT every byte equals {@code notExpected} (the write was lost / rolled back). */
+    /**
+     * Reopen RO and assert NOT every byte equals {@code notExpected} (the write was lost / rolled back).
+     */
     private static void assertNoBytes(String msg, CrashFaultFilesFacade ff, Path path, byte notExpected) {
         byte[] got = readBack(ff, path);
         boolean allEqual = true;

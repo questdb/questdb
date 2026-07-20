@@ -107,7 +107,9 @@ public class WalBatchSizeSweepBenchmark {
     @Param({"NOSYNC", "SYNC", "ADAPTIVE"})
     public String commitMode;
 
-    /** Batch size sweep: rows appended per commit. The x-axis of the amortization curve. */
+    /**
+     * Batch size sweep: rows appended per commit. The x-axis of the amortization curve.
+     */
     @Param({"1", "10", "100", "1000", "10000", "100000", "1000000"})
     public int rowsPerCommit;
 

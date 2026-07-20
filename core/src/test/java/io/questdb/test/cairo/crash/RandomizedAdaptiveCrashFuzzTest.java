@@ -111,7 +111,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         if (fuzzOverrideMinimal) {
             //   cancel notSet null  rollbk cAdd cRem cRen cTyp  data eqTs pDrop pPq  pNat trunc tDrop ttl  repl symV qry  pEnc tFmt cIdx
             fuzzer.setFuzzProbabilities(
-                    0.05, 0.2, 0.05, 0.0,  0, 0, 0, 0,   0.6, 0.0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0);
+                    0.05, 0.2, 0.05, 0.0, 0, 0, 0, 0, 0.6, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         } else {
             fuzzer.setFuzzProbabilities(
                     0.05, 0.2, 0.05, 0.0,       // cancelRows, notSet, nullSet, rollback(=0: clean seqTxn map)
@@ -163,7 +163,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         private ObjList<String> fp;   // built lazily, once
         private TableToken walToken;
 
-        FuzzCrashWorkload(long s0, long s1) { this.s0 = s0; this.s1 = s1; }
+        FuzzCrashWorkload(long s0, long s1) {
+            this.s0 = s0;
+            this.s1 = s1;
+        }
 
         @Override
         public TableToken[] setup(int iteration) throws Exception {

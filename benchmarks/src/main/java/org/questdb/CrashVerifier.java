@@ -47,36 +47,36 @@ import java.util.List;
 
 /**
  * CRASH-CONSISTENCY / POWER-CUT DURABILITY VERIFIER
- *
+ * <p>
  * PURPOSE: After CrashIngestWriter is hard-killed (kill -9) or power-cut (dm-flakey drop_writes),
  * this tool reopens the same QuestDB database root and verifies consistency / durability against the
  * deterministic row formulas and the acknowledged watermark recorded in _progress.
- *
+ * <p>
  * COMMIT MODE (via -DcommitMode=SYNC|NOSYNC|adaptive, default SYNC — matching the writer):
- *   SYNC / NOSYNC — the NON-WAL (bypass wal) path. Reopen, bit-check every row, and assert
- *     count % K == 0 (no torn commit) and count >= watermark (acked rows survived). Verdicts:
- *     CONSISTENT / LOUD_FAILURE / SILENT_CORRUPTION. Unchanged from the original harness.
- *   adaptive — the WAL path. On reopen run the PRODUCTION ADAPTIVE RECOVERY TRIPLE
- *     (RecoveryCoordinator.recover() → notifyWalTxnRepublisher → drainWalQueue) so the durable epoch
- *     rolls forward exactly as a real reboot does, then bit-check and assert the SP-D4 oracle against
- *     the captured (C = committed seqTxn, Wm = localDurableSeqTxn):
- *       - No silent corruption (HARD, every mode) — SILENT_CORRUPTION on any wrong value / torn commit.
- *       - Clean reopen — a suspend that never clears is a DURABILITY_FAILURE.
- *       - W=0 (adaptive == SYNC, zero loss): recovered frontier F >= C ⇒ DURABLE.
- *       - W>0 (RPO contract): every acked txn survives (F >= Wm) ⇒ RPO_OK; else DURABILITY_FAILURE.
- *
+ * SYNC / NOSYNC — the NON-WAL (bypass wal) path. Reopen, bit-check every row, and assert
+ * count % K == 0 (no torn commit) and count >= watermark (acked rows survived). Verdicts:
+ * CONSISTENT / LOUD_FAILURE / SILENT_CORRUPTION. Unchanged from the original harness.
+ * adaptive — the WAL path. On reopen run the PRODUCTION ADAPTIVE RECOVERY TRIPLE
+ * (RecoveryCoordinator.recover() → notifyWalTxnRepublisher → drainWalQueue) so the durable epoch
+ * rolls forward exactly as a real reboot does, then bit-check and assert the SP-D4 oracle against
+ * the captured (C = committed seqTxn, Wm = localDurableSeqTxn):
+ * - No silent corruption (HARD, every mode) — SILENT_CORRUPTION on any wrong value / torn commit.
+ * - Clean reopen — a suspend that never clears is a DURABILITY_FAILURE.
+ * - W=0 (adaptive == SYNC, zero loss): recovered frontier F >= C ⇒ DURABLE.
+ * - W>0 (RPO contract): every acked txn survives (F >= Wm) ⇒ RPO_OK; else DURABILITY_FAILURE.
+ * <p>
  * VERDICTS (printed to stdout; the harness parses the first word):
- *   CONSISTENT count=<n> watermark=<w>       — SYNC/NOSYNC path, all bars hold.
- *   DURABLE ...                              — adaptive W=0, full committed history survived.
- *   RPO_OK ...                               — adaptive W>0, every acked txn survived (RPO<=W).
- *   DURABILITY_FAILURE ...                   — an acked txn was lost, or a suspend never cleared (exit 3).
- *   LOUD_FAILURE: <msg>                      — CairoException on open/query (detected torn state, exit 1).
- *   SILENT_CORRUPTION ...                    — wrong value / gap / torn commit boundary (exit 2, SERIOUS).
- *
+ * CONSISTENT count=<n> watermark=<w>       — SYNC/NOSYNC path, all bars hold.
+ * DURABLE ...                              — adaptive W=0, full committed history survived.
+ * RPO_OK ...                               — adaptive W>0, every acked txn survived (RPO<=W).
+ * DURABILITY_FAILURE ...                   — an acked txn was lost, or a suspend never cleared (exit 3).
+ * LOUD_FAILURE: <msg>                      — CairoException on open/query (detected torn state, exit 1).
+ * SILENT_CORRUPTION ...                    — wrong value / gap / torn commit boundary (exit 2, SERIOUS).
+ * <p>
  * Usage: java -cp benchmarks/target/benchmarks.jar \
- *            [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dgroup.window.us=W] [-Depoch.interval.ms=N] \
- *            [-Droll.forward.enabled=true|false] \
- *            org.questdb.CrashVerifier <db-root>
+ * [-DcommitMode=SYNC|NOSYNC|adaptive] [-Dgroup.window.us=W] [-Depoch.interval.ms=N] \
+ * [-Droll.forward.enabled=true|false] \
+ * org.questdb.CrashVerifier <db-root>
  */
 public class CrashVerifier {
 
@@ -101,7 +101,7 @@ public class CrashVerifier {
         System.out.println("commitMode=" + modeProp + " (" + modeInt + ")"
                 + (modeInt == CommitMode.ADAPTIVE
                 ? " group.window.us=" + groupWindowUs + " epoch.interval.ms=" + epochIntervalMs
-                + " roll.forward.enabled=" + rollForward
+                  + " roll.forward.enabled=" + rollForward
                 : ""));
 
         final CairoConfiguration cfg = new DefaultCairoConfiguration(dbRoot) {

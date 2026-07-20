@@ -46,26 +46,32 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Deterministic sync-cost profiler: counts syscalls + bytes (not timing).
- *
+ * <p>
  * msync calls, msync bytes, fsync calls, fdatasync calls are DETERMINISTIC for a
  * fixed workload — they are exactly what the Goal-2 fdatasync+narrowing upgrade changes.
  * Counting them gives noise-free before/after comparison.
- *
+ * <p>
  * Usage:
- *   java -cp benchmarks/target/benchmarks.jar org.questdb.SyncCostProfiler
+ * java -cp benchmarks/target/benchmarks.jar org.questdb.SyncCostProfiler
  * or:
- *   mvn -pl benchmarks exec:java -Dexec.mainClass=org.questdb.SyncCostProfiler
+ * mvn -pl benchmarks exec:java -Dexec.mainClass=org.questdb.SyncCostProfiler
  */
 public class SyncCostProfiler {
 
     private static final String TABLE_NAME = "bench";
     private static final String[] SYMBOLS = {"alpha", "beta", "gamma", "delta", "epsilon"};
-    /** 256 KiB — same as CommitModeBenchmark so file-extends happen at the same rate */
+    /**
+     * 256 KiB — same as CommitModeBenchmark so file-extends happen at the same rate
+     */
     private static final long APPEND_PAGE_SIZE = 256 * 1024L;
 
-    /** Total rows inserted per mode run */
+    /**
+     * Total rows inserted per mode run
+     */
     private static final int TOTAL_ROWS = 200_000;
-    /** Commit batch size — gives 200 commits */
+    /**
+     * Commit batch size — gives 200 commits
+     */
     private static final int ROWS_PER_COMMIT = 1_000;
 
     public static void main(String[] args) throws Exception {
@@ -184,10 +190,12 @@ public class SyncCostProfiler {
 
         try {
             writer.close();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         try {
             writerEngine.close();
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         deleteDirectory(new java.io.File(dbRoot));
 
@@ -278,8 +286,8 @@ public class SyncCostProfiler {
 
     private static String modeName(int mode) {
         if (mode == CommitMode.NOSYNC) return "NOSYNC";
-        if (mode == CommitMode.ASYNC)  return "ASYNC";
-        if (mode == CommitMode.SYNC)   return "SYNC";
+        if (mode == CommitMode.ASYNC) return "ASYNC";
+        if (mode == CommitMode.SYNC) return "SYNC";
         return "UNKNOWN";
     }
 

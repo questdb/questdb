@@ -335,7 +335,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
     // helpers
     // ------------------------------------------------------------------------------------------------
 
-    /** Write a loadable {@code _snapshot} marker and copy the live {@code _txn}/{@code _cv} to {@code .epoch}. */
+    /**
+     * Write a loadable {@code _snapshot} marker and copy the live {@code _txn}/{@code _cv} to {@code .epoch}.
+     */
     private void fabricateEpochArtifacts(TableToken tt) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path src = new Path(); Path dst = new Path()) {
@@ -374,7 +376,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         }
     }
 
-    /** Release every pooled handle so a fresh CairoEngine can open the same db-root (reboot model). */
+    /**
+     * Release every pooled handle so a fresh CairoEngine can open the same db-root (reboot model).
+     */
     private void releaseHandles() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -382,7 +386,9 @@ public class AdaptiveUpgradeCompatTest extends AbstractCairoTest {
         engine.releaseInactiveTableSequencers();
     }
 
-    /** Run the WAL purge to completion with a strictly-increasing clock (defeats the purge-interval cadence). */
+    /**
+     * Run the WAL purge to completion with a strictly-increasing clock (defeats the purge-interval cadence).
+     */
     private void forceWalPurge(CairoEngine eng) {
         eng.releaseAllWalWriters();
         final long step = eng.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;

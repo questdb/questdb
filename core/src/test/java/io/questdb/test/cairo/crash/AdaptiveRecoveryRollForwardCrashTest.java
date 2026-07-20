@@ -196,7 +196,9 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
     // acceptable negative-control outcome. Distinct from any real row value (which are 0..K+M-1).
     private static final long TORN_SENTINEL = Long.MIN_VALUE;
 
-    /** Strict read: all rows in order, throwing on any error (used to ASSERT the GREEN recovery path). */
+    /**
+     * Strict read: all rows in order, throwing on any error (used to ASSERT the GREEN recovery path).
+     */
     private List<Long> readVs(CairoEngine eng) {
         final List<Long> out = new ArrayList<>();
         try (
@@ -232,7 +234,9 @@ public class AdaptiveRecoveryRollForwardCrashTest extends AbstractCrashConsisten
         }
     }
 
-    /** True iff {@code rows} is exactly the identity sequence 0,1,2,... (the uncorrupted full result). */
+    /**
+     * True iff {@code rows} is exactly the identity sequence 0,1,2,... (the uncorrupted full result).
+     */
     private boolean isIdentityPrefix(List<Long> rows) {
         for (int i = 0; i < rows.size(); i++) {
             if (rows.get(i) == null || rows.get(i) != (long) i) {

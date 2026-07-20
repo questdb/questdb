@@ -104,7 +104,9 @@ public class WalAdaptiveApplyBenchmark {
     @Param({"ADAPTIVE", "SYNC"})
     public String commitMode;
 
-    /** Adaptive durable-epoch cadence: -1 = disabled (lazy floor), 0 = every apply batch (worst case). */
+    /**
+     * Adaptive durable-epoch cadence: -1 = disabled (lazy floor), 0 = every apply batch (worst case).
+     */
     @Param({"-1", "0"})
     public long epochIntervalMs;
 

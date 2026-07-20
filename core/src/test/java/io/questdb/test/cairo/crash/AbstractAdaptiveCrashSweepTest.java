@@ -74,7 +74,9 @@ import org.junit.Assert;
  */
 public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsistencyTest {
 
-    /** Original crash-consistency sweep cap (2026-06-22 spec); truncation past N is logged, never silent. */
+    /**
+     * Original crash-consistency sweep cap (2026-06-22 spec); truncation past N is logged, never silent.
+     */
     protected static final int DEFAULT_ADAPTIVE_CRASH_POINT_CAP = 200;
 
     /**
@@ -109,12 +111,16 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
          */
         int oracle(int k, int n) throws Exception;
 
-        /** Release/drop this iteration's state so the next iteration starts clean. Best-effort. */
+        /**
+         * Release/drop this iteration's state so the next iteration starts clean. Best-effort.
+         */
         default void teardown() throws Exception {
         }
     }
 
-    /** The outcome of a sweep: N (count pass), the cap, the points actually swept, and per-k recovery. */
+    /**
+     * The outcome of a sweep: N (count pass), the cap, the points actually swept, and per-k recovery.
+     */
     protected static final class SweepResult {
         public final int cap;
         public final int n;
@@ -130,13 +136,17 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
             this.recoveredByK = recoveredByK;
         }
 
-        /** Per-k recovered committed-row count; index {@code k} in {@code 1..sweptPoints} ({@code [0]} unused). */
+        /**
+         * Per-k recovered committed-row count; index {@code k} in {@code 1..sweptPoints} ({@code [0]} unused).
+         */
         public int[] recoveredByK() {
             return recoveredByK;
         }
     }
 
-    /** True if ANY of the given tables is currently suspended (a swallowed WAL-apply crash). */
+    /**
+     * True if ANY of the given tables is currently suspended (a swallowed WAL-apply crash).
+     */
     protected boolean anyTableSuspended(TableToken... tokens) {
         for (TableToken tt : tokens) {
             if (engine.getTableSequencerAPI().isSuspended(tt)) {
@@ -146,7 +156,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         return false;
     }
 
-    /** {@link #forEachAdaptiveCrashPoint(AdaptiveCrashWorkload, int)} with the default cap (200). */
+    /**
+     * {@link #forEachAdaptiveCrashPoint(AdaptiveCrashWorkload, int)} with the default cap (200).
+     */
     protected SweepResult forEachAdaptiveCrashPoint(AdaptiveCrashWorkload workload) throws Exception {
         return forEachAdaptiveCrashPoint(workload, DEFAULT_ADAPTIVE_CRASH_POINT_CAP);
     }
@@ -305,7 +317,9 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractCrashConsis
         drainWalQueue();
     }
 
-    /** Release readers, writers, WAL writers and inactive sequencers so the next iteration starts fresh. */
+    /**
+     * Release readers, writers, WAL writers and inactive sequencers so the next iteration starts fresh.
+     */
     protected void releaseEngineHandles() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();

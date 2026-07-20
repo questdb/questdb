@@ -102,11 +102,17 @@ import java.util.TreeSet;
  */
 public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
-    /** Pre-epoch rows: a durable epoch is taken after these (interval=0 on the first applied batch). */
+    /**
+     * Pre-epoch rows: a durable epoch is taken after these (interval=0 on the first applied batch).
+     */
     private static final int LAZY_K = 4;
-    /** Post-epoch rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into. */
+    /**
+     * Post-epoch rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     */
     private static final int LAZY_M = 5;
-    /** Total committed rows once the whole gap is applied. */
+    /**
+     * Total committed rows once the whole gap is applied.
+     */
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
@@ -117,11 +123,17 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
      * merge — the multi-partition variable is isolated from the O3 variable W1/W1-INV already cover.
      */
     private static final int[] DAY = {1, 1, 2, 2, 3, 4, 5, 6, 7};
-    /** Hour-of-day paired with {@link #DAY}; only the K-prefix needs 2 distinct hours per shared day. */
+    /**
+     * Hour-of-day paired with {@link #DAY}; only the K-prefix needs 2 distinct hours per shared day.
+     */
     private static final int[] HOUR = {0, 12, 0, 12, 0, 0, 0, 0, 0};
-    /** The full set of distinct day-of-month values the committed set spans (days 1..7). */
+    /**
+     * The full set of distinct day-of-month values the committed set spans (days 1..7).
+     */
     private static final Set<Integer> ALL_DAYS = new TreeSet<>(Arrays.asList(1, 2, 3, 4, 5, 6, 7));
-    /** A day never used by any K/M row — the follow-up write's "yet another new partition". */
+    /**
+     * A day never used by any K/M row — the follow-up write's "yet another new partition".
+     */
     private static final int FOLLOWUP_DAY = 20;
 
     /**
@@ -315,7 +327,9 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         }
     }
 
-    /** Paired recovered-rows + partition-day-set snapshot for the negative-control comparison. */
+    /**
+     * Paired recovered-rows + partition-day-set snapshot for the negative-control comparison.
+     */
     private static final class PartitionRows {
         final List<Long> rows;
         final Set<Integer> days;
@@ -442,13 +456,17 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         void run() throws Exception;
     }
 
-    /** Inserts row {@code v} at its fixed ({@link #DAY}, {@link #HOUR}) timestamp (October 2024). */
+    /**
+     * Inserts row {@code v} at its fixed ({@link #DAY}, {@link #HOUR}) timestamp (October 2024).
+     */
     private static void insertRow(String table, int v) throws Exception {
         execute("insert into " + table + " values ('"
                 + String.format("2024-10-%02dT%02d:00:00.000000Z", DAY[v], HOUR[v]) + "', " + v + ")");
     }
 
-    /** count(*) — the committed row count from table metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
@@ -460,7 +478,9 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         }
     }
 
-    /** The result of a torn-tolerant identity-column read: the rows gathered, and whether it teared. */
+    /**
+     * The result of a torn-tolerant identity-column read: the rows gathered, and whether it teared.
+     */
     private static final class ReadResult {
         final List<Long> rows;
         final boolean torn;
@@ -497,7 +517,9 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         return new ReadResult(out, torn);
     }
 
-    /** Distinct partition day-of-month values present, plus per-day numRows, and whether the read teared. */
+    /**
+     * Distinct partition day-of-month values present, plus per-day numRows, and whether the read teared.
+     */
     private static final class PartitionScan {
         final Set<Integer> days;
         final Map<Integer, Long> rowsByDay;
@@ -541,7 +563,9 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         return new PartitionScan(days, rowsByDay, false);
     }
 
-    /** The set of distinct days spanned by the identity prefix {@code v=0..recovered-1} (per {@link #DAY}). */
+    /**
+     * The set of distinct days spanned by the identity prefix {@code v=0..recovered-1} (per {@link #DAY}).
+     */
     private static Set<Integer> expectedDaysForPrefix(int recovered) {
         final Set<Integer> days = new TreeSet<>();
         for (int i = 0; i < recovered && i < ROWS; i++) {

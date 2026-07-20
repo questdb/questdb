@@ -76,14 +76,22 @@ import java.util.Set;
  */
 public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
-    /** The rotating symbol set; row v's symbol is {@code SYMBOLS[v % SYMBOLS.length]}. */
+    /**
+     * The rotating symbol set; row v's symbol is {@code SYMBOLS[v % SYMBOLS.length]}.
+     */
     private static final String[] SYMBOLS = {"a", "b", "c"};
 
-    /** Pre-epoch rows: a durable epoch is taken after these (interval=0 on the first applied batch). */
+    /**
+     * Pre-epoch rows: a durable epoch is taken after these (interval=0 on the first applied batch).
+     */
     private static final int LAZY_K = 4;
-    /** Post-epoch rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into. */
+    /**
+     * Post-epoch rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     */
     private static final int LAZY_M = 5;
-    /** Total committed rows once the whole gap is applied. v=0..ROWS-1 is also the commit-order identity. */
+    /**
+     * Total committed rows once the whole gap is applied. v=0..ROWS-1 is also the commit-order identity.
+     */
     private static final int ROWS = LAZY_K + LAZY_M; // 9 -> 3 rows per symbol (evenly distributed by v%3)
 
     /**
@@ -312,7 +320,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         return resultBox[0];
     }
 
-    /** Asserts {@code vas} is internally consistent: an identity prefix by v, each row's symbol correct. */
+    /**
+     * Asserts {@code vas} is internally consistent: an identity prefix by v, each row's symbol correct.
+     */
     private void assertValidIdentityAndSymbolPrefix(String label, VsAndSyms vas) {
         for (int i = 0; i < vas.vs.size(); i++) {
             Assert.assertNotNull(label + " row " + i + " v read back NULL (corruption)", vas.vs.get(i));
@@ -351,7 +361,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 + "', '" + SYMBOLS[v % SYMBOLS.length] + "', " + v + ")");
     }
 
-    /** count(*) — the committed row count from table metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
@@ -363,7 +375,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         }
     }
 
-    /** Paired (v, s) columns read together so the symbol-fidelity and index cross-checks share one scan. */
+    /**
+     * Paired (v, s) columns read together so the symbol-fidelity and index cross-checks share one scan.
+     */
     private static final class VsAndSyms {
         final List<Long> vs;
         final List<String> syms;
@@ -374,7 +388,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
         }
     }
 
-    /** Torn-tolerant read result: the values read before any tear, and whether a loud tear occurred. */
+    /**
+     * Torn-tolerant read result: the values read before any tear, and whether a loud tear occurred.
+     */
     private static final class TornRead {
         final List<Long> values;
         final boolean torn;

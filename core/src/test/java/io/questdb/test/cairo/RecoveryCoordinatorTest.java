@@ -430,7 +430,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         });
     }
 
-    /** Positional 8-byte write of a table's {@code _txn} — corrupts a committed record WITHOUT truncating. */
+    /**
+     * Positional 8-byte write of a table's {@code _txn} — corrupts a committed record WITHOUT truncating.
+     */
     private void pokeLongTxn(FilesFacade ff, TableToken tt, long offset, long value) {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME).$();

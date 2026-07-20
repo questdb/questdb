@@ -59,13 +59,13 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Measures commit overhead across NOSYNC / ASYNC / SYNC commit modes.
- *
+ * <p>
  * Schema: bench (ts timestamp, l long, d double, v varchar, s symbol) partition by DAY.
  * Exercises the data+aux vector files (varchar) and symbol mem files on every commit.
- *
+ * <p>
  * DB root is on real disk (ext4) so fsync/fdatasync are real syscalls.
  * getDataAppendPageSize = 256 KiB → file-extends (and thus the SYNC fdatasync path) happen frequently.
- *
+ * <p>
  * Pattern follows TableWriterBenchmark: DDL via a temporary CairoEngine, then direct
  * TableWriter construction with the commit-mode-overridden configuration.
  */
@@ -76,7 +76,9 @@ public class CommitModeBenchmark {
 
     private static final String TABLE_NAME = "bench";
     private static final String[] SYMBOLS = {"alpha", "beta", "gamma", "delta", "epsilon"};
-    /** 256 KiB page size → frequent file extends → frequent fdatasync on SYNC path */
+    /**
+     * 256 KiB page size → frequent file extends → frequent fdatasync on SYNC path
+     */
     private static final long APPEND_PAGE_SIZE = 256 * 1024L;
 
     @Param({"NOSYNC", "ASYNC", "SYNC"})
@@ -189,7 +191,10 @@ public class CommitModeBenchmark {
     @TearDown(Level.Trial)
     public void tearDownTrial() {
         if (writer != null) {
-            try { writer.commit(); } catch (Exception ignored) {}
+            try {
+                writer.commit();
+            } catch (Exception ignored) {
+            }
             writer.close();
             writer = null;
         }
@@ -233,8 +238,8 @@ public class CommitModeBenchmark {
     private static int parseCommitMode(String name) {
         return switch (name) {
             case "NOSYNC" -> CommitMode.NOSYNC;
-            case "ASYNC"  -> CommitMode.ASYNC;
-            case "SYNC"   -> CommitMode.SYNC;
+            case "ASYNC" -> CommitMode.ASYNC;
+            case "SYNC" -> CommitMode.SYNC;
             default -> throw new IllegalArgumentException("Unknown commit mode: " + name);
         };
     }

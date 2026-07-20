@@ -179,11 +179,19 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private int crashAtOp = -1; // -1 = disarmed
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
 
-    /** Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions). */
-    public java.util.List<String> getSyncOrder() { return syncOrder; }
+    /**
+     * Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions).
+     */
+    public java.util.List<String> getSyncOrder() {
+        return syncOrder;
+    }
 
-    /** Number of filesystem-wide syncfs(2) calls observed so far (for the I1 fs-wide-epoch-flush proof). */
-    public int syncfsCount() { return syncfsCount; }
+    /**
+     * Number of filesystem-wide syncfs(2) calls observed so far (for the I1 fs-wide-epoch-flush proof).
+     */
+    public int syncfsCount() {
+        return syncfsCount;
+    }
 
     @Override
     public long openAppend(LPSZ name) {
@@ -526,7 +534,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return rc;
     }
 
-    /** Clear all tracked fd→path and durable-size/content state (for reuse across crash/retry cycles). */
+    /**
+     * Clear all tracked fd→path and durable-size/content state (for reuse across crash/retry cycles).
+     */
     public void reset() {
         fdToPath.clear();
         noCacheOpenFds.clear();
@@ -546,7 +556,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         // NB: modelSharedJournal is a configured policy, NOT per-cycle state -> intentionally NOT reset here.
     }
 
-    /** Record current sizes (and content) of all files under dbRoot as durable ("prior committed, log-journaled"). */
+    /**
+     * Record current sizes (and content) of all files under dbRoot as durable ("prior committed, log-journaled").
+     */
     public void markDurableBaseline(CharSequence dbRoot) {
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
@@ -567,7 +579,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         });
     }
 
-    /** Zero [offset, offset+len) of the given file when crash() runs (deterministic torn-write injection). */
+    /**
+     * Zero [offset, offset+len) of the given file when crash() runs (deterministic torn-write injection).
+     */
     public void tornTail(LPSZ name, long offset, long len) {
         tornTails.computeIfAbsent(toAbsPath(name), k -> new ArrayList<>())
                 .add(new long[]{offset, len});
@@ -604,7 +618,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 List<long[]> ranges = tornTails.get(key);
                 if (ranges != null) {
                     for (long[] r : ranges) {
-                        if (r[1] < 0 || r[1] > Integer.MAX_VALUE) throw new IllegalArgumentException("tornTail len out of range: " + r[1]);
+                        if (r[1] < 0 || r[1] > Integer.MAX_VALUE)
+                            throw new IllegalArgumentException("tornTail len out of range: " + r[1]);
                         int n = (int) r[1];
                         ByteBuffer zeros = ByteBuffer.allocate(n);
                         ch.write(zeros, r[0]);
@@ -617,12 +632,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         });
     }
 
-    /** Arm a simulated crash: throw CrashSimulationError on the n-th durability op (fsync/fsyncAndClose/msync). */
+    /**
+     * Arm a simulated crash: throw CrashSimulationError on the n-th durability op (fsync/fsyncAndClose/msync).
+     */
     public void armCrashAt(int n) {
         this.crashAtOp = n;
     }
 
-    /** Number of durability ops (fsync/fsyncAndClose/msync) observed so far. */
+    /**
+     * Number of durability ops (fsync/fsyncAndClose/msync) observed so far.
+     */
     public int durabilityOpCount() {
         return durabilityOps;
     }
@@ -678,22 +697,30 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     // === content-model test introspection (used by CrashModelSelfCheckTest) ===
 
-    /** True if the content model has observed an msync on this file (so sync_file_range can see its pages). */
+    /**
+     * True if the content model has observed an msync on this file (so sync_file_range can see its pages).
+     */
     public boolean isPteFlushed(CharSequence absPath) {
         return Boolean.TRUE.equals(pteFlushed.get(Paths.get(absPath.toString()).toAbsolutePath().toString()));
     }
 
-    /** The bytes the content model currently considers durable for this file (null if untracked). */
+    /**
+     * The bytes the content model currently considers durable for this file (null if untracked).
+     */
     public byte[] durableContentOf(CharSequence absPath) {
         return durableContent.get(Paths.get(absPath.toString()).toAbsolutePath().toString());
     }
 
-    /** The written-data end (data-at-device) the model has recorded for this file (0 if untracked). */
+    /**
+     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked).
+     */
     public long syncedDataEndOf(CharSequence absPath) {
         return syncedDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
 
-    /** The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked). */
+    /**
+     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked).
+     */
     public long journaledDataEndOf(CharSequence absPath) {
         return journaledDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
@@ -730,7 +757,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    /** Advance F's WRITTEN-data end (real bytes written) to the max end seen; never moves backward. */
+    /**
+     * Advance F's WRITTEN-data end (real bytes written) to the max end seen; never moves backward.
+     */
     private void advanceWrittenDataEnd(String path, long end) {
         long cur = writtenDataEnd.getOrDefault(path, 0L);
         if (end > cur) {
@@ -738,7 +767,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    /** Advance F's at-device (synced) end to the max value seen; never moves backward. */
+    /**
+     * Advance F's at-device (synced) end to the max value seen; never moves backward.
+     */
     private void advanceSyncedDataEnd(String path, long end) {
         long cur = syncedDataEnd.getOrDefault(path, 0L);
         if (end > cur) {
@@ -761,7 +792,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    /** Return a prefix of {@code src} of length {@code min(end, src.length)} (the journaled extent). */
+    /**
+     * Return a prefix of {@code src} of length {@code min(end, src.length)} (the journaled extent).
+     */
     private static byte[] truncateTo(byte[] src, long end) {
         int n = (int) Math.max(0L, Math.min(end, src.length));
         if (n == src.length) {
@@ -826,7 +859,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    /** File offset of the mapping that {@code addr} falls in (exact base match first, else range containment). */
+    /**
+     * File offset of the mapping that {@code addr} falls in (exact base match first, else range containment).
+     */
     private long mapFileOffset(long addr) {
         long[] exact = mmapAddrRange.get(addr);
         if (exact != null) {
@@ -844,7 +879,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return 0L;
     }
 
-    /** Resolve the file an msync address belongs to: exact base match first, else range containment. */
+    /**
+     * Resolve the file an msync address belongs to: exact base match first, else range containment.
+     */
     private String pathForAddr(long addr) {
         String p = mmapAddrToPath.get(addr);
         if (p != null) {
@@ -886,7 +923,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    /** Convert LPSZ (null-terminated native bytes) to a canonical absolute path String. */
+    /**
+     * Convert LPSZ (null-terminated native bytes) to a canonical absolute path String.
+     */
     private static String toAbsPath(LPSZ name) {
         return Paths.get(Utf8String.newInstance(name).toString()).toAbsolutePath().toString();
     }

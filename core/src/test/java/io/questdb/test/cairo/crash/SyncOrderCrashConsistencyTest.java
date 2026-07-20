@@ -63,10 +63,10 @@ public class SyncOrderCrashConsistencyTest extends AbstractCrashConsistencyTest 
                     // QuestDB partition paths look like: .../o/2001-09-08/v.d  and  .../o/2001-09-08/v.i
                     boolean isVarcharData = (path.endsWith("/v.d") || path.endsWith("\\v.d")
                             || path.contains("/v.d.") || path.contains("\\v.d."));
-                    boolean isVarcharAux  = (path.endsWith("/v.i") || path.endsWith("\\v.i")
+                    boolean isVarcharAux = (path.endsWith("/v.i") || path.endsWith("\\v.i")
                             || path.contains("/v.i.") || path.contains("\\v.i."));
                     if (isVarcharData && firstDataIdx < 0) firstDataIdx = i;
-                    if (isVarcharAux  && firstAuxIdx  < 0) firstAuxIdx  = i;
+                    if (isVarcharAux && firstAuxIdx < 0) firstAuxIdx = i;
                 }
 
                 if (firstDataIdx < 0 || firstAuxIdx < 0) {

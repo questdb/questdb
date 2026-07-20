@@ -240,17 +240,23 @@ public class SnapshotMarker implements Closeable {
         return false;
     }
 
-    /** Returns the epochSeqTxn loaded by the last successful {@link #tryLoad()}. */
+    /**
+     * Returns the epochSeqTxn loaded by the last successful {@link #tryLoad()}.
+     */
     public long getEpochSeqTxn() {
         return epochSeqTxn;
     }
 
-    /** Returns the epochTxn loaded by the last successful {@link #tryLoad()}. */
+    /**
+     * Returns the epochTxn loaded by the last successful {@link #tryLoad()}.
+     */
     public long getEpochTxn() {
         return epochTxn;
     }
 
-    /** Returns the epoch timestamp loaded by the last successful {@link #tryLoad()}. */
+    /**
+     * Returns the epoch timestamp loaded by the last successful {@link #tryLoad()}.
+     */
     public long getEpochTs() {
         return epochTs;
     }

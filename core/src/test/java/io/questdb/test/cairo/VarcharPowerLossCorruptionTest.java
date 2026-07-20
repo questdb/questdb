@@ -51,7 +51,7 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
  * Reproduces the VARCHAR power-loss corruption vulnerability and verifies the fix.
  *
  * <h2>The bug</h2>
- *
+ * <p>
  * VARCHAR split-value aux entries (16 bytes) store the data offset in bytes 8-15, written
  * <em>after</em> the row's data. On reopen, {@link VarcharTypeDriver#setAppendPosition} reads
  * that offset to place the append cursor at the end of the data vector. A torn / partially
@@ -74,7 +74,7 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
  * </ol>
  *
  * <h2>Durability scope (commit.mode=nosync, the default)</h2>
- *
+ * <p>
  * The shipped default is {@code cairo.commit.mode=nosync}: no {@code msync}/{@code fsync} is
  * performed for column, aux, {@code _txn}, column-version or index files. Recent commits may be
  * lost or torn on power loss <em>by design</em> - changes (1) and (3) above only affect durability

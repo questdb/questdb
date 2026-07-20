@@ -52,13 +52,19 @@ import io.questdb.std.str.Utf8s;
  */
 public final class WriteBarrierCheck {
 
-    /** Write barriers are explicitly disabled (nobarrier / barrier=0). */
+    /**
+     * Write barriers are explicitly disabled (nobarrier / barrier=0).
+     */
     public static final int BARRIERS_DISABLED = 2;
 
-    /** Write barriers appear to be enabled (no disabling token found in mount options). */
+    /**
+     * Write barriers appear to be enabled (no disabling token found in mount options).
+     */
     public static final int BARRIERS_PRESUMED_ENABLED = 1;
 
-    /** Could not determine barrier status (non-Linux, /proc/mounts unreadable, no matching mount). */
+    /**
+     * Could not determine barrier status (non-Linux, /proc/mounts unreadable, no matching mount).
+     */
     public static final int UNKNOWN = 0;
 
     private static final String PROC_MOUNTS = "/proc/mounts";

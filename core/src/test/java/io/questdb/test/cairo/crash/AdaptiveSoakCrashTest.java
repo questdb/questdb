@@ -487,7 +487,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         }
     }
 
-    /** Append one deterministic row for the given {@code id} to a held WalWriter and commit it (one WAL txn). */
+    /**
+     * Append one deterministic row for the given {@code id} to a held WalWriter and commit it (one WAL txn).
+     */
     private void appendRow(WalWriter w, int id) {
         final TableWriter.Row row = w.newRow(BASE_TS + (long) id * TS_STRIDE);
         row.putLong(0, id);                             // id
@@ -530,7 +532,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         return i;
     }
 
-    /** count(*) — the committed row count from metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from metadata (reliable even if a column read would tear).
+     */
     private long rowCount() {
         try (RecordCursorFactory f = select("select count() from t")) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
@@ -581,7 +585,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         return new int[]{walDirs, totalSegs, maxSegsPerWal};
     }
 
-    /** Count the durable-epoch copies present (the {@code _txn.epoch}/{@code _cv.epoch} ping-pong pair). */
+    /**
+     * Count the durable-epoch copies present (the {@code _txn.epoch}/{@code _cv.epoch} ping-pong pair).
+     */
     private int countEpochCopies(TableToken tt) {
         final File td = tableDir(tt);
         int n = 0;
@@ -621,7 +627,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         return new int[]{total, days.size(), total - days.size()};
     }
 
-    /** True if {@code name} begins with a {@code YYYY-MM-DD} day key (a DAY partition dir, versioned or not). */
+    /**
+     * True if {@code name} begins with a {@code YYYY-MM-DD} day key (a DAY partition dir, versioned or not).
+     */
     private static boolean isDatePrefixedDir(String name) {
         if (name.length() < 10) {
             return false;

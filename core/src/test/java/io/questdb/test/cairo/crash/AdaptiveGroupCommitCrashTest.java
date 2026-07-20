@@ -221,7 +221,9 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
         }
     }
 
-    /** Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn). */
+    /**
+     * Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn).
+     */
     private static void commitRow(WalWriter w, long tsMicros, long v) {
         TableWriter.Row row = w.newRow(tsMicros);
         row.putLong(1, v);
@@ -252,7 +254,9 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
         return out;
     }
 
-    /** Exposes WalPurgeJob.runSerially() to drive the background group-commit flush deterministically. */
+    /**
+     * Exposes WalPurgeJob.runSerially() to drive the background group-commit flush deterministically.
+     */
     static class ExposedFlusher extends WalPurgeJob {
         ExposedFlusher(io.questdb.cairo.CairoEngine engine) {
             super(engine);

@@ -246,7 +246,9 @@ public class AdaptiveEpochCrashTest extends AbstractCrashConsistencyTest {
         }
     }
 
-    /** The epoch's recovery anchor (marker + durable copies) must NOT exist (no epoch fired). */
+    /**
+     * The epoch's recovery anchor (marker + durable copies) must NOT exist (no epoch fired).
+     */
     private void assertNoEpochArtifacts(TableToken tt) {
         assertFileAbsent(tt, TableUtils.SNAPSHOT_FILE_NAME);
         assertFileAbsent(tt, TableUtils.TXN_FILE_NAME + TableUtils.EPOCH_COPY_SUFFIX);

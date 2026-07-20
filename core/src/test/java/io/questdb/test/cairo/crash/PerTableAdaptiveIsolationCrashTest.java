@@ -190,7 +190,9 @@ public class PerTableAdaptiveIsolationCrashTest extends AbstractCrashConsistency
         }
     }
 
-    /** Strict read: all rows of {@code table} in ts order, throwing on any error. */
+    /**
+     * Strict read: all rows of {@code table} in ts order, throwing on any error.
+     */
     private List<Long> readVs(CairoEngine eng, String table) {
         final List<Long> out = new ArrayList<>();
         try (

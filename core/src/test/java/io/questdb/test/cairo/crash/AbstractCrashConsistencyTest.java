@@ -17,19 +17,25 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
 
     protected CrashFaultFilesFacade crashFf;
 
-    /** Run {@code body} with the crash facade installed as the engine's FilesFacade. */
+    /**
+     * Run {@code body} with the crash facade installed as the engine's FilesFacade.
+     */
     protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
         crashFf = new CrashFaultFilesFacade();
         assertMemoryLeak(crashFf, body);
     }
 
-    /** Mark everything committed so far as durable (prior, log-journaled state). */
+    /**
+     * Mark everything committed so far as durable (prior, log-journaled state).
+     */
     protected void markDurableBaseline() {
         if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
         crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
     }
 
-    /** Simulate power loss: release handles (clean close never fsyncs) then roll files back. */
+    /**
+     * Simulate power loss: release handles (clean close never fsyncs) then roll files back.
+     */
     protected void crashAndReopen() {
         if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
         engine.releaseAllReaders();
@@ -62,7 +68,9 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         }
     }
 
-    /** Bar 2: every committed row present and correct after crash. */
+    /**
+     * Bar 2: every committed row present and correct after crash.
+     */
     protected void assertSyncDurable(String tableName, String column, List<String> expected) {
         List<String> actual = readColumn(tableName, column);
         Assert.assertEquals("row count after crash", expected.size(), actual.size());

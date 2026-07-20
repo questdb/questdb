@@ -89,9 +89,13 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      */
     private static final int[] TS_HOUR = {20, 8, 14, 2, 11, 5};
 
-    /** Pre-epoch O3 rows (durable cut taken after these) for the lazy-gap negative-control scenario. */
+    /**
+     * Pre-epoch O3 rows (durable cut taken after these) for the lazy-gap negative-control scenario.
+     */
     private static final int LAZY_K = 4;
-    /** Post-epoch O3 rows applied LAZILY (epoch disabled) — the rows at risk without recovery. */
+    /**
+     * Post-epoch O3 rows applied LAZILY (epoch disabled) — the rows at risk without recovery.
+     */
     private static final int LAZY_M = 5;
     // Hours for the K+M=9 lazy-gap rows; index 0 is the ceiling (23), all others below it, in a
     // non-monotonic order (independent scenario from TS_HOUR, same O3-forcing technique).
@@ -322,7 +326,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         void run() throws Exception;
     }
 
-    /** count(*) — the committed row count from table metadata (reliable even if a column read would tear). */
+    /**
+     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
@@ -356,7 +362,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         return out;
     }
 
-    /** True iff {@code rows}, in order, is exactly the identity sequence 0,1,2,... */
+    /**
+     * True iff {@code rows}, in order, is exactly the identity sequence 0,1,2,...
+     */
     private boolean isIdentityPrefix(List<Long> rows) {
         for (int i = 0; i < rows.size(); i++) {
             if (rows.get(i) == null || rows.get(i) != (long) i) {

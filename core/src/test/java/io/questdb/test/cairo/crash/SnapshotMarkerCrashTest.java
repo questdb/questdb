@@ -305,7 +305,9 @@ public class SnapshotMarkerCrashTest {
 
     // ---- private helpers ----
 
-    /** Build a {@link CairoConfiguration} backed by the given {@link FilesFacade}. */
+    /**
+     * Build a {@link CairoConfiguration} backed by the given {@link FilesFacade}.
+     */
     private static CairoConfiguration configWith(FilesFacade ff) {
         return new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath()) {
             @Override

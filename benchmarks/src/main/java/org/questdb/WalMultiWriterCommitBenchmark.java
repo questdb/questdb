@@ -120,7 +120,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Threads(WalMultiWriterCommitBenchmark.WRITER_COUNT)
 public class WalMultiWriterCommitBenchmark {
 
-    /** Concurrent writers == tables == JMH threads. */
+    /**
+     * Concurrent writers == tables == JMH threads.
+     */
     static final int WRITER_COUNT = 5;
 
     private static final long APPEND_PAGE_SIZE = 256 * 1024L;
