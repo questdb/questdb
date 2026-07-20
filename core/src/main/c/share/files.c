@@ -284,6 +284,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl
 #endif
 }
 
+#if defined(__linux__)
+/* sync_file_range(2) is exposed by <fcntl.h> only under _GNU_SOURCE (glibc); this file does not
+ * define it globally, so forward-declare the prototype here (mirrors the syncfs declaration below).
+ * Linux-only, present since 2.6.17; glibc presents this uniform signature on every supported arch.
+ * off_t == off64_t on our LP64 targets (x86-64, aarch64) and is available without _GNU_SOURCE.
+ * Without this, newer GCC (aarch64 build container) rejects the implicit declaration as an error. */
+extern int sync_file_range(int fd, off_t offset, off_t nbytes, unsigned int flags);
+#endif
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
 #if defined(__linux__)
     /* Linux-only: initiate writeback of the file's page cache over [offset, offset+nbytes)
