@@ -122,7 +122,6 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     public void clear() {
         close();
         taskQueue.clear();
-        stateByTableDirName.clear();
         lastNotifiedTxnByTableName.clear();
     }
 
