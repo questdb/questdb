@@ -346,6 +346,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 // NOT collapse the whole set, or `ts = (empty sub) OR ts = x` would
                                 // wrongly drop x's rows.
                                 outIntervals.setPos(divider);
+                                // The union expression still counts as applied: when every leaf of
+                                // the run is empty its value is the empty set, and a following
+                                // INTERSECT/SUBTRACT must combine with that empty result (yielding
+                                // the empty set) instead of seeding the intervals as if it were
+                                // the first expression.
+                                firstFuncApplied = true;
                                 continue;
                             }
                             if (!negated) {
