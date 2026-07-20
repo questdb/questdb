@@ -668,6 +668,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, px from c" + exchAPredicate + " latest on ts partition by exch")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\texch\tpx\n2020-01-02T00:00:00.000000Z\t" + exchA + "\t2.0\n");
             assertSqlCursors(
@@ -681,6 +682,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, px from c" + exchBPredicate + " latest on ts partition by exch")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\texch\tpx\n2020-01-02T01:00:00.000000Z\t" + exchB + "\t2.1\n");
             assertSqlCursors(
@@ -765,6 +767,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, sku, px from c" + skuAPredicate + " latest on ts partition by sku")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\tsku\tpx\n2020-01-02T00:00:00.000000Z\tBTCUSDT\t2.0\n");
             assertSqlCursors(
@@ -778,6 +781,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, sku, px from c" + skuBPredicate + " latest on ts partition by sku")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\tsku\tpx\n2020-01-02T01:00:00.000000Z\tBTCEUR\t2.1\n");
             assertSqlCursors(
@@ -904,14 +908,16 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
      * over the pruned merge, never silently dropped, never a raw pruned scan) -- no {@code NO_INDEX} hint
      * anywhere. The plain twin (oracle) answers correctly: the single latest 'BTC' row (3.1).
      * <p>
-     * No {@code .timestamp("ts")} metadata assertion here (deliberately): {@code wrapCompositeLatestBy}'s
-     * {@code LatestByLightRecordCursorFactory} does not designate a timestamp on its OWN output metadata
-     * for ANY composite LATEST ON query, pre-existing and unrelated to Task #27 -- confirmed empirically
-     * this is masked elsewhere only because a {@code SelectedRecord} projection wrapper usually sits on
-     * top and independently re-derives one. This query is the first shape whose projection already
-     * exactly matches {@code queryMeta} (the latest-by column is already selected), so no such wrapper is
-     * added and the gap becomes visible. Row-level correctness (the only thing Task #27 changes) is
-     * independently proven below via {@code assertSqlCursors} and the pinned {@code .returns(...)}.
+     * Uses {@code .inferTimestamp()} rather than a pinned {@code .timestamp("ts")} for the metadata
+     * assertion: {@code wrapCompositeLatestBy}'s {@code LatestByLightRecordCursorFactory} DOES now
+     * designate a timestamp on its own output metadata (Task 1/deferred-issue-1 fix -- this query is the
+     * first shape whose projection already exactly matches {@code queryMeta}, the latest-by column is
+     * already selected, so no {@code SelectedRecord} wrapper re-derives one independently, making this the
+     * one shape in this file that observes the factory's OWN metadata directly), but its emission order is
+     * NOT ts-ordered (map key-insertion order; {@code getScanDirection() == SCAN_DIRECTION_OTHER}), so a
+     * fixed ASC {@code .timestamp("ts")} pin would be the wrong assertion. Row-level correctness (the only
+     * thing Task #27 changes) is independently proven below via {@code assertSqlCursors} and the pinned
+     * {@code .returns(...)}.
      */
     @Test
     public void testLatestOnDimensionColumnWithDimensionEqualityPrunesAndMatchesPlainTwin() throws Exception {
@@ -927,6 +933,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, px from c where exch = 'BTC' latest on ts partition by exch")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\texch\tpx\n2020-01-03T06:00:00.000000Z\tBTC\t3.1\n");
             assertSqlCursors(
@@ -1024,6 +1031,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, px from c where exch = 'BTC' and px < 3.1 latest on ts partition by exch")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\texch\tpx\n2020-01-03T00:00:00.000000Z\tBTC\t3.0\n");
         });
@@ -1070,6 +1078,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, sku, px from c where exch = '" + exchA + "' latest on ts partition by exch")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\texch\tsku\tpx\n2020-01-01T01:00:00.000000Z\t" + exchA + "\tBTCUSDT\t1.1\n");
             assertSqlCursors(
@@ -1080,6 +1089,7 @@ public class CompositeCellPruningTest extends AbstractCairoTest {
             assertQuery("select ts, exch, sku, px from c where sku = 'BTCUSDT' latest on ts partition by sku")
                     .noLeakCheck()
                     .expectSize()
+                    .inferTimestamp()
                     .withPlanContaining("LatestBy", "Filter", "Composite cross-cell merge scan", "cellsPruned: 1")
                     .returns("ts\texch\tsku\tpx\n2020-01-01T01:00:00.000000Z\t" + exchA + "\tBTCUSDT\t1.1\n");
             assertSqlCursors(
