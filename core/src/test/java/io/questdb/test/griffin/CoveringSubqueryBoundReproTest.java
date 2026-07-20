@@ -671,6 +671,36 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
         });
     }
 
+    // Prefix AND + all-empty OR: rhs-first AND extraction encodes the OR's union leaves before
+    // the prefix bound's intersect leaf. When every disjunct is empty (NULL bound) the union's
+    // value is the empty set, and the following intersect must combine with it and stay empty.
+    // Pre-fix an all-NULL union run left no trace in the evaluator state, so `ts >= lo` was
+    // treated as the first applied expression and returned rows for an identically-false
+    // predicate.
+    @Test
+    public void testPrefixAndWithAllEmptyOrDisjunctsReturnsNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createSchema();
+            seedData();
+            String prefixAndOrBothEmpty = "select ts, value from sensor where " +
+                    "ts >= '2021-11-23T12:00:00.000000000Z' " +
+                    "and (ts = (select lo from bounds where sel = 999) or ts = (select hi from bounds where sel = 999))";
+            // the OR group must still be consumed as a runtime interval union (no filter fallback)
+            assertPlanContains(prefixAndOrBothEmpty, "Interval forward scan on: sensor");
+            // both disjuncts empty: the conjunction is identically false, zero rows
+            assertSqlCursors("select ts, value from sensor limit 0", prefixAndOrBothEmpty);
+
+            // control: one live disjunct must keep its row through the same prefix-AND path
+            String prefixAndOrOneEmpty = "select ts, value from sensor where " +
+                    "ts >= '2021-11-23T12:00:00.000000000Z' " +
+                    "and (ts = (select lo from bounds where sel = 999) or ts = (select hi from bounds where sel = 100))";
+            assertSqlCursors(
+                    "select ts, value from sensor where ts = '2021-11-23T17:59:17.060338000Z'",
+                    prefixAndOrOneEmpty
+            );
+        });
+    }
+
     // Plan red proof: `ts = (sub) OR ts = (sub)` now prunes via a runtime interval UNION instead of
     // a residual full-partition scan. Pre-fix this was a Frame forward scan + Filter (O(N)); post-
     // fix it is an Interval forward scan (O(H)). The correctness safety net above proves the rows

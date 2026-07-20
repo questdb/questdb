@@ -306,12 +306,13 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnionLeafRunAllNullLeavesFollowingIntersectFirstApplied() throws Exception {
+    public void testUnionLeafRunAllNullLeavesFollowingIntersectYieldsEmptySet() throws Exception {
         assertMemoryLeak(() -> {
             final LongList intervals = new LongList();
             final ObjList<Function> dynamicFunctions = new ObjList<>();
-            // every union leaf is NULL: the run contributes nothing and the intersect leaf
-            // must become the first applied interval, exactly as with per-leaf merging
+            // every union leaf is NULL: the union expression's value is the empty set. A
+            // following intersect must combine with that empty result and stay empty; it
+            // must NOT be treated as the first applied expression and seed the intervals.
             for (int i = 0; i < 3; i++) {
                 encodeUnionPointLeaf(intervals);
                 dynamicFunctions.add(TimestampConstant.TIMESTAMP_MICRO_NULL);
@@ -331,7 +332,8 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                     intervals,
                     dynamicFunctions
             )) {
-                assertIntervals(model.calculateIntervals(sqlExecutionContext), 1_500L, 6_000L);
+                // (empty UNION empty UNION empty) INTERSECT [1500, 6000] = empty
+                assertIntervals(model.calculateIntervals(sqlExecutionContext));
             }
         });
     }
