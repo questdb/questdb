@@ -117,6 +117,7 @@ public class LowerCaseUtf8SequenceObjHashMap<V> extends AbstractLowerCaseUtf8Seq
     }
 
     public void removeAtQuick(int keyIndex, int listIndex) {
+        assert keyIndex < 0 : "removeAtQuick expects a present key (negative keyIndex)";
         if (keyIndex < 0) {
             assert list.getQuick(listIndex) == keys[-keyIndex - 1];
             super.removeAt(keyIndex);

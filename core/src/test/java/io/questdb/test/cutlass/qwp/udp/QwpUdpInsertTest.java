@@ -1389,7 +1389,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     sender.table("surv_drop").symbol("host", "d0").doubleColumn("v", 2.0).at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
-                drainReceiver(receiver);
+                drainReceiver(receiver, 2);
                 drainWalQueue();
                 Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
 
@@ -1433,6 +1433,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     sender.table("timer_drop").symbol("host", "d0").doubleColumn("v", 2.0).at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                // Receive both datagrams first so both tables are autocreated;
+                // otherwise assertQuery below could hit a not-yet-created table
+                // and throw a CairoException that assertEventually does not catch.
+                drainReceiver(receiver, 2);
                 // Let the interval timer commit both tables (both now zero-uncommitted).
                 TestUtils.assertEventually(() -> {
                     receiver.runSerially();
@@ -1568,7 +1572,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                         sender.flush();
                     }
                 }
-                drainReceiver(receiver);
+                drainReceiver(receiver, 3);
                 Assert.assertEquals(3, receiver.getCachedTableCount());
 
                 for (int i = 0; i < 3; i++) {
@@ -1635,6 +1639,61 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
+        // M4: end-to-end through processDatagram. A datagram buffers rows for a
+        // table that is then DROPped WITHOUT a commit, so the cached TUD still
+        // holds uncommitted rows. The next datagram for that name hits the
+        // stale-TUD eviction throw; processDatagram drops the whole datagram
+        // (no ack on UDP) and counts it as a stale-table drop (M6). A later
+        // datagram recreates the table and its row lands (drop-and-heal).
+        assertMemoryLeak(() -> {
+            // RCVR_CONF keeps up to 10 datagrams uncommitted, so a single
+            // datagram leaves its rows buffered (LOW_COMMIT_RATE_CONF would
+            // force-commit after every datagram).
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+
+                // Drop the table while its buffered row is still uncommitted.
+                execute("DROP TABLE udp_heal");
+                drainWalQueue();
+
+                // Next datagram for the same name: the stale TUD still holds the
+                // buffered row, so getTableUpdateDetails throws, the datagram is
+                // dropped, and the stale TUD is evicted.
+                long staleBefore = receiver.getDroppedStaleTableCount();
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h1").doubleColumn("v", 2.0).at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals("stale-table drop must be counted separately",
+                        staleBefore + 1, receiver.getDroppedStaleTableCount());
+                Assert.assertEquals("stale TUD must be evicted", 0, receiver.getCachedTableCount());
+
+                // Heal: a later datagram recreates the table and buffers its row.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("udp_heal").symbol("host", "h2").doubleColumn("v", 3.0).at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+            }
+            // close() commits buffered rows best-effort, so the healed row lands
+            // while the rolled-back (v=1) and dropped-datagram (v=2) rows do not.
+            drainWalQueue();
+            assertQuery("SELECT v FROM udp_heal")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n3.0\n");
+        });
+    }
+
+    @Test
     public void testUdpRepeatedDropRecreateChurnAlwaysLands() throws Exception {
         // The original footgun: a table repeatedly autocreated via UDP and
         // dropped under the SAME name through one long-lived receiver. Before the
@@ -1692,6 +1751,26 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             Os.pause();
         }
         Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
+    }
+
+    // Deterministic drain for multi-datagram tests: the single-gap drainReceiver
+    // above can break after only the first of several back-to-back datagrams is
+    // processed (the second lands after the first empty poll). When a test knows
+    // how many tables it expects cached, drain until that count is reached
+    // instead of guessing at inter-datagram timing.
+    private static void drainReceiver(QwpUdpReceiver receiver, int minCachedTables) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (System.nanoTime() < deadline) {
+            receiver.runSerially();
+            if (receiver.getCachedTableCount() >= minCachedTables) {
+                return;
+            }
+            Os.pause();
+        }
+        Assert.assertTrue(
+                "timeout: receiver cached " + receiver.getCachedTableCount() + " tables, expected " + minCachedTables,
+                receiver.getCachedTableCount() >= minCachedTables
+        );
     }
 
     private static QwpUdpSender newSender(int maxDatagramSize) {

@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -90,6 +91,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private long droppedBadMagicCount;
     private long droppedBadVersionCount;
     private long droppedParseErrorCount;
+    private long droppedStaleTableCount;
     private long droppedTooShortCount;
     private long droppedTruncatedCount;
 
@@ -247,6 +249,18 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return droppedParseErrorCount;
     }
 
+    /**
+     * Number of datagrams dropped because a target table's update details could
+     * not be acquired -- almost always a table that was DROPped concurrently
+     * (its stale cached writer, possibly still holding buffered rows, is evicted
+     * and the datagram is dropped so the sender heals on the next one). Kept
+     * separate from {@link #getDroppedParseErrorCount()} so a concurrent-drop
+     * data event is not mistaken for a malformed-payload parse error.
+     */
+    public long getDroppedStaleTableCount() {
+        return droppedStaleTableCount;
+    }
+
     public long getDroppedTooShortCount() {
         return droppedTooShortCount;
     }
@@ -261,7 +275,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     public long getTotalDroppedCount() {
         return droppedBadMagicCount + droppedBadVersionCount + droppedParseErrorCount
-                + droppedTooShortCount + droppedTruncatedCount;
+                + droppedStaleTableCount + droppedTooShortCount + droppedTruncatedCount;
     }
 
     @Override
@@ -396,13 +410,26 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             messageCursor.of(address, (int) totalLength, null);
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE,
-                        tableBlock.getTableNameUtf8(),
-                        tableBlock.getSchema(),
-                        tableBlock,
-                        configuration.getMaxTablesPerConnection()
-                );
+                final WalTableUpdateDetails tud;
+                try {
+                    tud = tudCache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            tableBlock.getTableNameUtf8(),
+                            tableBlock.getSchema(),
+                            tableBlock,
+                            configuration.getMaxTablesPerConnection()
+                    );
+                } catch (CairoException e) {
+                    // The table could not be acquired -- almost always because
+                    // it was DROPped concurrently and its stale cached writer
+                    // (possibly still holding buffered rows) was evicted. There
+                    // is no ack on the UDP path, so drop the whole datagram and
+                    // heal on the next one. Counted separately from parse errors.
+                    droppedStaleTableCount++;
+                    LOG.error().$("dropping datagram, table update details unavailable: ")
+                            .$(e.getFlyweightMessage()).$();
+                    return DATAGRAM_DROPPED;
+                }
                 if (tud == null) {
                     LOG.error().$("failed to get table update details for: ").$(tableBlock.getTableName()).$();
                     continue;

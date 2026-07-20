@@ -184,12 +184,19 @@ public class QwpTudCache implements QuietCloseable {
      */
     public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        Utf8Sequence discardedTableName = null;
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            // Capture before the commit: a table-dropped commit fails without
+            // committing, and freeing a commitOnClose=false TUD below rolls its
+            // buffered rows back, so we must remember whether rows are about to
+            // be discarded.
+            final boolean hadBufferedRows = !tud.isFirstRow();
             try {
                 if (!tud.isDropped()) {
-                    final boolean willAdvance = consumer != null && !tud.isFirstRow();
+                    final boolean willAdvance = consumer != null && hadBufferedRows;
                     tud.commit(false);
                     if (willAdvance && !tud.isDropped()) {
                         consumer.accept(
@@ -207,22 +214,44 @@ public class QwpTudCache implements QuietCloseable {
             }
 
             if (tud.isDropped()) {
-                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
+                // The free below rolls back this dropped table's buffered rows.
+                // On the QWP deferred-ack path the caller must NOT clear its
+                // uncommitted-deferred-rows clamp, or the cumulative durable-ack
+                // would cover the discarded rows (a phantom ack -> silent data
+                // loss). Propagate after the loop so the client replays the
+                // group (at-least-once) rather than losing the rows; any other
+                // tables committed above stay durable and are simply re-sent.
+                if (hadBufferedRows && discardedTableName == null) {
+                    discardedTableName = tableName;
+                }
                 Misc.free(tud);
             } else {
                 i++;
             }
         }
+        if (discardedTableName != null) {
+            throw CairoException.nonCritical()
+                    .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                    .put(discardedTableName);
+        }
     }
 
     public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        Utf8Sequence discardedTableName = null;
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            // Capture before the forced commit: a table-dropped commit fails
+            // without committing, and freeing the TUD below rolls its buffered
+            // rows back, so we must remember whether rows are about to be
+            // discarded.
+            final boolean hadBufferedRows = !tud.isFirstRow();
             try {
-                if (!tud.isDropped() && !tud.isFirstRow()) {
+                if (!tud.isDropped() && hadBufferedRows) {
                     final long seqTxnBefore = tud.getLastSeqTxn();
                     tud.commitIfMaxUncommittedRowsCountReached();
                     if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
@@ -241,12 +270,24 @@ public class QwpTudCache implements QuietCloseable {
             }
 
             if (tud.isDropped()) {
-                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
+                // See commitAll: a mid-group forced commit that discards a
+                // dropped table's buffered rows must not let the deferred-ack
+                // clamp release, or the group-closing commit would phantom-ack
+                // the discarded rows. Propagate so the client replays.
+                if (hadBufferedRows && discardedTableName == null) {
+                    discardedTableName = tableName;
+                }
                 Misc.free(tud);
             } else {
                 i++;
             }
+        }
+        if (discardedTableName != null) {
+            throw CairoException.nonCritical()
+                    .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                    .put(discardedTableName);
         }
     }
 
@@ -260,7 +301,8 @@ public class QwpTudCache implements QuietCloseable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
             try {
                 if (!tud.isDropped()) {
                     tud.commit(false);
@@ -275,15 +317,19 @@ public class QwpTudCache implements QuietCloseable {
                 LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
             }
 
-            // A distressed writer can throw a plain CairoException after DROP.
-            // The commit loop would otherwise retry and log it forever. The name
-            // registry still detects the stale token after it purges the old dir.
+            // A DROP is detected the moment the name registry marks the token
+            // dropped (getTableTokenByDirName returns null before any physical
+            // dir purge). This also covers the zero-row dropped-table case,
+            // where commit() short-circuits and throws nothing, and a distressed
+            // writer that throws a plain CairoException after DROP; without it
+            // the loop would retry and log the same table forever. This is a
+            // fire-and-forget path (no ack), so no rows are silently acknowledged.
             if (!tud.isDropped() && isTableTokenStale(tud)) {
                 tud.setIsDropped();
             }
 
             if (tud.isDropped()) {
-                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
                 Misc.free(tud);
             } else {
@@ -297,7 +343,8 @@ public class QwpTudCache implements QuietCloseable {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0; i < keys.size(); ) {
             Utf8Sequence tableName = keys.getQuick(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
             try {
                 if (!tud.isDropped()) {
                     long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
@@ -316,15 +363,19 @@ public class QwpTudCache implements QuietCloseable {
                 LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
             }
 
-            // A distressed writer can throw a plain CairoException after DROP.
-            // The commit loop would otherwise retry and log it forever. The name
-            // registry still detects the stale token after it purges the old dir.
+            // A DROP is detected the moment the name registry marks the token
+            // dropped (getTableTokenByDirName returns null before any physical
+            // dir purge). This also covers the zero-row dropped-table case,
+            // where commit() short-circuits and throws nothing, and a distressed
+            // writer that throws a plain CairoException after DROP; without it
+            // the loop would retry and log the same table forever. This is a
+            // fire-and-forget path (no ack), so no rows are silently acknowledged.
             if (!tud.isDropped() && isTableTokenStale(tud)) {
                 tud.setIsDropped();
             }
 
             if (tud.isDropped()) {
-                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
                 Misc.free(tud);
             } else {

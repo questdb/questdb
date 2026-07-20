@@ -1455,6 +1455,69 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllPropagatesWhenDroppedTableDiscardsBufferedRows() throws Exception {
+        // C2: the sibling of the getTableUpdateDetails guard. When commitAll
+        // evicts a DROPped table that still holds buffered rows, freeing the
+        // commitOnClose=false TUD rolls those rows back. On the deferred-ack
+        // path commitAll must PROPAGATE (not swallow) so the caller keeps its
+        // watermark clamp and the client replays, instead of the cumulative ack
+        // covering the discarded rows (a phantom ack -> silent data loss). A
+        // co-cached survivor (the group-closing frame's real target) still
+        // commits and advances exactly once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c2_dropped (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c2_survivor (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails droppedTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("c2_dropped"), null, null, 2
+                );
+                WalTableUpdateDetails survivorTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("c2_survivor"), null, null, 2
+                );
+                Assert.assertNotNull(droppedTud);
+                Assert.assertNotNull(survivorTud);
+
+                // The survivor buffers a real row that must still commit.
+                survivorTud.getWriter().newRow(0L).append();
+                Assert.assertFalse(survivorTud.isFirstRow());
+
+                // Simulate c2_dropped being DROPped mid-group while still holding
+                // buffered rows: the fake reports a non-zero uncommitted row
+                // count and a table-dropped commit failure.
+                replaceWriterWithFake(droppedTud, true);
+
+                int[] advanced = {0};
+                try {
+                    cache.commitAll((_, _, _) -> advanced[0]++);
+                    Assert.fail("commitAll must propagate when a dropped table discards buffered rows");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+
+                // The dropped table was evicted; the survivor stayed and
+                // advanced exactly once (the dropped table never acknowledges).
+                Assert.assertEquals(1, cache.size());
+                Assert.assertNull(getCachedTud(cache, "c2_dropped"));
+                Assert.assertSame(survivorTud, getCachedTud(cache, "c2_survivor"));
+                Assert.assertEquals("only the survivor advances", 1, advanced[0]);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM c2_survivor").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testCommitAllRemovesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE commit_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1475,22 +1538,25 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertNotNull(tud);
 
                 // Replace the real writer with a fake that simulates a
-                // table-dropped commit failure. This exercises the
-                // catch (CommitFailedException) branch where
-                // e.isTableDropped() returns true, followed by the
-                // if (tud.isDropped()) removal path.
+                // table-dropped commit failure. The fake reports a non-zero
+                // uncommitted row count, so the dropped table is discarding
+                // buffered rows. commitAll() must still evict it, but it must
+                // also PROPAGATE (C1) so a QWP deferred-ack caller cannot
+                // acknowledge the rows this eviction rolled back.
                 replaceWriterWithFake(tud, true);
 
-                // commitAll() should catch the CommitFailedException, mark
-                // the TUD as dropped, remove it from the cache, and free it.
                 Assert.assertEquals(1, getCacheSize(cache));
                 try {
                     cache.commitAll();
-                } catch (Exception e) {
-                    throw e;
+                    Assert.fail("commitAll() must propagate when a dropped table discards buffered rows");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
                 } catch (Throwable t) {
-                    throw new AssertionError("unexpected throwable", t);
+                    throw new AssertionError("unexpected throwable type", t);
                 }
+                // The dropped TUD is still evicted and freed.
                 Assert.assertEquals(0, getCacheSize(cache));
             }
         });
@@ -1659,6 +1725,104 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(2, cache.size());
                 Assert.assertSame(failingTud, getCachedTud(cache, "stop_fail"));
                 Assert.assertSame(droppedTud, getCachedTud(cache, "stop_drop"));
+            }
+        });
+    }
+
+    @Test
+    public void testCommitDoesNotAdvanceWatermarkWhenDroppedTableDiscardsBufferedRows() throws Exception {
+        // C2 end-to-end at the watermark level. A FLAG_DEFER_COMMIT group
+        // buffers rows for two tables; one is DROPped mid-group and is NOT
+        // re-referenced by the group-closing frame. The group-closing
+        // state.commit() runs commitAll, which discards the dropped table's
+        // buffered rows. The cumulative-ack watermark must NOT advance over the
+        // discarded rows: commit() must fail and keep the
+        // uncommitted-deferred-rows clamp so the store-and-forward client
+        // replays (at-least-once) rather than trimming slots the server rolled
+        // back.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE phantom_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE phantom_keep (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Buffer deferred rows for both tables through the real cache.
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                QwpTudCache cache = (QwpTudCache) tudCacheField.get(state);
+                WalTableUpdateDetails dropTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("phantom_drop"), null, null, 4
+                );
+                WalTableUpdateDetails keepTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("phantom_keep"), null, null, 4
+                );
+                keepTud.getWriter().newRow(0L).append();
+                // Simulate phantom_drop DROPped mid-group with buffered rows.
+                replaceWriterWithFake(dropTud, true);
+
+                // A committed prefix advanced the watermark to 2; the deferred
+                // group then arms the clamp.
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals(2, state.getHighestProcessedSequence());
+                state.markUncommittedDeferredRows();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+
+                // Group-closing commit: commitAll discards phantom_drop's rows.
+                state.commit();
+
+                Assert.assertFalse("commit must fail when a dropped table discards buffered rows", state.isOk());
+                Assert.assertTrue("clamp must hold so the client replays", state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(9);
+                Assert.assertEquals("watermark must not advance over discarded deferred rows",
+                        2, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitIfMaxUncommittedRowsPropagatesWhenDroppedTableDiscardsBufferedRows() throws Exception {
+        // C1 on the mid-group forced-commit path: a max-uncommitted-rows commit
+        // that hits a DROPped table with buffered rows must propagate, not
+        // swallow, so the group-closing commit cannot later release the
+        // deferred-ack clamp over rows this eviction discarded.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cim_dropped (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // maxUncommittedRows=1: a single buffered row reaches the force-commit
+            // threshold (WAL tables have no metadataService, so the cache's
+            // default is used).
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 1)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("cim_dropped"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Simulate DROP mid-group with a buffered row over the threshold.
+                replaceWriterWithFake(tud, true);
+
+                try {
+                    cache.commitIfMaxUncommittedRowsReached((_, _, _) -> { });
+                    Assert.fail("commitIfMaxUncommittedRowsReached must propagate discarded buffered rows");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            e.getFlyweightMessage().toString().contains("discarded buffered rows")
+                    );
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+                Assert.assertEquals(0, cache.size());
             }
         });
     }
@@ -2041,6 +2205,52 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
                 // The stale TUD was evicted; the cache no longer retains it.
                 Assert.assertEquals(0, cache.size());
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsRenamedTableIsNotEvicted() throws Exception {
+        // M1: the second term of isTableTokenStale (getTableTokenByDirName ==
+        // null) must exclude a live RENAMEd table from eviction. A rename keeps
+        // the on-disk directory, so the dir still resolves the token even though
+        // the OLD name no longer does. A re-lookup by the old name must return
+        // the SAME cached TUD (not evicted) and must NOT roll its buffered rows
+        // back -- dropping or inverting the term would treat the rename as a
+        // drop, evict the live writer, and (because it holds buffered rows)
+        // throw the C1 discard exception. (Committing through the stale writer
+        // after a rename is a separate, pre-existing concern: WalWriter.commit
+        // then raises TableReferenceOutOfDateException; the guard's job is only
+        // to avoid the false eviction, which is what this test pins.)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rename_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("rename_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+
+                // Buffer an uncommitted row, then rename the table out from
+                // under the cache (which is still keyed by the old name).
+                tud.getWriter().newRow(1_000_000L).append();
+                Assert.assertFalse(tud.isFirstRow());
+                execute("RENAME TABLE rename_src TO rename_dst");
+
+                // Re-lookup by the OLD name: the token resolves by directory, so
+                // the TUD is NOT stale and must be returned unchanged, with its
+                // buffered row intact (not rolled back by a false eviction).
+                WalTableUpdateDetails again = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("rename_src"), null, null, 1
+                );
+                Assert.assertSame("a renamed (not dropped) table must not be evicted", tud, again);
+                Assert.assertEquals(1, cache.size());
+                Assert.assertFalse("buffered rows must survive a rename", again.isFirstRow());
             }
         });
     }
@@ -3188,7 +3398,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     case "getUncommittedRowCount" -> 1L;
                     case "getWalId" -> 1;
                     case "getSegmentId" -> 0;
-                    case "commit" -> {
+                    case "getLastSeqTxn" -> 0L;
+                    // commit(false) -> commit(), commit(true) -> ic(); both must
+                    // surface the same simulated failure.
+                    case "commit", "ic" -> {
                         if (isTableDropped) {
                             throw CairoException.tableDropped(tableToken);
                         }
