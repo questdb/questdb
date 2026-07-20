@@ -71,6 +71,10 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int precedence;
     public IQueryModel queryModel;
     public ExpressionNode rhs;
+    // Compile-time link (like intrinsicValue): set on a scalar sub-query QUERY node used as a
+    // designated-timestamp pruning bound, so the residual filter re-compiled from this same node
+    // reads the pruning bound's single frozen value instead of opening the sub-query again.
+    public ScalarTimestampBoundHolder scalarBoundHolder;
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
@@ -289,6 +293,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         implemented = false;
         windowExpression = null;
         lateralDepth = 0;
+        scalarBoundHolder = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {

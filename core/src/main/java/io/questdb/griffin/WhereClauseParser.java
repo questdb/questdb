@@ -43,6 +43,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -1508,6 +1509,13 @@ public final class WhereClauseParser implements Mutable {
                     isBetween,
                     outDriver
             );
+            // Share one evaluation of each scalar sub-query bound between this pruning inverter and
+            // the retained residual filter: the bound publishes its single per-execution value into a
+            // holder that the residual (re-compiled from the same sub-query node) reads instead of
+            // opening the sub-query again. Without this, a commit between the two opens could make
+            // pruning stricter than the residual and silently drop qualifying rows.
+            shareScalarSubQueryBound(loBound, loBoundNode);
+            shareScalarSubQueryBound(hiBound, hiBoundNode);
             head = loBound = hiBound = null; // ownership transferred to the inverter
             model.intersectMonotonicTimestamp(inverter);
             // a runtime bound may not be invertible when the scan opens, so it only prunes
@@ -3308,6 +3316,20 @@ public final class WhereClauseParser implements Mutable {
      * {@link #resolvedBoundFunc}, ownership passing to the caller). The returned status selects the
      * outcome; see the {@code BOUND_*} constants.
      */
+    // Links a scalar sub-query pruning bound to its retained residual filter so both read one frozen
+    // value. The bound (owner) publishes into the holder at scan open; the residual - re-compiled from
+    // the same sub-query node, including per-worker clones - reads that holder via
+    // ScalarSubQueryBoundRefFunction instead of opening the sub-query again.
+    private static void shareScalarSubQueryBound(Function bound, ExpressionNode boundNode) {
+        // Only actual scalar SUBQUERY bounds need sharing; direct runtime constants (bind variables,
+        // now()) already re-read the same frozen SqlExecutionContext snapshot on every open.
+        if (boundNode != null && bound instanceof ScalarSubQueryTimestampFunction ssf) {
+            final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ssf.getType(), ssf.isNonDeterministic());
+            ssf.setPublishHolder(holder);
+            boundNode.scalarBoundHolder = holder;
+        }
+    }
+
     private int resolveScalarBound(
             int outType,
             TimestampDriver outDriver,

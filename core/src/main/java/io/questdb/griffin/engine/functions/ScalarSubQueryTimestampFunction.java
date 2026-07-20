@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 
@@ -41,6 +42,7 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     private final Function cursorFunction;
     private final RecordCursorFactory factory;
     private final int position;
+    private ScalarTimestampBoundHolder publishHolder;
     private long value = Numbers.LONG_NULL;
 
     public ScalarSubQueryTimestampFunction(Function cursorFunction, int position) {
@@ -70,6 +72,11 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         cursorFunction.init(symbolTableSource, executionContext);
         value = ScalarSubQueryUtils.readTimestamp(factory, executionContext, position);
+        // Publish the single per-execution value so the retained residual filter (and its per-worker
+        // clones) read the exact same frozen bound instead of opening the sub-query a second time.
+        if (publishHolder != null) {
+            publishHolder.publish(value);
+        }
     }
 
     @Override
@@ -87,6 +94,10 @@ public final class ScalarSubQueryTimestampFunction extends TimestampFunction {
     @Override
     public boolean isStableWithinExecution() {
         return factory.isStableWithinExecution();
+    }
+
+    public void setPublishHolder(ScalarTimestampBoundHolder publishHolder) {
+        this.publishHolder = publishHolder;
     }
 
     @Override

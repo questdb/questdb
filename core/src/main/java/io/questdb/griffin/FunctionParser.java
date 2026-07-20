@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -120,6 +121,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -769,6 +771,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
+        final ScalarTimestampBoundHolder scalarBoundHolder = node.scalarBoundHolder;
+        if (scalarBoundHolder != null) {
+            // This sub-query was already compiled and evaluated once as a designated-timestamp
+            // pruning bound (WhereClauseParser). Re-opening it here for the residual filter could
+            // observe a different commit than the pruning open and drop qualifying rows, so read the
+            // pruning bound's single frozen value instead.
+            return new ScalarSubQueryBoundRefFunction(scalarBoundHolder);
+        }
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
