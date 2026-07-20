@@ -76,14 +76,14 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // at CREATE, which silently rejected a row back-dated below that minimum - even though
         // the user asked for the base's whole history.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:20.000000Z', 20)," +
                     "('2026-01-01T00:00:30.000000Z', 30)");
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -115,7 +115,7 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
     public void testExplicitBoundaryAdmitsRowExactlyOnIt() throws Exception {
         // The boundary is inclusive: a row whose timestamp equals it belongs to the view.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-04-01T00:00:14.999999Z', 1)," +
                     "('2026-04-01T00:00:15.000000Z', 2)," +
@@ -123,7 +123,7 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-04-01T00:00:15.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -157,7 +157,7 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-04-01T00:00:30.000000Z' AS " +
-                    "SELECT ts, sym, x, row_number() OVER () AS rn FROM base WHERE sym = 'a'");
+                    "SELECT ts, sym, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym = 'a'");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -181,12 +181,12 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // A boundary above every row in the base is valid: the seed qualifies nothing, and
         // later rows join the view on event time rather than on arrival time.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:10.000000Z', 10)");
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2027-01-01T00:00:00.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -222,13 +222,13 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // A zero-row seed is the normal case, not a corner: START FROM NOW over a base of past
         // data qualifies nothing, and so does any boundary in the future.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Pre-CREATE history, entirely BELOW the boundary: the seed must qualify none of it.
             execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:10.000000Z', 10)");
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2027-01-01T00:00:00.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -260,7 +260,7 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // A TIMESTAMP_NANO base keeps its precision: the literal parses against the base's
         // driver, so a boundary between two rows one nanosecond apart separates them.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP_NS, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-04-01T00:00:15.000000499Z', 1)," +
                     "('2026-04-01T00:00:15.000000500Z', 2)," +
@@ -268,7 +268,7 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-04-01T00:00:15.000000500Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -293,9 +293,9 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // arrive in order (forward-append) or out of order (replay). The counters record it.
         assertMemoryLeak(() -> {
             setCurrentMicros(1_775_001_600_000_000L); // 2026-04-01T00:00:00Z, the CREATE moment
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // In order, above the boundary.
@@ -335,14 +335,14 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         //
         // Now they are seeded at CREATE, and the O3 commit adds exactly the one row it carries.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:10.000000Z', 10)," +
                     "('2026-01-01T00:00:20.000000Z', 20)");
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -408,7 +408,7 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-04-01T00:00:05.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn, " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn, " +
                     "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s " +
                     "FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -440,14 +440,14 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // target, serves the seeded rows off disk, and drains forward from where the sweep left
         // off - it does not re-seed, which would duplicate every row it had already committed.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:10.000000Z', 10)," +
                     "('2026-01-01T00:00:20.000000Z', 20)");
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -495,12 +495,12 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // short-circuit does NOT over-skip a straddling commit - the above-boundary rows still
         // land in the view, and the visit counter reflects exactly the sub-floor prefix length.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
             // Future boundary: the seed qualifies nothing, so latestSeenTs stays unset and the next
             // in-order commit reaches the incremental drain (a cross-commit O3 would divert instead).
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2027-01-01T00:00:00.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -540,17 +540,17 @@ public class LiveViewStartFromSeedTest extends AbstractLiveViewTest {
         // visiting each row through TimestampLowerBoundCursor. A future boundary with an empty seed
         // keeps latestSeenTs unset, so the commit reaches the incremental in-order drain (not O3).
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2027-01-01T00:00:00.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
 
                 // One in-order commit of 5_000 rows, every one well below the 2027 boundary.
                 final int rowCount = 5_000;
-                execute("INSERT INTO base " +
+                execute("INSERT INTO base (ts, x) " +
                         "SELECT timestamp_sequence('2026-01-01T00:00:00.000000Z', 1000), x::int " +
                         "FROM long_sequence(" + rowCount + ")");
                 drainWalQueue();

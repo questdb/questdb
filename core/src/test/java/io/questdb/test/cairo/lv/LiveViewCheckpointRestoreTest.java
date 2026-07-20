@@ -630,9 +630,10 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // bring both back - the view stays invalid, keeps its reason, and remains queryable from its
         // own on-disk tier.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts " +
+                    "ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             final String expectedRows = "ts\tx\trn\n" +
                     "2026-01-01T00:00:01.000000Z\t1\t1\n" +
@@ -683,9 +684,10 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // broken as it is here, and the restored database re-derives the same stub from the same
         // missing file.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts " +
+                    "ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             // A healthy, unrelated table. It is what the whole-database checkpoint was losing.
             execute("CREATE TABLE other (ts TIMESTAMP, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 

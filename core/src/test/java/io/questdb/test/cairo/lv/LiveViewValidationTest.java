@@ -123,9 +123,9 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             // Free the name, then a real live view; IF NOT EXISTS over the SAME kind no-ops.
             execute("DROP TABLE lv");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             Assert.assertNotNull("IF NOT EXISTS over an existing live view must be a no-op",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
             execute("DROP LIVE VIEW lv");
@@ -141,7 +141,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // other CREATE forms (it accepted keyword names and did not strip public.).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String body = " FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base";
+            final String body = " FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
 
             // Unquoted keyword name: rejected, like a table of the same name.
             try {
@@ -187,7 +187,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                        "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
                 Assert.fail("expected CREATE LIVE VIEW to be rejected when live views are disabled");
             } catch (SqlException e) {
                 Assert.assertTrue(
@@ -213,10 +213,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                        "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
                 Assert.fail("expected same-kind collision reject");
             } catch (SqlException e) {
                 Assert.assertTrue(
@@ -240,7 +240,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
-                    + "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    + "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
 
             final StringSink plan = new StringSink();
             printSql("EXPLAIN " + body, plan);
@@ -270,7 +270,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
-                    + "SELECT ts, sym, x, row_number() OVER () AS rn FROM base WHERE sym = 'a'";
+                    + "SELECT ts, sym, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym = 'a'";
 
             final StringSink plan = new StringSink();
             printSql("EXPLAIN " + body, plan);
@@ -313,7 +313,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             armed.set(true);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             armed.set(false);
 
             final String seq = order.toString();
@@ -371,7 +371,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // IF NOT EXISTS first: it is the dangerous arm (a silent no-op, not a wrong message).
             assertCreateTableOverLiveViewRejected(true);
@@ -399,7 +399,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
 
             // Restart with the feature disabled: no instance is registered, but the token and
@@ -430,7 +430,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
 
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, "false");
@@ -460,7 +460,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             // to the plain numeric value (1_200s -> 1200s, 1_800s -> 1800s, both under the
             // 60-minute IN MEMORY cap; 1_500ms -> 1500ms exercises the "ms" unit path).
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1_200s IN MEMORY 1_800s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(lv);
             Assert.assertEquals(1200L, lv.getDefinition().getFlushEveryInterval());
@@ -470,7 +470,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("DROP LIVE VIEW lv");
 
             execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1_500ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
             Assert.assertNotNull(lv2);
             Assert.assertEquals(1500L, lv2.getDefinition().getFlushEveryInterval());
@@ -480,11 +480,11 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
             // Misplaced separators fail closed with the "invalid duration value" reject.
             assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY _600s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 3__600s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 600_s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             Assert.assertNull("no view should survive a malformed-duration reject",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
         });
@@ -498,10 +498,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // checkpoint restore, so CREATE must reject it up front.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertLiveViewCreateRejected("SELECT ts, x, rnd_double() AS r, row_number() OVER () AS rn FROM base", "rnd_double");
-            assertLiveViewCreateRejected("SELECT ts, x, now() AS r, row_number() OVER () AS rn FROM base", "now");
-            assertLiveViewCreateRejected("SELECT ts, x, systimestamp() AS r, row_number() OVER () AS rn FROM base", "systimestamp");
-            assertLiveViewCreateRejected("SELECT ts, x, sysdate() AS r, row_number() OVER () AS rn FROM base", "sysdate");
+            assertLiveViewCreateRejected("SELECT ts, x, rnd_double() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "rnd_double");
+            assertLiveViewCreateRejected("SELECT ts, x, now() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "now");
+            assertLiveViewCreateRejected("SELECT ts, x, systimestamp() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "systimestamp");
+            assertLiveViewCreateRejected("SELECT ts, x, sysdate() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "sysdate");
         });
     }
 
@@ -511,10 +511,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // un-emitted, so the row set diverges permanently from any recompute.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE v > rnd_double()", "rnd_double");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > now()", "now");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > systimestamp()", "systimestamp");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > sysdate()", "sysdate");
+            assertLiveViewCreateRejected("SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE v > rnd_double()", "rnd_double");
+            assertLiveViewCreateRejected("SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE ts > now()", "now");
+            assertLiveViewCreateRejected("SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE ts > systimestamp()", "systimestamp");
+            assertLiveViewCreateRejected("SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE ts > sysdate()", "sysdate");
         });
     }
 
@@ -543,32 +543,37 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            // A window that declares no ORDER BY of its own takes the base scan order, so it stays
-            // on the incremental fast path under a backward scan and reaches the new reject. This
-            // is the whole exploitable surface: a window WITH an inner ORDER BY ts needs a cached
-            // plan under a DESC scan and the incremental-refresh gate above already rejects it.
-            assertOrderByDescRejected("SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts DESC");
+            // The unordered window that used to stay single-pass under a backward scan and reach
+            // the DESC reject was row_number() OVER (), which the finite-influence gate now rejects
+            // at CREATE outright (it has no bounded out-of-order influence). Every remaining eligible
+            // window declares an inner ORDER BY ts, so it can no longer elide to a single-pass
+            // backward scan; the finite-influence gate closes this surface first. Assert that.
+            assertUnanchoredRankingRejected("SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts DESC", "row_number");
             // Same through the residual-filter factory, which sits between window and page frame.
-            assertOrderByDescRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 1 ORDER BY ts DESC");
+            assertUnanchoredRankingRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 1 ORDER BY ts DESC", "row_number");
 
-            // The elision is what makes DESC dangerous. ORDER BY on a non-timestamp column, or on
-            // the timestamp under an alias, keeps its Sort factory and hits a generic shape reject.
+            // ORDER BY on a non-timestamp column keeps its Sort factory over the window, so the
+            // root is no longer a window factory and the generic shape reject fires.
             assertLiveViewShapeRejected(
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY x DESC",
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY x DESC",
                     "live view select must contain at least one window function"
             );
+            // ORDER BY the timestamp under an alias, descending: the eligible window's inner
+            // ORDER BY ts can no longer elide under the descending scan, so it needs a cached plan
+            // and the multi-pass gate rejects it (row_number() OVER () - the old single-pass vehicle
+            // - is now rejected by the finite-influence gate instead).
             assertLiveViewShapeRejected(
-                    "SELECT ts AS t, x, row_number() OVER () AS rn FROM base ORDER BY t DESC",
-                    "live view select must be a simple scan of a single WAL base table"
+                    "SELECT ts AS t, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY t DESC",
+                    "requires caching or multi-pass evaluation"
             );
 
             // Ascending ORDER BY on the designated timestamp elides into the forward scan the
             // refresh path already drives, so it stays accepted - the reject must not widen to it.
             execute("CREATE LIVE VIEW lv_asc FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts ASC");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY ts ASC");
             execute("DROP LIVE VIEW lv_asc");
             execute("CREATE LIVE VIEW lv_default FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY ts");
             execute("DROP LIVE VIEW lv_default");
             execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, avg(x) OVER w AS a FROM base " +
@@ -593,31 +598,33 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, ts2 TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            final String expected = "live view select cannot override the designated timestamp; expected 'ts', got 'ts2'";
-            // row_number() OVER () is the whole exploitable surface: it needs no ORDER BY, so it
-            // stays single-pass under the overridden timestamp. A window that orders by the base
-            // ts needs a sort once ts2 is designated, and the cached-window gate rejects it first
-            // - which is why this hole survived, reachable only through the one window shape that
-            // does not care about ordering.
+            // The exploit surface was row_number() OVER (): it needs no ORDER BY, so it stayed
+            // single-pass under the overridden timestamp and reached the override reject. The
+            // finite-influence gate now rejects that unanchored ranking at CREATE outright, so the
+            // override-via-unordered-window hole is closed at the source.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts2)", "row_number");
+            // An anonymous OVER (ORDER BY ts2) is still unanchored ranking, rejected the same way.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts2, x, row_number() OVER (ORDER BY ts2) AS rn FROM base TIMESTAMP(ts2)", "row_number");
+            // Projecting the base's ts alongside does not change that it is unanchored ranking.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts2)", "row_number");
+            // Every remaining eligible window declares an inner ORDER BY, so once ts2 is designated
+            // it needs a sort and the cached-window gate rejects it first - the override reject is
+            // no longer reachable through a valid live-view window shape.
             assertLiveViewShapeRejected(
-                    "SELECT ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts2)", expected);
-            // An anonymous OVER (ORDER BY ts2) matches the overridden natural order, so it needs
-            // no sort either and reaches the same reject.
-            assertLiveViewShapeRejected(
-                    "SELECT ts2, x, row_number() OVER (ORDER BY ts2) AS rn FROM base TIMESTAMP(ts2)", expected);
-            // Projecting the base's ts alongside does not help: the OUTPUT designated timestamp
-            // is still ts2, and that is the column the refresh job stamps latestSeenTs from.
-            assertLiveViewShapeRejected(
-                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts2)", expected);
+                    "SELECT ts2, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base TIMESTAMP(ts2)",
+                    "requires caching or multi-pass evaluation");
 
             // Positive controls - the reject must not widen to a view that merely PROJECTS a
             // second timestamp column, nor to one that names the base's own designated timestamp
             // explicitly. Both leave the two spaces identical.
             execute("CREATE LIVE VIEW lv_plain FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, ts2, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("DROP LIVE VIEW lv_plain");
             execute("CREATE LIVE VIEW lv_explicit FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, ts2, x, row_number() OVER () AS rn FROM base TIMESTAMP(ts)");
+                    "SELECT ts, ts2, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base TIMESTAMP(ts)");
             execute("DROP LIVE VIEW lv_explicit");
         });
     }
@@ -638,12 +645,12 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             assertLiveViewShapeRejected(
-                    "SELECT *, row_number() OVER () AS rn FROM base",
+                    "SELECT *, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base",
                     "wildcard column select is not allowed in live view queries"
             );
             // A qualified wildcard expands identically, so it must be caught by the same gate.
             assertLiveViewShapeRejected(
-                    "SELECT base.*, row_number() OVER () AS rn FROM base",
+                    "SELECT base.*, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base",
                     "wildcard column select is not allowed in live view queries"
             );
 
@@ -655,7 +662,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             // An explicit column list naming exactly what "*" would have expanded to stays accepted
             // - the reject is about the wildcard re-expanding on a recompile, not about the columns.
             execute("CREATE LIVE VIEW lv_explicit FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("DROP LIVE VIEW lv_explicit");
         });
     }
@@ -671,10 +678,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertDurationOutOfRangeRejected(
                     "CREATE LIVE VIEW lv FLUSH EVERY 100_000_000_000_000_000d START FROM NOW AS " +
-                            "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                            "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertDurationOutOfRangeRejected(
                     "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 100_000_000_000_000_000d START FROM NOW AS " +
-                            "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                            "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
         });
     }
 
@@ -715,7 +722,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base_nowal (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base_nowal";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base_nowal";
             try {
                 execute(createSql);
                 // Should not reach here; drop defensively so a spurious success does
@@ -744,7 +751,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("BACKFILL"),
                     "live view BACKFILL is not supported, use START FROM BEGINNING");
         });
@@ -757,13 +764,13 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM dateadd('d', -1, 0::timestamp) AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("dateadd"),
                     "'now', 'beginning' or a quoted timestamp literal expected");
 
             // NOW is grammar, not the now() function, so the call syntax is rejected too.
             final String nowCallSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW() AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(nowCallSql, nowCallSql.indexOf('('),
                     "live view START FROM NOW does not take arguments");
         });
@@ -777,7 +784,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM 'not-a-timestamp' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("'not-a-timestamp'"),
                     "invalid live view START FROM timestamp [ts=not-a-timestamp]");
             Assert.assertNull("no view should survive a malformed-boundary reject",
@@ -790,7 +797,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("NOW"), "'from' expected");
         });
     }
@@ -802,7 +809,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NULL AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("NULL"),
                     "live view START FROM does not accept NULL");
         });
@@ -815,7 +822,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("AS"),
                     "live view requires a START FROM clause");
             Assert.assertNull("no view should survive a missing-START-FROM reject",
@@ -831,7 +838,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM '2026-04-01T00:00:15.000000123Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base_ns");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base_ns");
 
             final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(lv);
@@ -844,7 +851,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
                     "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY " +
                     "START FROM '2026-04-01T00:00:15.000000123Z' AS (\n" +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base_ns\n" +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base_ns\n" +
                     ");\n");
         });
     }
@@ -857,7 +864,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM '2026-04-01T00:00:15.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(lv);
@@ -870,14 +877,14 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
                     "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY " +
                     "START FROM '2026-04-01T00:00:15.000000Z' AS (\n" +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
                     ");\n");
 
             // The rendered DDL is executable: drop and replay it verbatim.
             execute("DROP LIVE VIEW lv");
             execute("CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY " +
                     "START FROM '2026-04-01T00:00:15.000000Z' AS (\n" +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
                     ");");
             final LiveViewInstance replayed = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(replayed);
@@ -895,7 +902,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM 2026-04-01T00:00:15.000000Z AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base";
             assertException(createSql, createSql.indexOf("2026"),
                     "'now', 'beginning' or a quoted timestamp literal expected");
         });
@@ -904,7 +911,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     private void assertCreateLiveViewCollisionRejected(boolean ifNotExists) throws Exception {
         try {
             execute("CREATE LIVE VIEW " + (ifNotExists ? "IF NOT EXISTS " : "") +
-                    "lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
             Assert.fail("expected name-collision reject [ifNotExists=" + ifNotExists + ']');
         } catch (SqlException e) {
             Assert.assertTrue(

@@ -1240,7 +1240,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case 2 -> "ts, sym, i, first_value(i) OVER (" + frame + ") AS v";
             case 3 -> "ts, sym, count() OVER (" + frame + ") AS v";
             case 4 -> "ts, sym, x, avg(x) OVER (" + frame + ") AS v";
-            case 5 -> "ts, sym, row_number() OVER () AS rn";
+            case 5 -> "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
             case 6 -> "ts, sym, i, min(i) OVER (" + frame + ") AS v";
             case RANGE_SUM_VARIANT -> "ts, sym, i, sum(i) OVER (" + rangeFrame + ") AS v";
             case RANGE_AVG_VARIANT -> "ts, sym, x, avg(x) OVER (" + rangeFrame + ") AS v";
@@ -3139,8 +3139,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // disk reader's symbol table via the LV-space ids the refresh worker
             // stored, plus the per-tier symbol cache for any lead-only value.
             projection = symbolReadBack
-                    ? "ts, sym, i, row_number() OVER () AS rn"
-                    : "ts, i, row_number() OVER () AS rn";
+                    ? "ts, sym, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn"
+                    : "ts, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
         } else if (isDecimal) {
             projection = decimalProjection(decimalFunc, n, rescaleTargetScale);
         } else {
@@ -3391,7 +3391,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // A fixed-width identity output, so the tier can store every column and the
         // lead is genuinely resident. IN MEMORY 1h dwarfs the run's span, so the
         // tier holds the whole output and eviction never touches the lead band.
-        final String viewSql = "SELECT ts, sym, i, row_number() OVER () AS rn FROM base";
+        final String viewSql = "SELECT ts, sym, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM BEGINNING AS " + viewSql);
 
         LOG.info().$("LV lead-ordering fuzz: rows=").$(rowCount).$(", symCount=").$(symCount).$();
@@ -4004,7 +4004,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // renumber the rows a reader saw a moment earlier.
         final int startMode = rnd.nextInt(START_FROM_MODES);
         final long boundary = startBoundary(rnd, startMode, tsv, false, rowCount / 2);
-        final String viewSql = "SELECT ts, vs, vv, i, row_number() OVER () AS rn FROM base";
+        final String viewSql = "SELECT ts, vs, vv, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
         final String oracleSql = viewSql + whereTail(false, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
@@ -4724,7 +4724,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
         final long boundary = startBoundary(rnd, startMode, tsv, false);
-        final String viewSql = "SELECT ts, vs, vv, vb, va, row_number() OVER () AS rn FROM base";
+        final String viewSql = "SELECT ts, vs, vv, vb, va, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
         final String oracleSql = viewSql + whereTail(false, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s "
                 + startFromClause(startMode, boundary, false)

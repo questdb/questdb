@@ -83,7 +83,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // The view kept its derived row for the deleted 00:01 as a ghost: a row the base no longer
         // holds, which no recompute of the view's SELECT can produce.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
                     "('2026-01-01T00:00:02.000000Z', 2)," +
@@ -91,7 +91,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -131,7 +131,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // The recompute must start at the boundary, not at the base's first row: the view's
         // numbering has to come out the same as if the replacement had been there all along.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL " +
                     "DEDUP UPSERT KEYS(ts)");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
@@ -142,7 +142,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -173,7 +173,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // the view does not hold, so the replay it forces must be a no-op for the view: the
         // sub-boundary row stays out and the numbering above the boundary does not shift.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL " +
                     "DEDUP UPSERT KEYS(ts)");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
@@ -184,7 +184,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -219,7 +219,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // on serving a row whose base row no longer passes its SELECT - while the watermark moved
         // past the commit that removed it, making the ghost permanent.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL " +
                     "DEDUP UPSERT KEYS(ts)");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
@@ -227,7 +227,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -270,7 +270,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // trigger belongs clamped UP to the boundary - the lowest timestamp the view can hold -
         // not thrown away.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL " +
                     "DEDUP UPSERT KEYS(ts)");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
@@ -281,7 +281,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -318,7 +318,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // head-hit replay under a finite boundary must not pull the sub-boundary row into the view
         // and must not renumber what the head already covers.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // 00:01 sits below the boundary and must never surface, on any path.
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
@@ -327,7 +327,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:02.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -379,7 +379,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // Whatever it deletes or inserts down there, the view's rows and their numbering must come
         // out identical - the deletion side clamps to the boundary and finds an empty range.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
                     "('2026-01-01T00:00:02.000000Z', 2)," +
@@ -388,7 +388,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);
@@ -428,7 +428,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
         // base rows at or above the boundary - the deleted 00:03 gone, the rewritten 00:04 in its
         // new form, and nothing from the band's sub-boundary half.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-01-01T00:00:01.000000Z', 1)," +
                     "('2026-01-01T00:00:02.000000Z', 2)," +
@@ -438,7 +438,7 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
                 driveRefreshToQuiescence(job);

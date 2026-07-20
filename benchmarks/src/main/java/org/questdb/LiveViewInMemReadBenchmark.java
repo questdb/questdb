@@ -72,7 +72,7 @@ import java.util.concurrent.TimeUnit;
  * the tier on by default?" decision (RFC v2, open question 3) and reporting the
  * Mode A (lead-from-RAM) vs Mode B (disk subset) vs disk-only net.
  * <p>
- * A SYMBOL-free {@code row_number()} view (so {@code SELECT * FROM lv} routes
+ * A SYMBOL-free bounded {@code count(*)} window view (so {@code SELECT * FROM lv} routes
  * through the tier) is populated with {@code rows} ticks at a 1ms step. All three
  * read arms scan the identical {@code SELECT * FROM lv}; the {@code routing} param
  * decides what the cursor serves:
@@ -172,7 +172,7 @@ public class LiveViewInMemReadBenchmark {
         final String inMemory = seamSplit ? "in memory " + Math.max(1L, spanSeconds / 2) + "s " : "in memory 60m ";
         engine.execute(
                 "create live view lv flush every 100ms " + inMemory + "start from now as "
-                        + "select ts, i, row_number() over () as rn from base",
+                        + "select ts, i, count(*) over (partition by i order by ts rows between 1000000 preceding and current row) as rn from base",
                 sqlCtx
         );
 

@@ -918,7 +918,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final String frame = "PARTITION BY sym ORDER BY ts ROWS BETWEEN " + n + " PRECEDING AND CURRENT ROW";
         return switch (variant) {
             case 0 -> "ts, sym, i, sum(i) OVER (" + frame + ") AS v";
-            case 1 -> "ts, sym, row_number() OVER () AS rn";
+            case 1 -> "ts, sym, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }
@@ -2051,7 +2051,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // A SYMBOL-free row_number() IN MEMORY view: the reads route through the
         // in-mem tier (Mode B) so the multi-worker refresh churns the tier under the
         // readers, and the readers can assert the gapless-rn prefix invariant.
-        final String viewSql = "SELECT ts, i, row_number() OVER () AS rn FROM base";
+        final String viewSql = "SELECT ts, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2333,7 +2333,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
-        final String viewSql = "SELECT ts, i, row_number() OVER () AS rn FROM base";
+        final String viewSql = "SELECT ts, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2548,7 +2548,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // passthrough, which routes disk-only but still exercises the publish hand-off
         // (the readers open cursors over the view while the driver swaps under them).
         final String viewSql = modeB
-                ? "SELECT ts, i, row_number() OVER () AS rn FROM base"
+                ? "SELECT ts, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base"
                 : "SELECT " + projection(0, n) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
@@ -2761,7 +2761,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // the var-length reads dereference, which is the base-pointer move this soak is about.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
 
-        final String viewSql = "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base";
+        final String viewSql = "SELECT ts, vs, vv, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");

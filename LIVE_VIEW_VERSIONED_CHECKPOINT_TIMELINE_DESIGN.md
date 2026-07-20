@@ -1420,13 +1420,41 @@ Add an explicit enterprise-consumption gate at Phase 3/9 covering the
    boundary rebuild (`o3_boundary_replay_rows` grows, resume untouched - the two
    paths are disjoint). The view converges to the from-base recompute with no
    refresh fault after every step.
-4. Implement the initial CREATE-time allowlist and rejection diagnostics, move
-   OSS tests/fixtures onto eligible functions, and pin the scope-cut decision:
-   unanchored `row_number`/`rank`/`dense_rank` (currently accepted,
-   snapshot-capable, and tested) are removed, while their anchored,
-   segment-reset forms stay eligible and return in Phase 7. Confirm no shipped
-   fixture or customer depends on the removed shapes before enforcing the
-   allowlist.
+4. **[DONE]** Implement the initial CREATE-time allowlist and rejection
+   diagnostics, move OSS tests/fixtures onto eligible functions, and pin the
+   scope-cut decision: unanchored `row_number`/`rank`/`dense_rank` (previously
+   accepted, snapshot-capable, and tested) are removed, while their anchored,
+   segment-reset forms stay eligible and return in Phase 7.
+   `SqlParser.validateLiveViewFiniteInfluence()` rejects at `CREATE LIVE VIEW`
+   any `row_number`/`rank`/`dense_rank` whose window is not anchored - naming the
+   function and explaining it has no finite out-of-order influence boundary -
+   and accepts the anchored (`OVER w ... ANCHOR ...`) forms. The check runs at
+   parse time, after `validateLiveViewAnchors`, and closes the single-partition
+   `OVER ()` / `OVER (ORDER BY ts)` hole the bare-unbounded reject deliberately
+   left open (partitioned-but-unanchored ranking was already turned away).
+   `LiveViewCheckpointContracts.DependencyKind.UNANCHORED_RANK` (frozen in step 1)
+   is the pinned contract this enforces. `LiveViewValidationTest`
+   `testRejectUnanchoredRanking` locks the reject (row_number/rank/dense_rank,
+   inline and via a named window, case-insensitive, nested in an expression) and
+   the anchored `ANCHOR EXPRESSION`/`ANCHOR DAILY` positive controls. Every OSS
+   test/fixture that built a live view on unanchored `row_number() OVER ()` was
+   moved onto an eligible shape. Where a test asserts the ranking column's values
+   as a gapless `1..N` witness, an identical-output substitute keeps the asserted
+   values unchanged: a single-partition, full-look-behind
+   `count(*) OVER (PARTITION BY <g> ORDER BY <ts> ROWS BETWEEN 1000000 PRECEDING
+   AND CURRENT ROW)` over a single (usually all-`NULL`) partition column
+   reproduces `1,2,...,N` bit-for-bit, so no expected value changed; filler sites
+   use a natural bounded partitioned frame. The override- and DESC-scan rejection
+   tests, whose exploit surface was reachable only through the removed unordered
+   ranking shape, now assert the finite-influence gate (and the cached/multi-pass
+   gate for ordered eligible windows) that subsume it. This migration - across
+   `LiveViewSmokeTest`, `LiveViewInMemReadTest`, `LiveViewTest`, `LiveViewFuzzTest`
+   (which also exercises anchored `rank`/`dense_rank`), `LiveViewConcurrencyTest`
+   (gapless-`1..N` invariant preserved), the start-from/dedup/DDL/replace-range
+   suites, and the non-`cairo/lv` catalogue/security/show-create/QWP/DDL-listener
+   tests plus the in-mem read benchmark - confirmed no shipped fixture depends on
+   the removed shapes. `ServerMainTest` and the `griffin` `CheckpointTest`
+   already used anchored `row_number() OVER w`, so they stayed eligible unchanged.
 
 **Deliverable:** measured baseline plus enforced CREATE-time eligibility; no
 checkpoint format change.

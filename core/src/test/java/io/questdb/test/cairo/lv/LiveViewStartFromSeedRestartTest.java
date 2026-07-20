@@ -68,7 +68,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * corrupted seed before the assertions run.) That split is the gap this class exists to close.
  * <p>
  * So every test here cuts the base in half with an explicit boundary, and asserts the view's rows,
- * their {@code row_number()} and a running sum wide enough to span the whole admitted set - not a
+ * their {@code rn} row number and a running sum wide enough to span the whole admitted set - not a
  * row count, which cannot tell a duplicated row from a dropped one.
  */
 public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
@@ -85,7 +85,7 @@ public class LiveViewStartFromSeedRestartTest extends AbstractLiveViewTest {
             """;
     private static final String START_FROM = "'2026-04-01T00:00:05.000000Z'";
     private static final String VIEW_SQL = """
-            SELECT ts, x, row_number() OVER () AS rn,
+            SELECT ts, x, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn,
                    sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s
             FROM base""";
 

@@ -105,7 +105,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try {
                 execute(sql);
                 Assert.fail("expected SqlException for " + sql);
@@ -157,7 +157,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym = 'bbb'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym = 'bbb'");
 
             // Two commits written before either is applied: both see cleanSymbolCount=2, so 'ccc' and
             // 'ddd' collide on the same local key, and every 'bbb' row here has to be matched through
@@ -207,10 +207,10 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             // IF NOT EXISTS should succeed when the view already exists.
             execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -221,12 +221,12 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             // A parenthesized SELECT must capture only the balanced inner query;
             // a stray leading '(' used to make the stored SQL fail to recompile.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS (SELECT val, ts, row_number() OVER () AS rn FROM base)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS (SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
             assertQuery("SELECT view_sql FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck()
                     .noRandomAccess()
                     .noCircuitBreakerCheck() // catalogue function over the in-memory registry; no per-row checks
-                    .returns("view_sql\nSELECT val, ts, row_number() OVER () AS rn FROM base\n");
+                    .returns("view_sql\nSELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base\n");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -236,7 +236,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             final TableToken token = engine.verifyTableName("lv");
             final FilesFacade ff = configuration.getFilesFacade();
@@ -283,7 +283,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:01.000000Z', 1)");
@@ -316,7 +316,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             // invalidation fan-out and the WAL purge floor would all walk a dead view.
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             final ObjList<LiveViewInstance> dependents = new ObjList<>();
             engine.getLiveViewRegistry().getViewsForBaseTable("base", dependents);
@@ -459,7 +459,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             cols.append(", hi_sym SYMBOL");
             execute("CREATE TABLE base (" + cols + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, lo_sym, hi_sym, c1, row_number() OVER () AS rn FROM base " +
+                    "SELECT ts, lo_sym, hi_sym, c1, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base " +
                     "WHERE hi_sym IS NULL");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -513,7 +513,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             final TableToken lvToken = engine.verifyTableName("lv");
             lvDir[0] = lvToken.getDirName();
 
@@ -585,7 +585,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             final TableToken lvToken = engine.verifyTableName("lv");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
@@ -623,7 +623,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             final TableToken lvToken = engine.verifyTableName("lv");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(lvToken));
             Assert.assertFalse(engine.isWalApplySuspended(lvToken));
@@ -657,7 +657,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             final TableToken lvToken = engine.verifyTableName("lv");
 
             execute("ALTER LIVE VIEW lv SUSPEND WAL WITH 'DISK FULL', 'manual halt'");
@@ -680,7 +680,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         // before any state change, so the view stays un-suspended throughout.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             final TableToken lvToken = engine.verifyTableName("lv");
 
             assertAlterLiveViewRejected("ALTER LIVE VIEW lv FREEZE WAL", "'resume' or 'suspend' expected");
@@ -753,7 +753,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             for (int i = 0; i < viewCount; i++) {
                 execute("CREATE TABLE base" + i + " (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute("CREATE LIVE VIEW lv" + i + " FLUSH EVERY 1s START FROM NOW AS "
-                        + "SELECT ts, x, row_number() OVER () AS rn FROM base" + i);
+                        + "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base" + i);
             }
             final LiveViewRegistry registry = engine.getLiveViewRegistry();
             final ObjList<LiveViewInstance> all = new ObjList<>();
@@ -844,7 +844,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final WalSegmentPageFrameCursor cursor = job.walFrameCursorForTest();
                 final long cap = 128L * 1024;
@@ -894,7 +894,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             final int viewCount = 6;
             for (int v = 0; v < viewCount; v++) {
                 execute("CREATE LIVE VIEW lv" + v + " FLUSH EVERY 1s START FROM BEGINNING AS " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                        "SELECT ts, x, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             }
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-04-01T00:00:00.000000Z', 1), " +
@@ -946,7 +946,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertQuery("SELECT table_type, matView FROM tables() WHERE table_name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("table_type\tmatView\nL\tfalse\n");
             // No liveView boolean column exists (the would-be symmetry with matView).
@@ -968,7 +968,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertQuery("SELECT table_type FROM tables() WHERE table_name = 'lv'").noLeakCheck().noRandomAccess().returns("table_type\nL\n");
             execute("DROP LIVE VIEW lv");
         });
@@ -979,7 +979,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertQuery("SELECT table_type, is_insertable_into FROM information_schema.tables() " +
                     "WHERE table_name = 'lv'").noLeakCheck().noRandomAccess().returns("table_type\tis_insertable_into\n" +
                     "LIVE VIEW\tfalse\n");
@@ -992,7 +992,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertQuery("SELECT relkind FROM pg_class() WHERE relname = 'lv'").noLeakCheck().noRandomAccess().returns("relkind\nv\n");
             execute("DROP LIVE VIEW lv");
         });
@@ -1139,7 +1139,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -1246,7 +1246,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             // that requires a single WAL base table at the leaf.
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                        "SELECT base1.val, base1.ts, row_number() OVER () AS rn FROM base1 " +
+                        "SELECT base1.val, base1.ts, count(*) OVER (PARTITION BY 0 ORDER BY base1.ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base1 " +
                         "JOIN base2 ON base1.ts = base2.ts");
                 Assert.fail("expected SqlException for JOIN in live view select");
             } catch (SqlException e) {
@@ -1263,7 +1263,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base WHERE val > 5");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE val > 5");
             // Mix in rows that fail the filter (val <= 5) — they must NOT advance rn.
             execute("INSERT INTO base (val, ts) VALUES " +
                     "(1, '2026-01-01T00:00:00.000000Z'), " +
@@ -1299,7 +1299,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv_eq FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT a, b, val, ts, row_number() OVER () AS rn FROM base WHERE a = b");
+                    "SELECT a, b, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE a = b");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv_eq");
@@ -1339,9 +1339,9 @@ public class LiveViewTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW lv_eq FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT a, b, val, ts, row_number() OVER () AS rn FROM base WHERE a = b");
+                    "SELECT a, b, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE a = b");
             execute("CREATE LIVE VIEW lv_ne FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT a, b, val, ts, row_number() OVER () AS rn FROM base WHERE a != b");
+                    "SELECT a, b, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE a != b");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Finish seeding from the applied base FIRST, so the (NULL, NULL) rows below arrive
@@ -1443,7 +1443,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL INDEX, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym = 'a'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym = 'a'");
             // Interleave a/b rows so a leaked 'b' row would perturb both the row set and rn.
             execute("INSERT INTO base (sym, val, ts) VALUES " +
                     "('a', 1, '2026-01-01T00:00:00.000000Z'), " +
@@ -1490,17 +1490,17 @@ public class LiveViewTest extends AbstractLiveViewTest {
             // distinct functions with distinct loops, and the '_' wildcard and ~ take the
             // java.util.regex Matcher path, which NPEs on a null value rather than skipping it.
             execute("CREATE LIVE VIEW lv_contains FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE '%a%'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym LIKE '%a%'");
             execute("CREATE LIVE VIEW lv_starts FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE 'a%'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym LIKE 'a%'");
             execute("CREATE LIVE VIEW lv_ends FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE '%a'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym LIKE '%a'");
             execute("CREATE LIVE VIEW lv_ilike FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym ILIKE '%A%'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym ILIKE '%A%'");
             execute("CREATE LIVE VIEW lv_wildcard FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE 'x_x'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym LIKE 'x_x'");
             execute("CREATE LIVE VIEW lv_regex FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym ~ 'a'");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym ~ 'a'");
 
             execute("INSERT INTO base (sym, val, ts) VALUES " +
                     "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
@@ -1575,7 +1575,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                        "SELECT val, ts, row_number() OVER () AS rn FROM base WHERE ts > '2026-01-01T00:00:00.000000Z'");
+                        "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE ts > '2026-01-01T00:00:00.000000Z'");
                 // Should not reach here; drop defensively so a spurious success does not
                 // leave a view that trips a later assertion on the same name.
                 execute("DROP LIVE VIEW lv");
@@ -1599,7 +1599,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Batch 1: rows 1, 2.
                 execute("INSERT INTO base (val, ts) VALUES " +
@@ -1636,7 +1636,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (val, ts) VALUES " +
                         "(10, '2026-01-01T00:00:00.000000Z'), " +
@@ -1680,7 +1680,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             // best, an out-of-bounds mmap read at worst).
             execute("CREATE TABLE base (pad SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (pad, val, ts) VALUES " +
                         "('a', 10, '2026-01-01T00:00:00.000000Z'), " +
@@ -1728,7 +1728,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+                    "SELECT val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);

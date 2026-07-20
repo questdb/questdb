@@ -217,7 +217,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE MATERIALIZED VIEW mat_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h) PARTITION BY DAY");
             execute("CREATE VIEW plain_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h)");
-            execute("CREATE LIVE VIEW live_v FLUSH EVERY 1s START FROM NOW AS SELECT ts, v, row_number() OVER () AS rn FROM base");
+            execute("CREATE LIVE VIEW live_v FLUSH EVERY 1s START FROM NOW AS SELECT ts, v, count(*) OVER (PARTITION BY v ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             assertQuery("SELECT relname, relkind FROM pg_catalog.pg_class WHERE relname IN ('base', 'mat_v', 'plain_v', 'live_v') ORDER BY relname")
                     .returns("""

@@ -203,7 +203,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         // A user who copy-pasted that output would get a plain table instead of a live view.
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create live view lv flush every 1s start from now as select ts, x, row_number() over () as rn from base");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
             drainWalAndViewQueues();
             assertExceptionNoLeakCheck(
                     "show create table lv",
@@ -218,7 +218,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         // a live view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create live view lv flush every 1s start from now as select ts, x, row_number() over () as rn from base");
+            execute("create live view lv flush every 1s start from now as select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
             drainWalAndViewQueues();
             printSql("show create live view lv");
             TestUtils.assertContains(sink.toString(), "CREATE LIVE VIEW 'lv'");

@@ -417,7 +417,7 @@ public class SecurityTest extends AbstractCairoTest {
                     .with(recorder, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)) {
                 engine.execute(
                         "create live view lv flush every 1s start from now as " +
-                                "select ts, x, row_number() over () as rn from base",
+                                "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base",
                         recordingContext
                 );
             }
@@ -445,7 +445,7 @@ public class SecurityTest extends AbstractCairoTest {
                     .with(new DenyBaseTableSelectSecurityContext(), null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)) {
                 engine.execute(
                         "create live view lv flush every 1s start from now as " +
-                                "select ts, x, row_number() over () as rn from base",
+                                "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base",
                         denyContext
                 );
                 Assert.fail();
@@ -472,7 +472,7 @@ public class SecurityTest extends AbstractCairoTest {
             try {
                 engine.execute(
                         "create live view lv flush every 1s start from now as " +
-                                "select ts, x, row_number() over () as rn from base",
+                                "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base",
                         roContext
                 );
                 Assert.fail();
@@ -523,7 +523,7 @@ public class SecurityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
             execute("create live view lv flush every 1s start from now as " +
-                    "select ts, x, row_number() over () as rn from base");
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
             final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
                     .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
             try {
@@ -547,7 +547,7 @@ public class SecurityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
             execute("create live view lv flush every 1s start from now as " +
-                    "select ts, x, row_number() over () as rn from base");
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
             final TableToken lvToken = engine.verifyTableName("lv");
             // Suspend through the privileged context so RESUME has something to clear.
             execute("alter live view lv suspend wal");
@@ -578,7 +578,7 @@ public class SecurityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
             execute("create live view lv flush every 1s start from now as " +
-                    "select ts, x, row_number() over () as rn from base");
+                    "select ts, x, count(*) over (partition by x order by ts rows between 1 preceding and current row) as rn from base");
             final TableToken lvToken = engine.verifyTableName("lv");
 
             final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)

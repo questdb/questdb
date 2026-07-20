@@ -548,7 +548,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS (SELECT ts, x, row_number() OVER () AS rn FROM tab)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS (SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM tab)");
             drainWalQueue();
             execute("DROP LIVE VIEW lv");
             drainWalQueue();

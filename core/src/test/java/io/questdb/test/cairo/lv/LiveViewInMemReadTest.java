@@ -532,7 +532,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                         "ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n");
 
                 assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
-                        "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE rn > 1");
+                        "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE rn > 1");
             } finally {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
@@ -577,7 +577,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // Differential oracle over the same shapes: a from-scratch recompute from base.
             assertLvMatchesOracle("SELECT * FROM lv WHERE rn > 1",
-                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE rn > 1");
+                    "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE rn > 1");
         });
     }
 
@@ -966,10 +966,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // mapping regression surfaces as swapped values on them rather than as a
         // silently disk-served read.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, a, b, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, a, b, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, a, b) VALUES " +
                         "('2026-05-12T00:00:01.000000Z', 10, 20), " +
@@ -996,7 +996,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Differential oracle plus an explicit expectation: b then a, on the
             // disk-backed overlap (rn 1-2) and the RAM-only lead (rn 3-4) alike.
             assertLvMatchesOracle("SELECT ts, b, a, rn FROM lv",
-                    "SELECT ts, b, a, rn FROM (SELECT ts, a, b, row_number() OVER () AS rn FROM base)");
+                    "SELECT ts, b, a, rn FROM (SELECT ts, a, b, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
             StringSink sink = new StringSink();
             printSql("SELECT ts, b, a, rn FROM lv", sink);
             Assert.assertEquals("ts\tb\ta\trn\n" +
@@ -1027,21 +1027,21 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("all rows served from the tier", 5, pruned.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, pruned.leadRowsServed);
             assertLvMatchesOracle("SELECT ts, g FROM lv",
-                    "SELECT ts, g FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base)");
+                    "SELECT ts, g FROM (SELECT ts, x, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
 
             // Pruning around a fixed-width column routes the same way.
             InnerRead prunedInt = readInner("SELECT ts, rn FROM lv");
             Assert.assertTrue("pruned fixed-width projection must route", prunedInt.routingEligible);
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, prunedInt.leadRowsServed);
             assertLvMatchesOracle("SELECT ts, rn FROM lv",
-                    "SELECT ts, rn FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base)");
+                    "SELECT ts, rn FROM (SELECT ts, x, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
 
             // Pruned AND reordered, with the timestamp no longer first.
             InnerRead reordered = readInner("SELECT g, ts FROM lv");
             Assert.assertTrue("pruned + reordered projection must route", reordered.routingEligible);
             Assert.assertEquals("two un-flushed lead rows served from RAM", 2, reordered.leadRowsServed);
             assertLvMatchesOracle("SELECT g, ts FROM lv",
-                    "SELECT g, ts FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base)");
+                    "SELECT g, ts FROM (SELECT ts, x, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
 
             // Explicit expectation on the symbol values: 'cc' (rn=4) is a lead-only
             // symbol that lives solely in the tier's cache, so the overlay must
@@ -1077,7 +1077,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // A lead-only symbol: the row exists only in RAM and its id only in the cache.
             assertLvMatchesOracle("SELECT ts, g FROM lv WHERE g = 'cc'",
-                    "SELECT ts, g FROM (SELECT ts, x, g, row_number() OVER () AS rn FROM base) WHERE g = 'cc'");
+                    "SELECT ts, g FROM (SELECT ts, x, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE g = 'cc'");
             StringSink cc = new StringSink();
             printSql("SELECT ts, g FROM lv WHERE g = 'cc'", cc);
             Assert.assertEquals("ts\tg\n2026-05-12T00:00:04.000000Z\tcc\n", cc.toString());
@@ -1439,7 +1439,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // descending arm above.
             Assert.assertEquals("rn\n1\n2\n3\n4\n5\n", pruned.output);
             assertLvMatchesOracle("SELECT rn FROM lv",
-                    "SELECT rn FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+                    "SELECT rn FROM (SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
         });
     }
 
@@ -1455,11 +1455,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             buildFlushedPlusLead();
 
             assertLvMatchesOracle("SELECT max(rn) FROM lv",
-                    "SELECT max(rn) FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+                    "SELECT max(rn) FROM (SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
             assertLvMatchesOracle("SELECT sum(x) FROM lv",
-                    "SELECT sum(x) FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+                    "SELECT sum(x) FROM (SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
             assertLvMatchesOracle("SELECT count() FROM lv",
-                    "SELECT count() FROM (SELECT ts, x, row_number() OVER () AS rn FROM base)");
+                    "SELECT count() FROM (SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base)");
             // Pin the values outright: an oracle that silently went disk-only on BOTH sides
             // would still match. The lead's rows are 4 and 5, so every one of these differs
             // from its applied-prefix answer (3, 6 and 3).
@@ -1960,10 +1960,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     @Test
     public void testModeBEnabledForSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("INSERT INTO base (ts, g) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 'aa'), " +
                     "('2026-05-12T00:00:00.000002Z', 'bb')");
@@ -2006,7 +2006,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // stored the base segment-local id would resolve both symbols to the
             // wrong string; storing LV-space ids is what makes Mode B == disk-only.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY keep ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE keep > 0");
             execute("INSERT INTO base (ts, g, keep) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 'aa', 0), " +
                     "('2026-05-12T00:00:00.000002Z', 'bb', 1), " +
@@ -2041,7 +2041,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY keep ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE keep > 0");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2167,10 +2167,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // through a flush-to-disk plus a full tier rebuild (see finishLeadRefresh),
         // so the slot reflects only disk-consistent rows again.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2275,10 +2275,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // lead to disk and rebuilds the tier as a clean subset, keeping the overlap
         // so no row falls in the gap.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2364,10 +2364,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // function lost snapshot support). This test forces that state directly via
         // setSnapshotCapability(false) to exercise the branch and pin the resync.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2449,10 +2449,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // ensureLeadEligible gates on designated-timestamp + tier-storable types only, NOT
         // snapshot capability, so a non-capable view genuinely reaches this lead path.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2559,10 +2559,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         //   re-arm instance.leadRowCount from the stale-stamped slot.
         // Cycle C: a forward row + flush must not re-flush rows 01-02.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2644,12 +2644,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     @Test
     public void testO3ReplayRebuildOracleSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Pin the CREATE clock below the data so the non-seed floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, x) VALUES " +
@@ -2716,14 +2716,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     @Test
     public void testO3ReplayRebuildBoundsToInMemoryWindow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Pin the CREATE clock below the data so the non-seed floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
             // A tight 2s IN MEMORY window: after O3 the rewritten LV table spans
             // two day-partitions, but only the recent 2s suffix is resident.
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 2s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             final IntList openedLvPartitions = new IntList();
@@ -2796,12 +2796,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     @Test
     public void testO3ReplayRebuildRegainsModeB() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Pin the CREATE clock below the data so the non-seed floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2869,7 +2869,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT " + everyTierTypeColumns() + ", row_number() OVER () AS rn FROM base");
+                    "SELECT " + everyTierTypeColumns() + ", count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -2933,12 +2933,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base_a (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_a");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base_a");
             // Sibling: INT at the same column index, same total column count.
             execute("CREATE TABLE base_b (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lvb FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_b");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base_b");
 
             LiveViewInstance instanceA = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instanceA);
@@ -2988,7 +2988,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             // ... and equal a from-scratch recompute over the post-dedup base.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_a");
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base_a");
 
             assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
@@ -3043,12 +3043,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // be used here because its battery calls engine.clear() up front, which
             // drops the LV registry entry and with it the un-flushed lead.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // Forcing the tier off (stamp mismatch) drops to the applied prefix:
             // disk holds only the 3 flushed rows, not the lead.
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
         });
     }
 
@@ -3090,7 +3090,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // over base) plus an explicit expectation. printSql, not assertQuery: the
             // latter's battery clears the engine and drops the un-flushed lead.
             assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'bb'",
-                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'bb'");
+                    "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE g = 'bb'");
             StringSink bb = new StringSink();
             printSql("SELECT * FROM lv WHERE g = 'bb'", bb);
             Assert.assertEquals("ts\tg\trn\n" +
@@ -3120,10 +3120,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // the flush flyweight, the merge-record getArray accessor, and
         // reset()/footprint end to end across the normal / null cases.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, arr DOUBLE[], g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, arr, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, arr, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk.
                 execute("INSERT INTO base (ts, arr) VALUES " +
@@ -3160,12 +3160,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Differential oracle: the in-mem read (incl. the lead's arrays and the
             // NULL row) equals a from-scratch recompute over base.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, arr, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, arr, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // Forcing the tier off drops to the applied prefix: the lead's arrays are
             // absent from disk.
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, arr, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, arr, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
 
             // A flush lands the lead on disk; the tier read then equals the
             // disk-only read byte for byte.
@@ -3194,10 +3194,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // the base oracle. Covers the 1-D element, the 2-D [row][col] element, and
         // the NULL array -> NaN -> predicate-false branch.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, a1 DOUBLE[], a2 DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, a1 DOUBLE[], a2 DOUBLE[][], g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, a1, a2, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, a1, a2, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk, mixed 1-D and 2-D shapes.
                 execute("INSERT INTO base (ts, a1, a2) VALUES " +
@@ -3234,14 +3234,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // WHERE would renumber the filtered rows and mismatch the materialized rn).
             assertLvMatchesOracle(
                     "SELECT ts, a1, a2, rn FROM lv WHERE a1[1] > 4.5",
-                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a1[1] > 4.5");
+                    "SELECT * FROM (SELECT ts, a1, a2, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE a1[1] > 4.5");
 
             // Pin the 1-D element at a non-zero index: a1[2] = 8 matches only lead
             // row 4 (a1=[7,8]). A wrong 1-D offset would read 7 (or NaN) and drop the
             // row, mismatching the oracle.
             assertLvMatchesOracle(
                     "SELECT ts, a1, a2, rn FROM lv WHERE a1[2] = 8.0",
-                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a1[2] = 8.0");
+                    "SELECT * FROM (SELECT ts, a1, a2, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE a1[2] = 8.0");
 
             // 2-D element predicate pins the exact value: a2[2][2] = 20 matches only
             // lead row 4 (a2=[[17,18],[19,20]]). The equality catches a wrong 2-D
@@ -3251,7 +3251,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // are 1-row so idx0 is out of bounds), and the NULL row is NaN.
             assertLvMatchesOracle(
                     "SELECT ts, a1, a2, rn FROM lv WHERE a2[2][2] = 20.0",
-                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a2[2][2] = 20.0");
+                    "SELECT * FROM (SELECT ts, a1, a2, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE a2[2][2] = 20.0");
 
             // Forcing the tier off drops the lead: the disk-only scan holds only the
             // 3 flushed rows, none of which have a2[2][2] = 20, so the result is
@@ -3264,7 +3264,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // 99_999.0 is rejected as an invalid constant.
             assertDiskOnlyMatchesOracle(
                     "SELECT ts, a1, a2, rn FROM lv WHERE a2[2][2] = 20.0",
-                    "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a2[2][2] = 99999.0");
+                    "SELECT * FROM (SELECT ts, a1, a2, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE a2[2][2] = 99999.0");
 
             // A flush lands the lead on disk; the Mode B filtered read then equals the
             // disk-only filtered read byte for byte.
@@ -3284,10 +3284,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // a purely-numeric one. Exercises the (data, aux) write path, the flush
         // flyweight, the merge-record accessors, and reset()/footprint end to end.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, s STRING, b BINARY) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, s STRING, b BINARY, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, s, b, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, s, b, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk (rnd_bin is evaluated once at
                 // insert, so the stored bytes are fixed for both reads below).
@@ -3325,12 +3325,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Differential oracle: the in-mem read (incl. the lead's STRING/BINARY
             // and the NULL row) equals a from-scratch recompute over base.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, s, b, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, s, b, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // Forcing the tier off drops to the applied prefix: the lead's var-size
             // values are absent from disk.
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, s, b, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, s, b, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
 
             // A flush lands the lead on disk; the tier read then equals the
             // disk-only read byte for byte.
@@ -3351,10 +3351,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // the flush flyweight, the merge-record accessors, and reset()/footprint end
         // to end across the inlined / split / null cases.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, v VARCHAR, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, v, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, v, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk. A short inlined value, a long
                 // value forced through the split (data-region) path, and an empty.
@@ -3392,12 +3392,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Differential oracle: the in-mem read (incl. the lead's VARCHAR and the
             // NULL row) equals a from-scratch recompute over base.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, v, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, v, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // Forcing the tier off drops to the applied prefix: the lead's var-size
             // values are absent from disk.
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, v, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, v, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
 
             // A flush lands the lead on disk; the tier read then equals the
             // disk-only read byte for byte.
@@ -3418,29 +3418,29 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Full scan: size() = disk.size() + leadRowCount = 5; the read serves
             // all five rows, matching the recompute.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             // A head LIMIT inside the overlap never reaches the lead.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT 2",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 2");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 2");
             // A head LIMIT exactly at the overlap/lead boundary.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT 3",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
             // A head LIMIT crosses the overlap/lead boundary cleanly.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT 4",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 4");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 4");
             // A head LIMIT past size() returns every row, no over-read.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT 10",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 10");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 10");
             // A tail LIMIT uses size() to find the offset, so it lands on the
             // un-flushed lead rows.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT -2",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT -2");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT -2");
             // A tail LIMIT that crosses the lead/overlap boundary back into disk.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT -4",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT -4");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT -4");
             // A bounded range LIMIT straddling the overlap/lead boundary.
             assertLvMatchesOracle("SELECT * FROM lv LIMIT 2,5",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 2,5");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 2,5");
         });
     }
 
@@ -3504,10 +3504,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // growth.bytes = 0 forces the slow-path (and its IN MEMORY eviction) on
             // every publish.
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -3560,7 +3560,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             InnerRead read = readInner("SELECT * FROM lv");
             Assert.assertTrue("post-eviction read must stay routing-eligible", read.routingEligible);
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // size() must equal the served row count so LIMIT pushdown is exact.
             // Pre-fix the vanished disk row left size() one over the rows actually
@@ -3573,7 +3573,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 Assert.assertEquals("size() must count every served row exactly once", 6, cursor.size());
             }
             assertLvMatchesOracle("SELECT * FROM lv LIMIT 6",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 6");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 6");
 
             // Explicit full result: both ts=03 rows present - the disk overlap
             // (rn=3) and the lead (rn=4) - in ts then rn order.
@@ -3852,7 +3852,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // agree, and the tier read still matches the recompute.
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         });
     }
 
@@ -3886,7 +3886,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // Every row survives the seam, and size() agrees with what the stream yields.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
                 try (LiveViewRecordCursor cursor = openLvCursor(factory)) {
                     long streamed = 0;
@@ -3944,10 +3944,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("only the rebuilt lead is resident after restart", 2, after.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows recovered from the base WAL", 2, after.leadRowsServed);
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             // Disk still holds only the applied prefix (the lead is in RAM again).
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
         });
     }
 
@@ -3965,7 +3965,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // derived from base rows would land four rows off and either duplicate the boundary row or
         // drop it.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Four rows below the boundary, four at or above it.
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-04-01T00:00:01.000000Z', 1)," +
@@ -3978,7 +3978,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:08.000000Z', 8)");
             drainWalQueue();
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM '2026-04-01T00:00:05.000000Z' AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Seed: the four admitted rows land on disk, and nothing lands in the tier.
@@ -4023,13 +4023,13 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // The stitched read equals a from-scratch recompute over the admitted base rows, with
             // one gapless row_number() spanning the seam.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base " +
                             "WHERE ts >= '2026-04-01T00:00:05.000000Z'");
 
             // Forcing the tier off drops to the applied prefix: the four seeded rows plus the
             // flushed pair, and none of the four below the boundary.
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base " +
                             "WHERE ts >= '2026-04-01T00:00:05.000000Z' AND ts <= '2026-04-01T00:00:11.000000Z'");
         });
     }
@@ -4045,10 +4045,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // the restore would resume at the head and re-emit the rows disk already
         // holds, duplicating them once the rebuilt lead is flushed.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Batch 1 -> flush 1. The first flush always writes a head .cp
@@ -4106,9 +4106,9 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertTrue("post-restart read must be routing-eligible", after.routingEligible);
             Assert.assertEquals("two un-flushed lead rows recovered (batch 3)", 2, after.leadRowsServed);
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 4");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 4");
 
             // Flush the rebuilt lead and confirm disk holds all six rows exactly
             // once (no duplicate batch 2). assertQuery is safe now: the lead is on
@@ -4178,7 +4178,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // ... and equals a from-scratch recompute: row_number continues 1..5, not a
             // cold-restart 1..3 (disk) + 1..2 (lead).
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             // The rebuild retired the corrupt .cp and wrote a fresh post-rebuild head.
             Assert.assertTrue("a fresh head .cp must be written after the rebuild",
                     restored.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL);
@@ -4200,14 +4200,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     @Test
     public void testSymbolLvIsLeadEligible() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             // SYMBOL output is now lead-eligible: eager interning gives the lead's
             // symbols LV-table-consistent ids the read path resolves from RAM.
             execute("CREATE LIVE VIEW lv_sym FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("CREATE LIVE VIEW lv_num FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             execute("INSERT INTO base (ts, g, x) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 'aa', 1), " +
                     "('2026-05-12T00:00:02.000000Z', 'bb', 2)");
@@ -4250,12 +4250,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             // Differential oracle: the lead read equals a from-scratch recompute.
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             // Forcing the tier off drops to the applied prefix (the 3 flushed rows);
             // the lead-only 'cc' value is absent from that prefix.
             assertDiskOnlyMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base LIMIT 3");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base LIMIT 3");
         });
     }
 
@@ -4271,14 +4271,14 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // oracle filters the LV's pre-computed row_number projection (a plain
             // recompute would re-rank after the filter and disagree on rn).
             assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'cc'",
-                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'cc'");
+                    "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE g = 'cc'");
             // A WHERE on a committed value spanning the overlap and the lead.
             assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'bb'",
-                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'bb'");
+                    "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) WHERE g = 'bb'");
             // ORDER BY the SYMBOL column: the static-symbol sort ranks by the raw
             // int key over the overlay's symbol count, which spans the lead's ids.
             assertLvMatchesOracle("SELECT * FROM lv ORDER BY g, ts",
-                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) ORDER BY g, ts");
+                    "SELECT * FROM (SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base) ORDER BY g, ts");
         });
     }
 
@@ -4305,7 +4305,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         });
     }
 
@@ -4333,7 +4333,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("only the rebuilt lead is resident after restart", 2, after.inMemRowsServed);
             Assert.assertEquals("two un-flushed lead rows recovered", 2, after.leadRowsServed);
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         });
     }
 
@@ -4343,7 +4343,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, keep INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
+                    "SELECT ts, g, count(*) OVER (PARTITION BY keep ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE keep > 0");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -4404,10 +4404,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // lvConsumedSeqTxn == applied), so the formerly-RAM-only lead rows land on
         // disk via REPLACE_RANGE and the rebuilt tier regains Mode A.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -4459,7 +4459,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
@@ -4481,10 +4481,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // bound. The RAM-only lead is discarded and recomputed from base (retained
         // because lvConsumedSeqTxn == applied); the rebuilt tier regains Mode A.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -4521,7 +4521,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertLvMatchesOracle("SELECT * FROM lv",
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                     .timestamp("ts")
                     .expectSize()
@@ -4543,10 +4543,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // LV table still holds every row and the re-read matches a from-scratch
         // recompute across the restart boundary.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, x) VALUES " +
@@ -4775,10 +4775,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // extra ts=03 row lands on top as lead. Disk therefore holds a row at exactly the
     // lead's minimum timestamp - the ts the post-restart pure-lead slot stamps as its seam.
     private void buildFlushedPlusLeadWithFrontierTie() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 1), " +
@@ -4811,10 +4811,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // on the right row there, and the arm passes while testing nothing.
     private void buildEvictedOverlapPlusLead() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
-        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
-                "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s on, so the first cycle falls out of the 1s window
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -4840,10 +4840,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     private void buildFlushedPlusLead() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 1), " +
@@ -4867,10 +4867,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // (id 2, resolvable only from the tier's symbol cache) and 'bb' re-occurs
     // (committed id 1, resolvable via the disk reader).
     private void buildMixedFlushedPlusLead() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                "SELECT ts, x, g, row_number() OVER () AS rn FROM base");
+                "SELECT ts, x, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, x, g) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 1, 'aa'), " +
@@ -4893,10 +4893,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // re-occurs (committed id 1, resolvable via the disk reader). Exercises both
     // overlay bands.
     private void buildSymbolFlushedPlusLead() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                "SELECT ts, g, row_number() OVER () AS rn FROM base");
+                "SELECT ts, g, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, g) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 'aa'), " +
@@ -4919,10 +4919,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // and whose second row is a non-NULL g != h pair. Exercises the interpreted symbol
     // comparator against a lead-only NULL that the disk table cannot know about.
     private void buildTwoSymbolFlushedPlusNullLead() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, h SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, h SYMBOL, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                "SELECT ts, g, h, row_number() OVER () AS rn FROM base");
+                "SELECT ts, g, h, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, g, h) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 'aa', 'xx'), " +
@@ -5107,9 +5107,9 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // Creates a fixed-width LV with the in-mem tier on, ingests two rows, and
     // drives one refresh cycle so the published slot is populated and stamped.
     private void createIngestRefresh() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
-                "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
         execute("INSERT INTO base (ts, x) VALUES " +
                 "('2026-05-12T00:00:00.000001Z', 4), " +
                 "('2026-05-12T00:00:00.000002Z', 9)");
@@ -5128,11 +5128,11 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // most recent (seam = cycle-2 minimum).
     private void createSeamSplitLv() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
-        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         // Pin the CREATE wall clock below the data so every row stays in-frame.
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
-                "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -5158,10 +5158,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // an aliased read across records surfaces as a value mismatch.
     private void createVarSizeSeamSplitLv() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
-        execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
-                "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base");
+                "SELECT ts, vs, vv, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -5192,10 +5192,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     private void createSymbolSeamSplitLvNoCache() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, "false");
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
-        execute("CREATE TABLE base (ts TIMESTAMP, s SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, s SYMBOL, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
-                "SELECT ts, s, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                "SELECT ts, s, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -5231,7 +5231,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         return "a_boolean, a_byte, a_short, a_char, an_int, a_long, a_float, a_double," +
                 " a_symbol, an_ipv4, a_uuid, a_long256, a_geo_byte, a_geo_short, a_geo_int," +
                 " a_geo_long, a_decimal8, a_decimal16, a_decimal32, a_decimal64, a_decimal128," +
-                " a_decimal256, a_string, a_varchar, a_bin, an_array, a_date, ts";
+                " a_decimal256, a_string, a_varchar, a_bin, an_array, a_date, ts, pg";
     }
 
     private static String everyTierTypeSelect(long startMicros, long rowCount) {
@@ -5263,7 +5263,8 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 " rnd_bin(4, 16, 3) a_bin," +
                 " rnd_double_array(1) an_array," +
                 " CAST(timestamp_sequence(" + startMicros + ", 100_000) AS DATE) a_date," +
-                " timestamp_sequence(" + startMicros + ", 100_000) ts" +
+                " timestamp_sequence(" + startMicros + ", 100_000) ts," +
+                " CAST(NULL AS SYMBOL) pg" +
                 " FROM long_sequence(" + rowCount + ")";
     }
 
