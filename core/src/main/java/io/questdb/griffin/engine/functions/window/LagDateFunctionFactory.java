@@ -282,6 +282,15 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
                         configuration.getSqlWindowStoreMaxPages(),
                         MemoryTag.NATIVE_CIRCULAR_BUFFER
                 );
+                // Bind the retained per-query tracker to the freshly allocated ring only. The ring
+                // (MemoryCARWImpl) allocates lazily on first append, so binding here -- before that
+                // append -- keeps alloc and free symmetric on the per-query counter. The map is left
+                // untracked on purpose: MapFactory allocates the map backing eagerly at construction,
+                // so binding a tracker post-hoc would decrement bytes that were never charged and
+                // drive the per-query counter negative. The map is small and partition-capped.
+                if (memoryTracker != null) {
+                    memory.setMemoryTracker(memoryTracker);
+                }
             }
             super.computeNext(record);
         }
@@ -314,6 +323,13 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
                         configuration.getSqlWindowStoreMaxPages(),
                         MemoryTag.NATIVE_CIRCULAR_BUFFER
                 );
+                // Bind the retained per-query tracker to the freshly allocated ring. It is created
+                // here, after the tracker was bound, so alloc and free charge the per-query counter
+                // symmetrically. Without this a single LAG could reserve maxPartitions * offset * 8
+                // bytes outside the limit; the cursor owns partition resolution, so no map is needed.
+                if (memoryTracker != null) {
+                    memory.setMemoryTracker(memoryTracker);
+                }
             }
 
             long startOffset = Unsafe.getUnsafe().getLong(partitionStateAddr);

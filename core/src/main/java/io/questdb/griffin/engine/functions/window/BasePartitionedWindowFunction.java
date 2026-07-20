@@ -43,6 +43,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // constructor; null at construction means "lazy", and every lifecycle method below is
     // null-safe.
     protected Map map;
+    // Retained per-query tracker. Held even while map is null (streaming variants allocate their
+    // map/ring lazily) so a later lazy allocation can bind the same tracker and stay on the
+    // per-query counter. Bound by the owning cursor before reopen().
+    protected MemoryTracker memoryTracker;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
 
@@ -96,6 +100,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Retain the tracker even when map is null: streaming variants allocate their map/ring
+        // lazily (in streamingPass1/computeNext), after this call, and read memoryTracker to bind
+        // it to the fresh allocation so it counts against the per-query limit.
+        this.memoryTracker = tracker;
         if (map != null) {
             map.setMemoryTracker(tracker);
         }

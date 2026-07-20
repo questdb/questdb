@@ -279,6 +279,37 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAboveBoundOrdinaryLagFirstExecutionProducesResults() throws Exception {
+        // First-execution regression. An above-bound LAG (offset > MAX_STREAMING_LAG_OFFSET) falls
+        // back to the ordinary cached-helper LagOverPartitionFunction, whose partition map is closed
+        // at construction. The cursor now starts closed so the first of() binds the per-query
+        // MemoryTracker on that function and reopens its map before the first row reaches it. Before
+        // the fix the cursor started open, the first of() skipped reopening the window functions, and
+        // the first processBaseRow dereferenced a zero-backed map through map.withKey() -- an
+        // empirically reproduced JVM SIGSEGV. Fetching the full result (not just the plan) drives that
+        // first execution end to end; a single partition keeps DeferredEmit's partition-major
+        // emission order deterministic without an outer ORDER BY.
+        assertQuery(
+                "select x, sym, " +
+                        "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                        "lead(x, 65_537) over (partition by sym order by ts desc) as ld from t"
+        )
+                .ddl(
+                        "create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day",
+                        "insert into t values (10, 'A', 0), (20, 'A', 1000), (30, 'A', 2000)"
+                )
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("DeferredEmitWindow")
+                .returns(
+                        "x\tsym\tlg\tld\n" +
+                                "10\tA\t20\tnull\n" +
+                                "20\tA\t30\tnull\n" +
+                                "30\tA\tnull\tnull\n"
+                );
+    }
+
+    @Test
     public void testMixedLagAndLeadFallsBackToCachedWhenNotNormalised() throws Exception {
         // Phase 6.1 cost-model: mixed LAG + LEAD without OVER ORDER BY (or with an order matching the
         // base scan direction) has no sort tree for streaming to eliminate. Cached is already optimal,

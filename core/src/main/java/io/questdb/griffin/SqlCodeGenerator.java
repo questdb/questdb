@@ -10533,13 +10533,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     chainMetadata
             );
         } catch (Throwable th) {
+            // Thread the primary failure through every cleanup step so a throwing owner close
+            // (e.g. a SQL-reachable function whose close() throws) attaches as suppressed instead
+            // of replacing the original exception and short-circuiting the remaining frees.
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                Misc.freeObjList(e.value);
+                Misc.freeObjList(e.value, th);
             }
-            Misc.free(base);
-            Misc.freeObjList(functions);
-            Misc.freeObjList(naturalOrderFunctions);
-            Misc.freeObjList(partitionByFunctions);
+            Misc.free(base, th);
+            Misc.freeObjList(functions, th);
+            Misc.freeObjList(naturalOrderFunctions, th);
+            Misc.freeObjList(partitionByFunctions, th);
             throw th;
         }
     }

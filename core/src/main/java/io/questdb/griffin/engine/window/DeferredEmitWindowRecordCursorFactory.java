@@ -293,11 +293,19 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // cursor.of() assigns baseCursor before doing any work that can throw, so any failure
-        // mid-init leaves the cursor owning the reference; _close() -> cursor.close() handles
-        // cleanup via the normal path.
-        cursor.of(base.getCursor(executionContext), executionContext);
-        return cursor;
+        // cursor.of() assigns baseCursor before doing any work that can throw, so a failure
+        // mid-init leaves the cursor owning the reference. Close it here, while the per-query
+        // MemoryTracker is still bound, so partial native allocations (pending ring, partition
+        // map, streaming-function state) are released and no base reader stays busy. Mirrors the
+        // three sibling window factories.
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -350,15 +358,19 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         if (isClosed) {
             return;
         }
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(partitionMap);
+        // Commit to the closed state before touching owners: close is one-shot, so a throwing
+        // owner must not leave _close re-enterable. Close every owner best-effort and rethrow the
+        // first failure with the rest suppressed, so one throwing owner never strands the others.
+        isClosed = true;
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, partitionMap);
         // partitionByRecord shares its underlying Function list with the lookahead window function's
         // own partitionByRecord. VirtualRecord.close() nulls each list entry; the lookahead function's
         // close() runs next (via freeObjList(functions)) and iterates the now-null list as a no-op.
-        Misc.free(partitionByRecord);
-        Misc.freeObjList(functions);
-        isClosed = true;
+        failure = Misc.freeBestEffort(failure, partitionByRecord);
+        failure = Misc.freeObjListBestEffort(failure, functions);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -418,7 +430,13 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         private MemoryARW pendingMem;
 
         DeferredEmitWindowRecordCursor() {
-            this.isOpen = true;
+            // Start closed so the first of() binds the per-query MemoryTracker on the window
+            // functions and the partition map before reopening their native backing, charging
+            // every byte to the per-query counter symmetrically. Mirrors the lazy-open pattern in
+            // CachedWindowRecordCursor. Without this, the first of() would skip the reopen of the
+            // window functions' partition maps (closed at construction) and the first row would
+            // dereference a zero-backed map.
+            this.isOpen = false;
         }
 
         @Override
@@ -426,19 +444,26 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             if (!isOpen) {
                 return;
             }
+            // Set isOpen=false up front: AbstractRecordCursorFactory makes close one-shot, so if
+            // any owner's close throws we must not re-enter and must have already committed to the
+            // closed state. Close every owner best-effort and rethrow the first failure with the
+            // rest attached as suppressed, so one throwing owner never strands the others.
             isOpen = false;
-            baseCursor = Misc.free(baseCursor);
+            Throwable failure = Misc.freeBestEffort(null, baseCursor);
+            baseCursor = null;
             baseRecordForEmit = null;
-            pendingMem = Misc.free(pendingMem);
+            failure = Misc.freeBestEffort(failure, pendingMem);
+            pendingMem = null;
             pendingBaseAddr = 0;
             flushMapCursor = null;
-            resetFunctions();
+            failure = resetFunctionsBestEffort(failure);
             if (partitionMap != null) {
                 // Free (not just clear) so the per-query MemoryTracker bound in of() is decremented
                 // symmetrically; of() reopen()s the backing on the next execution.
-                partitionMap.close();
+                failure = Misc.freeBestEffort(failure, partitionMap);
             }
             clearState();
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override
@@ -494,6 +519,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     beginFlush();
                     continue;
                 }
+                // Check the breaker on every flushed tail too, not just during ingest: after base
+                // EOF the flush can emit up to (partitions * maxLookahead) rows and downstream
+                // consumers (HTTP, PGWire, embedded) do not universally add per-row checks. The
+                // breaker is time-throttled internally, so a per-flush-row check is cheap.
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 long flushSlot = nextFlushSlot();
                 if (flushSlot != -1L) {
                     bindOutputToSlot(outputRecord, flushSlot);
@@ -517,12 +547,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             this.baseCursor = Misc.free(this.baseCursor);
             this.baseCursor = baseCursor;
             // Set isOpen ahead of any throw-prone calls below so close() runs the full cleanup
-            // path on failure. A previously-closed cursor enters of() with isOpen=false; without
-            // this assignment, close()'s early-exit would leak the newly assigned baseCursor.
-            if (!isOpen) {
-                isOpen = true;
-                reopenFunctions();
-            }
+            // path on failure. The cursor starts closed (constructor) and close() sets it back to
+            // false, so of() always reopens the state below; without isOpen=true here, close()'s
+            // early-exit would leak the newly assigned baseCursor and anything reopened below.
+            isOpen = true;
             // baseCursor.getRecordB() typically returns a cached B record; calling it on every
             // of() is cheap. The reference is reused across toTop() because toTop() resets ringHead
             // but does not re-call of(), so the B record we hold remains valid against the same
@@ -537,6 +565,14 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // the map's reopen() both charge the bound tracker, and close() frees against it.
             // partitionMap is null in non-partitioned mode.
             final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+            // Bind the per-query tracker on every window function's tracker-aware state (per-
+            // partition maps and streaming rings) and reopen the state that resetFunctions() and
+            // construction tore down, BEFORE the first row can reach it. This runs on every
+            // execution, including the first: a window function's partition map is closed at
+            // construction (BasePartitionedWindowFunction) and its streaming ring is unallocated,
+            // so binding+reopening here is what makes the first processBaseRow safe and keeps
+            // every function-side allocation on the per-query counter rather than global RSS.
+            bindAndReopenFunctions(memoryTracker);
             if (pendingMem == null) {
                 // Page size = one partition's slice. In non-partitioned mode there is exactly one
                 // page; in partitioned mode each new partition extends pendingMem by one page via
@@ -587,14 +623,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public void reopen() {
-            if (!isOpen) {
-                isOpen = true;
-                // Restore per-function state that resetFunctions() tore down in close().
-                // The subsequent of() short-circuits its own reopenFunctions() now that isOpen=true,
-                // so reopen() must take responsibility here. Without this, reopen()-then-of() would
-                // leave streaming/cached window functions in their post-close state.
-                reopenFunctions();
-            }
+            // Per-function state and pendingMem are (re)bound and reopened by the of() that always
+            // follows reopen(); of() binds the per-query MemoryTracker first so their backing
+            // allocates under it. Reopening the functions here (without a tracker) would leave that
+            // allocation unaccounted, so reopen() only resets the cursor's own scalar state.
+            isOpen = true;
             // partitionMap is intentionally left closed here: close() freed it and the of() that
             // always follows reopen() binds the per-query tracker before reopen()ing the backing.
             // Touching a closed map here (clear() memsets a null base) would crash.
@@ -882,22 +915,39 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
         }
 
-        private void reopenFunctions() {
+        private void bindAndReopenFunctions(MemoryTracker memoryTracker) {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 Function f = functions.getQuick(i);
+                if (f instanceof WindowFunction wf) {
+                    // Bind the tracker before reopen so the function's tracker-aware state (its
+                    // partition map and, for streaming variants, the lazily allocated ring)
+                    // charges the per-query counter. BasePartitionedWindowFunction retains the
+                    // tracker even while its map is null, so a ring created later in
+                    // streamingPass1 inherits it.
+                    wf.setMemoryTracker(memoryTracker);
+                }
                 if (f instanceof Reopenable r) {
                     r.reopen();
                 }
             }
         }
 
-        private void resetFunctions() {
+        private Throwable resetFunctionsBestEffort(Throwable failure) {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 Function f = functions.getQuick(i);
                 if (f instanceof WindowFunction wf) {
-                    wf.reset();
+                    try {
+                        wf.reset();
+                    } catch (Throwable th) {
+                        if (failure == null) {
+                            failure = th;
+                        } else if (th != failure) {
+                            failure.addSuppressed(th);
+                        }
+                    }
                 }
             }
+            return failure;
         }
 
         private void resetSinglePartitionStateIfNonPartitioned() {
