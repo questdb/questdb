@@ -190,6 +190,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Memory pages stay mmapped between writes so a frequently-checkpointed LV
     // does not pay reopen cost. Freed at job close.
     private LiveViewCheckpointWriter checkpointWriter;
+    // Dedicated publisher for strictly in-order versioned-timeline cadence
+    // entries. O3 forced checkpoints remain on the ring path until Phase 5 can
+    // range-splice historical roots.
+    private LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter;
+    @TestOnly
+    private volatile int checkpointTimelineTestFailureStage;
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
@@ -329,6 +335,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(applyJob);
         checkpointReader = Misc.free(checkpointReader);
         checkpointWriter = Misc.free(checkpointWriter);
+        checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
         ringManifestWriter = Misc.free(ringManifestWriter);
         stagingBuffer = Misc.free(stagingBuffer);
     }
@@ -380,6 +387,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // time. The continuation framework may remount this job on a peer carrier,
         // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
+    }
+
+    /** Test-only failure injection for crash-ordering coverage of timeline publication. */
+    @TestOnly
+    public void setCheckpointTimelineTestFailureStage(int stage) {
+        checkpointTimelineTestFailureStage = stage;
+        if (checkpointTimelineStoreWriter != null) {
+            checkpointTimelineStoreWriter.setTestFailureStage(stage);
+        }
     }
 
     /**
@@ -4418,6 +4434,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            if (!force) {
+                if (checkpointTimelineStoreWriter == null) {
+                    checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+                    checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+                }
+                final long createdLvSeqTxn = engine.getTableSequencerAPI()
+                        .getTxnTracker(instance.getLiveViewToken())
+                        .getWriterTxn();
+                path.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                checkpointTimelineStoreWriter.append(
+                        path,
+                        functions,
+                        anchorWindow,
+                        instance.getLiveViewToken().getTableId(),
+                        createdLvSeqTxn,
+                        batchMaxTs,
+                        instance.getLvRowsTotal()
+                );
+            }
             final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
             // Test-only: omit the last N function-snapshot blocks to forge a
             // CRC-valid-but-short checkpoint. 0 in production, so the limit is

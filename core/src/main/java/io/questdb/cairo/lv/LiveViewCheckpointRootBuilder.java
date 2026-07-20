@@ -51,6 +51,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     private final LiveViewCheckpointFunctionRoot functionRoot;
     private LiveViewCheckpointPageRef[] functionRootRefs = new LiveViewCheckpointPageRef[8];
     private boolean initialized;
+    private long lastSegmentBytes;
     private long maxTimestamp;
     private final LiveViewCheckpointRoot resultRoot;
     private final LongList segmentIds = new LongList();
@@ -139,7 +140,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
                 segmentIds
         );
         resultRoot.writeTo(segmentWriter, out);
-        segmentWriter.commit();
+        lastSegmentBytes = segmentWriter.commit();
     }
 
     @Override
@@ -153,6 +154,10 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     public void getReferencedSegmentIds(@NotNull LongList out) {
         out.clear();
         out.add(segmentIds);
+    }
+
+    public long getLastSegmentBytes() {
+        return lastSegmentBytes;
     }
 
     private void addSegmentId(long segmentId) {

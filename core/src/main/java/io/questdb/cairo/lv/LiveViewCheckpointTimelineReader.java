@@ -120,6 +120,35 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
     }
 
     /**
+     * Finds the greatest composite key in the tree in {@code O(log N)} time.
+     * Normal checkpoint sealing uses this to enforce that an append-only cadence
+     * boundary is strictly above the current head before it freezes any state.
+     */
+    public boolean last(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull LiveViewCheckpointTimelineEntry out) {
+        if (rootRef.isNull()) {
+            return false;
+        }
+        long segmentId = rootRef.getSegmentId();
+        long offset = rootRef.getOffset();
+        long length = rootRef.getLength();
+        while (true) {
+            openAndDecode(segmentId, offset, length, navNode);
+            final int count = navNode.count();
+            if (count == 0) {
+                throw LiveViewCheckpointMetadata.invalid("timeline node is empty");
+            }
+            if (navNode.isLeaf()) {
+                navNode.copyEntryTo(count - 1, out);
+                return true;
+            }
+            final int child = count - 1;
+            segmentId = navNode.childSegmentId[child];
+            offset = navNode.childOffset[child];
+            length = navNode.childLength[child];
+        }
+    }
+
+    /**
      * Opens the reader against a live view's {@code _checkpoints} directory. The
      * root reference passed to each query pins the generation; this call only
      * fixes where metadata segments live.

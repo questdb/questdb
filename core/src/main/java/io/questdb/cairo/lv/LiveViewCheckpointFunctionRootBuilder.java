@@ -57,6 +57,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
     private final LiveViewCheckpointStatePageRef scalarStateRef = new LiveViewCheckpointStatePageRef();
     private LiveViewCheckpointPartitionMapWriter.Mutation[] mutations = new LiveViewCheckpointPartitionMapWriter.Mutation[8];
     private boolean initialized;
+    private long lastSegmentBytes;
     private int mutationCount;
     private int stateFormatVersion;
 
@@ -110,7 +111,7 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
                 candidateCounts
         );
         resultFunctionRoot.writeTo(segmentWriter, out);
-        segmentWriter.commit();
+        lastSegmentBytes = segmentWriter.commit();
         segmentUseCounts.clear();
         segmentUseCounts.add(candidateCounts);
         oldPartitionMapRoot.of(partitionMapRoot.getSegmentId(), partitionMapRoot.getOffset(), partitionMapRoot.getLength());
@@ -157,6 +158,10 @@ public class LiveViewCheckpointFunctionRootBuilder implements Closeable {
             }
         }
         initialized = true;
+    }
+
+    public long getLastSegmentBytes() {
+        return lastSegmentBytes;
     }
 
     public void putPartition(
