@@ -72,15 +72,20 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             boolean orderedByTimestampAsc
     ) {
         // The cursor emits one row per partition key in map (key-insertion) order, NOT in
-        // designated-timestamp order, so this factory must not advertise a designated timestamp:
-        // advertising one would imply the output is ordered by it (ascending or descending), which
-        // it is not. Strip the timestamp from the base metadata. The sibling LatestByRecordCursorFactory
-        // (the non-random-access path) sorts its row indexes before replaying the base cursor, so it
-        // emits in base-scan order and legitimately keeps the timestamp; this light path trades that
-        // sort for random access and loses the ordering. With no designated timestamp the scan
-        // direction is vacuous, so -- like keyed GROUP BY and DISTINCT -- this factory does not
-        // override getScanDirection() and inherits the default.
-        super(GenericRecordMetadata.copyOfSansTimestamp(base.getMetadata()));
+        // designated-timestamp order, so this factory must not advertise a FORWARD/BACKWARD scan
+        // direction: that would imply the output is ordered by the timestamp (ascending or
+        // descending), which it is not. It DOES keep the timestamp column and its VALUES though
+        // (LATEST ON never drops the column), so the output metadata still designates it -- a
+        // downstream time-series op (SAMPLE BY, ASOF/LT join, another LATEST ON, ...) needs a
+        // designated timestamp merely to know which column to key its logic on; whether that
+        // column is actually in order is a SEPARATE question, answered by getScanDirection()
+        // below (overridden to SCAN_DIRECTION_OTHER), not by metadata ts-designation. A consumer
+        // that additionally requires ORDER (e.g. ORDER BY <ts>, or SAMPLE BY's own ASC-order
+        // check) sees SCAN_DIRECTION_OTHER and inserts its own sort rather than wrongly taking a
+        // sort-skip fast path. FilterOnValuesRecordCursorFactory is the precedent for this split:
+        // it also keeps ts designated on metadata while overriding getScanDirection() to
+        // SCAN_DIRECTION_OTHER whenever its own multi-key scan isn't actually order-preserving.
+        super(buildMetadata(base, timestampIndex));
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
@@ -95,6 +100,17 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         this.cursor = new LatestByLightRecordCursor(latestByMap);
         this.timestampIndex = timestampIndex;
         this.orderedByTimestampAsc = orderedByTimestampAsc;
+    }
+
+    // A private static helper (rather than inline in the super(...) call) because a constructor
+    // cannot run statements before its super() call; timestampIndex is the column the LATEST ON
+    // clause actually named (via "LATEST ON <col>"), which the caller resolved and may differ
+    // from base's OWN designated timestamp column, so it -- not base.getMetadata().getTimestampIndex()
+    // -- is the correct index to designate here.
+    private static GenericRecordMetadata buildMetadata(RecordCursorFactory base, int timestampIndex) {
+        GenericRecordMetadata metadata = GenericRecordMetadata.copyOfSansTimestamp(base.getMetadata());
+        metadata.setTimestampIndex(timestampIndex);
+        return metadata;
     }
 
     @Override
@@ -115,6 +131,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             cursor.close();
             throw th;
         }
+    }
+
+    @Override
+    public int getScanDirection() {
+        // See the constructor comment: the map emits rows in partition-key insertion order, not
+        // in timestamp order, so this is neither a forward nor a backward ts-ordered scan.
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
