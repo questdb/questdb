@@ -26,15 +26,24 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Gates an outer scan behind a whole-predicate boolean filter that is a runtime constant, i.e.
@@ -52,10 +61,22 @@ import io.questdb.std.Misc;
  *     outer I/O.</li>
  * </ul>
  * The gate owns both the base factory and the filter and frees each exactly once on close,
- * including on the false path where the base cursor was never opened.
+ * including on the record-cursor false path where the base cursor was never opened.
+ * <p>
+ * The gate also preserves the base's page-frame capability: {@link #supportsPageFrameCursor()}
+ * reports the base's value, so a parent parallel/vectorized operator (count/sum aggregation,
+ * parallel GROUP BY, horizon join, TopK) keeps its page-frame path instead of falling back to
+ * serial. On {@link #getPageFrameCursor} the true path delegates straight to the base cursor
+ * (full parallel scan), while the false path returns a wrapper that yields zero frames. That
+ * false page-frame wrapper opens a real base cursor so the metadata accessors
+ * ({@code getColumnMapping()}, {@code getSymbolTable()}) honor their contracts during a parallel
+ * consumer's setup - acquiring the base reader but lifting no column data. Only the rare false
+ * page-frame path pays that reader acquisition; the common false record-cursor path stays fully
+ * zero-I/O.
  */
 public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFactory {
     private RecordCursorFactory base;
+    private EmptyPageFrameCursor emptyPageFrameCursor;
     private Function filter;
 
     public RuntimeConstGateRecordCursorFactory(RecordCursorFactory base, Function filter) {
@@ -89,6 +110,36 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        // Re-evaluate the runtime constant for THIS execution, same contract as getCursor. A
+        // consumer calls exactly one of getCursor()/getPageFrameCursor() per execution.
+        filter.init(null, executionContext);
+        if (filter.getBool(null)) {
+            // TRUE: delegate straight to the base page-frame cursor so the base's full parallel /
+            // vectorized scan is preserved with zero wrapper overhead.
+            return base.getPageFrameCursor(executionContext, order);
+        }
+        // The empty result never iterates and never consults the circuit breaker on its own.
+        // Honor cancellation once at open, so a gated-out query still observes a tripped breaker.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+        // FALSE: open a real base page-frame cursor so getColumnMapping()/getSymbolTable()/
+        // newSymbolTable() honor their contracts during a parallel consumer's setup, then wrap it
+        // to yield ZERO frames so no column data is ever lifted. This acquires the base reader on
+        // the rare false page-frame path; the common false record-cursor path (getCursor) stays
+        // fully zero-I/O.
+        final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
+        try {
+            if (emptyPageFrameCursor == null) {
+                emptyPageFrameCursor = new EmptyPageFrameCursor();
+            }
+            return emptyPageFrameCursor.of(baseCursor);
+        } catch (Throwable th) {
+            Misc.free(baseCursor);
+            throw th;
+        }
+    }
+
+    @Override
     public int getScanDirection() {
         return base.getScanDirection();
     }
@@ -119,6 +170,15 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         return base.recordCursorSupportsRandomAccess();
     }
 
+    // The gate keeps the base's page-frame capability: TRUE delegates to the base cursor (full
+    // parallel scan), FALSE returns an empty page-frame cursor. Reporting the base's value lets a
+    // parent parallel/vectorized operator keep its page-frame path instead of falling back to
+    // serial.
+    @Override
+    public boolean supportsPageFrameCursor() {
+        return base.supportsPageFrameCursor();
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
@@ -143,13 +203,121 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
+        final EmptyPageFrameCursor emptyPageFrameCursor = this.emptyPageFrameCursor;
+        this.emptyPageFrameCursor = null;
         final RecordCursorFactory base = this.base;
         this.base = null;
         final Function filter = this.filter;
         this.filter = null;
 
-        Throwable failure = Misc.freeBestEffort(null, base);
+        Throwable failure = Misc.freeBestEffort(null, emptyPageFrameCursor);
+        failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Wraps a real base page-frame cursor to expose an EMPTY scan for the gate's false path.
+     * Every frame-producing method reports empty so no column data is ever lifted, while the
+     * metadata accessors delegate to the base cursor so a parallel consumer's setup contract is
+     * honored. Opening the base cursor acquires its reader; the wrapper releases it on close.
+     */
+    private static final class EmptyPageFrameCursor implements TablePageFrameCursor {
+        private PageFrameCursor baseCursor;
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            // Empty scan: no rows to add to the counter.
+        }
+
+        @Override
+        public void close() {
+            baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public ColumnMapping getColumnMapping() {
+            return baseCursor.getColumnMapping();
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return 0;
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        // For a table base the held base cursor is a real TablePageFrameCursor, so this cast is
+        // safe and hands consumers the base reader - the same one the TRUE path would expose.
+        @Override
+        public TableReader getTableReader() {
+            return ((TablePageFrameCursor) baseCursor).getTableReader();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return ((TablePageFrameCursor) baseCursor).hasIntervalFilter();
+        }
+
+        @Override
+        public boolean isExternal() {
+            return baseCursor.isExternal();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public @Nullable PageFrame next(long skipTarget) {
+            return null;
+        }
+
+        // This wrapper is initialized via of(PageFrameCursor), not via
+        // of(SqlExecutionContext, PartitionFrameCursor). The base factory's getPageFrameCursor()
+        // already handles partition-level initialization; we only wrap its result.
+        @Override
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void releaseOpenPartitions() {
+            baseCursor.releaseOpenPartitions();
+        }
+
+        @Override
+        public void setScanProfile(ReaderScanProfile profile) {
+            baseCursor.setScanProfile(profile);
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return true;
+        }
+
+        @Override
+        public void toPartition(int partitionIndex) {
+            ((TablePageFrameCursor) baseCursor).toPartition(partitionIndex);
+        }
+
+        @Override
+        public void toTop() {
+            // Empty scan: nothing to rewind.
+        }
+
+        private EmptyPageFrameCursor of(PageFrameCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            return this;
+        }
     }
 }
