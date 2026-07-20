@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
@@ -1154,7 +1155,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
-            // no signature match — find the best descriptor for a helpful error message
+            // no signature match. A CURSOR argument may be a scalar boolean sub-query used in
+            // boolean context (e.g. "a and (select b from x)"); coerce such arguments to
+            // BOOLEAN and retry once. Coerced arguments are no longer CURSOR-typed, so the
+            // retry cannot recurse further.
+            boolean coerced = false;
+            for (int i = 0; i < argCount; i++) {
+                final Function wrapped = BooleanSubQueryFunction.maybeWrap(args.getQuick(i), argPositions.getQuick(i));
+                if (wrapped != null) {
+                    args.setQuick(i, wrapped);
+                    coerced = true;
+                }
+            }
+            if (coerced) {
+                return createFunction(node, args, argPositions);
+            }
+
+            // find the best descriptor for a helpful error message
             if (overload.size() == 1) {
                 candidateDescriptor = overload.getQuick(0);
             } else {

@@ -3233,6 +3233,25 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBareTokenlessSubQueryPredicateKeptAsFilter() throws Exception {
+        // a sub-query used directly as a boolean predicate has a null token;
+        // it is not an intrinsic and must survive extraction as a regular filter
+        // (used to throw NPE)
+        IntrinsicModel m = modelOf("(select * from x)");
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testIntervalExtractedAroundTokenlessSubQueryConjunct() throws Exception {
+        // the timestamp intrinsic must still be extracted while the tokenless
+        // sub-query conjunct stays in the residual filter (used to throw NPE)
+        IntrinsicModel m = modelOf("timestamp in '2015-02-23' and (select * from x)");
+        TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]"), intervalToString(m));
+        Assert.assertNotNull(m.filter);
+    }
+
+    @Test
     public void testNotInIntervalIntersect() throws Exception {
         IntrinsicModel m = modelOf("timestamp not between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z' and timestamp in '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
@@ -3742,6 +3761,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T00:00:00.000000Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
                 intervalToString(m)
         );
+    }
+
+    @Test
+    public void testTimestampEqualsOrSubqueryOnLeft() throws Exception {
+        IntrinsicModel m = modelOf("(select * from x) or timestamp = '2018-01-01'");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'2018-01-01' timestamp = (select-choose * from (x)) or");
+    }
+
+    @Test
+    public void testTimestampEqualsOrSubqueryOnRight() throws Exception {
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (select * from x)");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "(select-choose * from (x)) '2018-01-01' timestamp = or");
     }
 
     @Test

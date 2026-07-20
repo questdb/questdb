@@ -77,6 +77,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -734,6 +735,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function filter = functionParser.parseFunction(expr, metadata, executionContext);
         if (isBoolean(filter.getType())) {
             return filter;
+        }
+        // a scalar boolean sub-query used directly as a predicate evaluates once per execution
+        final Function coerced = BooleanSubQueryFunction.maybeWrap(filter, expr.position);
+        if (coerced != null) {
+            return coerced;
         }
         Misc.free(filter);
         throw SqlException.$(expr.position, "boolean expression expected");
@@ -6494,8 +6500,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
                 if (!isBoolean(filter.getType())) {
-                    Misc.free(filter);
-                    throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
+                    // a scalar boolean sub-query used directly as a predicate evaluates once per execution
+                    final Function coerced = BooleanSubQueryFunction.maybeWrap(filter, constFilterExpr.position);
+                    if (coerced == null) {
+                        Misc.free(filter);
+                        throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
+                    }
+                    filter = coerced;
                 }
                 filter.init(null, executionContext);
                 if (filter.isConstant()) {
