@@ -860,6 +860,85 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedOffsetsCalendarUnitComposesInOrder() throws Exception {
+        // Two nested models carrying different offset units leave a genuinely nested wrapper,
+        // and_offset(and_offset(pred,'M',o1),'h',o2). Rebuilding that residual must recurse into the
+        // inner wrapper BEFORE wrapping the outer one: wrapTimestampLiteral only replaces LITERAL
+        // nodes, so whichever pass runs first plants its dateadd at the leaf and the later pass nests
+        // around it. Wrapping outer-first yields dateadd('M',1,dateadd('h',5,ts)) where the correct
+        // composition is dateadd('h',5,dateadd('M',1,ts)). Calendar units do not commute with
+        // fixed-tick units, so the reversed order drops the rows the day-of-month clamp folds onto
+        // the bound - here Jan 29/30/31, which all clamp onto Feb 28.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2022-01-28T20:00:00.000000Z',1),
+                        ('2022-01-29T20:00:00.000000Z',2),
+                        ('2022-01-30T20:00:00.000000Z',3),
+                        ('2022-01-31T20:00:00.000000Z',4),
+                        ('2022-02-01T20:00:00.000000Z',5)
+                    """);
+            assertQuery("""
+                    SELECT tt, v FROM (
+                      SELECT dateadd('h',5,t1) tt, v
+                      FROM (SELECT dateadd('M',1,ts) t1, v FROM tab) timestamp(t1)
+                    ) timestamp(tt)
+                    WHERE tt = '2022-03-01T01:00:00.000000Z'
+                    """)
+                    .timestamp("tt")
+                    // Pin the nesting order itself, not just the row set: the 'M' shift must be applied
+                    // to ts FIRST, matching tt = dateadd('h',5,dateadd('M',1,ts)).
+                    .withPlanContaining("dateadd('h',5,dateadd('M',1,ts))")
+                    .returns("""
+                            tt\tv
+                            2022-03-01T01:00:00.000000Z\t1
+                            2022-03-01T01:00:00.000000Z\t2
+                            2022-03-01T01:00:00.000000Z\t3
+                            2022-03-01T01:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedOffsetsCalendarUnitOnIndexedSymbolPath() throws Exception {
+        // The indexed-symbol filter path compiles intrinsicModel.filter through compileBooleanFilter
+        // rather than generateFilter0, so it never reached the stranded-wrapper rebuild that
+        // generateFilter0 performs. A nested and_offset left behind by rebuildAndOffsetResidual
+        // therefore went straight to the function compiler and surfaced as
+        // "unknown function name: and_offset(BOOLEAN,CHAR,INT)". Dropping the INDEX made the same
+        // query compile. Rebuilding the nested wrapper at source removes it before any filter path
+        // sees it; the second query is the no-pushdown oracle for the row count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX, v INT) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("INSERT INTO tab SELECT dateadd('m',(x*53)::int,'2021-12-20T00:00:00.000000Z'),'k'||(x%3),x::int FROM long_sequence(4000)");
+            assertQuery("""
+                    SELECT count() FROM (
+                      SELECT dateadd('h',1,t1) tt, s, v
+                      FROM (SELECT dateadd('M',1,ts) t1, s, v FROM tab) timestamp(t1)
+                    ) timestamp(tt)
+                    WHERE tt IN '2022-02-28' AND s = 'k1'
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            35
+                            """);
+            assertQuery("""
+                    SELECT count() FROM tab
+                    WHERE dateadd('h',1,dateadd('M',1,ts)) IN '2022-02-28' AND s = 'k1'
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            35
+                            """);
+        });
+    }
+
+    @Test
     public void testNestedOffsetsPushdown() throws Exception {
         // Test that nested dateadd offsets both get applied
         assertMemoryLeak(() -> {
@@ -1777,6 +1856,32 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                 "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
                 ") WHERE ts > '2022-01-01'")
                 .fails(0, "timestamp overflow");
+    }
+
+    @Test
+    public void testUnknownOffsetUnitOnIndexedSymbolPathReportsInvalidPeriod() throws Exception {
+        // detectTimestampOffset's parseUnitCharacter accepts ANY single character, so an invalid
+        // dateadd unit still gets wrapped in and_offset. analyzeAndOffset then bails at
+        // getAddMethod(unit) == null, which used to leave the wrapper in the residual. On the
+        // non-indexed path generateFilter0 rebuilt it and the user saw dateadd's own
+        // "invalid time period" error; on the indexed-symbol path the wrapper reached the function
+        // compiler and leaked the internal name instead. Both paths must report the real error.
+        assertMemoryLeak(() -> execute(
+                "CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX, v INT) TIMESTAMP(ts) PARTITION BY DAY"));
+
+        // The three filter-compilation paths must all report the same error. Naming the unit pins
+        // that the rebuilt dateadd carries the original token rather than some other bad unit.
+        // Indexed symbol and LATEST ON compile intrinsicModel.filter directly; the plain predicate
+        // goes through generateFilter0, which already rebuilt stranded wrappers.
+        assertQuery("SELECT * FROM (SELECT dateadd('z',1,ts) tt, s, v FROM tab) timestamp(tt) "
+                + "WHERE tt IN '2022-01-01' AND s = 'k1'")
+                .fails(79, "invalid time period [unit=z]");
+        assertQuery("SELECT * FROM (SELECT dateadd('z',1,ts) tt, s, v FROM tab) timestamp(tt) "
+                + "WHERE tt IN '2022-01-01' LATEST ON tt PARTITION BY s")
+                .fails(79, "invalid time period [unit=z]");
+        assertQuery("SELECT * FROM (SELECT dateadd('z',1,ts) tt, s, v FROM tab) timestamp(tt) "
+                + "WHERE tt IN '2022-01-01' AND v = 1")
+                .fails(79, "invalid time period [unit=z]");
     }
 
     @Test

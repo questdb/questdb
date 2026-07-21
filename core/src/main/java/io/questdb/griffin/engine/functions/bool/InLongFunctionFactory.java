@@ -208,37 +208,6 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Reports whether any IN-list element (args past index 0) is LONG-width
-     * typed, i.e. not an INT-width one, so a long-width set is needed.
-     */
-    private static boolean hasLongWidthElement(ObjList<Function> args) {
-        for (int i = 1, n = args.size(); i < n; i++) {
-            if (!isIntWidthTag(ColumnType.tagOf(args.getQuick(i).getType()))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Reports whether any IN-list element (args past index 0) may feed the
-     * INT-width set for a narrow-integer key: an INT-width element (INT/SHORT/BYTE,
-     * or an untyped NULL) always does, and a numeric STRING/VARCHAR/SYMBOL element
-     * does when its value fits INT (decided per value at parse time). A string-like
-     * element is counted here even if it later widens, so the INT-width set is
-     * allocated and the key probed at INT width whenever one is present.
-     */
-    private static boolean hasNarrowIntElement(ObjList<Function> args) {
-        for (int i = 1, n = args.size(); i < n; i++) {
-            final int tag = ColumnType.tagOf(args.getQuick(i).getType());
-            if (isIntWidthTag(tag) || isNumericStringLike(tag)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Reports whether {@code val} fits the INT range excluding the INT_NULL
      * sentinel (Integer.MIN_VALUE), i.e. it would type as an INT literal and so
      * wrap a narrow-integer key mod 2^32 rather than widen it.
@@ -492,22 +461,23 @@ public class InLongFunctionFactory implements FunctionFactory {
             this.valueFunctionPositions = valueFunctionPositions;
             this.isNarrowIntKey = isNarrowIntKey;
             this.isSplitKey = isSplitKey;
-            // The int/long split is by element TYPE, so which sets can ever be used is
-            // fixed here (init() only refreshes their runtime-constant values).
-            // Allocate only the sets an element feeds so getBool probes once on a
-            // single-width list, and guard both allocations so a native OOM on the
-            // second cannot leak the first.
-            final boolean isIntSetNeeded = isSplitKey && hasNarrowIntElement(valueFunctions);
-            final boolean isLongSetNeeded = !isSplitKey || hasLongWidthElement(valueFunctions);
+            // The int/long split is by element TYPE, but a runtime-constant element's type is only
+            // final once init() has run - an indexed bind variable is legally UNDEFINED at compile
+            // time, and the same factory is re-executed after a re-bind to a different type. So the
+            // ctor cannot know which sets init() will fill: sizing them off the compile-time
+            // snapshot left parseToSets adding to a null set. A split key routes elements to either
+            // set by runtime type, so allocate both; every other key reads the same number at both
+            // widths and only ever needs the long one. This mirrors the all-constant path above,
+            // whose types ARE final. init() recomputes hasIntSet/hasLongSet from the post-parse
+            // sizes, so an unused set costs nothing per row. Both allocations are guarded so a
+            // native OOM on the second cannot leak the first.
             DirectLongHashSet intSet = null;
             DirectLongHashSet longSet = null;
             try {
-                if (isIntSetNeeded) {
+                if (isSplitKey) {
                     intSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
                 }
-                if (isLongSetNeeded) {
-                    longSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
-                }
+                longSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
             } catch (Throwable e) {
                 Misc.free(intSet);
                 Misc.free(longSet);
@@ -670,6 +640,12 @@ public class InLongFunctionFactory implements FunctionFactory {
         // Dynamic entries hold their args index. Constant entries hold -(run index + 1).
         private final IntList elementIndexes;
         private final IntList elementKinds;
+        // Compile-time snapshots of the KEY's width, unlike elementKinds, which init() refreshes.
+        // They cannot be refreshed in isolation: the ctor already baked them into constValues and
+        // the constSets width partitioning, so recomputing them would need those re-derived too.
+        // Re-binding the KEY of "WHERE $1 IN (col, ...)" to a different width is therefore
+        // unsupported - it reads the key through the old width's accessor. Reachable only from the
+        // embedded API: every wire protocol reconciles parameter types and recompiles instead.
         private final boolean isNarrowIntKey;
         private final boolean isSplitKey;
 
@@ -716,27 +692,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                     currentConstSet = null;
                     currentConstKind = -1;
                     elementIndexes.add(i);
-                    switch (tag) {
-                        case ColumnType.BYTE:
-                        case ColumnType.SHORT:
-                        case ColumnType.INT:
-                            elementKinds.add(KIND_NARROW_INT);
-                            break;
-                        case ColumnType.LONG:
-                        case ColumnType.TIMESTAMP:
-                            elementKinds.add(KIND_LONG);
-                            break;
-                        case ColumnType.VARCHAR:
-                            elementKinds.add(KIND_VARCHAR);
-                            break;
-                        case ColumnType.STRING:
-                        case ColumnType.SYMBOL:
-                            elementKinds.add(KIND_STR);
-                            break;
-                        default:
-                            elementKinds.add(KIND_NONE);
-                            break;
-                    }
+                    elementKinds.add(dynamicElementKind(tag));
                 }
             } catch (Throwable e) {
                 Misc.freeObjList(constSets);
@@ -845,6 +801,24 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            // A non-constant element's type is only final once the call above has refreshed the
+            // link functions: an indexed bind variable is legally UNDEFINED at compile time, and the
+            // same factory is re-executed after a re-bind to a different type. Freezing the kinds in
+            // the ctor sent a re-bound element down the wrong accessor - getStrA() on a LONG bind
+            // throws, and a stale KIND_NONE silently compared every row against NULL instead.
+            // Constant entries keep their ctor kinds: their types ARE final, and their values are
+            // already partitioned into constSets by width.
+            for (int i = 0, n = elementIndexes.size(); i < n; i++) {
+                final int elementIndex = elementIndexes.getQuick(i);
+                if (elementIndex >= 0) {
+                    elementKinds.setQuick(i, dynamicElementKind(ColumnType.tagOf(args.getQuick(elementIndex).getType())));
+                }
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(args.getQuick(0));
             if (negated) {
@@ -869,6 +843,21 @@ public class InLongFunctionFactory implements FunctionFactory {
                 default:
                     return Numbers.parseLongQuiet(func.getStrA(null));
             }
+        }
+
+        /**
+         * Maps a non-constant element's type tag to the KIND_* the per-row dispatch reads. Shared by
+         * the constructor and {@link #init}, which has to recompute it once the element types are
+         * final.
+         */
+        private static int dynamicElementKind(int tag) {
+            return switch (tag) {
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT -> KIND_NARROW_INT;
+                case ColumnType.LONG, ColumnType.TIMESTAMP -> KIND_LONG;
+                case ColumnType.VARCHAR -> KIND_VARCHAR;
+                case ColumnType.STRING, ColumnType.SYMBOL -> KIND_STR;
+                default -> KIND_NONE;
+            };
         }
     }
 }

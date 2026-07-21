@@ -674,10 +674,21 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);
-            slaveTimestamps.of(slaveData.get(idx, 1));
-            slaveRowIds.of(slaveData.get(idx, 0));
+            // Read the raw pointers before binding the flyweights: a key absent from the slave leaves
+            // 0 here, and GroupByLongList.of(0) ALLOCATES an empty list instead of binding one. The
+            // pointer is never written back, so binding unconditionally allocated once per master row
+            // and the bump allocator only reclaims at an index rebuild - which stops for good once
+            // lastSlaveTimestamp reaches INDEX_COMPLETE. Mirrors the async cursor and the two
+            // prevailing cursors below.
+            final long rowIdsPtr = slaveData.get(idx, 0);
+            final long timestampsPtr = slaveData.get(idx, 1);
 
-            if (slaveTimestamps.size() > 0) {
+            if (rowIdsPtr != 0) {
+                slaveRowIds.of(rowIdsPtr);
+                assert slaveRowIds.size() > 0;
+                slaveTimestamps.of(timestampsPtr);
+                assert slaveTimestamps.size() > 0;
+
                 long rowLo = slaveData.get(idx, 2);
                 rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                 rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
@@ -985,8 +996,12 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
             final int masterKey = internalJoinRecord.getInt(masterSymbolIndex);
             final int idx = toSymbolMapKey(masterKey);
-            timestamps.of(slaveData.get(idx, 0));
-            if (timestamps.size() > 0) {
+            // See the scalar cursor: binding the flyweight to a 0 pointer allocates an empty list
+            // that is never written back, so an unmatched key allocated once per master row.
+            final long timestampsPtr = slaveData.get(idx, 0);
+            if (timestampsPtr != 0) {
+                timestamps.of(timestampsPtr);
+                assert timestamps.size() > 0;
                 long rowLo = slaveData.get(idx, 1);
                 rowLo = Vect.binarySearch64Bit(timestamps.dataPtr(), slaveTimestampLo, rowLo, timestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                 rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;

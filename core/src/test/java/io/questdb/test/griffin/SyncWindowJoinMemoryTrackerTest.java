@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
@@ -166,6 +167,34 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testKeyedWindowJoinUnmatchedKeysDoNotGrowAllocatorScalar() throws Exception {
+        // A master key absent from the slave leaves slaveData holding 0, and GroupByLongList.of(0)
+        // ALLOCATES a fresh empty list rather than binding an existing one. The serial cursors never
+        // wrote that pointer back, so every master row carrying an unmatched key allocated again.
+        // FastGroupByAllocator.free() is a no-op below its chunk size, so the only reclamation is
+        // slaveAllocator.clear() at an index rebuild - and once the slave is exhausted the cursor
+        // sets lastSlaveTimestamp = INDEX_COMPLETE (Long.MAX_VALUE), after which the rebuild gate
+        // masterTimestampHi > lastSlaveTimestamp can never fire again. Growth is then unbounded for
+        // the rest of the scan. The async sibling guards this with `if (rowIdsPtr != 0)`.
+        //
+        // Symbols are disjoint here ('t...' vs 'p...'), so NO master row matches: the aggregates
+        // allocate nothing and the per-query limit can only be reached by the leak. The slave spans
+        // 10_000s against the master's 100_000s, so the index completes about a tenth of the way in
+        // and the remaining ~90_000 master rows accumulate two lists each, roughly 24 MB against the
+        // 8 MiB limit. array_agg is not batch-computable, which is what routes to the scalar cursor.
+        assertUnmatchedKeysDoNotGrowAllocator("array_agg(p.price)", false);
+    }
+
+    @Test
+    public void testKeyedWindowJoinUnmatchedKeysDoNotGrowAllocatorVectorized() throws Exception {
+        // The vectorized twin of testKeyedWindowJoinUnmatchedKeysDoNotGrowAllocatorScalar, covering
+        // the second unguarded bind. sum() is batch-computable, which is what routes here. It leaks
+        // one list per master row rather than two, so roughly 12 MB against the 8 MiB limit. Kept
+        // separate so a regression names the cursor that broke instead of stopping at the first.
+        assertUnmatchedKeysDoNotGrowAllocator("sum(p.price)", true);
     }
 
     @Test
@@ -362,6 +391,44 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
+    private void assertUnmatchedKeysDoNotGrowAllocator(String aggregate, boolean isVectorized) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createDisjointTrades(engine, sqlExecutionContext, 100_000);
+                        createDisjointPrices(engine, sqlExecutionContext, 100_000);
+                        final String query = "SELECT t.ts, " + aggregate + " " +
+                                "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                                "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING EXCLUDE PREVAILING";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, WindowJoinFastRecordCursorFactory.class);
+                            // Pin WHICH inner cursor runs, so a routing change cannot silently move
+                            // this off the site it covers.
+                            final TextPlanSink planSink = new TextPlanSink();
+                            planSink.of(factory, sqlExecutionContext);
+                            TestUtils.assertContains(planSink.getSink(), "vectorized: " + isVectorized);
+                            TestUtils.assertContains(planSink.getSink(), "(exclude prevailing)");
+                            assertDrainsFully(factory, sqlExecutionContext, 100_000);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private static void assertDrainsFully(RecordCursorFactory factory, SqlExecutionContext ctx, long expectedRows) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            long rows = 0;
+            while (cursor.hasNext()) {
+                rows++;
+            }
+            Assert.assertEquals(expectedRows, rows);
+        }
+    }
+
     private static void assertQueryBreaches(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             //noinspection StatementWithEmptyBody
@@ -391,6 +458,30 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                 Assert.assertTrue("expected rows at iteration " + i, rows > 0);
             }
         }
+    }
+
+    private static void createDisjointPrices(CairoEngine engine, SqlExecutionContext ctx, int rows) throws Exception {
+        engine.execute(
+                "CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                ctx
+        );
+        // 0.1s apart, so the slave spans a tenth of the master's range and the index completes early.
+        // The 'p' prefix keeps every symbol out of the master's set.
+        engine.execute(
+                "INSERT INTO prices SELECT (x * 100_000)::timestamp, ('p' || (x % 2))::symbol, x::double FROM long_sequence(" + rows + ")",
+                ctx
+        );
+    }
+
+    private static void createDisjointTrades(CairoEngine engine, SqlExecutionContext ctx, int rows) throws Exception {
+        engine.execute(
+                "CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) timestamp(ts) PARTITION BY DAY",
+                ctx
+        );
+        engine.execute(
+                "INSERT INTO trades SELECT (x * 1_000_000)::timestamp, ('t' || (x % 8))::symbol, x::double FROM long_sequence(" + rows + ")",
+                ctx
+        );
     }
 
     private static void createPrices(CairoEngine engine, SqlExecutionContext ctx, int rows, int symbols) throws Exception {

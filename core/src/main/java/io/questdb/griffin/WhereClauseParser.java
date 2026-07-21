@@ -510,6 +510,13 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         // and_offset args are stored in reverse order: [offset, unit, predicate]
         // This matches how ExpressionNode.toSink renders function args
+        //
+        // SqlOptimiser#wrapInAndOffset is the only producer of these wrappers and always builds
+        // [CONSTANT int, CONSTANT quoted-char, predicate], so the malformed-shape returns below are
+        // unreachable. That matters because they leave the wrapper in place: the filter paths that
+        // compile intrinsicModel.filter directly never rebuild a stranded wrapper, so a shape that
+        // did reach them would surface the internal and_offset name to the user. Only the
+        // unknown-unit arm takes a value the optimiser does not validate, and it rebuilds.
         ObjList<ExpressionNode> args = node.args;
         if (args.size() != 3) {
             return false;
@@ -552,7 +559,16 @@ public final class WhereClauseParser implements Mutable {
         // Get the add method for this unit from the timestamp driver
         TimestampDriver.TimestampAddMethod addMethod = timestampDriver.getAddMethod(unit);
         if (addMethod == null) {
-            return false;  // Unknown unit
+            // Unknown unit. SqlOptimiser's parseUnitCharacter accepts any single character, so a
+            // unit that dateadd itself rejects still reaches here inside a wrapper. Rebuild the
+            // residual instead of bailing with the wrapper intact: the filter paths that compile
+            // intrinsicModel.filter directly - indexed symbol, LATEST ON - never run the stranded
+            // wrapper rebuild, so they would surface the internal "unknown function name:
+            // and_offset" instead of the dateadd error the non-indexed path reports. No temp model
+            // exists yet at this point, so there is nothing to free. The rebuilt dateadd carries the
+            // bad unit to the function compiler, which reports "invalid time period".
+            rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
+            return false;
         }
 
         // Calendar months and years clamp the day of month - addMonths(2022-03-31, -1) and
@@ -3107,8 +3123,21 @@ public final class WhereClauseParser implements Mutable {
      * @param stride    the dateadd stride, i.e. the negated stored (inverse) offset
      */
     private void rebuildAndOffsetResidual(ExpressionNode node, ExpressionNode predicate, CharSequence unitToken, int stride) {
+        // Rewrite any nested wrapper first. moveWhereInsideSubQueries wraps once per annotated model
+        // as it pushes the predicate down, so the LAST wrap applied - the innermost model's - ends up
+        // as the OUTERMOST and_offset node. This method therefore sees the innermost model's unit,
+        // and the wrapper it holds carries an outer model's unit that must land further from the
+        // source timestamp. wrapTimestampLiteral only replaces LITERAL nodes, so whichever pass runs
+        // first plants its dateadd at the leaf and the later pass nests around it. Recursing here
+        // rewrites the inner wrapper while the leaf is still a bare literal, giving
+        // dateadd(outer_unit, o2, dateadd(this_unit, o1, ts)); wrapping first would instead yield
+        // dateadd(this_unit, o1, dateadd(outer_unit, o2, ts)), and calendar units do not commute with
+        // fixed-tick units. It also removes the nested wrapper at source, so no and_offset survives
+        // into the residual filter. Mirrors rebuildStrandedAndOffsets, which recurses for this reason.
+        rebuildStrandedAndOffsets(expressionNodePool, predicate);
         // The temp interval extraction may have marked predicate sub-nodes as consumed (intrinsicValue
-        // TRUE); reset them so collapseIntrinsicNodes keeps the whole reconstructed residual.
+        // TRUE); reset them so collapseIntrinsicNodes keeps the whole reconstructed residual. This runs
+        // after the recursion above so a TRUE mark the inner wrapper's copyFrom carried up is cleared too.
         resetIntrinsicMarks(predicate);
         // The stride is invariant across the subtree, so format it once here rather than once
         // per wrapped literal down in the recursion.

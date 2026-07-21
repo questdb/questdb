@@ -38,6 +38,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,6 +51,12 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             3
             5
             """;
+    // Only row 1, whose key overflows INT. Both width-rebind tests select it through whichever
+    // width their binding names, so a width mix-up returns nothing instead.
+    private static final String MATCHED_ROW = """
+            rn
+            1
+            """;
     // The rows whose INT-arithmetic key is NULL, i.e. whose getInt() carries INT_NULL.
     private static final String NULL_KEY_ROWS = """
             rn
@@ -57,6 +64,23 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
             2
             5
             """;
+    // Row 1's key overflows INT: 100000*100000 is 10_000_000_000 read at long width and
+    // 1_410_065_408 read at INT width. Rows 2 and 3 stay small and match neither bound value.
+    private static final String WIDTH_SPLIT_TABLE = """
+            CREATE TABLE x AS (SELECT
+              cast(CASE WHEN x = 1 THEN 100000 ELSE 3 END AS INT) a,
+              cast(CASE WHEN x = 1 THEN 100000 ELSE 5 END AS INT) b,
+              cast(x AS INT) rn
+            FROM long_sequence(3))""";
+    // b is a column, so "a IN ($1,b)" reaches InLongVarFunction; b never equals a, so only $1 selects.
+    private static final String VAR_PATH_QUERY = "SELECT rn FROM x WHERE a IN ($1,b)";
+    private static final String VAR_PATH_ROW_THREE = """
+            rn
+            3
+            """;
+    private static final String VAR_PATH_TABLE =
+            "CREATE TABLE x AS (SELECT cast(x AS LONG) a, cast(100 AS LONG) b, cast(x AS INT) rn FROM long_sequence(5))";
+    private static final String WIDTH_SPLIT_QUERY = "SELECT rn FROM x WHERE (a*b) IN ($1,$2)";
 
     @Test
     public void testBindVariables() throws Exception {
@@ -416,6 +440,85 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableIntWidthCompileThenLongRebind() throws Exception {
+        // The runtime-const form decided WHICH width sets exist from a compile-time type snapshot,
+        // but init() re-partitions the elements by their RUNTIME type. Compiled with INT-width binds
+        // it allocated only the int set, so re-binding the same factory with LONG values sent
+        // parseToSets down the outLongSet.add() arm with a null set - an NPE reaching the user as
+        // "unexpected filter error". Re-binding a compiled factory to a different type is an
+        // established pattern: QueryAssertion.assertBinds compiles once and re-binds per case, and
+        // IndexedParameterLinkFunction.init() refreshes its type for exactly this reason.
+        //
+        // Row 1's key overflows INT, so the two widths carry genuinely different numbers
+        // (100000*100000 = 10_000_000_000 widened, 1_410_065_408 wrapped). Each binding names its
+        // own width's value, so the row matches only if the element and the key are read at the
+        // SAME width - confusing them selects nothing. See the mirror in
+        // testBindVariableLongWidthCompileThenIntRebind.
+        assertMemoryLeak(() -> {
+            // The compiled filter freezes each bind variable's width into its IR at compile time and
+            // does not re-serialize on a re-bind, so it answers this query at the compile-time width
+            // whatever the new binding says. That divergence is pre-existing and independent of the
+            // set-allocation bug covered here - it reproduces on IN ($1,5), which allocated both sets
+            // all along. Pin the Java path, which is what parseToSets feeds.
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                execute(WIDTH_SPLIT_TABLE);
+
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("int binds", MATCHED_ROW, bindVariableService -> {
+                    bindVariableService.setInt(0, 1_410_065_408);
+                    bindVariableService.setInt(1, 999);
+                }));
+                cases.add(BindVarTuple.ok("re-bound to long", MATCHED_ROW, bindVariableService -> {
+                    bindVariableService.setLong(0, 10_000_000_000L);
+                    bindVariableService.setLong(1, 999);
+                }));
+                assertQuery(WIDTH_SPLIT_QUERY)
+                        .noLeakCheck()
+                        .assertBinds(cases);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableLongWidthCompileThenIntRebind() throws Exception {
+        // The mirror of testBindVariableIntWidthCompileThenLongRebind: compiled with LONG-width
+        // binds only the long set was allocated, so re-binding INT values sent parseToSets down the
+        // outIntSet.add() arm with a null set. Kept as its own test so each direction reds on its
+        // own - run together, the first crash would hide the second.
+        assertMemoryLeak(() -> {
+            // The compiled filter freezes each bind variable's width into its IR at compile time and
+            // does not re-serialize on a re-bind, so it answers this query at the compile-time width
+            // whatever the new binding says. That divergence is pre-existing and independent of the
+            // set-allocation bug covered here - it reproduces on IN ($1,5), which allocated both sets
+            // all along. Pin the Java path, which is what parseToSets feeds.
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                execute(WIDTH_SPLIT_TABLE);
+
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("long binds", MATCHED_ROW, bindVariableService -> {
+                    bindVariableService.setLong(0, 10_000_000_000L);
+                    bindVariableService.setLong(1, 999);
+                }));
+                cases.add(BindVarTuple.ok("re-bound to int", MATCHED_ROW, bindVariableService -> {
+                    bindVariableService.setInt(0, 1_410_065_408);
+                    bindVariableService.setInt(1, 999);
+                }));
+                assertQuery(WIDTH_SPLIT_QUERY)
+                        .noLeakCheck()
+                        .assertBinds(cases);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableSplitKeyMatchesEqNull() throws Exception {
         // A bind variable is non-deterministic ACROSS EXECUTIONS but perfectly stable within a row,
         // so an INT-arithmetic key holding one is still safe to read at both widths. Reading the
@@ -453,6 +556,55 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                     // A non-constant element reaches InLongVarFunction.
                     assertQuery("SELECT rn FROM x WHERE (a*$1) IN (null, a-1)").noLeakCheck().returns(nullKeyRows);
                 }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableVarPathLongCompileThenStringRebind() throws Exception {
+        // Mirror of testBindVariableVarPathStringCompileThenLongRebind. A NON-numeric string is what
+        // discriminates here: re-bound to "3" a stale KIND_LONG still lands on 3, because
+        // StrFunction.getLong implicit-casts it. "abc" separates them - the stale kind throws
+        // ImplicitCastException where the refreshed KIND_STR parses quietly to LONG_NULL and matches
+        // nothing. Kept separate so each direction reds on its own.
+        assertMemoryLeak(() -> {
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                execute(VAR_PATH_TABLE);
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("long bind", VAR_PATH_ROW_THREE, bvs -> bvs.setLong(0, 3)));
+                cases.add(BindVarTuple.ok("re-bound to non-numeric string", "rn\n", bvs -> bvs.setStr(0, "abc")));
+                assertQuery(VAR_PATH_QUERY).noLeakCheck().assertBinds(cases);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableVarPathStringCompileThenLongRebind() throws Exception {
+        // The var form (reached when an element is a column) froze each element's KIND in its
+        // constructor from the compile-time type, then dispatched on it per row. Master read the
+        // element type per row instead, so a bind variable re-bound to another type kept working.
+        // A frozen KIND_STR sends a re-bound LONG element down func.getStrA(rec), which LongFunction
+        // does not implement - UnsupportedOperationException, surfacing as "unexpected filter error".
+        // init() must refresh the kinds after the link functions have refreshed their types.
+        //
+        // The JIT is off because the compiled filter binds each variable's type into its IR at
+        // compile time and never re-serializes, so it rejects the re-bind before any of this is
+        // reached. elementKinds only drives the Java path.
+        assertMemoryLeak(() -> {
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                execute(VAR_PATH_TABLE);
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("string bind", VAR_PATH_ROW_THREE, bvs -> bvs.setStr(0, "3")));
+                cases.add(BindVarTuple.ok("re-bound to long", VAR_PATH_ROW_THREE, bvs -> bvs.setLong(0, 3)));
+                assertQuery(VAR_PATH_QUERY).noLeakCheck().assertBinds(cases);
             } finally {
                 sqlExecutionContext.setJitMode(jitMode);
             }
