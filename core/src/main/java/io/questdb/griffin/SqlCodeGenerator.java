@@ -5098,6 +5098,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (slave.supportsTimeFrameCursor()) {
                         boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
+                        boolean hasFastHint = SqlHints.hasAsOfFastHint(model, masterAlias, slaveAlias);
                         if (hasDenseHint) {
                             if (isSingleSymbolJoin) {
                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -5181,7 +5182,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     null,
                                     null
                             );
-                        } else {
+                        } else if (hasFastHint) {
+                            // Multi-column / non-single-symbol key: Fast only on explicit request. Its
+                            // per-master key back-scan is O(rows-per-timestamp / key-distance) and cliffs
+                            // on dense timestamps or high key cardinality; see asof_fast hint.
                             int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
@@ -5196,6 +5200,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     toleranceInterval,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
+                            );
+                        } else {
+                            // Default multi-key ASOF: forward-scan Dense. Resilient to timestamp density
+                            // and key cardinality (O(n), no per-master back-scan cliff).
+                            int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            return new AsOfJoinDenseRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    createRecordCopierMaster(masterMetadata),
+                                    slave,
+                                    createRecordCopierSlave(slaveMetadata),
+                                    joinColumnSplit,
+                                    keyTypes,
+                                    slaveContext,
+                                    toleranceInterval,
+                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[0] : null,
+                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
                             );
                         }
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
