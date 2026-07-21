@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -50,9 +51,24 @@ import java.nio.ByteBuffer;
 import java.util.HashSet;
 
 /**
- * Composes the immutable page/root stores into one crash-ordered normal
- * checkpoint publication. This writer is deliberately limited to strictly
- * in-order cadence appends; O3 range splicing is owned by the repair phases.
+ * Composes the immutable page/root stores into one crash-ordered checkpoint
+ * publication. Two publications exist, and they differ only in which logical
+ * entries they touch:
+ * <ul>
+ *     <li>{@link #append} is the strictly in-order cadence seal (design section
+ *     11). It adds one logical boundary above the current head and reuses every
+ *     older root.</li>
+ *     <li>{@link #beginRepair} plus {@link #publishRepair} is the localized
+ *     out-of-order range splice (design section 12.5). It re-versions the roots a
+ *     repair replayed over - same {@code checkpointId}, new state and position -
+ *     while the prefix below the correction floor and the converged suffix at or
+ *     above {@code H} keep their existing payload roots, and one persistent
+ *     row-position range-add corrects the suffix's cumulative recovery
+ *     coordinate without walking it.</li>
+ * </ul>
+ * Both end in the same commit point: the inactive superblock slot, published
+ * last, carrying the generation watermark that declares prefix, repaired
+ * interval and suffix all valid against one pinned base snapshot.
  */
 public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
@@ -73,12 +89,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     public LiveViewCheckpointTimelineStoreWriter(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
         this.keyBuffer = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(keyBuffer);
-        lifecycleReconciledDirs.clear();
     }
 
     public Result append(
@@ -143,6 +153,288 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
     }
 
+    /**
+     * Opens a repair capture against the current published generation. The
+     * returned capture owns one data segment into which the replay freezes the
+     * state of every logical boundary it crosses; nothing it writes is reachable
+     * until {@link #publishRepair} commits the superblock, so a discarded capture
+     * is a temporary file and nothing else.
+     * <p>
+     * The capture pins the generation it was opened against. A normal cadence
+     * seal (or another repair) publishing in between invalidates every old root
+     * reference the capture holds, so {@link #publishRepair} refuses rather than
+     * splicing stale references into a newer tree.
+     */
+    public RepairCapture beginRepair(@Transient @NotNull Path checkpointsDir) {
+        ensureDirectories(checkpointsDir);
+        try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
+            metaStore.of(checkpointsDir);
+            if (!metaStore.isValid()) {
+                throw CairoException.critical(0)
+                        .put("cannot repair a live view checkpoint timeline with no valid generation");
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            return new RepairCapture(
+                    checkpointsDir,
+                    skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
+                    superblock.generation
+            );
+        }
+    }
+
+    @Override
+    public void close() {
+        Misc.free(keyBuffer);
+        lifecycleReconciledDirs.clear();
+    }
+
+    /**
+     * Publishes one localized out-of-order repair as a timeline range splice
+     * (design section 12.5).
+     * <p>
+     * The splice preserves every logical key: the captured boundaries keep their
+     * {@code checkpointId}, {@code maxTimestamp} and {@code createdLvSeqTxn} and
+     * receive a new root version plus the replay-derived position, while the
+     * prefix and the converged suffix keep their existing payload roots by page
+     * reference. {@code suffixRowDelta} is the replacement's total output-row
+     * count change; it lands as one difference-array point add at the first
+     * logical key at or above {@code highTsExclusive}, so every suffix root
+     * reports a corrected cumulative {@code lvRowPosition} without the splice
+     * walking or rewriting it.
+     * <p>
+     * A repair that crossed no logical boundary and moved no row still publishes:
+     * the new generation watermark is what declares the whole reused timeline
+     * valid against the repair's pinned base snapshot.
+     *
+     * @param capture              boundaries frozen by the replay, ascending by key
+     * @param definitionTxn        live-view definition identity
+     * @param normalizedBaseSeqTxn {@code E}, the pinned base snapshot the whole
+     *                             timeline is now valid against
+     * @param coveredLvSeqTxn      live-view writer {@code seqTxn} the replacement
+     *                             reached
+     * @param historyEpoch         current history epoch
+     * @param primaryOwner         false for a read-only replica, which must not publish
+     * @param highTsExclusive      {@code H}, the exclusive convergence boundary the
+     *                             suffix starts at
+     * @param suffixRowDelta       output rows the replacement added (negative when it
+     *                             removed rows)
+     */
+    public RepairResult publishRepair(
+            @NotNull RepairCapture capture,
+            long definitionTxn,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn,
+            long historyEpoch,
+            boolean primaryOwner,
+            long highTsExclusive,
+            long suffixRowDelta
+    ) {
+        if (!primaryOwner) {
+            throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
+        }
+        capture.validateAgainst(highTsExclusive);
+        final Path checkpointsDir = capture.checkpointsDir;
+        final int boundaryCount = capture.size();
+
+        try (
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader timelineReader = new LiveViewCheckpointTimelineReader(configuration);
+                LiveViewCheckpointRowPositionDeltaReader deltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
+                LiveViewCheckpointRoot oldCheckpointRoot = new LiveViewCheckpointRoot(configuration);
+                LiveViewCheckpointFunctionDirectory oldFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
+                LiveViewCheckpointSegmentDirectory segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
+                LiveViewCheckpointMetaSegmentWriter directoryWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
+                RootBuilders roots = new RootBuilders();
+                LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration);
+                LiveViewCheckpointRowPositionDeltaWriter deltaWriter = new LiveViewCheckpointRowPositionDeltaWriter(configuration)
+        ) {
+            metaStore.of(checkpointsDir);
+            timelineReader.of(checkpointsDir);
+            deltaReader.of(checkpointsDir);
+            timelineWriter.of(checkpointsDir);
+            deltaWriter.of(checkpointsDir);
+
+            if (!metaStore.isValid()) {
+                throw CairoException.critical(0)
+                        .put("cannot repair a live view checkpoint timeline with no valid generation");
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint repair definition identity mismatch");
+            }
+            if (superblock.generation != capture.generation) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint timeline moved under the repair capture")
+                        .put(" [captured=").put(capture.generation)
+                        .put(", current=").put(superblock.generation).put(']');
+            }
+            if (normalizedBaseSeqTxn < superblock.normalizedBaseSeqTxn
+                    || coveredLvSeqTxn < superblock.coveredLvSeqTxn) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint generation watermarks must not move backwards")
+                        .put(" [storedBase=").put(superblock.normalizedBaseSeqTxn)
+                        .put(", nextBase=").put(normalizedBaseSeqTxn)
+                        .put(", storedLv=").put(superblock.coveredLvSeqTxn)
+                        .put(", nextLv=").put(coveredLvSeqTxn).put(']');
+            }
+
+            final long generation = checkedIncrement(superblock.generation, "generation");
+            final LiveViewCheckpointPageRef oldTimelineRoot = copy(superblock.timelineRootRef);
+            final LiveViewCheckpointPageRef oldDeltaRoot = copy(superblock.rowPositionDeltaRootRef);
+            final LiveViewCheckpointPageRef oldDirectoryRoot = copy(superblock.segmentDirectoryRootRef);
+            segmentDirectory.of(checkpointsDir, oldDirectoryRoot);
+
+            // The data segment reaches its final name before any metadata can
+            // reference it, exactly as the cadence seal orders it. An empty
+            // capture publishes no data at all - only the suffix correction and
+            // the generation watermark move.
+            final long dataSegmentBytes = boundaryCount > 0 ? capture.commitData() : 0;
+            if (testFailureStage == TEST_FAIL_AFTER_DATA_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint data publication");
+            }
+
+            long nextSegmentId = boundaryCount > 0
+                    ? Math.max(superblock.nextSegmentId, capture.dataSegmentId + 1)
+                    : superblock.nextSegmentId;
+            roots.of(checkpointsDir, nextSegmentId);
+            final LiveViewCheckpointTimelineEntry[] newEntries = new LiveViewCheckpointTimelineEntry[boundaryCount];
+            final LongList removedSegmentIds = new LongList();
+            final LongList addedSegmentIds = new LongList();
+            final LiveViewCheckpointPageRef oldFunctionDirectoryRef = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef newRootRef = new LiveViewCheckpointPageRef();
+            for (int i = 0; i < boundaryCount; i++) {
+                final FrozenBoundary boundary = capture.boundaries.getQuick(i);
+                final LiveViewCheckpointTimelineEntry oldEntry = boundary.oldEntry;
+                oldCheckpointRoot.of(checkpointsDir, oldEntry.rootRef);
+                if (oldCheckpointRoot.getCheckpointId() != oldEntry.checkpointId
+                        || oldCheckpointRoot.getMaxTimestamp() != oldEntry.maxTimestamp
+                        || oldCheckpointRoot.getDefinitionTxn() != definitionTxn) {
+                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                            .put("live view checkpoint repair root identity mismatch [checkpointId=")
+                            .put(oldEntry.checkpointId).put(']');
+                }
+                oldCheckpointRoot.getFunctionDirectoryRef(oldFunctionDirectoryRef);
+                oldFunctionDirectory.of(checkpointsDir, oldFunctionDirectoryRef);
+                roots.buildRoot(
+                        boundary,
+                        true,
+                        oldFunctionDirectory,
+                        oldEntry.checkpointId,
+                        oldEntry.maxTimestamp,
+                        definitionTxn,
+                        capture.dataSegmentId,
+                        newRootRef,
+                        addedSegmentIds
+                );
+                // The old root released every data segment it referenced and the
+                // new one takes its own; a segment no current root names any more
+                // retires at this generation and the purge job unlinks it once no
+                // reader can reach it. Applied per root because repeated
+                // references inside one root count once per side.
+                removedSegmentIds.clear();
+                for (int s = 0, n = oldCheckpointRoot.getSegmentIdCount(); s < n; s++) {
+                    removedSegmentIds.add(oldCheckpointRoot.getSegmentId(s));
+                }
+                dropSegmentId(addedSegmentIds, capture.dataSegmentId);
+                segmentDirectory.applyRootReferenceChanges(removedSegmentIds, addedSegmentIds, generation);
+
+                final long prefixCorrection = deltaReader.prefixSum(
+                        oldDeltaRoot,
+                        oldEntry.maxTimestamp,
+                        oldEntry.checkpointId
+                );
+                final long baseLvRowPosition;
+                try {
+                    baseLvRowPosition = Math.subtractExact(boundary.effectiveLvRowPosition, prefixCorrection);
+                } catch (ArithmeticException e) {
+                    throw CairoException.critical(0).put("live view checkpoint row position overflow");
+                }
+                final LiveViewCheckpointTimelineEntry newEntry = new LiveViewCheckpointTimelineEntry().of(
+                        oldEntry.maxTimestamp,
+                        oldEntry.checkpointId,
+                        oldEntry.createdLvSeqTxn,
+                        baseLvRowPosition,
+                        boundary.logicalStateBytes
+                );
+                newEntry.rootRef.of(newRootRef.getSegmentId(), newRootRef.getOffset(), newRootRef.getLength());
+                newEntries[i] = newEntry;
+            }
+            nextSegmentId = roots.nextSegmentId;
+            long metadataBytesAdded = roots.metadataBytesAdded;
+            if (boundaryCount > 0) {
+                segmentDirectory.addSegment(capture.dataSegmentId, dataSegmentBytes, boundaryCount);
+            }
+
+            final LiveViewCheckpointPageRef newTimelineRoot = new LiveViewCheckpointPageRef();
+            if (boundaryCount > 0) {
+                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                timelineWriter.splice(oldTimelineRoot, newEntries, boundaryCount, nextSegmentId++, newTimelineRoot);
+                metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
+            } else {
+                copy(oldTimelineRoot, newTimelineRoot);
+            }
+
+            // The breakpoint is resolved against the OLD tree on purpose: a splice
+            // preserves every key, so the first suffix key is the same in both, and
+            // reading it here needs no page from the segment just written.
+            final LiveViewCheckpointPageRef newDeltaRoot = new LiveViewCheckpointPageRef();
+            copy(oldDeltaRoot, newDeltaRoot);
+            long suffixBreakpointTimestamp = Numbers.LONG_NULL;
+            if (suffixRowDelta != 0) {
+                final LiveViewCheckpointTimelineEntry suffixEntry = new LiveViewCheckpointTimelineEntry();
+                if (timelineReader.successor(oldTimelineRoot, highTsExclusive, suffixEntry)) {
+                    nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                    deltaWriter.suffixAdd(
+                            oldDeltaRoot,
+                            suffixEntry.maxTimestamp,
+                            suffixEntry.checkpointId,
+                            suffixRowDelta,
+                            nextSegmentId++,
+                            newDeltaRoot
+                    );
+                    metadataBytesAdded = checkedAdd(metadataBytesAdded, deltaWriter.getLastSegmentBytes());
+                    suffixBreakpointTimestamp = suffixEntry.maxTimestamp;
+                }
+            }
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            directoryWriter.of(checkpointsDir, nextSegmentId++);
+            final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
+            segmentDirectory.writeTo(directoryWriter, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.commit());
+            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
+            }
+
+            superblock.generation = generation;
+            superblock.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
+            superblock.coveredLvSeqTxn = coveredLvSeqTxn;
+            superblock.nextSegmentId = nextSegmentId;
+            superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
+            superblock.dataBytes = checkedAdd(superblock.dataBytes, dataSegmentBytes);
+            copy(newTimelineRoot, superblock.timelineRootRef);
+            copy(newDeltaRoot, superblock.rowPositionDeltaRootRef);
+            copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
+            metaStore.publish();
+
+            return new RepairResult(
+                    generation,
+                    boundaryCount,
+                    suffixRowDelta,
+                    suffixBreakpointTimestamp,
+                    dataSegmentBytes,
+                    metadataBytesAdded,
+                    metaStore.getWalPurgeFloor()
+            );
+        }
+    }
+
+    @TestOnly
+    public void setTestFailureStage(int testFailureStage) {
+        this.testFailureStage = testFailureStage;
+    }
+
     private Result append0(
             @Transient @NotNull Path checkpointsDir,
             @NotNull ObjList<WindowFunction> functions,
@@ -175,17 +467,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointFunctionDirectory oldFunctionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
                 LiveViewCheckpointSegmentDirectory segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
                 LiveViewCheckpointDataSegmentWriter dataWriter = new LiveViewCheckpointDataSegmentWriter(configuration);
-                LiveViewCheckpointMetaSegmentWriter metaWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
-                LiveViewCheckpointFunctionRootBuilder functionRootBuilder = new LiveViewCheckpointFunctionRootBuilder(configuration);
-                LiveViewCheckpointFunctionRoot oldFunctionRoot = new LiveViewCheckpointFunctionRoot(configuration);
-                LiveViewCheckpointPartitionMapReader oldPartitionReader = new LiveViewCheckpointPartitionMapReader(configuration);
-                LiveViewCheckpointRootBuilder checkpointRootBuilder = new LiveViewCheckpointRootBuilder(configuration);
+                LiveViewCheckpointMetaSegmentWriter directoryWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
+                RootBuilders roots = new RootBuilders();
                 LiveViewCheckpointTimelineWriter timelineWriter = new LiveViewCheckpointTimelineWriter(configuration)
         ) {
             metaStore.of(checkpointsDir);
             timelineReader.of(checkpointsDir);
             deltaReader.of(checkpointsDir);
-            oldPartitionReader.of(checkpointsDir);
             timelineWriter.of(checkpointsDir);
 
             final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
@@ -240,112 +528,28 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final long dataSegmentId = nextSegmentId++;
             dataWriter.of(checkpointsDir, dataSegmentId);
 
-            long logicalStateBytes = 0;
-            final LiveViewCheckpointStatePageRef anchorStateRef = new LiveViewCheckpointStatePageRef();
-            if (anchorWindow != null) {
-                final MemoryA sink = dataWriter.beginPage();
-                final long start = sink.getAppendOffset();
-                anchorWindow.snapshot(sink);
-                final int bytes = checkedIntLength(sink.getAppendOffset() - start, "anchor state");
-                dataWriter.endPage(anchorStateRef, bytes, ANCHOR_STATE_PAGE_KIND, RAW_CODEC, 1, 0);
-                logicalStateBytes = checkedAdd(logicalStateBytes, bytes);
-            }
-
-            final ObjList<FrozenFunction> frozenFunctions = new ObjList<>(functions.size());
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                final WindowFunction function = functions.getQuick(i);
-                if (!function.supportsCheckpointState()) {
-                    continue;
-                }
-                final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
-                if (identity == null || function.checkpointDependency() == null) {
-                    throw CairoException.critical(0)
-                            .put("checkpoint-capable live view function has no compiler metadata");
-                }
-                final FrozenFunction frozen = new FrozenFunction(
-                        identity.getEncoded(),
-                        function.checkpointStateFormatVersion(),
-                        encodeKeySchema(function.getCheckpointKeyColumnTypes())
-                );
-                logicalStateBytes = checkedAdd(logicalStateBytes, freezeFunction(dataWriter, function, frozen));
-                frozenFunctions.add(frozen);
-            }
-            if (frozenFunctions.size() == 0) {
-                throw CairoException.critical(0).put("cannot seal live view checkpoint without functions");
-            }
-
+            final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow);
             final long dataSegmentBytes = dataWriter.commit();
             if (testFailureStage == TEST_FAIL_AFTER_DATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint data publication");
             }
 
-            long metadataBytesAdded = 0;
-            final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
-            final LongList anchorSegmentIds = new LongList();
-            if (anchorWindow != null) {
-                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                metaWriter.of(checkpointsDir, nextSegmentId++);
-                LiveViewCheckpointAnchorRoot.writeTo(metaWriter, anchorStateRef, anchorRootRef);
-                metadataBytesAdded = checkedAdd(metadataBytesAdded, metaWriter.commit());
-                anchorSegmentIds.add(dataSegmentId);
-            }
-
-            final ObjList<LiveViewCheckpointPageRef> functionRootRefs = new ObjList<>(frozenFunctions.size());
-            for (int i = 0, n = frozenFunctions.size(); i < n; i++) {
-                final FrozenFunction frozen = frozenFunctions.getQuick(i);
-                final LiveViewCheckpointPageRef oldFunctionRootRef = new LiveViewCheckpointPageRef();
-                if (hasPrevious) {
-                    oldFunctionDirectory.find(frozen.identity, oldFunctionRootRef);
-                }
-                functionRootBuilder.of(
-                        checkpointsDir,
-                        oldFunctionRootRef,
-                        frozen.identity,
-                        frozen.stateFormatVersion,
-                        frozen.keySchema
-                );
-                if (frozen.scalarStateRef != null) {
-                    functionRootBuilder.setScalarStateRef(frozen.scalarStateRef);
-                } else {
-                    removeMissingPartitions(
-                            checkpointsDir,
-                            oldFunctionRootRef,
-                            oldFunctionRoot,
-                            oldPartitionReader,
-                            frozen,
-                            functionRootBuilder
-                    );
-                    for (int p = 0, m = frozen.partitions.size(); p < m; p++) {
-                        final FrozenPartition partition = frozen.partitions.getQuick(p);
-                        functionRootBuilder.putPartition(
-                                partition.key,
-                                partition.scalarState,
-                                partition.statePageRefs
-                        );
-                    }
-                }
-                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
-                functionRootBuilder.build(nextSegmentId++, functionRootRef);
-                metadataBytesAdded = checkedAdd(metadataBytesAdded, functionRootBuilder.getLastSegmentBytes());
-                functionRootRefs.add(functionRootRef);
-            }
-
-            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            checkpointRootBuilder.begin(
-                    checkpointsDir,
+            roots.of(checkpointsDir, nextSegmentId);
+            final LiveViewCheckpointPageRef checkpointRootRef = new LiveViewCheckpointPageRef();
+            final LongList reusedSegmentIds = new LongList();
+            roots.buildRoot(
+                    boundary,
+                    hasPrevious,
+                    oldFunctionDirectory,
                     checkpointId,
                     maxTimestamp,
                     definitionTxn,
-                    anchorRootRef,
-                    anchorSegmentIds
+                    dataSegmentId,
+                    checkpointRootRef,
+                    reusedSegmentIds
             );
-            for (int i = 0, n = functionRootRefs.size(); i < n; i++) {
-                checkpointRootBuilder.addFunction(functionRootRefs.getQuick(i));
-            }
-            final LiveViewCheckpointPageRef checkpointRootRef = new LiveViewCheckpointPageRef();
-            checkpointRootBuilder.build(nextSegmentId++, checkpointRootRef);
-            metadataBytesAdded = checkedAdd(metadataBytesAdded, checkpointRootBuilder.getLastSegmentBytes());
+            nextSegmentId = roots.nextSegmentId;
+            long metadataBytesAdded = roots.metadataBytesAdded;
 
             final long prefixCorrection = deltaReader.prefixSum(oldDeltaRoot, maxTimestamp, checkpointId);
             final long baseLvRowPosition;
@@ -355,7 +559,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 throw CairoException.critical(0).put("live view checkpoint row position overflow");
             }
             final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry()
-                    .of(maxTimestamp, checkpointId, createdLvSeqTxn, baseLvRowPosition, logicalStateBytes);
+                    .of(maxTimestamp, checkpointId, createdLvSeqTxn, baseLvRowPosition, boundary.logicalStateBytes);
             entry.rootRef.of(
                     checkpointRootRef.getSegmentId(),
                     checkpointRootRef.getOffset(),
@@ -366,24 +570,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             timelineWriter.append(oldTimelineRoot, entry, nextSegmentId++, newTimelineRoot);
             metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
 
-            final LongList newRootSegmentIds = new LongList();
-            checkpointRootBuilder.getReferencedSegmentIds(newRootSegmentIds);
             segmentDirectory.addSegment(dataSegmentId, dataSegmentBytes, 1);
-            final LongList reusedSegmentIds = new LongList();
-            for (int i = 0, n = newRootSegmentIds.size(); i < n; i++) {
-                final long segmentId = newRootSegmentIds.getQuick(i);
-                if (segmentId != dataSegmentId) {
-                    reusedSegmentIds.add(segmentId);
-                }
-            }
+            dropSegmentId(reusedSegmentIds, dataSegmentId);
             if (reusedSegmentIds.size() > 0) {
                 segmentDirectory.applyRootReferenceChanges(new LongList(), reusedSegmentIds, generation);
             }
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-            metaWriter.of(checkpointsDir, nextSegmentId++);
+            directoryWriter.of(checkpointsDir, nextSegmentId++);
             final LiveViewCheckpointPageRef newDirectoryRoot = new LiveViewCheckpointPageRef();
-            segmentDirectory.writeTo(metaWriter, newDirectoryRoot);
-            metadataBytesAdded = checkedAdd(metadataBytesAdded, metaWriter.commit());
+            segmentDirectory.writeTo(directoryWriter, newDirectoryRoot);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, directoryWriter.commit());
             if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
             }
@@ -412,17 +608,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return new Result(
                     generation,
                     checkpointId,
-                    logicalStateBytes,
+                    boundary.logicalStateBytes,
                     dataSegmentBytes,
                     metadataBytesAdded,
                     metaStore.getWalPurgeFloor()
             );
         }
-    }
-
-    @TestOnly
-    public void setTestFailureStage(int testFailureStage) {
-        this.testFailureStage = testFailureStage;
     }
 
     private static long checkedAdd(long a, long b) {
@@ -456,6 +647,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         to.of(from.getSegmentId(), from.getOffset(), from.getLength());
     }
 
+    /**
+     * Removes {@code segmentId} from a root's referenced-segment list. The
+     * segment a publication introduces is registered with its own root count, so
+     * it must not also be counted through the per-root reference changes.
+     */
+    private static void dropSegmentId(LongList segmentIds, long segmentId) {
+        for (int i = 0, n = segmentIds.size(); i < n; i++) {
+            if (segmentIds.getQuick(i) == segmentId) {
+                segmentIds.removeIndex(i);
+                return;
+            }
+        }
+    }
+
     private static byte[] encodeKeySchema(@Nullable ColumnTypes keyTypes) {
         final int count = keyTypes == null ? 0 : keyTypes.getColumnCount();
         final ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES + count * Integer.BYTES);
@@ -464,6 +669,27 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             buffer.putInt(keyTypes.getColumnType(i));
         }
         return buffer.array();
+    }
+
+    private static void removeMissingPartitions(
+            Path checkpointsDir,
+            LiveViewCheckpointPageRef oldFunctionRootRef,
+            LiveViewCheckpointFunctionRoot oldFunctionRoot,
+            LiveViewCheckpointPartitionMapReader oldPartitionReader,
+            FrozenFunction frozen,
+            LiveViewCheckpointFunctionRootBuilder builder
+    ) {
+        if (oldFunctionRootRef.isNull()) {
+            return;
+        }
+        oldFunctionRoot.of(checkpointsDir, oldFunctionRootRef);
+        final LiveViewCheckpointPageRef oldPartitionRoot = new LiveViewCheckpointPageRef();
+        oldFunctionRoot.getPartitionMapRootRef(oldPartitionRoot);
+        oldPartitionReader.iterateAll(oldPartitionRoot, entry -> {
+            if (!frozen.currentKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
+                builder.removePartition(entry.getKey());
+            }
+        });
     }
 
     private void ensureDirectories(Path checkpointsDir) {
@@ -479,6 +705,54 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         .put("could not create live view checkpoint data directory [path=").put(path).put(']');
             }
         }
+    }
+
+    /**
+     * Freezes the runtime's current window state - the optional anchor plus every
+     * checkpoint-capable function - into immutable pages of the open data
+     * segment, and returns the reference set one checkpoint root is built from.
+     * A cadence seal freezes once; a repair freezes once per logical boundary its
+     * replay crosses, all into the same segment.
+     */
+    private FrozenBoundary freezeBoundary(
+            LiveViewCheckpointDataSegmentWriter dataWriter,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow
+    ) {
+        final FrozenBoundary boundary = new FrozenBoundary();
+        long logicalStateBytes = 0;
+        if (anchorWindow != null) {
+            final MemoryA sink = dataWriter.beginPage();
+            final long start = sink.getAppendOffset();
+            anchorWindow.snapshot(sink);
+            final int bytes = checkedIntLength(sink.getAppendOffset() - start, "anchor state");
+            dataWriter.endPage(boundary.anchorStateRef, bytes, ANCHOR_STATE_PAGE_KIND, RAW_CODEC, 1, 0);
+            boundary.hasAnchor = true;
+            logicalStateBytes = checkedAdd(logicalStateBytes, bytes);
+        }
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState()) {
+                continue;
+            }
+            final LiveViewCheckpointFunctionIdentity identity = function.checkpointFunctionIdentity();
+            if (identity == null || function.checkpointDependency() == null) {
+                throw CairoException.critical(0)
+                        .put("checkpoint-capable live view function has no compiler metadata");
+            }
+            final FrozenFunction frozen = new FrozenFunction(
+                    identity.getEncoded(),
+                    function.checkpointStateFormatVersion(),
+                    encodeKeySchema(function.getCheckpointKeyColumnTypes())
+            );
+            logicalStateBytes = checkedAdd(logicalStateBytes, freezeFunction(dataWriter, function, frozen));
+            boundary.functions.add(frozen);
+        }
+        if (boundary.functions.size() == 0) {
+            throw CairoException.critical(0).put("cannot seal live view checkpoint without functions");
+        }
+        boundary.logicalStateBytes = logicalStateBytes;
+        return boundary;
     }
 
     private long freezeFunction(
@@ -533,27 +807,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         return ref;
     }
 
-    private static void removeMissingPartitions(
-            Path checkpointsDir,
-            LiveViewCheckpointPageRef oldFunctionRootRef,
-            LiveViewCheckpointFunctionRoot oldFunctionRoot,
-            LiveViewCheckpointPartitionMapReader oldPartitionReader,
-            FrozenFunction frozen,
-            LiveViewCheckpointFunctionRootBuilder builder
-    ) {
-        if (oldFunctionRootRef.isNull()) {
-            return;
-        }
-        oldFunctionRoot.of(checkpointsDir, oldFunctionRootRef);
-        final LiveViewCheckpointPageRef oldPartitionRoot = new LiveViewCheckpointPageRef();
-        oldFunctionRoot.getPartitionMapRootRef(oldPartitionRoot);
-        oldPartitionReader.iterateAll(oldPartitionRoot, entry -> {
-            if (!frozen.currentKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
-                builder.removePartition(entry.getKey());
-            }
-        });
-    }
-
     private long skipPublishedSegmentIds(Path checkpointsDir, long candidate) {
         try (Path path = new Path()) {
             while (true) {
@@ -572,6 +825,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 candidate++;
             }
         }
+    }
+
+    /**
+     * One logical boundary's frozen state: the optional anchor page plus one
+     * entry per checkpoint-capable function. Holds only page references into an
+     * already-written data segment, so a capture that spans a whole replay costs
+     * metadata rather than a copy of every state image.
+     */
+    private static final class FrozenBoundary {
+        private final LiveViewCheckpointStatePageRef anchorStateRef = new LiveViewCheckpointStatePageRef();
+        private final ObjList<FrozenFunction> functions = new ObjList<>();
+        private long effectiveLvRowPosition;
+        private boolean hasAnchor;
+        private long logicalStateBytes;
+        private final LiveViewCheckpointTimelineEntry oldEntry = new LiveViewCheckpointTimelineEntry();
     }
 
     private static final class FrozenFunction {
@@ -607,6 +875,76 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.key = key;
             this.scalarState = scalarState;
             this.statePageRefs = statePageRefs;
+        }
+    }
+
+    private static final class HistoryEpochChangedException extends RuntimeException {
+        private static final HistoryEpochChangedException INSTANCE = new HistoryEpochChangedException();
+
+        private HistoryEpochChangedException() {
+        }
+    }
+
+    /**
+     * Result of one localized repair publication.
+     */
+    public static final class RepairResult {
+        private final long dataBytesAdded;
+        private final long generation;
+        private final long metadataBytesAdded;
+        private final int rootsVersioned;
+        private final long suffixBreakpointTimestamp;
+        private final long suffixRowDelta;
+        private final long walPurgeFloor;
+
+        private RepairResult(
+                long generation,
+                int rootsVersioned,
+                long suffixRowDelta,
+                long suffixBreakpointTimestamp,
+                long dataBytesAdded,
+                long metadataBytesAdded,
+                long walPurgeFloor
+        ) {
+            this.generation = generation;
+            this.rootsVersioned = rootsVersioned;
+            this.suffixRowDelta = suffixRowDelta;
+            this.suffixBreakpointTimestamp = suffixBreakpointTimestamp;
+            this.dataBytesAdded = dataBytesAdded;
+            this.metadataBytesAdded = metadataBytesAdded;
+            this.walPurgeFloor = walPurgeFloor;
+        }
+
+        public long getDataBytesAdded() {
+            return dataBytesAdded;
+        }
+
+        public long getGeneration() {
+            return generation;
+        }
+
+        public long getMetadataBytesAdded() {
+            return metadataBytesAdded;
+        }
+
+        public int getRootsVersioned() {
+            return rootsVersioned;
+        }
+
+        /**
+         * @return the logical key the suffix range-add landed on, or
+         * {@link Numbers#LONG_NULL} when no suffix root exists or no row moved
+         */
+        public long getSuffixBreakpointTimestamp() {
+            return suffixBreakpointTimestamp;
+        }
+
+        public long getSuffixRowDelta() {
+            return suffixRowDelta;
+        }
+
+        public long getWalPurgeFloor() {
+            return walPurgeFloor;
         }
     }
 
@@ -659,10 +997,248 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
     }
 
-    private static final class HistoryEpochChangedException extends RuntimeException {
-        private static final HistoryEpochChangedException INSTANCE = new HistoryEpochChangedException();
+    /**
+     * The state one localized repair froze, and the generation it was frozen
+     * against. Created by {@link #beginRepair}, filled by the replay through
+     * {@link #capture} as it crosses each logical boundary in {@code [C, H)},
+     * and consumed by {@link #publishRepair}.
+     * <p>
+     * Everything it writes lands in one temporary data segment, so a capture that
+     * is closed without publishing leaves an unreferenced temp file and nothing
+     * else - no metadata names it and no generation can reach it.
+     */
+    public class RepairCapture implements Closeable {
+        private final ObjList<FrozenBoundary> boundaries = new ObjList<>();
+        private final Path checkpointsDir = new Path();
+        private final LiveViewCheckpointDataSegmentWriter dataWriter =
+                new LiveViewCheckpointDataSegmentWriter(configuration);
+        private final long dataSegmentId;
+        private final long generation;
+        private boolean isDataOpen;
+        private boolean isDataPublished;
 
-        private HistoryEpochChangedException() {
+        private RepairCapture(Path checkpointsDir, long dataSegmentId, long generation) {
+            this.checkpointsDir.of(checkpointsDir);
+            this.dataSegmentId = dataSegmentId;
+            this.generation = generation;
+        }
+
+        /**
+         * Freezes the runtime's current window state as the new root version of
+         * {@code entry}, a logical boundary the replay has just finished
+         * reproducing.
+         *
+         * @param entry                   the boundary's current logical entry,
+         *                                including the root version being superseded
+         * @param functions               the live compiled window functions, standing
+         *                                at exactly {@code entry.maxTimestamp}
+         * @param anchorWindow            the live anchor window, or null
+         * @param effectiveLvRowPosition  replay-derived cumulative live-view row
+         *                                position at the boundary
+         */
+        public void capture(
+                @NotNull LiveViewCheckpointTimelineEntry entry,
+                @NotNull ObjList<WindowFunction> functions,
+                @Nullable LiveViewWindow anchorWindow,
+                long effectiveLvRowPosition
+        ) {
+            if (isDataPublished) {
+                throw CairoException.critical(0).put("live view checkpoint repair capture is already published");
+            }
+            if (effectiveLvRowPosition < 0) {
+                throw CairoException.critical(0)
+                        .put("negative live view checkpoint repair row position, position=")
+                        .put(effectiveLvRowPosition);
+            }
+            if (entry.rootRef.isNull()) {
+                throw CairoException.critical(0).put("live view checkpoint repair boundary has no root version");
+            }
+            final int size = boundaries.size();
+            if (size > 0) {
+                final LiveViewCheckpointTimelineEntry previous = boundaries.getQuick(size - 1).oldEntry;
+                if (LiveViewCheckpointTimeline.compareKey(
+                        previous.maxTimestamp,
+                        previous.checkpointId,
+                        entry.maxTimestamp,
+                        entry.checkpointId
+                ) >= 0) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint repair boundaries must ascend [previous=")
+                            .put(previous.maxTimestamp).put(", next=").put(entry.maxTimestamp).put(']');
+                }
+            }
+            if (!isDataOpen) {
+                dataWriter.of(checkpointsDir, dataSegmentId);
+                isDataOpen = true;
+            }
+            final FrozenBoundary boundary = freezeBoundary(dataWriter, functions, anchorWindow);
+            boundary.oldEntry.copyFrom(entry);
+            boundary.effectiveLvRowPosition = effectiveLvRowPosition;
+            boundaries.add(boundary);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(dataWriter);
+            if (isDataOpen && !isDataPublished) {
+                try (Path path = new Path()) {
+                    LiveViewCheckpointLayout.dataSegmentTmpPath(path, checkpointsDir, dataSegmentId);
+                    configuration.getFilesFacade().removeQuiet(path.$());
+                }
+            }
+            boundaries.clear();
+            Misc.free(checkpointsDir);
+        }
+
+        /**
+         * @return the generation this capture was opened against
+         */
+        public long getGeneration() {
+            return generation;
+        }
+
+        public int size() {
+            return boundaries.size();
+        }
+
+        private long commitData() {
+            final long bytes = dataWriter.commit();
+            isDataPublished = true;
+            return bytes;
+        }
+
+        private void validateAgainst(long highTsExclusive) {
+            for (int i = 0, n = boundaries.size(); i < n; i++) {
+                final LiveViewCheckpointTimelineEntry entry = boundaries.getQuick(i).oldEntry;
+                if (entry.maxTimestamp >= highTsExclusive) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint repair boundary is at or above the convergence bound")
+                            .put(" [boundary=").put(entry.maxTimestamp)
+                            .put(", highTsExclusive=").put(highTsExclusive).put(']');
+                }
+            }
+        }
+    }
+
+    /**
+     * The metadata writers one publication builds its checkpoint roots with, plus
+     * the running segment-id cursor and metadata byte count they share. One
+     * instance serves every boundary of a repair, so a K-root splice allocates
+     * its builders once.
+     */
+    private final class RootBuilders implements Closeable {
+        private final LiveViewCheckpointRootBuilder checkpointRootBuilder =
+                new LiveViewCheckpointRootBuilder(configuration);
+        private final Path checkpointsDir = new Path();
+        private final LiveViewCheckpointFunctionRootBuilder functionRootBuilder =
+                new LiveViewCheckpointFunctionRootBuilder(configuration);
+        private final LiveViewCheckpointMetaSegmentWriter metaWriter =
+                new LiveViewCheckpointMetaSegmentWriter(configuration);
+        private final LiveViewCheckpointFunctionRoot oldFunctionRoot =
+                new LiveViewCheckpointFunctionRoot(configuration);
+        private final LiveViewCheckpointPartitionMapReader oldPartitionReader =
+                new LiveViewCheckpointPartitionMapReader(configuration);
+        private long metadataBytesAdded;
+        private long nextSegmentId;
+
+        /**
+         * Writes the anchor root, one function root per frozen function, and the
+         * checkpoint root itself. When {@code hasOldDirectory} the builders start
+         * from the old root's function/partition-map paths, so an unchanged
+         * partition entry is reused by reference rather than rewritten.
+         */
+        private void buildRoot(
+                FrozenBoundary boundary,
+                boolean hasOldDirectory,
+                LiveViewCheckpointFunctionDirectory oldFunctionDirectory,
+                long checkpointId,
+                long maxTimestamp,
+                long definitionTxn,
+                long dataSegmentId,
+                LiveViewCheckpointPageRef rootRefOut,
+                LongList referencedSegmentIdsOut
+        ) {
+            final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
+            final LongList anchorSegmentIds = new LongList();
+            if (boundary.hasAnchor) {
+                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                metaWriter.of(checkpointsDir, nextSegmentId++);
+                LiveViewCheckpointAnchorRoot.writeTo(metaWriter, boundary.anchorStateRef, anchorRootRef);
+                metadataBytesAdded = checkedAdd(metadataBytesAdded, metaWriter.commit());
+                anchorSegmentIds.add(dataSegmentId);
+            }
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            checkpointRootBuilder.begin(
+                    checkpointsDir,
+                    checkpointId,
+                    maxTimestamp,
+                    definitionTxn,
+                    anchorRootRef,
+                    anchorSegmentIds
+            );
+            final LiveViewCheckpointPageRef oldFunctionRootRef = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+            for (int i = 0, n = boundary.functions.size(); i < n; i++) {
+                final FrozenFunction frozen = boundary.functions.getQuick(i);
+                oldFunctionRootRef.clear();
+                if (hasOldDirectory) {
+                    oldFunctionDirectory.find(frozen.identity, oldFunctionRootRef);
+                }
+                functionRootBuilder.of(
+                        checkpointsDir,
+                        oldFunctionRootRef,
+                        frozen.identity,
+                        frozen.stateFormatVersion,
+                        frozen.keySchema
+                );
+                if (frozen.scalarStateRef != null) {
+                    functionRootBuilder.setScalarStateRef(frozen.scalarStateRef);
+                } else {
+                    removeMissingPartitions(
+                            checkpointsDir,
+                            oldFunctionRootRef,
+                            oldFunctionRoot,
+                            oldPartitionReader,
+                            frozen,
+                            functionRootBuilder
+                    );
+                    for (int p = 0, m = frozen.partitions.size(); p < m; p++) {
+                        final FrozenPartition partition = frozen.partitions.getQuick(p);
+                        functionRootBuilder.putPartition(
+                                partition.key,
+                                partition.scalarState,
+                                partition.statePageRefs
+                        );
+                    }
+                }
+                nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                functionRootBuilder.build(nextSegmentId++, functionRootRef);
+                metadataBytesAdded = checkedAdd(metadataBytesAdded, functionRootBuilder.getLastSegmentBytes());
+                checkpointRootBuilder.addFunction(functionRootRef);
+            }
+
+            nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+            checkpointRootBuilder.build(nextSegmentId++, rootRefOut);
+            metadataBytesAdded = checkedAdd(metadataBytesAdded, checkpointRootBuilder.getLastSegmentBytes());
+            checkpointRootBuilder.getReferencedSegmentIds(referencedSegmentIdsOut);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(checkpointRootBuilder);
+            Misc.free(functionRootBuilder);
+            Misc.free(metaWriter);
+            Misc.free(oldFunctionRoot);
+            Misc.free(oldPartitionReader);
+            Misc.free(checkpointsDir);
+        }
+
+        private void of(Path checkpointsDir, long nextSegmentId) {
+            this.checkpointsDir.of(checkpointsDir);
+            this.oldPartitionReader.of(checkpointsDir);
+            this.nextSegmentId = nextSegmentId;
+            this.metadataBytesAdded = 0;
         }
     }
 }
