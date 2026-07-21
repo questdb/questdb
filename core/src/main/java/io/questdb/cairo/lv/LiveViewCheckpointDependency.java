@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,6 +45,7 @@ public final class LiveViewCheckpointDependency {
     private final StructuralConvergence structuralConvergence;
     private final boolean supportsKeyReset;
     private final boolean supportsKeyRestore;
+    private final int timestampType;
 
     public LiveViewCheckpointDependency(
             @NotNull DependencyKind kind,
@@ -51,6 +53,7 @@ public final class LiveViewCheckpointDependency {
             @NotNull CharSequence orderSignature,
             long frameLo,
             long frameHi,
+            int timestampType,
             boolean supportsKeyRestore,
             boolean supportsKeyReset,
             @NotNull StructuralConvergence structuralConvergence,
@@ -61,6 +64,7 @@ public final class LiveViewCheckpointDependency {
         this.orderSignature = orderSignature.toString();
         this.frameLo = frameLo;
         this.frameHi = frameHi;
+        this.timestampType = timestampType;
         this.lowBoundStrategy = kind.getLowBoundStrategy();
         this.highBoundStrategy = kind.getHighBoundStrategy();
         this.supportsKeyRestore = supportsKeyRestore;
@@ -101,8 +105,39 @@ public final class LiveViewCheckpointDependency {
         return partitionSignature;
     }
 
+    /**
+     * Returns the finite preceding width {@code W}, in the designated timestamp
+     * column's native units, for a bounded RANGE descriptor. The compiler has
+     * already normalized any time unit the user wrote into those units, so a
+     * caller can subtract this from a timestamp directly.
+     */
+    public long getRangeFrameWidth() {
+        if (!isFiniteRange()) {
+            throw new IllegalStateException("not a finite RANGE dependency");
+        }
+        return -frameLo;
+    }
+
     public StructuralConvergence getStructuralConvergence() {
         return structuralConvergence;
+    }
+
+    /** Returns the base table's designated timestamp type the frame bounds are expressed in. */
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    /**
+     * Returns true when this descriptor is a {@code RANGE W PRECEDING ... CURRENT ROW}
+     * frame with a finite width over a timestamp column - the only RANGE shape whose
+     * forward influence boundary {@code H} is derivable by timestamp arithmetic.
+     */
+    public boolean isFiniteRange() {
+        return kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
+                && frameLo != Long.MIN_VALUE
+                && frameLo <= 0
+                && frameHi == 0
+                && ColumnType.isTimestamp(timestampType);
     }
 
     public boolean supportsKeyReset() {

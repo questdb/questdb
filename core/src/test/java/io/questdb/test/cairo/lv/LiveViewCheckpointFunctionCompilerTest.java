@@ -24,18 +24,22 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -111,6 +115,8 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, range.dependency.getKind());
             Assert.assertEquals(-10, range.dependency.getFrameLo());
             Assert.assertEquals(0, range.dependency.getFrameHi());
+            Assert.assertEquals(10, range.dependency.getRangeFrameWidth());
+            Assert.assertNotNull(range.rangePlan);
             Assert.assertTrue(range.dependency.supportsKeyRestore());
             Assert.assertFalse(range.dependency.supportsKeyReset());
             Assert.assertEquals(StructuralConvergence.EXACT, range.dependency.getStructuralConvergence());
@@ -127,6 +133,101 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(0, rows.dependency.getFrameHi());
             Assert.assertEquals(NumericConvergence.EXACT, rows.dependency.getNumericConvergence());
+            Assert.assertNull(rows.rangePlan);
+        });
+    }
+
+    @Test
+    public void testRangeDependencyNormalizesTimestampUnitsAndBuildsUnionPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            // The parser leaves the width in the units the user wrote, so the descriptor has
+            // to normalize it the same way the runtime frame does - here 2s/3s into micros.
+            final Metadata micros = compileMetadata(
+                    "select ts, sym, "
+                            + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                            + "count(x) over (partition by sym order by ts range between 3 seconds preceding and current row) c "
+                            + "from base",
+                    0
+            );
+            Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, micros.dependency.getTimestampType());
+            Assert.assertTrue(micros.dependency.isFiniteRange());
+            Assert.assertEquals(2_000_000L, micros.dependency.getRangeFrameWidth());
+            Assert.assertEquals(-2_000_000L, micros.dependency.getFrameLo());
+            // The plan unions both functions and keeps the widest look-behind.
+            Assert.assertNotNull(micros.rangePlan);
+            Assert.assertEquals(2, micros.rangePlan.getFunctionCount());
+            Assert.assertEquals(3_000_000L, micros.rangePlan.getMaxFrameWidth());
+            Assert.assertEquals(micros.dependency.getPartitionSignature(), micros.rangePlan.getPartitionSignature());
+            Assert.assertEquals(micros.dependency.getOrderSignature(), micros.rangePlan.getOrderSignature());
+
+            // A view mixing a bounded RANGE with a bounded ROWS frame stays valid, but has no
+            // RANGE repair plan - the ROWS half is bounded by Phase 6, not by a timestamp width.
+            final Metadata mixed = compileMetadata(
+                    "select ts, sym, "
+                            + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                            + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s "
+                            + "from base",
+                    0
+            );
+            Assert.assertTrue(mixed.dependency.isFiniteRange());
+            Assert.assertNull(mixed.rangePlan);
+
+            // The same width normalizes against the base's own timestamp resolution.
+            execute("create table base_ns (ts timestamp_ns, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata nanos = compileMetadata(
+                    "select ts, sym, avg(x) over (partition by sym order by ts "
+                            + "range between 2 milliseconds preceding and current row) a from base_ns",
+                    0
+            );
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, nanos.dependency.getTimestampType());
+            Assert.assertEquals(2_000_000L, nanos.dependency.getRangeFrameWidth());
+            Assert.assertEquals(-2_000_000L, nanos.dependency.getFrameLo());
+            Assert.assertNotNull(nanos.rangePlan);
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, nanos.rangePlan.getTimestampType());
+        });
+    }
+
+    /**
+     * The RANGE shapes outside {@code W PRECEDING ... CURRENT ROW} stay compilable, but must
+     * not present themselves as a finite RANGE dependency - a repair planner that claimed
+     * them would derive a bound the frame does not obey.
+     */
+    @Test
+    public void testRangeShapesOutsideTheSupportedFrameAreNotFiniteRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+
+            // Ends before the current row: finite, but its influence boundary is not the
+            // one RANGE W PRECEDING ... CURRENT ROW arithmetic derives.
+            assertNotFiniteRange("select ts, sym, last_value(x) over (partition by sym order by ts "
+                    + "range between '3' hour preceding and '1' hour preceding) a from base");
+            // Unbounded look-behind: no dependency floor below the correction.
+            assertNotFiniteRange("select ts, sym, first_value(x) ignore nulls over (partition by sym order by ts "
+                    + "range between unbounded preceding and '2' second preceding) a from base");
+            // A frame exclusion changes membership inside the window.
+            assertNotFiniteRange("select ts, sym, avg(x) over (partition by sym order by ts "
+                    + "range between 2 preceding and current row exclude current row) a from base");
+        });
+    }
+
+    @Test
+    public void testRangeWidthOutOfRangeFailsCompilation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            // TimestampDriver.from(long, char) narrows days to int, so this width collapses to
+            // a zero-wide runtime frame. The descriptor cannot describe the frame the user
+            // asked for, so compilation fails instead of checkpointing a mismatched bound.
+            try {
+                compileMetadata(
+                        "select ts, sym, avg(x) over (partition by sym order by ts "
+                                + "range between 4294967296 days preceding and current row) a from base",
+                        0
+                );
+                Assert.fail("expected RANGE width rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "RANGE width is out of range for the designated timestamp");
+            }
         });
     }
 
@@ -170,6 +271,12 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertNotFiniteRange(String sql) throws Exception {
+        final Metadata metadata = compileMetadata(sql, 0);
+        Assert.assertFalse(sql, metadata.dependency.isFiniteRange());
+        Assert.assertNull(sql, metadata.rangePlan);
+    }
+
     private static Metadata compileMetadata(String sql, int functionIndex) throws Exception {
         sqlExecutionContext.setLiveViewCompile(true);
         try (SqlCompiler compiler = engine.getSqlCompiler();
@@ -179,11 +286,16 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                 root = root.getBaseFactory();
             }
             Assert.assertTrue(root instanceof WindowRecordCursorFactory);
-            final ObjList<WindowFunction> functions = ((WindowRecordCursorFactory) root).getWindowFunctions();
+            final WindowRecordCursorFactory windowFactory = (WindowRecordCursorFactory) root;
+            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
             final WindowFunction function = functions.getQuick(functionIndex);
             Assert.assertNotNull(function.getClass().getName(), function.checkpointFunctionIdentity());
             Assert.assertNotNull(function.getClass().getName(), function.checkpointDependency());
-            return new Metadata(function.checkpointFunctionIdentity(), function.checkpointDependency());
+            return new Metadata(
+                    function.checkpointFunctionIdentity(),
+                    function.checkpointDependency(),
+                    windowFactory.getCheckpointRangePlan()
+            );
         } finally {
             sqlExecutionContext.setLiveViewCompile(false);
         }
@@ -192,13 +304,16 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     private static class Metadata {
         private final LiveViewCheckpointDependency dependency;
         private final LiveViewCheckpointFunctionIdentity identity;
+        private final LiveViewCheckpointRangePlan rangePlan;
 
         private Metadata(
                 LiveViewCheckpointFunctionIdentity identity,
-                LiveViewCheckpointDependency dependency
+                LiveViewCheckpointDependency dependency,
+                LiveViewCheckpointRangePlan rangePlan
         ) {
             this.identity = identity;
             this.dependency = dependency;
+            this.rangePlan = rangePlan;
         }
     }
 }

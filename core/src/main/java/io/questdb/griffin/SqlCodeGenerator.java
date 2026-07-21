@@ -9815,6 +9815,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (qc.isWindowExpression()) {
                     final WindowExpression ac = (WindowExpression) qc;
                     final ExpressionNode ast = qc.getAst();
+                    if (executionContext.isLiveViewCompile()) {
+                        LiveViewCheckpointFunctionCompiler.validateRange(ac, ast.token, baseMetadata);
+                    }
 
                     partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
@@ -10002,7 +10005,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             if (factorySignature == null) {
                                 throw SqlException.$(qc.getAst().position, "live view checkpoint function factory identity is unavailable");
                             }
-                            LiveViewCheckpointFunctionCompiler.configure(windowFunction, qc, factorySignature, i);
+                            LiveViewCheckpointFunctionCompiler.configure(
+                                    windowFunction,
+                                    qc,
+                                    factorySignature,
+                                    i,
+                                    baseMetadata
+                            );
                         }
                         if (lvCompile
                                 && qc.getRowsLoKind() == WindowExpression.PRECEDING && qc.getRowsLoExpr() == null
@@ -10014,7 +10023,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
-                return new WindowRecordCursorFactory(base, factoryMetadata, functions, anchorableWindowFunctions);
+                return new WindowRecordCursorFactory(
+                        base,
+                        factoryMetadata,
+                        functions,
+                        anchorableWindowFunctions,
+                        lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null
+                );
             } else {
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);

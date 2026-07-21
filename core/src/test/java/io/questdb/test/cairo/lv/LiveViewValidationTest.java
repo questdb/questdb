@@ -60,6 +60,83 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewValidationTest extends AbstractCairoTest {
 
+    /**
+     * {@code RANGE W PRECEDING ... CURRENT ROW} is the shape the localized out-of-order
+     * repair bounds by timestamp arithmetic, and the width only means anything while the
+     * frame is ordered by the designated timestamp ascending. A frame that claims the shape
+     * but orders by something else is turned away at CREATE, as is a pair of RANGE functions
+     * that disagree on the key domain the repair would have to plan against.
+     * <p>
+     * Every other RANGE shape keeps the behavior it has today: accepted, and simply not
+     * claimed by a repair plan.
+     */
+    @Test
+    public void testRangeDependencyValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, grp SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, avg(x) OVER (PARTITION BY sym ORDER BY x "
+                            + "RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) a FROM base",
+                    "RANGE window function must ORDER BY the designated timestamp ASC"
+            );
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, avg(x) OVER (PARTITION BY sym ORDER BY ts DESC "
+                            + "RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) a FROM base",
+                    "RANGE window function must ORDER BY the designated timestamp ASC"
+            );
+
+            // Two RANGE functions that disagree on the key domain cannot share one repair
+            // interval, so the planner refuses to union them.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, grp, "
+                            + "avg(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) a, "
+                            + "sum(x) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3 PRECEDING AND CURRENT ROW) s "
+                            + "FROM base",
+                    "RANGE window functions must use the same PARTITION BY and ORDER BY domain"
+            );
+
+            // Positive controls. Two RANGE functions over one key domain union cleanly,
+            // whether the width is bare or carries a time unit.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, "
+                    + "avg(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) a, "
+                    + "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN 3 PRECEDING AND CURRENT ROW) s "
+                    + "FROM base");
+            execute("DROP LIVE VIEW lv");
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, avg(x) OVER w AS a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN 30 SECONDS PRECEDING AND CURRENT ROW)");
+            execute("DROP LIVE VIEW lv");
+
+            // An anchored window is bounded by its segment, not by a RANGE width, so the
+            // RANGE gate must not touch it - its frame is the default unbounded one.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, sum(x) OVER w AS s FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("DROP LIVE VIEW lv");
+
+            // The RANGE shapes this phase does not plan against must keep working. They are
+            // not W PRECEDING ... CURRENT ROW, so no repair plan claims them, but that is a
+            // reason to leave them alone - not to stop accepting them.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, last_value(x) OVER w AS a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING)");
+            execute("DROP LIVE VIEW lv");
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)");
+            execute("DROP LIVE VIEW lv");
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, sym, avg(x) OVER w AS a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     @Test
     public void testRejectUnanchoredRanking() throws Exception {
         // Phase 0 finite-influence scope cut (see

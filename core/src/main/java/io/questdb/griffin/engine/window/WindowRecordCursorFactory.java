@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -39,6 +40,7 @@ import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Factory implements select with window functions that support streaming, that is:
@@ -53,6 +55,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // these and never touches a bounded ROWS/RANGE window's state. Null for
     // non-live-view compiles, which never consult it.
     private final ObjList<WindowFunction> anchorableWindowFunctions;
+    // Union of the finite RANGE dependencies every window function in this factory carries,
+    // or null when the factory mixes shapes, is not a live-view compile, or has no window
+    // function with a finite RANGE frame. Bounds the localized O3 repair interval.
+    private final LiveViewCheckpointRangePlan checkpointRangePlan;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
     private RecordCursorFactory base;
@@ -65,7 +71,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null);
+        this(base, metadata, functions, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -74,10 +80,21 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
+        this(base, metadata, functions, anchorableWindowFunctions, null);
+    }
+
+    public WindowRecordCursorFactory(
+            RecordCursorFactory base,
+            GenericRecordMetadata metadata,
+            ObjList<Function> functions,
+            ObjList<WindowFunction> anchorableWindowFunctions,
+            LiveViewCheckpointRangePlan checkpointRangePlan
+    ) {
         super(metadata);
         this.base = base;
         this.functions = functions;
         this.anchorableWindowFunctions = anchorableWindowFunctions;
+        this.checkpointRangePlan = checkpointRangePlan;
 
         windowFunctions = new ObjList<>();
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -114,6 +131,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    /** Returns the immutable finite-RANGE repair contract, or null for a mixed/non-RANGE view. */
+    public @Nullable LiveViewCheckpointRangePlan getCheckpointRangePlan() {
+        return checkpointRangePlan;
     }
 
     /**

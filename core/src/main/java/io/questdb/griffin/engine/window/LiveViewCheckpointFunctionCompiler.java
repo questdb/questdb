@@ -30,13 +30,21 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
+import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /** Compiler-only builder for stable live-view checkpoint function metadata. */
 public final class LiveViewCheckpointFunctionCompiler {
@@ -49,20 +57,30 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull WindowFunction function,
             @NotNull WindowExpression window,
             @NotNull CharSequence factorySignature,
-            int outputPosition
-    ) {
+            int outputPosition,
+            @NotNull RecordMetadata baseMetadata
+    ) throws SqlException {
+        final int timestampType = baseMetadata.getTimestampType();
         final String partitionSignature = expressionListSignature(window.getPartitionBy(), null);
         final String orderSignature = expressionListSignature(window.getOrderBy(), window.getOrderByDirection());
         final boolean anchored = window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE
                 || window.isResolvedWindowAnchored();
         final DependencyKind kind = dependencyKind(function.getName(), window);
         final boolean keyed = function.getCheckpointKeyColumnTypes() != null;
+        // The RANGE kind is only assigned to a W PRECEDING ... CURRENT ROW frame, and
+        // SqlCodeGenerator has already run validateRange() over every live-view window
+        // expression, so such a frame is known to be ordered by the designated timestamp
+        // ascending and its width is safe to read as a timestamp offset.
+        final long frameLo = kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
+                ? rangeFrameLo(function.getName(), window, timestampType)
+                : window.getRowsLo();
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
                 kind,
                 partitionSignature,
                 orderSignature,
-                window.getRowsLo(),
+                frameLo,
                 window.getRowsHi(),
+                timestampType,
                 keyed,
                 keyed && anchored,
                 StructuralConvergence.EXACT,
@@ -85,6 +103,91 @@ public final class LiveViewCheckpointFunctionCompiler {
         function.setCheckpointCompilerMetadata(identity, dependency);
     }
 
+    /**
+     * Builds the union of the finite RANGE dependencies a streaming live-view factory
+     * carries, or null when any window function is not a finite RANGE - a mixed
+     * ROWS/anchor factory stays valid but has no RANGE repair plan. Two RANGE functions
+     * must nevertheless agree on the key/order domain even in a mixed factory, so a later
+     * planner can never combine incompatible descriptors into one repair interval.
+     */
+    @Nullable
+    public static LiveViewCheckpointRangePlan rangePlan(
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<QueryColumn> columns
+    ) throws SqlException {
+        LiveViewCheckpointDependency firstRange = null;
+        LiveViewCheckpointFunctionIdentity firstIdentity = null;
+        boolean allRange = true;
+        int rangeFunctionCount = 0;
+        long maxFrameWidth = 0;
+
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (!(function instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency == null || !dependency.isFiniteRange()) {
+                allRange = false;
+                continue;
+            }
+            final LiveViewCheckpointFunctionIdentity identity = windowFunction.checkpointFunctionIdentity();
+            if (firstRange == null) {
+                firstRange = dependency;
+                firstIdentity = identity;
+            } else if (!firstRange.getPartitionSignature().equals(dependency.getPartitionSignature())
+                    || !firstRange.getOrderSignature().equals(dependency.getOrderSignature())
+                    || firstRange.getTimestampType() != dependency.getTimestampType()) {
+                throw SqlException.$(
+                                columns.getQuick(i).getAst().position,
+                                "live view RANGE window functions must use the same PARTITION BY and ORDER BY domain"
+                        )
+                        .put(" [first=").put(functionLabel(firstIdentity))
+                        .put(", incompatible=").put(functionLabel(identity)).put(']');
+            }
+            maxFrameWidth = Math.max(maxFrameWidth, dependency.getRangeFrameWidth());
+            rangeFunctionCount++;
+        }
+
+        if (!allRange || firstRange == null) {
+            return null;
+        }
+        return new LiveViewCheckpointRangePlan(
+                rangeFunctionCount,
+                maxFrameWidth,
+                firstRange.getPartitionSignature(),
+                firstRange.getOrderSignature(),
+                firstRange.getTimestampType()
+        );
+    }
+
+    /**
+     * Validates the ordering domain of a {@code RANGE W PRECEDING ... CURRENT ROW} frame -
+     * the one RANGE shape whose forward influence boundary {@code H} follows from timestamp
+     * arithmetic, and therefore the only one this phase plans a localized repair against.
+     * The width is meaningless unless the frame is ordered by the designated timestamp
+     * ascending, so a frame that claims the shape but orders by something else is turned
+     * away at CREATE rather than silently given a bound that does not describe it.
+     * <p>
+     * Every other RANGE shape - a frame ending before the current row, an unbounded
+     * look-behind, a FOLLOWING bound, a frame exclusion - keeps its existing behavior. Those
+     * frames simply do not produce a finite RANGE descriptor, so no repair plan claims them;
+     * narrowing what a live view accepts is a separate, deliberate scope decision.
+     * <p>
+     * The caller runs this for every live-view window expression, before the function itself
+     * is parsed, so an unsupported frame is named at its own position rather than surfacing
+     * later as a missing-checkpoint-metadata failure.
+     */
+    public static void validateRange(
+            @NotNull WindowExpression window,
+            @NotNull CharSequence functionName,
+            @NotNull RecordMetadata baseMetadata
+    ) throws SqlException {
+        if (dependencyKind(functionName, window) == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW) {
+            validateRangeOrder(functionName, window, baseMetadata);
+        }
+    }
+
     private static DependencyKind dependencyKind(CharSequence functionName, WindowExpression window) {
         if (window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE || window.isResolvedWindowAnchored()) {
             return DependencyKind.FIXED_ANCHOR_SEGMENT;
@@ -98,7 +201,10 @@ public final class LiveViewCheckpointFunctionCompiler {
             if (window.getFramingMode() == WindowExpression.FRAMING_ROWS) {
                 return DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW;
             }
-            if (window.getFramingMode() == WindowExpression.FRAMING_RANGE) {
+            if (window.getFramingMode() == WindowExpression.FRAMING_RANGE
+                    && window.getRowsLoKind() == WindowExpression.PRECEDING
+                    && window.getRowsHiKind() == WindowExpression.CURRENT
+                    && window.getExclusionKind() == WindowExpression.EXCLUDE_NO_OTHERS) {
                 return DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW;
             }
         }
@@ -123,6 +229,15 @@ public final class LiveViewCheckpointFunctionCompiler {
         return sink.toString();
     }
 
+    private static CharSequence functionLabel(LiveViewCheckpointFunctionIdentity identity) {
+        if (identity == null) {
+            return "unknown";
+        }
+        return identity.getCanonicalWindowName().isEmpty()
+                ? identity.getFactorySignature()
+                : identity.getFactorySignature() + " OVER " + identity.getCanonicalWindowName();
+    }
+
     private static boolean isRanking(CharSequence name) {
         return Chars.equalsIgnoreCase(name, "row_number")
                 || Chars.equalsIgnoreCase(name, "rank")
@@ -140,5 +255,56 @@ public final class LiveViewCheckpointFunctionCompiler {
                 || Chars.equalsIgnoreCase(name, "nsum"))
                 ? NumericConvergence.FLOATING_TOLERANCE
                 : NumericConvergence.EXACT;
+    }
+
+    /**
+     * Resolves the descriptor's {@code frameLo} to the negated finite RANGE width {@code W}
+     * in the designated timestamp's native units. {@link WindowExpression#getRowsLo()} still
+     * carries the width in the units the user wrote, so this repeats exactly the conversion
+     * {@code WindowContextImpl.of()} applies to build the runtime frame - the repair floor
+     * {@code L = R - W} is only sound while the descriptor and the compiled frame agree
+     * bit-for-bit.
+     */
+    private static long rangeFrameLo(
+            CharSequence functionName,
+            WindowExpression window,
+            int timestampType
+    ) throws SqlException {
+        final long rowsLo = window.getRowsLo();
+        final char unit = window.getRowsLoExprTimeUnit();
+        if (unit == 0 || !ColumnType.isTimestamp(timestampType)) {
+            return rowsLo;
+        }
+        final long frameLo = ColumnType.getTimestampDriver(timestampType).from(rowsLo, unit);
+        // from(long, char) yields 0 for an unrecognized unit, and narrows minutes/hours/days
+        // to int, so a width beyond that range silently collapses to zero or flips sign.
+        // Such a frame has no usable dependency bound - reject it instead of checkpointing a
+        // view whose runtime frame is not the one the user asked for.
+        if (frameLo >= 0 && rowsLo < 0) {
+            final int position = window.getRowsLoExprPos() > 0
+                    ? window.getRowsLoExprPos()
+                    : window.getAst().position;
+            throw SqlException.$(position, "live view RANGE width is out of range for the designated timestamp [function=")
+                    .put(functionName).put("(), width=").put(-rowsLo).put(unit).put(']');
+        }
+        return frameLo;
+    }
+
+    private static void validateRangeOrder(
+            CharSequence functionName,
+            WindowExpression window,
+            RecordMetadata baseMetadata
+    ) throws SqlException {
+        final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+        final int timestampIndex = baseMetadata.getTimestampIndex();
+        final boolean valid = timestampIndex != -1
+                && orderBy.size() == 1
+                && window.getOrderByDirection().getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, orderBy.getQuick(0).token) == timestampIndex;
+        if (!valid) {
+            final int position = orderBy.size() > 0 ? orderBy.getQuick(0).position : window.getAst().position;
+            throw SqlException.$(position, "live view RANGE window function must ORDER BY the designated timestamp ASC [function=")
+                    .put(functionName).put("()]");
+        }
     }
 }
