@@ -30,19 +30,26 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDelta;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
+import io.questdb.cairo.lv.LiveViewCheckpointTimeline;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineWriter;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Zip;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -267,6 +274,26 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRestartValidationCostIsConstantAtOneAndOneHundredMillionLogicalEntries() throws Exception {
+        final CountingMetaOpenFilesFacade ff = new CountingMetaOpenFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            final LiveViewCheckpointPageRef timelineRoot = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef rowPositionRoot = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef segmentDirectoryRoot = new LiveViewCheckpointPageRef();
+
+            // nextCheckpointId is the authoritative monotonic population upper bound.
+            // The root pages deliberately name a missing deep child: bounded restart
+            // must validate the roots and catalogue without following that child.
+            writeLargeTimelineRoots(timelineRoot, rowPositionRoot, segmentDirectoryRoot);
+            publishLargeTimelineGeneration(1, 1_000_000, timelineRoot, rowPositionRoot, segmentDirectoryRoot);
+            assertBoundedRestart(ff, 1, 1_000_000);
+
+            publishLargeTimelineGeneration(2, 100_000_000, timelineRoot, rowPositionRoot, segmentDirectoryRoot);
+            assertBoundedRestart(ff, 2, 100_000_000);
+        });
+    }
+
     private static Path checkpointsDir(Path path) {
         path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
         return path;
@@ -281,6 +308,25 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
             Assert.assertEquals(expected, pin.getGeneration());
             Assert.assertEquals(expected, store.getSuperblock().generation);
         }
+    }
+
+    private void assertBoundedRestart(
+            CountingMetaOpenFilesFacade ff,
+            long expectedGeneration,
+            long expectedLogicalEntryCount
+    ) {
+        ff.beginMeasurement();
+        try (LiveViewCheckpointMetaStore store = openStore(); LiveViewCheckpointGenerationPin pin = store.pin()) {
+            Assert.assertEquals(expectedGeneration, pin.getGeneration());
+            Assert.assertEquals(expectedLogicalEntryCount, store.getSuperblock().nextCheckpointId);
+        } finally {
+            ff.endMeasurement();
+        }
+        Assert.assertEquals(
+                "startup must open only the timeline, row-position, and segment-directory roots",
+                3,
+                ff.getMetaOpenCount()
+        );
     }
 
     private void corruptPage(LiveViewCheckpointPageRef ref) {
@@ -300,6 +346,66 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
             final long crcStart = ref.getOffset() + LiveViewCheckpointLayout.PAGE_LENGTH_OFFSET;
             final int crc = Zip.crc32(0, mem.addressOf(crcStart), ref.getLength() - LiveViewCheckpointLayout.PAGE_LENGTH_OFFSET);
             mem.putInt(ref.getOffset() + LiveViewCheckpointLayout.PAGE_CRC_OFFSET, crc);
+        }
+    }
+
+    private void publishLargeTimelineGeneration(
+            long generation,
+            long logicalEntryCount,
+            LiveViewCheckpointPageRef timelineRoot,
+            LiveViewCheckpointPageRef rowPositionRoot,
+            LiveViewCheckpointPageRef segmentDirectoryRoot
+    ) {
+        try (LiveViewCheckpointMetaStore store = openStore()) {
+            final LiveViewCheckpointSuperblock sb = store.getSuperblock();
+            sb.generation = generation;
+            sb.definitionTxn = 10;
+            sb.historyEpoch = 20;
+            sb.normalizedBaseSeqTxn = generation;
+            sb.coveredLvSeqTxn = generation;
+            sb.nextCheckpointId = logicalEntryCount;
+            sb.nextSegmentId = 1;
+            sb.metadataBytes = 1;
+            sb.dataBytes = 0;
+            sb.timelineRootRef.of(timelineRoot.getSegmentId(), timelineRoot.getOffset(), timelineRoot.getLength());
+            sb.rowPositionDeltaRootRef.of(rowPositionRoot.getSegmentId(), rowPositionRoot.getOffset(), rowPositionRoot.getLength());
+            sb.segmentDirectoryRootRef.of(segmentDirectoryRoot.getSegmentId(), segmentDirectoryRoot.getOffset(), segmentDirectoryRoot.getLength());
+            store.publish();
+        }
+    }
+
+    private void writeLargeTimelineRoots(
+            LiveViewCheckpointPageRef timelineRoot,
+            LiveViewCheckpointPageRef rowPositionRoot,
+            LiveViewCheckpointPageRef segmentDirectoryRoot
+    ) {
+        final long missingSegmentId = 999_999;
+        try (LiveViewCheckpointMetaSegmentWriter writer = new LiveViewCheckpointMetaSegmentWriter(configuration);
+             LiveViewCheckpointSegmentDirectory segmentDirectory = new LiveViewCheckpointSegmentDirectory(configuration);
+             Path dir = new Path()) {
+            writer.of(checkpointsDir(dir), 0);
+
+            MemoryA page = writer.beginPage(LiveViewCheckpointTimeline.PAGE_KIND_INTERNAL);
+            page.putInt(1);
+            page.putLong(0);
+            page.putLong(0);
+            page.putLong(missingSegmentId);
+            page.putLong(LiveViewCheckpointLayout.SEG_HEADER_SIZE);
+            page.putInt(LiveViewCheckpointLayout.PAGE_HEADER_SIZE + Integer.BYTES);
+            writer.endPage(timelineRoot);
+
+            page = writer.beginPage(LiveViewCheckpointRowPositionDelta.PAGE_KIND_INTERNAL);
+            page.putInt(1);
+            page.putLong(0);
+            page.putLong(0);
+            page.putLong(0);
+            page.putLong(missingSegmentId);
+            page.putLong(LiveViewCheckpointLayout.SEG_HEADER_SIZE);
+            page.putInt(LiveViewCheckpointLayout.PAGE_HEADER_SIZE + Integer.BYTES);
+            writer.endPage(rowPositionRoot);
+
+            segmentDirectory.writeTo(writer, segmentDirectoryRoot);
+            writer.commit();
         }
     }
 
@@ -360,6 +466,34 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
         private void suffixAdd(long timestamp, long checkpointId, long delta) {
             rowPositionWriter.suffixAdd(rowPositionRoot, timestamp, checkpointId, delta, nextSegmentId++, tmpRoot);
             rowPositionRoot.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+        }
+    }
+
+    private static final class CountingMetaOpenFilesFacade extends TestFilesFacadeImpl {
+        private boolean measuring;
+        private int metaOpenCount;
+
+        private void beginMeasurement() {
+            metaOpenCount = 0;
+            measuring = true;
+        }
+
+        private void endMeasurement() {
+            measuring = false;
+        }
+
+        private int getMetaOpenCount() {
+            return metaOpenCount;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (measuring
+                    && Utf8s.containsAscii(name, LV_DIR)
+                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.META_SEGMENT_PREFIX)) {
+                metaOpenCount++;
+            }
+            return super.openRO(name);
         }
     }
 
