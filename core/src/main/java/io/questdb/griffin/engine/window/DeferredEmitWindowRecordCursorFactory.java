@@ -299,7 +299,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }

@@ -54,6 +54,7 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
@@ -98,23 +99,24 @@ import java.util.stream.Stream;
  *       Cached, no sort trees.</li>
  *   <li>{@code Q2_MIXED_ASC} — both functions {@code OVER (ORDER BY ts ASC)}. Cached, orders
  *       dismissed (natural).</li>
- *   <li>{@code Q3_MIXED_DESC} — both {@code OVER (ORDER BY ts DESC)}. Cached, two sort trees
- *       (LEAD and LAG disagree on scan direction internally).</li>
+ *   <li>{@code Q3_MIXED_DESC} — both {@code OVER (ORDER BY ts DESC)}. Phase 4 normalisation
+ *       fires and the group streams through deferred emit.</li>
  *   <li>{@code Q4_MIXED_PARTITION_NO_ORDER} — both {@code OVER (PARTITION BY sym)}. Cached,
  *       partitioned, no sort trees.</li>
  *   <li>{@code Q5_MIXED_PARTITION_ASC} — both
  *       {@code OVER (PARTITION BY sym ORDER BY ts ASC)}. Cached, partitioned, orders
  *       dismissed.</li>
  *   <li>{@code Q6_MIXED_PARTITION_DESC} — both
- *       {@code OVER (PARTITION BY sym ORDER BY ts DESC)}. Cached, partitioned, two sort trees.
- *       Worst-case current cost.</li>
+ *       {@code OVER (PARTITION BY sym ORDER BY ts DESC)}. Phase 4 normalisation fires and the
+ *       partitioned group streams through deferred emit.</li>
  *   <li>{@code Q7_MIXED_INVERSE_NO_PARTITION} —
  *       {@code LAG(x,1) OVER (ORDER BY ts DESC) + LEAD(x,1) OVER (ORDER BY ts ASC)}. LAG and
  *       LEAD compute the same row value but the planner doesn't unify them; LAG gets a sort
  *       tree, LEAD is unordered.</li>
  *   <li>{@code Q8_MIXED_INVERSE_PARTITION} — same as Q7 but partitioned.</li>
  *   <li>{@code Q9_DUAL_LEAD} — {@code LEAD(x,1) OVER (ORDER BY ts ASC) + LEAD(x,3)
- *       OVER (ORDER BY ts ASC)}. Two LEADs with different offsets, both cached today.</li>
+ *       OVER (ORDER BY ts ASC)}. Both functions have positive lookahead, so the group streams
+ *       through deferred emit.</li>
  *   <li>{@code Q10_DUAL_LAG} — {@code LAG(x,1) OVER (ORDER BY ts ASC) + LAG(x,3) OVER (ORDER BY
  *       ts ASC)}. Two LAGs, both ZERO_PASS + lookahead=0 — already streams via the existing
  *       {@link WindowRecordCursorFactory}. Baseline: this is the floor that Phase 6 would aim
@@ -139,12 +141,13 @@ import java.util.stream.Stream;
  * {@code shape}+{@code path} pair hits the expected factory class. Silent routing drift would
  * corrupt the numbers; the assertion catches it at setup rather than mid-run.
  */
-@State(Scope.Benchmark)
+@State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3)
 @Measurement(iterations = 5)
 @Fork(1)
+@Threads(1)
 public class WindowLeadLagBenchmark {
 
     private static final int SYMBOL_CAPACITY = 2_000_000;
@@ -216,11 +219,11 @@ public class WindowLeadLagBenchmark {
     @Setup(Level.Trial)
     public void setUp() throws Exception {
         tempRoot = Files.createTempDirectory("windowleadlagbench-");
-        final boolean streaming = "STREAMING".equals(path);
+        final boolean isStreaming = "STREAMING".equals(path);
         final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString()) {
             @Override
             public boolean getSqlWindowStreamingLeadEnabled() {
-                return streaming;
+                return isStreaming;
             }
         };
         engine = new CairoEngine(configuration);
@@ -397,7 +400,7 @@ public class WindowLeadLagBenchmark {
         }
     }
 
-    private StringSink renderShapeUnderFlag(String sql, boolean streaming, int rows, int partitions) throws Exception {
+    private StringSink renderShapeUnderFlag(String sql, boolean isStreaming, int rows, int partitions) throws Exception {
         Path root = Files.createTempDirectory("windowleadlagbench-verify-");
         CairoEngine verifyEngine = null;
         SqlCompilerImpl verifyCompiler = null;
@@ -405,7 +408,7 @@ public class WindowLeadLagBenchmark {
             final CairoConfiguration verifyConf = new DefaultCairoConfiguration(root.toString()) {
                 @Override
                 public boolean getSqlWindowStreamingLeadEnabled() {
-                    return streaming;
+                    return isStreaming;
                 }
             };
             verifyEngine = new CairoEngine(verifyConf);

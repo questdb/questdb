@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -294,6 +294,9 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                         configuration.getSqlWindowStoreMaxPages(),
                         MemoryTag.NATIVE_CIRCULAR_BUFFER
                 );
+                if (memoryTracker != null) {
+                    buffer.setMemoryTracker(memoryTracker);
+                }
             }
             super.pass1(record, recordOffset, spi);
         }

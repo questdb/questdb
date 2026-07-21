@@ -141,6 +141,23 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadRingProductAtLimitStreams() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (" +
+                    "SELECT x, timestamp_sequence(0, 1) ts FROM long_sequence(80)) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+
+            // ringCapacity=32 and leadCount=2 use every bit in the 64-bit pending mask.
+            StreamingLeadEquivalence.assertEquivalent(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT x, lead(x, 31) OVER () lx, lead(x, 1) OVER () ly FROM t",
+                    "multi-LEAD pending-mask product 64"
+            );
+        });
+    }
+
+    @Test
     public void testLeadStreamsOverParquetBackedBase() throws Exception {
         // C18: emission resolves base columns via baseCursor.recordAt(rowid) on a Parquet-backed
         // frame; the cursor sets the Parquet decode-budget hint (MONOTONIC non-partitioned,

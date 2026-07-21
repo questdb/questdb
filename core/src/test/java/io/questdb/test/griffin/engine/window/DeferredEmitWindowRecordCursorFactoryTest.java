@@ -32,9 +32,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.DeferredEmitWindowRecordCursorFactory;
@@ -68,6 +70,28 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
                     Assert.assertFalse(cursor.hasNext());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testFailedOpenPreservesPrimaryException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (10, 0)");
+
+            try (RecordCursorFactory factory = newDeferredFactory(
+                    new TestFailingOpenWindowFunction(LongColumn.newInstance(0)))) {
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail("expected cursor initialization failure");
+                } catch (IllegalStateException e) {
+                    Assert.assertEquals("open failure", e.getMessage());
+                    Assert.assertEquals(1, e.getSuppressed().length);
+                    Assert.assertTrue(e.getSuppressed()[0] instanceof IllegalArgumentException);
+                    Assert.assertEquals("cleanup failure", e.getSuppressed()[0].getMessage());
+                }
+            }
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
         });
     }
 
@@ -491,6 +515,10 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
      * synthetic LEAD on x at the given offset. Two output columns: {@code (x, lead_x)} both LONG.
      */
     private RecordCursorFactory newDeferredFactory(int leadOffset) throws SqlException {
+        return newDeferredFactory(new TestStreamingLeadLongFunction(LongColumn.newInstance(0), leadOffset));
+    }
+
+    private RecordCursorFactory newDeferredFactory(WindowFunction lead) throws SqlException {
         final RecordCursorFactory base;
         try (io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler()) {
             base = compiler.compile("select x from t", sqlExecutionContext).getRecordCursorFactory();
@@ -502,10 +530,6 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
 
         ObjList<Function> functions = new ObjList<>();
         functions.add(LongColumn.newInstance(0));
-        TestStreamingLeadLongFunction lead = new TestStreamingLeadLongFunction(
-                LongColumn.newInstance(0),
-                leadOffset
-        );
         lead.setColumnIndex(1);
         functions.add(lead);
 
@@ -552,11 +576,28 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
         }
     }
 
+    private static final class TestFailingOpenWindowFunction extends TestStreamingLeadLongFunction {
+
+        TestFailingOpenWindowFunction(Function arg) {
+            super(arg, 1);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            throw new IllegalStateException("open failure");
+        }
+
+        @Override
+        public void reset() {
+            throw new IllegalArgumentException("cleanup failure");
+        }
+    }
+
     /**
      * Synthetic streaming LEAD-Long function for tests. Implements the deferred-emit protocol only;
      * {@link #pass1} throws because no test routes through the cached executor.
      */
-    private static final class TestStreamingLeadLongFunction extends BaseWindowFunction implements WindowFunction {
+    private static class TestStreamingLeadLongFunction extends BaseWindowFunction implements WindowFunction {
         private final int lookahead;
 
         TestStreamingLeadLongFunction(Function arg, int lookahead) {

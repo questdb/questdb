@@ -57,10 +57,9 @@ public final class StreamingLeadEquivalence {
      * the header line matches verbatim and the data rows match as a sorted multiset. Caller is
      * responsible for setting up the table state before invoking.
      * <p>
-     * Pins the streaming plan (the flag-on run must route through {@code DeferredEmitWindow}). Use
-     * the {@code expectStreaming} overload with {@code false} for shapes that intentionally fall
-     * back to the cached path, so the equivalence assertion cannot silently degrade to a vacuous
-     * cached-vs-cached comparison.
+     * Pins flag-on routing to match the expected path. Use the {@code expectStreaming} overload
+     * with {@code false} for shapes that intentionally fall back, so the equivalence assertion
+     * cannot silently accept either an unexpected cached or DeferredEmit route.
      */
     public static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg) throws Exception {
         assertEquivalent(engine, ctx, sql, contextMsg, true);
@@ -68,9 +67,9 @@ public final class StreamingLeadEquivalence {
 
     /**
      * Variant of {@link #assertEquivalent(CairoEngine, SqlExecutionContext, String, String)} that
-     * lets the caller declare whether the shape is expected to stream. When {@code expectStreaming}
-     * is true the flag-on plan is pinned to contain {@code DeferredEmitWindow}; a dispatch
-     * regression to the cached path then fails here instead of passing a cached-vs-cached compare.
+     * lets the caller declare whether the shape is expected to stream. The flag-on plan must contain
+     * {@code DeferredEmitWindow} exactly when {@code expectStreaming} is true, so routing regressions
+     * cannot hide behind equivalent query output.
      */
     public static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg, boolean expectStreaming) throws Exception {
         final StringSink cachedSink = CACHED_SINK.get();
@@ -83,20 +82,19 @@ public final class StreamingLeadEquivalence {
         AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
         engine.print(sql, streamingSink, ctx);
 
-        if (expectStreaming) {
-            // Independent routing signal: the sorted-multiset comparison below still passes if the
-            // dispatch gate silently regressed to cached (both paths are correct). Compile the
-            // flag-on EXPLAIN plan and require the DeferredEmitWindow node so a fuzz/boundary case
-            // cannot degrade to a vacuous cached-vs-cached comparison.
-            final StringSink planSink = PLAN_SINK.get();
-            planSink.clear();
-            engine.print("explain " + sql, planSink, ctx);
-            if (!Chars.contains(planSink, "DeferredEmitWindow")) {
-                Assert.fail(
-                        "expected streaming plan (DeferredEmitWindow) but it was absent. " + contextMsg
-                                + " sql=" + sql + " plan=\n" + planSink
-                );
-            }
+        // Independent routing signal: the sorted-multiset comparison below still passes when both
+        // flag states route to cached. Pin both positive and negative expectations so an eligible
+        // shape cannot silently stop streaming and an ineligible shape cannot enter DeferredEmit.
+        final StringSink planSink = PLAN_SINK.get();
+        planSink.clear();
+        engine.print("explain " + sql, planSink, ctx);
+        final boolean hasDeferredEmit = Chars.contains(planSink, "DeferredEmitWindow");
+        if (hasDeferredEmit != expectStreaming) {
+            Assert.fail(
+                    "unexpected DeferredEmitWindow routing [expected=" + expectStreaming
+                            + ", actual=" + hasDeferredEmit + "]. " + contextMsg
+                            + " sql=" + sql + " plan=\n" + planSink
+            );
         }
 
         String[] cachedLines = splitLines(cachedSink.toString());

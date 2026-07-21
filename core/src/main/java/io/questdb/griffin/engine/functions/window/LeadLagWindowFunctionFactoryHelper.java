@@ -269,6 +269,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", ").val(offset).val(", ");
@@ -442,6 +447,8 @@ public class LeadLagWindowFunctionFactoryHelper {
         protected MemoryARW buffer;
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
+        @Nullable
+        protected MemoryTracker memoryTracker;
         protected final long offset;
         protected long count = 0;
         protected int loIdx = 0;
@@ -504,6 +511,14 @@ public class LeadLagWindowFunctionFactoryHelper {
             loIdx = 0;
             count = 0;
             nullStreamingFields();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memoryTracker = tracker;
+            if (buffer != null) {
+                buffer.setMemoryTracker(tracker);
+            }
         }
 
         @Override

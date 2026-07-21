@@ -235,6 +235,9 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
                         configuration.getSqlWindowStoreMaxPages(),
                         MemoryTag.NATIVE_CIRCULAR_BUFFER
                 );
+                if (memoryTracker != null) {
+                    buffer.setMemoryTracker(memoryTracker);
+                }
             }
             super.pass1(record, recordOffset, spi);
         }

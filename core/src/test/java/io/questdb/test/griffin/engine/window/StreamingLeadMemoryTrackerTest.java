@@ -52,6 +52,52 @@ public class StreamingLeadMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonPartitionedLagFallbackRingBreachesAndReleases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            // Phase 4 turns the large descending LEAD into an ordinary non-partitioned LAG inside
+            // the deferred cursor. Its row-scaled ring must count against the per-query limit.
+            final String query = "SELECT v, " +
+                    "lag(v, 1) OVER (ORDER BY ts DESC), " +
+                    "lead(v, 65_537) OVER (ORDER BY ts DESC) FROM tab";
+
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 320 * 1024L);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, DeferredEmitWindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        // Drain until the ordinary LAG ring breaches the query limit.
+                    }
+                    Assert.fail("expected per-query memory breach on the ordinary LAG ring");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024L);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, DeferredEmitWindowRecordCursorFactory.class);
+                for (int i = 0; i < 3; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 50_000, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOrdinaryLagFallbackRingBreachesAndReleases() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (" +

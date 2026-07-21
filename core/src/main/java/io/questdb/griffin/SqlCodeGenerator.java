@@ -10196,7 +10196,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // cursorPartitionByRecord wraps a list owned by sharedSrc; do not free it
                         // here or sharedSrc.close() would later double-free. base and functions
                         // are freed by the outer catch in this method.
-                        Misc.free(cursorPartitionMap);
+                        Misc.free(cursorPartitionMap, t);
                         throw t;
                     }
                 }

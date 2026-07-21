@@ -361,7 +361,7 @@ public interface WindowFunction extends Function {
      * frees against it at cursor close. A null tracker degrades to global-only
      * accounting. Default no-op for functions with no tracker-aware state.
      * <p>
-     * LEAD/LAG functions bind both their per-partition map and ring buffer. Some other
+     * LEAD/LAG functions bind their ring buffer and, when partitioned, their map. Some other
      * ROWS-frame functions bind only their map, leaving the sliding-window ring on the
      * global counter. Under PARTITION BY ... ROWS, those untracked rings can still scale
      * with partition cardinality; the bound map provides only a partial backstop.
