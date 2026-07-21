@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
  * should be used.
  */
 public interface PageFrame {
-
     /**
      * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
      * <p>
@@ -64,6 +63,21 @@ public interface PageFrame {
      * @return column count
      */
     int getColumnCount();
+
+    /** Address of the full designated-timestamp vector used by a borrowed native base view. */
+    default long getDesignatedTimestampPageAddress() {
+        return 0;
+    }
+
+    /** Size of the full designated-timestamp vector used by a borrowed native base view. */
+    default long getDesignatedTimestampPageSize() {
+        return 0;
+    }
+
+    /** Physical column top of the designated timestamp. */
+    default long getDesignatedTimestampPageTop() {
+        return 0;
+    }
 
     /**
      * Returns page frame format.
@@ -165,8 +179,18 @@ public interface PageFrame {
      */
     long getPageSize(int columnIndex);
 
+    /** Physical column top for a borrowed native base view. */
+    default long getPageTop(int columnIndex) {
+        return 0;
+    }
+
     default ParquetDecoder getParquetDecoder() {
         return null;
+    }
+
+    /** Opaque Rust logical-frame state; zero when this frame is base-only. */
+    default long getPartitionFrameState() {
+        return 0;
     }
 
     /**
