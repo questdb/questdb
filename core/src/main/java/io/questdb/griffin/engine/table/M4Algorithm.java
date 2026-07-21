@@ -41,8 +41,8 @@ import io.questdb.std.Unsafe;
  *
  * @see SubsampleAlgorithm
  */
-class M4Algorithm implements SubsampleAlgorithm {
-    static final M4Algorithm INSTANCE = new M4Algorithm();
+public class M4Algorithm implements SubsampleAlgorithm {
+    public static final M4Algorithm INSTANCE = new M4Algorithm();
 
     @Override
     public void select(long buffer, int bufferSize, int targetPoints,

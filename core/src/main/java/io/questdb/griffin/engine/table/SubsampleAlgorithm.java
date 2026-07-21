@@ -35,7 +35,7 @@ import io.questdb.std.Unsafe;
  * and write selected buffer indices to the output list. The buffer layout per
  * entry is: [rowId: long (8)][timestamp: long (8)][value: double (8)] = 24 bytes.
  */
-interface SubsampleAlgorithm {
+public interface SubsampleAlgorithm {
     int ENTRY_SIZE = 24;
 
     /**
