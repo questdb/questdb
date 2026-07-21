@@ -1,0 +1,15 @@
+shared.network.worker.count=1
+shared.network.worker.affinity=0
+shared.query.worker.count=15
+shared.query.worker.affinity=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14
+shared.write.worker.count=1
+shared.write.worker.affinity=0
+
+cairo.partition.encoder.parquet.row.group.size=1000
+cairo.sql.page.frame.max.rows=10000
+cairo.sql.small.page.frame.max.rows=10000
+
+line.tcp.enabled=false
+pg.enabled=false
+telemetry.enabled=false
+query.tracing.enabled=false

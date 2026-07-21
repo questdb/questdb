@@ -1,0 +1,72 @@
+$ perf --version
+perf version 7.0.12
+
+$ cat /proc/sys/kernel/perf_event_paranoid
+-1
+
+$ perf c2c record -e list
+mem-ldst     : available
+
+$ jcmd 1121709 Compiler.perfmap
+1121709:
+Command executed successfully
+
+$ cat baseline/record.stderr
+[ perf record: Woken up 196 times to write data ]
+[ perf record: Captured and wrote 51.808 MB /tmp/questdb-latestby-fs-20260721/c2c-markout-final/baseline/perf.data (676715 samples) ]
+
+$ cat baseline/client.json
+{
+  "query": "SELECT h.offset / 1000 AS horizon_ms, avg(q.mid - t.price) AS avg_markout FROM markout_trades t HORIZON JOIN markout_quotes q LIST (0, 1000U, 2000U, 3000U) AS h ORDER BY h.offset",
+  "warmups": 0,
+  "recorded_requests": 500,
+  "recorded_seconds": 11.887487287051044,
+  "result": [
+    [0, 0.0],
+    [1, 0.9999995],
+    [2, 1.9999985],
+    [3, 2.999997]
+  ],
+  "result_changes": 0
+}
+
+$ DEBUGINFOD_URLS= perf c2c report --stdio --full-symbols --show-all \
+    -i baseline/perf.data
+=================================================
+            Trace Event Information
+=================================================
+  Total records                     :     676715
+  Load Operations                   :     236538
+  Load L1D hit                      :     232813
+  Load L2D hit                      :        282
+  Load LLC hit                      :       2585
+  Load Local HITM                   :       2387
+  Load Remote HITM                  :         48
+
+=================================================
+    Global Shared Cache Line Event Information
+=================================================
+  Total Shared Cache Lines          :         33
+
+=================================================
+                 c2c details
+=================================================
+  Events                            : ibs_op/ldlat=0/
+  Cachelines sort on                : Total HITMs
+  Cacheline data grouping           : offset,iaddr
+
+# Index             Address  Node  PA cnt     Hitm    Total  LclHitm  RmtHitm
+      0         0x7ff685b80     0     575   11.58%      282      282        0
+      1         0x7ff6866c0     0     574   11.09%      270      270        0
+      2         0x7ff686040     0     668    9.86%      240      240        0
+      3         0x7ff686300     0     524    9.69%      236      236        0
+      4         0x7ff686400     0     772    9.61%      234      234        0
+      5         0x7ff685c80     0     720    9.53%      232      232        0
+
+$ head -n 2 baseline/hitm.txt
+  shared-query_2 1121781 [002] 7ff685bac 629800842 |OP LOAD|LVL L3 hit|SNP HitM|TLB L1 hit|LCK N/A|BLK N/A 737b4623cbae void io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory.processHorizonTimestamps(...)
+ shared-query_12 1121791 [012] 7ff6865dc 629800842 |OP LOAD|LVL L3 hit|SNP HitM|TLB L1 hit|LCK N/A|BLK N/A 737b4623ce7d void io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory.processHorizonTimestamps(...)
+
+The two perf-script lines above retain all fields needed by group_hitm.py, but
+abbreviate only the Java parameter list with (...). The external raw artifact
+contains the complete resolved signatures.

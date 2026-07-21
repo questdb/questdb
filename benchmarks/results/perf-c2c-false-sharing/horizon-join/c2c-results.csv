@@ -1,0 +1,3 @@
+variant,recorded_requests,recorded_seconds,total_records,load_operations,local_hitm,remote_hitm,total_hitm,target_hitm,shared_cache_lines,hitm_per_query,target_hitm_per_query,hitm_per_1000_loads
+baseline,500,11.887487287051044,676715,236538,2387,48,2435,2259,33,4.870000,4.518000,10.294329
+fixed,500,7.727785159018822,463144,170685,23,4,27,0,18,0.054000,0.000000,0.158186

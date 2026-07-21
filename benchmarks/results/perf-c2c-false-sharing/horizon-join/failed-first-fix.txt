@@ -1,0 +1,36 @@
+The first fix added eight long padding fields in a superclass but did not fill
+the four-byte slot after the HotSpot object header. This diagnostic recording
+used the same markout query, data, jemalloc library, pinning, 100 warmups and
+500 recorded requests as the final before/after recordings.
+
+query:
+SELECT
+  h.offset / 1000 AS horizon_ms,
+  avg(q.mid - t.price) AS avg_markout
+FROM markout_trades t
+HORIZON JOIN markout_quotes q
+  LIST (0, 1000U, 2000U, 3000U) AS h
+ORDER BY h.offset
+
+recorded requests: 500
+recorded seconds:  11.091313102049753
+sampled loads:     226592
+local HITM:        940
+remote HITM:       112
+total HITM:        1052
+target HITM:       942
+
+The field probe explains the failed result:
+currentOffsetIdx=12
+padding.p1=16
+padding.p2=24
+padding.p3=32
+padding.p4=40
+padding.p5=48
+padding.p6=56
+padding.p7=64
+padding.p8=72
+currentHorizonTs=80
+
+The long-only padding moved currentHorizonTs but left currentOffsetIdx in the
+object-boundary cache line.

@@ -43,7 +43,7 @@ import io.questdb.std.Unsafe;
  * Returns horizon timestamps in master's resolution (master_ts + offset).
  * Callers must scale externally for ASOF lookup when master/slave timestamp types differ.
  */
-public class AsyncHorizonTimestampIterator implements QuietCloseable {
+public class AsyncHorizonTimestampIterator extends AsyncHorizonTimestampIteratorPadding implements QuietCloseable {
     private final int[] heapOffsetIdx;
     private final long[] heapPos;
     private final long[] heapTs;
@@ -256,4 +256,14 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         heapOffsetIdx[a] = heapOffsetIdx[b];
         heapOffsetIdx[b] = ti;
     }
+}
+
+@SuppressWarnings("unused")
+class AsyncHorizonTimestampIteratorPadding {
+    // Per-worker iterators and their heap arrays are allocated back-to-back. Keep mutable iterator
+    // fields one cache line away from the object boundary so that they do not share a cache line
+    // with the preceding worker's heap arrays.
+    // Fill the 4-byte slot after the object header; otherwise HotSpot places a subclass int there.
+    protected int p0;
+    protected long p1, p2, p3, p4, p5, p6, p7, p8;
 }
