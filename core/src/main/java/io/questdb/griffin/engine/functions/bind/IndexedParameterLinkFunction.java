@@ -313,6 +313,17 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
         return true;
     }
 
+    /**
+     * A bind variable is non-deterministic across executions - it must not be baked into a
+     * materialized view - but its value is fixed for the whole cursor, so two reads within one row
+     * always agree. Overriding the derived default keeps callers that read one function at two
+     * widths from treating a bind variable like {@code rnd_int()}.
+     */
+    @Override
+    public boolean isRowStable() {
+        return true;
+    }
+
     @Override
     public boolean isRuntimeConstant() {
         return true;

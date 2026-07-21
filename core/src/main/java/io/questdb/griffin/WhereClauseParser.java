@@ -555,6 +555,13 @@ public final class WhereClauseParser implements Mutable {
             return false;  // Unknown unit
         }
 
+        // Calendar months and years clamp the day of month - addMonths(2022-03-31, -1) and
+        // addMonths(2022-03-28, -1) both land on 2022-02-28 - so the shift stays monotone but stops
+        // being injective and cannot be inverted by shifting the bounds back. Every other unit adds a
+        // fixed number of ticks and is a bijection, as is a zero offset. See the merge below for what
+        // the non-injective case costs: a widened interval that must stay behind a residual filter.
+        final boolean isInjective = offsetValue == 0 || (unit != 'M' && unit != 'y');
+
         // Create a temporary model to extract intervals from the inner predicate
         IntrinsicModel tempModel = models.next();
         int timestampType = reader.getMetadata().getTimestampType();
@@ -597,18 +604,21 @@ public final class WhereClauseParser implements Mutable {
             // only when the merge fully represents it as an interval; otherwise leave it as a residual
             // filter so a source it cannot push down (e.g. multiple disjoint intervals that must union,
             // or a dynamic bound) still filters correctly.
-            if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue)) {
-                if (extracted) {
+            if (model.mergeIntervalModelWithAddMethod(tempModel, addMethod, offsetValue, isInjective)) {
+                if (extracted && isInjective) {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-                // removeAndIntrinsics declined the predicate but still left intervals behind: an
-                // analysis such as analyzeMonotonicTimestamp deliberately applies a WIDENED
-                // (superset) interval and returns false so the predicate survives as a residual
-                // filter. A lossy cast bound is the reachable case - ts::timestamp truncates a
-                // TIMESTAMP_NS column, so the preimage of the bound is wider than the bound
-                // itself. Consuming it here returned rows that fail the predicate. Keep the
-                // interval for pruning, but rebuild the predicate so it still re-checks each row.
+                // The merge applied a WIDENED (superset) interval, so consuming the predicate would
+                // return rows that fail it. Keep the interval for pruning and rebuild the predicate
+                // so it still re-checks each row. Two analyses land here:
+                // - removeAndIntrinsics declined but still left intervals behind, as
+                //   analyzeMonotonicTimestamp deliberately does. A lossy cast bound is the reachable
+                //   case - ts::timestamp truncates a TIMESTAMP_NS column, so the preimage of the
+                //   bound is wider than the bound itself.
+                // - the offset unit is not injective ('M', 'y'), so mergeIntervalModelWithAddMethod
+                //   widened the upper boundary to cover the timestamps the day-of-month clamp folds
+                //   onto it. Those rows satisfy the predicate and must not be scanned away.
                 // The merge consumed tempModel, so do not clear it again here.
                 rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
                 return false;

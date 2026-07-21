@@ -999,7 +999,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * it must be left as a residual filter
      * @throws SqlException if applying the offset would cause timestamp overflow
      */
-    boolean mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+    boolean mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset, boolean isInjective) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
             // A source predicate the analysis consumed without applying an interval constrains nothing,
             // so the caller may consume the and_offset predicate too. The one shape that reaches here is
@@ -1038,11 +1038,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final TimestampDriver otherDriver = other.timestampDriver;
+        // A non-injective unit ('M' and 'y' clamp the day of month) stalls: several source timestamps
+        // collapse onto one shifted value. Shifting the LOWER boundary still lands on the first
+        // timestamp of its stall, because the shift picks the exact day rather than a clamped one, so
+        // that side needs nothing. The UPPER boundary lands on the FIRST timestamp of its stall too -
+        // and every later one satisfies the predicate as well, so they must stay inside the scan.
+        // One extra unit clears the longest stall by a wide margin: a clamp moves a date by at most
+        // three days while a month adds at least twenty-eight. The interval is then a superset, which
+        // the caller must keep re-checking with a residual filter instead of consuming the predicate.
+        final int hiOffset = isInjective || offset == Integer.MAX_VALUE ? offset : offset + 1;
         try {
             parsedIntervals.clear();
             for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
                 final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver, true);
-                final long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver, false);
+                final long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, hiOffset, otherDriver, false);
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                     // A shifted interval spans the entire range, so the union does too: the offset
                     // predicate constrains nothing. Keep this builder's own intervals and consume it.

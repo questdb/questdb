@@ -6255,7 +6255,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slaveToFree.supportsTimeFrameCursor()) {
+                                    // Both serial constructors adopt joinFilter and the window
+                                    // functions - their _close() frees them - and close themselves on
+                                    // their own ctor failure, so null those fields BEFORE the call,
+                                    // exactly as the parallel siblings above do. Transferring
+                                    // afterwards left the catch below free to close them a second
+                                    // time, and Function.close() carries no idempotency guarantee.
+                                    // groupByFunctions is deliberately NOT transferred: unlike the
+                                    // async factories, neither serial factory frees that list (the
+                                    // cursor only clears it), so the catch below stays its owner.
                                     if (leftSymbolIndex != -1 && !isDynamicWindow) {
+                                        final Function serialJoinFilter = joinFilter;
+                                        joinFilter = null;
                                         master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
                                                 configuration,
@@ -6271,10 +6282,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 valueTypes,
                                                 rightSymbolIndex,
                                                 leftSymbolIndex,
-                                                joinFilter,
+                                                serialJoinFilter,
                                                 allVectorized
                                         );
                                     } else {
+                                        final Function serialJoinFilter = joinFilter;
+                                        final Function serialWindowLoFunc = windowLoFunc;
+                                        final Function serialWindowHiFunc = windowHiFunc;
+                                        joinFilter = null;
+                                        windowLoFunc = null;
+                                        windowHiFunc = null;
                                         master = new WindowJoinRecordCursorFactory(
                                                 asm,
                                                 configuration,
@@ -6286,8 +6303,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 lo,
                                                 hi,
-                                                windowLoFunc,
-                                                windowHiFunc,
+                                                serialWindowLoFunc,
+                                                serialWindowHiFunc,
                                                 loSign,
                                                 hiSign,
                                                 loTimeUnit,
@@ -6295,11 +6312,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 isDynamicWindow ? timestampDriver : null,
                                                 groupByFunctions,
                                                 valueTypes,
-                                                joinFilter
+                                                serialJoinFilter
                                         );
-                                        // Factory now owns these functions.
-                                        windowLoFunc = null;
-                                        windowHiFunc = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {
@@ -6539,9 +6553,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.free(filter);
                     throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
                 }
-                filter.init(null, executionContext);
+                // init() declares throws SqlException and getBool() can raise CairoException or an
+                // implicit-cast failure. The enclosing catch frees only master, so without this
+                // guard the filter - which may hold native memory - was dropped on either path.
+                final boolean filterValue;
+                try {
+                    filter.init(null, executionContext);
+                    filterValue = filter.isConstant() && filter.getBool(null);
+                } catch (Throwable th) {
+                    Misc.free(filter, th);
+                    throw th;
+                }
                 if (filter.isConstant()) {
-                    boolean filterValue = filter.getBool(null);
                     Misc.free(filter);
                     if (!filterValue) {
                         // do not copy metadata here

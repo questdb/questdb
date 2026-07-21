@@ -237,8 +237,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         predicateContext.clear();
         backfillNodes.clear();
         collectedPredicates.clear();
-        // Reused per-predicate width state; reset defensively so a fresh filter can never read a
-        // stale mark from an earlier one (onNodeDescended / serialize() already reset before use).
+        // The memo caches below are keyed by ExpressionNode identity and live for a whole filter, so
+        // this is their ONLY reset point - the node pool can hand the same objects to the next
+        // filter, where the cached answers would no longer describe the same subtree. The mark sets
+        // after them are per-predicate state that onNodeDescended also resets before use.
         arithExprTypeCache.clear();
         constantArithFoldCache.clear();
         constantArithFoldValues.clear();
@@ -572,6 +574,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private boolean requiresWideLanePair(ExpressionNode lhs, ExpressionNode rhs) {
+        // NOTE: this accepts F8 as well as F4, while the widening is only ever EMITTED for F4
+        // (isFloatLeaf). That asymmetry costs AND_SC short-circuiting and predicate reordering on a
+        // filter such as "d > 1.1 AND i32 = 5": wide-lane mode is entered, the mixed-size detector is
+        // skipped, no conversion is emitted, and the same scalar loop runs without early exit.
+        //
+        // Do NOT "fix" this by narrowing the clause to isFloatLeaf. Measured, that turns
+        // "adouble > 1.1 AND along > (2000000000 + 2000000000)" from SINGLE_SIZE into SCALAR with
+        // byte-identical IR, and the third case below from WIDE_LANE into SCALAR. Dropping the F8
+        // trigger un-suppresses the two "!isWideLaneMode &&" terms in visit(), and those fire on
+        // predicates where no widening is emitted at all: NarrowI64WidenDetector observes an
+        // overflowing constant fold as I4 and sets needsNarrowI64Widening, and markWidthSemantics
+        // computes isCmpLong from genuineArithType while this method uses arithExprType, so the two
+        // disagree on a cancelling fold. Tying those terms to an actually-emitted widening is the
+        // real fix; until then the F8 trigger is load-bearing.
         if ((containsFloatExpression(lhs) && isFloatWideningConst(rhs))
                 || (containsFloatExpression(rhs) && isFloatWideningConst(lhs))) {
             return true;
@@ -3608,16 +3624,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     i64WidenLeaves.clear();
                     i64WidenFoldRoots.clear();
                     i64WrapLeaves.clear();
-                    // The type and wide-lane caches hold nodes of the predicate we are leaving behind,
-                    // and the node pool can hand the same objects to a later filter. Drop them with
-                    // the marks.
-                    arithExprTypeCache.clear();
-                    constantArithFoldCache.clear();
-                    constantArithFoldValues.clear();
-                    genuineArithTypeCache.clear();
-                    containsFloatCache.clear();
-                    containsNarrowIntCache.clear();
-                    requiresWideLaneArithCache.clear();
+                    // The type and wide-lane memo caches are NOT cleared here. They are pure
+                    // functions of a node's subtree keyed by node identity, so an entry stays valid
+                    // for every predicate of the same filter, and serialize()'s whole-tree wide-lane
+                    // pre-pass has already filled them. Dropping them per predicate re-ran the type
+                    // and fold analysis from scratch for each one. The node pool can hand the same
+                    // objects to a LATER filter, and clear() already covers that boundary.
                     try {
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);

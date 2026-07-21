@@ -86,6 +86,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isRowStable() {
+        return getArg().isRowStable();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();
     }

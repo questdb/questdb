@@ -105,6 +105,11 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isRowStable() {
+        return getLeft().isRowStable() && getRight().isRowStable();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
         final Function r = getRight();

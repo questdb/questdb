@@ -113,6 +113,17 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean isRowStable() {
+        final ObjList<Function> args = args();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (!args.getQuick(i).isRowStable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final ObjList<Function> args = args();
         for (int i = 0, n = args.size(); i < n; i++) {

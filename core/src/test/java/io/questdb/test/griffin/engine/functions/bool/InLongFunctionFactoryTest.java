@@ -416,6 +416,50 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableSplitKeyMatchesEqNull() throws Exception {
+        // A bind variable is non-deterministic ACROSS EXECUTIONS but perfectly stable within a row,
+        // so an INT-arithmetic key holding one is still safe to read at both widths. Reading the
+        // non-determinism flag instead disqualified the key from the width split and probed it at
+        // long width only, so (a*$1) IN (null) missed the row whose product wraps to INT_NULL -
+        // while the literal spelling (a*2), '=' and IS NULL all reported it as null.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (SELECT
+                      cast(CASE WHEN x = 1 THEN 1_073_741_824 WHEN x = 2 THEN 3 ELSE null END AS INT) a,
+                      cast(x AS INT) rn
+                    FROM long_sequence(3))""");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 2);
+            final String nullKeyRows = """
+                    rn
+                    1
+                    3
+                    """;
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+
+                    // The oracles: row 1's product wraps to INT_NULL, row 3's operand is null.
+                    assertQuery("SELECT rn FROM x WHERE (a*$1) IS NULL").noLeakCheck().returns(nullKeyRows);
+                    assertQuery("SELECT rn FROM x WHERE (a*$1) = null").noLeakCheck().returns(nullKeyRows);
+                    // The literal spelling of the same key already agreed.
+                    assertQuery("SELECT rn FROM x WHERE (a*2) IN (null)").noLeakCheck().returns(nullKeyRows);
+
+                    // Each list length reaches a different InLong form: single const, two const, set.
+                    assertQuery("SELECT rn FROM x WHERE (a*$1) IN (null)").noLeakCheck().returns(nullKeyRows);
+                    assertQuery("SELECT rn FROM x WHERE (a*$1) IN (null, 999)").noLeakCheck().returns(nullKeyRows);
+                    assertQuery("SELECT rn FROM x WHERE (a*$1) IN (null, 999, 7)").noLeakCheck().returns(nullKeyRows);
+                    // A non-constant element reaches InLongVarFunction.
+                    assertQuery("SELECT rn FROM x WHERE (a*$1) IN (null, a-1)").noLeakCheck().returns(nullKeyRows);
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testNullValuedStringElementMatchesUntypedNull() throws Exception {
         // A string element is probed at the width its VALUE would carry as a literal. A string that
         // does not parse carries Numbers.LONG_NULL, i.e. it IS null - but LONG_NULL is

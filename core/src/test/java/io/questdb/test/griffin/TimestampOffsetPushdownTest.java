@@ -541,24 +541,66 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022-02'
                     """;
 
-            // Should only return row 2
-            // Plan shows interval pushdown with +1 month offset (calendar-aware)
-            // 2022-02-01 + 1 month = 2022-03-01
-            // 2022-02-28 23:59:59 + 1 month = 2022-03-28 23:59:59
+            // Should only return row 2.
+            // The plan still prunes with the +1 month calendar shift, but 'M' is not injective, so
+            // the upper bound is widened by one more month and the predicate stays as a filter:
+            //   lower: 2022-02-01 + 1 month           = 2022-03-01
+            //   upper: 2022-02-28 23:59:59 + 2 months = 2022-04-28 23:59:59
+            // The extra month covers the timestamps the day-of-month clamp folds onto the shifted
+            // bound; the filter then drops the ones that do not satisfy the predicate. Pinning the
+            // narrow 2022-03-28 bound with no filter node is what dropped rows - see
+            // testMonthOffsetPushdownKeepsDayClampedRows.
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('M',-1,timestamp),price]
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: trades
-                                      intervals: [("2022-03-01T00:00:00.000000Z","2022-03-28T23:59:59.999999Z")]
+                                Async Filter workers: 1
+                                  filter: dateadd('M',-1,timestamp) in [1643673600000000,1646092799999999]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("2022-03-01T00:00:00.000000Z","2022-04-28T23:59:59.999999Z")]
                             """)
                     .returns("""
                             ts\tprice
                             2022-02-15T12:00:00.000000Z\t150.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testMonthOffsetPushdownKeepsDayClampedRows() throws Exception {
+        // addMonths clamps the day of month, so 2022-03-29, -30 and -31 all shift back onto
+        // 2022-02-28 and satisfy the predicate just as 2022-03-28 does. Shifting the upper bound
+        // forward lands on 2022-03-28 - the FIRST timestamp of that clamp stall - so consuming the
+        // predicate scanned the other three away. The bound must widen past the stall and the
+        // predicate must stay behind as a residual filter to drop what the wider scan lets in.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH;");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2022-03-28T00:00:00.000000Z'),
+                        ('2022-03-29T00:00:00.000000Z'),
+                        ('2022-03-30T00:00:00.000000Z'),
+                        ('2022-03-31T00:00:00.000000Z'),
+                        ('2022-04-01T00:00:00.000000Z');
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('M', -1, ts) AS tt FROM m
+                    ) WHERE tt <= '2022-02-28T00:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt
+                            2022-02-28T00:00:00.000000Z
+                            2022-02-28T00:00:00.000000Z
+                            2022-02-28T00:00:00.000000Z
+                            2022-02-28T00:00:00.000000Z
                             """);
         });
     }
@@ -1864,20 +1906,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
-            // Should only return row 1
-            // Plan shows interval pushdown with +1 year offset (calendar-aware)
-            // 2022-01-01 + 1 year = 2023-01-01
-            // 2022-12-31 23:59:59 + 1 year = 2023-12-31 23:59:59
+            // Should only return row 1.
+            // The plan still prunes with the +1 year calendar shift, but 'y' clamps 02-29 onto 02-28
+            // just as 'M' clamps the day of month, so the upper bound is widened by one more year and
+            // the predicate stays as a filter:
+            //   lower: 2022-01-01 + 1 year            = 2023-01-01
+            //   upper: 2022-12-31 23:59:59 + 2 years  = 2024-12-31 23:59:59
+            // See testMonthOffsetPushdownKeepsDayClampedRows for the rows the narrow bound dropped.
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('y',-1,timestamp),price]
-                                PageFrame
-                                    Row forward scan
-                                    Interval forward scan on: trades
-                                      intervals: [("2023-01-01T00:00:00.000000Z","2023-12-31T23:59:59.999999Z")]
+                                Async Filter workers: 1
+                                  filter: dateadd('y',-1,timestamp) in [1640995200000000,1672531199999999]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: trades
+                                          intervals: [("2023-01-01T00:00:00.000000Z","2024-12-31T23:59:59.999999Z")]
                             """)
                     .returns("""
                             ts\tprice

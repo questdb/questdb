@@ -120,7 +120,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             @Nullable Function joinFilter
     ) {
         super(metadata);
-        assert slaveFactory.supportsTimeFrameCursor();
         try {
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
@@ -130,6 +129,10 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.windowHi = windowHi;
             this.windowLoFunc = windowLoFunc;
             this.windowHiFunc = windowHiFunc;
+            // Checked after the adopting assignments above, not at the top of the constructor: the
+            // generator transfers ownership of the filter and the window functions before it calls
+            // this, and the catch below frees the FIELDS, so an -ea failure any earlier leaks them.
+            assert slaveFactory.supportsTimeFrameCursor();
             this.loSign = loSign;
             this.hiSign = hiSign;
             this.loTimeUnit = loTimeUnit;

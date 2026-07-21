@@ -153,8 +153,12 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
             } finally {
                 // Free shared resources only after workers have finished
-                Misc.free(slaveFrameCursor);
+                slaveFrameCursor = Misc.free(slaveFrameCursor);
                 Misc.free(slaveTimeFrameState);
+                // The record caches symbol tables and array buffers; both async filter cursors free
+                // theirs the same way. close() ends in clear(), so the record stays reusable when
+                // the factory reopens this cursor.
+                Misc.free(masterRecord);
                 isOpen = false;
             }
         }

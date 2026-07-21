@@ -81,15 +81,22 @@ public class InLongFunctionFactory implements FunctionFactory {
         // holds every element and getBool probes it once per row.
         //
         // Splitting reads the key at both widths, which is only safe when the two reads carry
-        // consistent values. A non-deterministic key (e.g. rnd_int() + 0) breaks that: getInt()
-        // and getLong() would draw two different random values for one row, and the row would be
-        // probed against the two width sets with two unrelated keys. Treat such a key as
-        // non-split so getBool reads it exactly once per row (at long width); every element then
-        // lands in the long-width set. This is correct because a non-deterministic INT key has no
-        // single stable value to wrap anyway, and it matches how a width-stable key behaves.
+        // consistent values. A row-unstable key (e.g. rnd_int() + 0) breaks that: getInt() and
+        // getLong() would draw two different random values for one row, and the row would be probed
+        // against the two width sets with two unrelated keys. Treat such a key as non-split so
+        // getBool reads it exactly once per row (at long width); every element then lands in the
+        // long-width set. This is correct because a row-unstable INT key has no single stable value
+        // to wrap anyway, and it matches how a width-stable key behaves.
+        //
+        // isRowStable, not !isNonDeterministic: the guard only cares whether the two reads land on
+        // the same value within ONE row. Non-determinism asks whether two separate EXECUTIONS agree,
+        // and it is true for a bind variable, whose value is fixed for the whole cursor. Reading that
+        // signal sent every bind-variable key down the long-width-only path and reinstated the very
+        // bug the split key exists to fix: (i*$1) IN (null) disagreed with (i*2) IN (null) and with
+        // (i*$1) = null.
         final boolean isSplitKey = isNarrowIntKey
                 && !args.getQuick(0).isIntWidthStable()
-                && !args.getQuick(0).isNonDeterministic();
+                && args.getQuick(0).isRowStable();
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {

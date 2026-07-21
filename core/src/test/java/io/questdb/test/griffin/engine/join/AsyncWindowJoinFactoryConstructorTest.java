@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -40,6 +41,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
@@ -58,25 +60,32 @@ import org.junit.Test;
  * constructor itself releases it. SqlCodeGenerator frees only what it owns before the ctor call (the
  * base factories and the join metadata), which is what these tests do after the expected throw.
  * <p>
- * Each test injects the failure through a configuration getter read at exactly one point of the
- * construction, walking the fault down the ownership hand-offs the ctor comment describes:
+ * Each test injects the failure at exactly one point of the construction, walking the fault down the
+ * ownership hand-offs the ctor comment describes:
  * <ul>
  *   <li>ATOM: {@code getSqlAsOfJoinLookAhead()} throws inside the AsyncWindowJoin(Fast)Atom constructor,
  *       which has already adopted the filters (it closes itself on its own ctor failure);</li>
  *   <li>FRAME_SEQUENCE: {@code getCircuitBreakerConfiguration()} throws inside the PageFrameSequence
  *       constructor, which owns the atom by then and closes it on its own failure path (so the factory
- *       must not close it a second time).</li>
+ *       must not close it a second time);</li>
+ *   <li>CURSOR: {@code getMetadata()} throws inside the AsyncWindowJoinRecordCursor constructor, which
+ *       runs last, with a fully built frame sequence that only the factory ctor's catch can release.
+ *       Cursor construction reads no configuration, so this one is injected through the slave factory
+ *       instead - see {@link CountingSlaveFactory}.</li>
  * </ul>
  * The filters hold native memory and count their closes, so a leak fails {@code assertMemoryLeak} and a
- * double free fails the close-count assertion. Cursor construction reads no configuration, so it cannot
- * be failed with this technique; the resources its failure branch would release are the same frame
- * sequence -> atom -> filters the FRAME_SEQUENCE test already proves are released exactly once.
+ * double free fails the close-count assertion.
  */
 public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
 
     @Test
     public void testFastFactoryFreesPartialStateOnAtomFailure() throws Exception {
         assertConstructorFailureIsClean(true, FaultPoint.ATOM);
+    }
+
+    @Test
+    public void testFastFactoryFreesPartialStateOnCursorFailure() throws Exception {
+        assertCursorFailureIsClean(true);
     }
 
     @Test
@@ -92,6 +101,11 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
     @Test
     public void testGeneralFactoryFreesPartialStateOnAtomFailure() throws Exception {
         assertConstructorFailureIsClean(false, FaultPoint.ATOM);
+    }
+
+    @Test
+    public void testGeneralFactoryFreesPartialStateOnCursorFailure() throws Exception {
+        assertCursorFailureIsClean(false);
     }
 
     @Test
@@ -179,6 +193,73 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
             Assert.assertEquals(1, perWorkerJoinFilter.closeCount);
             Assert.assertEquals(1, masterFilter.closeCount);
             Assert.assertEquals(1, perWorkerMasterFilter.closeCount);
+        });
+    }
+
+    /**
+     * Fails the cursor constructor, the only fault point that reaches the factory ctor's catch with a
+     * live frame sequence to release. The cursor reads no configuration, so the fault rides in on the
+     * slave factory's {@code getMetadata()} instead: the cursor is the last thing the ctor builds, so
+     * the last such call of the whole construction is the cursor's. Pass 0 counts the calls, pass 1
+     * fails the last one. Building the cursor first - as the code did before this ownership fix -
+     * moves that last call somewhere else, and the filter close-count assertions below go red.
+     */
+    private static void assertCursorFailureIsClean(boolean fast) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            int metadataCalls = 0;
+            for (int pass = 0; pass < 2; pass++) {
+                final RecordCursorFactory masterFactory = baseFactory("master");
+                final RecordCursorFactory slaveFactory = baseFactory("slave");
+                final JoinRecordMetadata joinMetadata = new JoinRecordMetadata(engine.getConfiguration(), 0);
+                final CountingSlaveFactory countingSlaveFactory =
+                        new CountingSlaveFactory(slaveFactory, pass == 0 ? 0 : metadataCalls);
+
+                final NativeFilter joinFilter = new NativeFilter();
+                final NativeFilter perWorkerJoinFilter = new NativeFilter();
+                final ObjList<Function> perWorkerJoinFilters = new ObjList<>();
+                perWorkerJoinFilters.add(perWorkerJoinFilter);
+                final NativeFilter masterFilter = new NativeFilter();
+                final NativeFilter perWorkerMasterFilter = new NativeFilter();
+                final ObjList<Function> perWorkerMasterFilters = new ObjList<>();
+                perWorkerMasterFilters.add(perWorkerMasterFilter);
+
+                if (pass == 0) {
+                    final RecordCursorFactory factory = fast
+                            ? newFastFactory(engine.getConfiguration(), masterFactory, countingSlaveFactory, joinMetadata,
+                            joinFilter, perWorkerJoinFilters, masterFilter, perWorkerMasterFilters)
+                            : newGeneralFactory(engine.getConfiguration(), masterFactory, countingSlaveFactory, joinMetadata,
+                            joinFilter, perWorkerJoinFilters, masterFilter, perWorkerMasterFilters);
+                    metadataCalls = countingSlaveFactory.calls;
+                    Assert.assertTrue("the ctor must read the slave factory metadata", metadataCalls > 0);
+                    // Owns everything on success, so this also releases the base factories and the metadata.
+                    factory.close();
+                    continue;
+                }
+
+                try {
+                    if (fast) {
+                        newFastFactory(engine.getConfiguration(), masterFactory, countingSlaveFactory, joinMetadata,
+                                joinFilter, perWorkerJoinFilters, masterFilter, perWorkerMasterFilters);
+                    } else {
+                        newGeneralFactory(engine.getConfiguration(), masterFactory, countingSlaveFactory, joinMetadata,
+                                joinFilter, perWorkerJoinFilters, masterFilter, perWorkerMasterFilters);
+                    }
+                    Assert.fail("expected the injected CURSOR failure to propagate");
+                } catch (FaultInjectedException expected) {
+                    Assert.assertEquals(FaultPoint.CURSOR, expected.faultPoint);
+                }
+
+                Assert.assertEquals("owner join filter must be closed exactly once", 1, joinFilter.closeCount);
+                Assert.assertEquals("per-worker join filter must be closed exactly once", 1, perWorkerJoinFilter.closeCount);
+                Assert.assertEquals("owner master filter must be closed exactly once", 1, masterFilter.closeCount);
+                Assert.assertEquals("per-worker master filter must be closed exactly once", 1, perWorkerMasterFilter.closeCount);
+
+                // The base factories and the join metadata belong to the caller on a ctor throw.
+                Misc.free(masterFactory);
+                Misc.free(slaveFactory);
+                Misc.free(joinMetadata);
+            }
         });
     }
 
@@ -295,9 +376,61 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
         // Read by the AsyncWindowJoin(Fast)Atom constructor (WindowJoinTimeFrameHelper build), after it
         // has adopted the owner/per-worker filters.
         ATOM,
+        // Raised by the slave factory the AsyncWindowJoinRecordCursor constructor reads its metadata
+        // from. It runs last, so the frame sequence is live and only the factory ctor can release it.
+        CURSOR,
         // Read by the PageFrameSequence constructor, which owns the atom by then and closes it on its
         // own failure path.
         FRAME_SEQUENCE
+    }
+
+    /**
+     * Delegates to the real slave factory, counting {@code getMetadata()} calls and optionally throwing
+     * on the n-th one. {@code AsyncWindowJoinRecordCursor}'s constructor makes exactly one such call, so
+     * targeting the last one fails that constructor and nothing built before it.
+     */
+    private static class CountingSlaveFactory implements RecordCursorFactory {
+        private final RecordCursorFactory delegate;
+        private final int throwOnCall;
+        private int calls;
+
+        private CountingSlaveFactory(RecordCursorFactory delegate, int throwOnCall) {
+            this.delegate = delegate;
+            this.throwOnCall = throwOnCall;
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            if (++calls == throwOnCall) {
+                throw new FaultInjectedException(FaultPoint.CURSOR);
+            }
+            return delegate.getMetadata();
+        }
+
+        @Override
+        public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+            return delegate.newTimeFrameCursor();
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return delegate.recordCursorSupportsRandomAccess();
+        }
+
+        @Override
+        public boolean supportsTimeFrameCursor() {
+            return delegate.supportsTimeFrameCursor();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            delegate.toPlan(sink);
+        }
     }
 
     private static class FaultInjectedException extends RuntimeException {

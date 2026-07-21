@@ -391,6 +391,26 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Declares that two reads of this function within the SAME row are guaranteed to yield the same
+     * value. This is strictly weaker than {@link #isRuntimeConstant()}, which fixes the value for a
+     * whole cursor traversal, and it is a different question from {@link #isNonDeterministic()},
+     * which asks whether two separate EXECUTIONS of the same SQL agree.
+     * <p>
+     * Callers that read one function at two widths - {@code getInt()} and then {@code getLong()} on
+     * the same row - need this answer, not the non-determinism one. Reusing
+     * {@link #isNonDeterministic()} there over-approximates: a bind variable is non-deterministic
+     * across executions (it must not be baked into a materialized view) yet perfectly stable within
+     * a row.
+     * <p>
+     * The default is conservative and derived, so a function only has to override it when it is
+     * MORE stable than its non-determinism suggests. In particular the {@code rnd_*} family needs no
+     * override: it is non-deterministic and genuinely redraws per read.
+     */
+    default boolean isRowStable() {
+        return !isNonDeterministic();
+    }
+
+    /**
      * Declares that the function will maintain its value for all the rows during
      * {@link RecordCursor} traversal. However, between cursor traversals the function
      * value is liable to change.

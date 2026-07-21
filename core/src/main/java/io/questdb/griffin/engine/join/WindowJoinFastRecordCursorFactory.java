@@ -145,12 +145,15 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             boolean vectorized
     ) {
         super(metadata);
-        assert slaveFactory.supportsTimeFrameCursor();
         try {
             this.masterFactory = masterFactory;
             this.slaveFactory = slaveFactory;
             this.joinMetadata = joinMetadata;
             this.joinFilter = joinFilter;
+            // Checked after the adopting assignment above, not at the top of the constructor: the
+            // generator transfers ownership of the join filter before it calls this, and the catch
+            // below frees the FIELD, so an -ea failure any earlier leaks it.
+            assert slaveFactory.supportsTimeFrameCursor();
             this.includePrevailing = includePrevailing;
             this.windowLo = windowLo;
             this.windowHi = windowHi;

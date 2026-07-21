@@ -174,11 +174,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             long slaveTsScale,
             int workerCount
     ) {
-        assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
-        assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
-        assert perWorkerWindowLoFuncs == null || perWorkerWindowLoFuncs.size() == workerCount;
-        assert perWorkerWindowHiFuncs == null || perWorkerWindowHiFuncs.size() == workerCount;
-
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.ownerJoinFilter = ownerJoinFilter;
@@ -208,6 +203,15 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
             this.vectorized = vectorized && ownerWindowLoFunc == null && ownerWindowHiFunc == null;
+
+            // Checked here, not at the top of the constructor: the generator hands ownership of every
+            // filter and window function over before it calls this, so nothing else holds a reference
+            // by then. Failing an -ea assertion before the adopting assignments above would leak all
+            // of them, because the catch below frees the FIELDS, not the parameters.
+            assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
+            assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
+            assert perWorkerWindowLoFuncs == null || perWorkerWindowLoFuncs.size() == workerCount;
+            assert perWorkerWindowHiFuncs == null || perWorkerWindowHiFuncs.size() == workerCount;
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);

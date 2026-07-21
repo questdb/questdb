@@ -855,7 +855,8 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
             destination.mergeIntervalModelWithAddMethod(
                     source,
                     ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getAddMethod('h'),
-                    0
+                    0,
+                    true
             );
 
             try (RuntimeIntrinsicIntervalModel model = destination.buildIntervalModel()) {
