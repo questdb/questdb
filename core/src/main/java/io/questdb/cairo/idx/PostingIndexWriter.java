@@ -877,10 +877,43 @@ public class PostingIndexWriter implements IndexWriter {
         return encodeCtx.adaptiveDeltaAtOrAbove;
     }
 
+    // @TestOnly: force new covering entries to the LEGACY (aliased, format-0)
+    // layout so a test can synthesise a pre-9.4.x on-disk fixture for the
+    // eager-migration path. Never set in production.
+    @TestOnly
+    public static boolean FORCE_LEGACY_COVERING_FORMAT = false;
+
     // Covering-format a NEW entry this writer publishes should carry: covering
     // (coverCount>0) => de-aliased (format 1); non-covering => format-0-equivalent.
     private int newEntryCoveringFormat() {
-        return coverCount > 0 ? PostingIndexUtils.COVERING_FORMAT_DEALIASED : PostingIndexUtils.COVERING_FORMAT_LEGACY;
+        return (coverCount > 0 && !FORCE_LEGACY_COVERING_FORMAT)
+                ? PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                : PostingIndexUtils.COVERING_FORMAT_LEGACY;
+    }
+
+    /**
+     * Eager migration: if the current head is a LEGACY (format-0, aliased-footer)
+     * covering entry — as written by 9.4.x — re-seal it to a fresh de-aliased
+     * (format-1) entry so no format-0 covering head is ever extended in place
+     * (which would re-expose the concurrent covered-read OOB). Crash-safe: the
+     * reseal goes through appendNewEntry on a fresh sealTxn and only becomes live
+     * on the durable chain-head publish, so a crash mid-migrate leaves the old
+     * format-0 entry byte-intact and recoverable. One-time: after it runs the
+     * head is format 1 and this is a no-op. Returns true if it migrated.
+     */
+    public boolean migrateLegacyCoveringHeadIfNeeded() {
+        checkNotPoisoned();
+        if (coverCount <= 0 || !chain.hasHead()) {
+            return false;
+        }
+        if (headStoredCoveringFormat() != PostingIndexUtils.COVERING_FORMAT_LEGACY) {
+            return false; // already de-aliased
+        }
+        if (genCount == 0 || keyCount == 0) {
+            return false; // nothing covered to migrate
+        }
+        rebuildSidecars(); // reencodes the format-0 head into a fresh format-1 entry
+        return true;
     }
 
     // The head entry's OWN stored covering format. The head may pre-date the

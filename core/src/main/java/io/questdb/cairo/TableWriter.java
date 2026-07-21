@@ -1413,6 +1413,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
                         configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
+                        migrateLegacyCoveringHeadIfNeeded(indexer);
                     }
                 }
             } catch (Throwable th) {
@@ -3117,6 +3118,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         lastOpenPartitionTxnName
                                 );
                                 configureCoveringIfNeeded(indexer, index, lastOpenPartitionTs);
+                                migrateLegacyCoveringHeadIfNeeded(indexer);
                             }
                         } finally {
                             path.trimTo(pathSize);
@@ -5406,6 +5408,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // empty makes the asserts skip, which is correct for this path: the covered reads
         // are columnTop-relative over temp files sized to exactly (partitionSize - colTop)
         // rows, so an in-range rowId cannot address past the mapping by construction.
+    }
+
+    // Eager, one-time migration of a LEGACY (format-0, aliased-footer) covering
+    // POSTING head — as written by 9.4.x — to the de-aliased (format-1) layout on
+    // partition open, so no legacy covering head is ever extended in place (which
+    // would re-expose the concurrent covered-read OOB). Only fires on genuine
+    // partition open (NOT the fast-lag configure), and is a no-op once the head
+    // is format 1. Crash-safe via the reseal's atomic appendNewEntry publish.
+    private void migrateLegacyCoveringHeadIfNeeded(ColumnIndexer indexer) {
+        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
+            piw.migrateLegacyCoveringHeadIfNeeded();
+        }
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
