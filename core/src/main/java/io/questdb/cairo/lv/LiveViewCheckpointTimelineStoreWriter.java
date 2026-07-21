@@ -177,7 +177,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return new RepairCapture(
                     checkpointsDir,
                     skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId),
-                    superblock.generation
+                    superblock.generation,
+                    superblock.timelineRootRef
             );
         }
     }
@@ -999,7 +1000,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     /**
      * The state one localized repair froze, and the generation it was frozen
-     * against. Created by {@link #beginRepair}, filled by the replay through
+     * against. Created by {@link #beginRepair}, given its schedule by
+     * {@link RepairCapture#collectBoundaries}, filled by the replay through
      * {@link #capture} as it crosses each logical boundary in {@code [C, H)},
      * and consumed by {@link #publishRepair}.
      * <p>
@@ -1014,13 +1016,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointDataSegmentWriter(configuration);
         private final long dataSegmentId;
         private final long generation;
+        private final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
         private boolean isDataOpen;
         private boolean isDataPublished;
 
-        private RepairCapture(Path checkpointsDir, long dataSegmentId, long generation) {
+        private RepairCapture(
+                Path checkpointsDir,
+                long dataSegmentId,
+                long generation,
+                LiveViewCheckpointPageRef timelineRootRef
+        ) {
             this.checkpointsDir.of(checkpointsDir);
             this.dataSegmentId = dataSegmentId;
             this.generation = generation;
+            copy(timelineRootRef, this.timelineRootRef);
         }
 
         /**
@@ -1088,6 +1097,40 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             boundaries.clear();
             Misc.free(checkpointsDir);
+        }
+
+        /**
+         * Lists, ascending by key, the logical boundaries the repair has to
+         * re-version: every entry with {@code lowTsInclusive <= maxTimestamp <
+         * highTsExclusive} in the generation this capture was opened against
+         * - the same one {@link #publishRepair} refuses to splice past. That is the
+         * design's {@code [C, H)} interval - the prefix below {@code C} and the
+         * converged suffix at or above {@code H} keep their existing payload
+         * roots, so neither appears here.
+         * <p>
+         * The replay hands each one back through {@link #capture} as it crosses
+         * it, so the list is also the schedule the replay segments itself on.
+         * Entries are copies: the reader's flyweight is only valid inside its
+         * own callback.
+         */
+        public void collectBoundaries(
+                long lowTsInclusive,
+                long highTsExclusive,
+                @NotNull ObjList<LiveViewCheckpointTimelineEntry> out
+        ) {
+            out.clear();
+            if (timelineRootRef.isNull()) {
+                return;
+            }
+            try (LiveViewCheckpointTimelineReader reader = new LiveViewCheckpointTimelineReader(configuration)) {
+                reader.of(checkpointsDir);
+                reader.range(
+                        timelineRootRef,
+                        lowTsInclusive,
+                        highTsExclusive,
+                        entry -> out.add(new LiveViewCheckpointTimelineEntry().copyFrom(entry))
+                );
+            }
         }
 
         /**

@@ -177,6 +177,90 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testLocalizedO3ReplaySplicesTheTimelineInPlace() throws Exception {
+        // The replay side of the splice, driven by a real out-of-order commit rather
+        // than a synthetic capture: the refresh job plans the repair, segments its
+        // replay at the boundaries in [C, H), and publishes the splice itself. Every
+        // number asserted below is one the replay derived.
+        //
+        // The ring is capped at two anchors so the change - at 25s, below both
+        // survivors - finds none and takes the boundary rebuild, which is the whole
+        // pathology: the ring lost the anchors while the timeline kept every root.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                // W is 30s, so the repair localizes to R = 25s and converges one
+                // microsecond past 25s + 30s = 55s, which the 60s runtime frontier
+                // clears. That puts the 30s, 40s and 50s roots inside [C, H), leaves
+                // 10s and 20s as the reused prefix, and 60s as the converged suffix.
+                // L saturates at the view boundary here (R - W is below it), so this
+                // history is short enough that only H bounds the scan; the two-sided
+                // bound is measured in LiveViewCheckpointRingBoundaryFixtureTest.
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals("no anchor survives below the change", 0, instance.getO3ResumeReplayRows());
+                Assert.assertEquals("the rebuild must stop at H", 6, instance.getO3ReplayScanRows());
+                Assert.assertEquals("the rebuild must re-emit [R, H) only", 4, instance.getO3BoundaryReplayRows());
+
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(
+                        "the splice must neither drop a logical entry nor add one - the runtime"
+                                + " stands where the repair found it, so there is no new boundary",
+                        before.size(),
+                        after.size()
+                );
+                Assert.assertEquals(
+                        "the splice is this repair's one and only timeline publication",
+                        generationBefore + 1,
+                        generation(instance)
+                );
+
+                // Prefix: nothing at or below 20s changed, so the payload roots and
+                // their positions are the same objects the cadence wrote.
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                Assert.assertEquals(1, after.getQuick(ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(2, after.getQuick(ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+
+                // Repaired interval: same logical keys, new root versions, and
+                // positions the replay derived as "durable rows below R plus rows
+                // emitted at or below this boundary" - 2 + 2, 2 + 3, 2 + 4.
+                for (int i = 2; i <= 4; i++) {
+                    assertNewRoot(before, after, i);
+                    Assert.assertEquals(
+                            "repaired position at index " + i,
+                            i + 2,
+                            after.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+
+                // Converged suffix: the payload root is reused by page identity and
+                // only its cumulative position moves, by the one row the replacement
+                // added, through the persistent range-add.
+                assertSameRoot(before, after, 5);
+                Assert.assertEquals(6 + 1, after.getQuick(5 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
+        });
+    }
+
+    @Test
     public void testRangeSpliceReVersionsOnlyTheRepairedInterval() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -399,6 +483,56 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRestartAfterALocalizedO3ReplayRestoresTheCorrectedSuffix() throws Exception {
+        // The repaired positions are only as good as a restart's willingness to
+        // believe them: recovery selects the newest root at or below the durable
+        // frontier and refuses it unless its effective lvRowPosition plus the rows it
+        // replays equals the live-view table's own count. The root recovery lands on
+        // here is a converged suffix root, whose position moved by the range-add
+        // alone - so this is that arithmetic checked against the materialization.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                buildHistory(job);
+                appendAndRefresh(job, 25, 100);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first tick restores from the spliced timeline; the row then
+                // appends incrementally against the state that restore produced.
+                appendAndRefresh(job, 70, 7);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(
+                        "a root whose position the splice corrected must not send restart"
+                                + " back to the START FROM boundary",
+                        0,
+                        reloaded.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(8, reloaded.getLvRowsTotal());
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t114.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t22.0\n");
+        });
+    }
+
+    @Test
     public void testSuffixDeltaAccumulatesAcrossRepairs() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -558,6 +692,40 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             }
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testUnlocalizedO3ReplayStillRetiresTheTimeline() throws Exception {
+        // The scope boundary of the splice, stated as a test. A ROWS frame carries no
+        // finite RANGE dependency, so the plan localizes nothing and the rebuild
+        // replaces through positive infinity - there is no converged suffix to keep
+        // and the runtime it promotes is the replay's own. The timeline is retired
+        // whole and the post-replay seal opens a fresh history with one root, exactly
+        // as it did before the splice existed. Phase 6 bounds this shape.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                            "SELECT ts, sym, sum(x) OVER (" +
+                            "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
+                            ") s FROM base"
+            );
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                Assert.assertTrue(generation(instance) > 1);
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals("the whole history is re-emitted", 7, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(
+                        "a retired timeline starts over from the post-replay seal",
+                        1,
+                        entryCount(instance)
+                );
+                Assert.assertEquals(1, generation(instance));
+            }
         });
     }
 
