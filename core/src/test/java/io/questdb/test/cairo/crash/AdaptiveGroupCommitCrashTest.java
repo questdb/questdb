@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -218,6 +220,142 @@ public class AdaptiveGroupCommitCrashTest extends AbstractCrashConsistencyTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    /**
+     * CRITICAL 2 durable-ack ORACLE across concurrent writers under crash. Two held WalWriters of ONE
+     * adaptive W&gt;0 table share a {@code SeqTxnTracker}. A durable baseline row is on disk (acked). Then A
+     * commits the LOWER seqTxn and B the HIGHER; B flushes its own batch OUT OF ORDER while A's commit is
+     * still page-cache only. THE CONTRACT: the durable-ack frontier must stay at the CONTIGUOUS durable prefix
+     * (the baseline) — it must NEVER advance to B's own flushed seqTxn, which would falsely acknowledge A's
+     * non-durable commit. A power loss before A ever flushes then confirms end-to-end that nothing the
+     * durable-ack claimed is lost: the acked baseline survives, the un-acked tail may be dropped (RPO&le;W),
+     * and no surviving row is ever silently wrong.
+     *
+     * <p>The pre-fix bug advances the shared frontier to B's flushTo (over-claim), so {@code preCrashFrontier}
+     * would reach A's seqTxn and this asserts it does not.
+     */
+    @Test
+    public void testTwoWriterOutOfOrderFlushDurableAckNeverOverClaimsAcrossCrash() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        try {
+            runWithCrashFacade(() -> {
+                setCurrentMicros(1_000_000L);
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("t");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+                // Durable baseline: first row via the SQL path (writer released -> device-durable), applied +
+                // epoch'd, marked "already on disk". The durable-ack frontier reaches this baseline txn.
+                setCurrentMicros(1_000_000L);
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final long baselineTxn = engine.getTableSequencerAPI().lastTxn(tt);
+                Assert.assertEquals("baseline commit must be durable after the clean release flush",
+                        baselineTxn, tracker.getLocalDurableSeqTxn());
+                markDurableBaseline();
+
+                final long seqA;
+                final long preCrashFrontier;
+                WalWriter a = engine.getWalWriter(tt);
+                WalWriter b = engine.getWalWriter(tt);
+                try {
+                    Assert.assertNotEquals("two held writers must be distinct WALs sharing one tracker",
+                            a.getWalId(), b.getWalId());
+
+                    // A commits the LOWER seqTxn, B the HIGHER; both pending (msync'd, not device-durable).
+                    setCurrentMicros(1_001_000L);
+                    commitRow(a, ts("2024-01-01T01:00:00.000000Z"), 10);
+                    seqA = tracker.getSeqTxn();
+                    setCurrentMicros(1_002_000L);
+                    commitRow(b, ts("2024-01-01T02:00:00.000000Z"), 11);
+                    Assert.assertEquals("B must have sequenced right after A", seqA + 1, tracker.getSeqTxn());
+
+                    // B flushes its batch OUT OF ORDER (commit-driven trigger past W); A stays un-flushed.
+                    setCurrentMicros(1_000_000L + WINDOW_US + 2000L);
+                    commitRow(b, ts("2024-01-01T03:00:00.000000Z"), 12);
+
+                    // THE CONTRACT: the frontier is the contiguous durable prefix = the baseline, NOT B's own
+                    // flushed seqTxn. A's seqTxn is the oldest un-flushed hole.
+                    preCrashFrontier = tracker.getLocalDurableSeqTxn();
+                    Assert.assertEquals("frontier must stay at the contiguous durable prefix (the baseline)",
+                            baselineTxn, preCrashFrontier);
+                    Assert.assertTrue(
+                            "durable-ack OVER-CLAIM under crash: frontier (" + preCrashFrontier + ") must NOT reach "
+                                    + "A's un-flushed seqTxn (" + seqA + ")",
+                            preCrashFrontier < seqA
+                    );
+
+                    // POWER LOSS before A flushes: drop both writers' pending WITHOUT a flush (A's data, and
+                    // the whole un-acked tail, is page-cache only -> lost), then roll files back to last-durable.
+                    a.simulatePowerLossDropPending();
+                    b.simulatePowerLossDropPending();
+                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                } finally {
+                    a.close();
+                    b.close();
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseInactiveTableSequencers();
+
+                // Recover from the durable frontier and apply whatever IS durable.
+                new io.questdb.cairo.RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+
+                // (a) NO SILENTLY-WRONG ROWS: the acked baseline reads back correct; the un-acked tail may be
+                // gone (RPO<=W) and a torn tail surfaces loudly if at all — but a surviving row is never wrong.
+                assertNoSilentlyWrongPrefix(java.util.Arrays.asList(1L, 10L, 11L, 12L));
+                // (b) the durable-ack frontier never covered the lost txn -> nothing acknowledged was lost.
+                Assert.assertTrue("the durable-ack never claimed the lost un-flushed txn", preCrashFrontier < seqA);
+                // and the acked baseline row must actually be present after recovery.
+                final List<Long> rows = readVsQuietly();
+                Assert.assertFalse("the acked durable baseline row must survive the crash", rows.isEmpty());
+                Assert.assertEquals("the acked baseline value must be intact", Long.valueOf(1), rows.get(0));
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    /**
+     * Bar 1 for the long {@code v} column: the surviving rows are a correct PREFIX of {@code expectedFull} (a
+     * rolled-back tail = fewer rows is fine), never silently wrong; a torn tail may surface as a loud
+     * Cairo error, which is also acceptable.
+     */
+    private void assertNoSilentlyWrongPrefix(List<Long> expectedFull) {
+        try {
+            final List<Long> actual = readVs();
+            Assert.assertTrue("more rows than were ever committed", actual.size() <= expectedFull.size());
+            final int n = Math.min(actual.size(), expectedFull.size());
+            for (int i = 0; i < n; i++) {
+                Assert.assertEquals("row " + i + " silently wrong", expectedFull.get(i), actual.get(i));
+            }
+        } catch (CairoException | CairoError e) {
+            // acceptable: torn tail detected loudly
+        } catch (InternalError e) {
+            // acceptable: JVM surfaced a SIGBUS (mmap past a truncated file end) as InternalError
+        } catch (RuntimeException e) {
+            if (!(e.getCause() instanceof CairoException) && !(e.getCause() instanceof CairoError)) {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Like {@link #readVs()} but returns an empty list instead of throwing if the read hits a torn tail.
+     */
+    private List<Long> readVsQuietly() {
+        try {
+            return readVs();
+        } catch (Throwable t) {
+            return new ArrayList<>();
         }
     }
 

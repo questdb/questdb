@@ -473,6 +473,81 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
     }
 
     /**
+     * (j) CONTIGUOUS DURABLE PREFIX across concurrent writers (CRITICAL 2 durable-ack safety). Two WalWriters
+     * of ONE adaptive W&gt;0 table share one {@code SeqTxnTracker}. Writer A commits the LOWER seqTxn (N) and
+     * writer B the HIGHER (N+1); both are pending (msync'd, not device-durable). B then flushes its own batch
+     * OUT OF ORDER (commit-driven trigger) while A's txn N is still only in the page cache.
+     *
+     * <p>The durable-ack frontier ({@code localDurableSeqTxn}) must advance only to the CONTIGUOUS durable
+     * prefix — i.e. it must stay {@code < N} because A's txn N is the oldest un-flushed HOLE — even though B's
+     * (higher) txn is now on disk. The pre-fix bug advances the shared frontier to B's own seqTxn
+     * ({@code setLocalDurableSeqTxn(flushTo)}), falsely claiming A's non-durable txn N as durable, so a QWP
+     * durable-ack would lie and acknowledged data would be lost on a power cut. A counting facade proves A's
+     * segment fdatasync never ran (its commit is genuinely non-durable) while B's did.
+     */
+    @Test
+    public void testTwoWritersOutOfOrderFlushKeepsFrontierAtContiguousPrefix() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
+
+        final WalFdatasyncFacade ff = new WalFdatasyncFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            try (WalWriter a = engine.getWalWriter(tt); WalWriter b = engine.getWalWriter(tt)) {
+                Assert.assertNotEquals("two concurrently-held writers must be distinct WALs sharing one tracker",
+                        a.getWalId(), b.getWalId());
+
+                // A commits FIRST -> lower seqTxn N. Deferred (pending, un-flushed).
+                setCurrentMicros(1_000_000L);
+                commitRow(a, 0L, 10);
+                final long seqA = tracker.getSeqTxn();
+
+                // B commits -> higher seqTxn N+1. Deferred (pending, un-flushed).
+                setCurrentMicros(1_001_000L);
+                commitRow(b, 60_000_000L, 11);
+                final long seqB = tracker.getSeqTxn();
+                Assert.assertEquals("B must have sequenced immediately after A", seqA + 1, seqB);
+
+                // Nothing flushed yet: the durable frontier lags both writers.
+                Assert.assertTrue("tail must be pending before any flush", tracker.getLocalDurableSeqTxn() < seqA);
+                ff.reset();
+
+                // Advance PAST the window, then commit AGAIN on B: the commit-driven trigger flushes B's batch
+                // ONLY (A is a different writer with its own monitor + pending state; the flush is per-writer
+                // with no cross-writer barrier).
+                setCurrentMicros(1_000_000L + WINDOW_US + 1000L);
+                commitRow(b, 120_000_000L, 12);
+
+                // B's segment IS now device-durable (its batch fdatasync ran) ...
+                Assert.assertTrue(
+                        "B's own segment must have been fdatasync'd by its commit-driven flush",
+                        ff.walDirFdatasyncs(b.getWalId()) > 0
+                );
+                // ... but A NEVER flushed: A's txn N is a HOLE, its segment fdatasync has NOT run.
+                Assert.assertEquals(
+                        "A's segment must NOT have been fdatasync'd — its txn " + seqA + " is still page-cache only",
+                        0, ff.walDirFdatasyncs(a.getWalId())
+                );
+
+                // THE DURABLE-ACK CONTRACT: the frontier may only cover the contiguous durable prefix. A's txn
+                // N is the oldest un-flushed hole, so the frontier MUST stay < N. The bug advances it to B's
+                // own (higher) seqTxn, over-claiming A's non-durable txn N as durable.
+                Assert.assertTrue(
+                        "durable-ack OVER-CLAIM: localDurableSeqTxn (" + tracker.getLocalDurableSeqTxn()
+                                + ") must NOT reach A's un-flushed seqTxn (" + seqA + "); it may only cover the "
+                                + "contiguous durable prefix (< " + seqA + ")",
+                        tracker.getLocalDurableSeqTxn() < seqA
+                );
+            }
+        });
+    }
+
+    /**
      * Append one (ts, v) row to a HELD WalWriter and commit it (one WAL txn, writer NOT released).
      */
     private static void commitRow(WalWriter w, long ts, long v) {
@@ -526,6 +601,23 @@ public class AdaptiveGroupCommitTest extends AbstractCairoTest {
             int c = 0;
             for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
                 if (isWalCommitFile(fdatasyncPaths.get(i))) {
+                    c++;
+                }
+            }
+            return c;
+        }
+
+        /**
+         * Count fdatasync calls that landed on a file inside the {@code walN} directory of the given WAL id
+         * (the writer's own segment column data + events file). The directory boundary is matched exactly
+         * ({@code /walN/} not {@code /walN0/}) so wal id 2 is not confused with wal id 20. Used to prove which
+         * writer's segment was actually device-flushed when two writers of one table flush out of order.
+         */
+        public int walDirFdatasyncs(int walId) {
+            int c = 0;
+            for (int i = 0, n = fdatasyncPaths.size(); i < n; i++) {
+                final String p = fdatasyncPaths.get(i);
+                if (p.contains("/wal" + walId + "/") || p.contains("\\wal" + walId + "\\")) {
                     c++;
                 }
             }

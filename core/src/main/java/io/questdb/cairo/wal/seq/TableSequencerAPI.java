@@ -407,7 +407,13 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void purgeTxnTracker(String dirName) {
-        seqTxnTrackers.remove(dirName);
+        final SeqTxnTracker removed = seqTxnTrackers.remove(dirName);
+        if (removed != null) {
+            // Clear the adaptive group-commit contiguous-prefix pins and zero this tracker's contribution to
+            // the engine-wide durable-frontier gauge before it is discarded (table drop / reboot reset), so a
+            // fresh tracker for the same dir does not inherit stale pins and the gauge does not leak.
+            removed.resetDurableFrontier();
+        }
     }
 
     /**

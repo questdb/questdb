@@ -32,6 +32,8 @@ import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -79,11 +81,27 @@ public class SeqTxnTracker {
     // Which ping-pong slot currently holds pinnedEpochTxn: true => EPOCH_ID_A, false => EPOCH_ID_B.
     // The next epoch pins into the OTHER slot. Initial value is arbitrary (no pin held yet).
     private boolean pinnedEpochSlotIsA = false;
-    // The highest seqTxn whose WAL commit was fdatasync'd under ADAPTIVE mode (data→events→seq).
-    // Default -1 means "no local-fsync guarantee yet" — only ADAPTIVE tables advance this.
-    // NOSYNC tables leave it at -1 forever. Volatile: written on the WAL commit thread
-    // (WalWriter), read by QWP/durable-ack threads.
+    // The highest seqTxn whose WAL commit is device-durable under ADAPTIVE mode (data→events→seq) AND is
+    // part of the CONTIGUOUS durable prefix across ALL concurrent writers of this table (see the pending map
+    // below). Default -1 means "no local-fsync guarantee yet" — only ADAPTIVE tables advance this.
+    // NOSYNC tables leave it at -1 forever. Volatile: written on a WAL commit / group-commit flush thread
+    // (WalWriter), read lock-free by QWP/durable-ack threads.
     private volatile long localDurableSeqTxn = -1L;
+    // --- Adaptive GROUP-COMMIT (W>0) contiguous durable prefix (CRITICAL 2) ---
+    // Several WalWriters of ONE table share this tracker and flush their deferred group-commit batches
+    // INDEPENDENTLY (WalGroupCommitFlushQueue.sweep / the per-writer commit-driven trigger), with no
+    // cross-writer barrier. A writer must therefore NOT advance the shared durable-ack frontier to its OWN
+    // seqTxn on flush: writer B (seqTxn 11) flushing before writer A (seqTxn 10) would falsely claim A's
+    // still-page-cache-only txn 10 as durable and the QWP durable-ack would lie. Instead each writer records
+    // the OLDEST un-flushed seqTxn of its current batch here; localDurableSeqTxn only advances to the
+    // contiguous prefix = (map empty ? getSeqTxn() : min(oldest-un-flushed) - 1). Parallel lists keyed by
+    // index: pendingWalIds[i] -> pendingLoSeqTxns[i]. Tiny (one entry per concurrently-held WalWriter) and
+    // touched only per BATCH (start / flush), not per row. Guarded by durableFrontierLock (NOT `this`, which
+    // the waiter machinery uses) so the frontier RMW never contends with fireWaiters/updateWriterTxns;
+    // localDurableSeqTxn stays volatile for lock-free reads.
+    private final Object durableFrontierLock = new Object();
+    private final IntList pendingWalIds = new IntList();
+    private final LongList pendingLoSeqTxns = new LongList();
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
@@ -337,19 +355,98 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Records that the WAL commit for {@code seqTxn} was fdatasync'd (ADAPTIVE mode). Only
-     * advances the frontier — a lower value is silently ignored (monotone, same safety as seqTxn).
+     * Advances the device-durable frontier to {@code seqTxn} (ADAPTIVE mode). MONOTONE: a value below the
+     * current frontier is silently ignored (durable data never becomes non-durable), which also makes an
+     * out-of-order contiguous-prefix recompute in {@link #markWriterDurable(int)} safe.
+     *
+     * <p>Used directly on the ADAPTIVE {@code W=0} path (the commit fdatasync completed BEFORE the seqTxn was
+     * even assigned, so the commit is durable when this is called; concurrent writers are safe because a txn
+     * is durable before it is sequenced), and internally by {@link #markWriterDurable(int)} under
+     * {@code durableFrontierLock} for the {@code W>0} contiguous prefix. A table is exclusively W=0 OR W>0
+     * (config-fixed), so these two callers never race for the same tracker.
      */
     public void setLocalDurableSeqTxn(long seqTxn) {
-        // Monotone CAS-free update: ADAPTIVE commits publish strictly increasing seqTxns per table
-        // (the sequencer is single-writer per table), so a plain volatile write suffices.
-        // Guard against any ordering anomaly with a max() check.
         if (seqTxn > localDurableSeqTxn) {
             // Push the delta to the global durable-frontier gauge, clamping the -1 initial to 0
             // (mirrors the addSeqTxn(newSeqTxn - Math.max(0, stxn)) pattern above).
             metrics.walMetrics().addLocalDurableSeqTxn(seqTxn - Math.max(0, localDurableSeqTxn));
             localDurableSeqTxn = seqTxn;
         }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): record the OLDEST un-flushed {@code loSeqTxn} of {@code walId}'s current
+     * batch so the shared durable-ack frontier can be held at the contiguous durable prefix across concurrent
+     * writers. putIfAbsent — a writer's later commits in the SAME batch (walId already pinned) must NOT lower
+     * its recorded floor; the pin is dropped only by {@link #markWriterDurable(int)} (after that writer's
+     * fdatasync) or {@link #resetDurableFrontier()} (recovery/reboot). A distressed/crash teardown WITHOUT a
+     * flush deliberately LEAVES the pin, so the frontier stays honestly behind the writer's non-durable data.
+     */
+    public void registerWriterPending(int walId, long loSeqTxn) {
+        synchronized (durableFrontierLock) {
+            if (indexOfPendingWalId(walId) < 0) {
+                pendingWalIds.add(walId);
+                pendingLoSeqTxns.add(loSeqTxn);
+            }
+        }
+    }
+
+    /**
+     * Adaptive group-commit (W&gt;0): called AFTER {@code walId}'s batched device flush (data→events→seq)
+     * completes. Drops the writer's pin, then advances {@link #localDurableSeqTxn} MONOTONICALLY to the
+     * contiguous durable prefix across the remaining pending writers: {@code min(oldest-un-flushed) - 1}, or
+     * {@code getSeqTxn()} (every committed txn is now durable) when nothing is pending. Never advances to the
+     * flushing writer's own seqTxn — that is the CRITICAL-2 over-claim. Idempotent: an unknown/already-removed
+     * walId is a harmless no-op that still recomputes the prefix from the remaining pins.
+     */
+    public void markWriterDurable(int walId) {
+        synchronized (durableFrontierLock) {
+            final int idx = indexOfPendingWalId(walId);
+            if (idx > -1) {
+                pendingWalIds.removeIndex(idx);
+                pendingLoSeqTxns.removeIndex(idx);
+            }
+            final long target = pendingWalIds.size() == 0 ? seqTxn : minPendingLoSeqTxn() - 1;
+            setLocalDurableSeqTxn(target);
+        }
+    }
+
+    /**
+     * Recovery / reboot reset (paired with the tracker's other reset paths): clear every pending-writer pin
+     * and drop the durable frontier back to the uninitialised -1, keeping the engine-wide durable-frontier
+     * gauge honest so a post-reset re-advance from -1 does not double-count. Clears stale pins that a
+     * distressed/crash-torn writer left behind, so a reused/fresh writer recomputes from an empty map.
+     */
+    public void resetDurableFrontier() {
+        synchronized (durableFrontierLock) {
+            pendingWalIds.clear();
+            pendingLoSeqTxns.clear();
+            final long current = localDurableSeqTxn;
+            if (current > 0) {
+                metrics.walMetrics().addLocalDurableSeqTxn(-current);
+            }
+            localDurableSeqTxn = -1L;
+        }
+    }
+
+    private int indexOfPendingWalId(int walId) {
+        for (int i = 0, n = pendingWalIds.size(); i < n; i++) {
+            if (pendingWalIds.getQuick(i) == walId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private long minPendingLoSeqTxn() {
+        long min = Long.MAX_VALUE;
+        for (int i = 0, n = pendingLoSeqTxns.size(); i < n; i++) {
+            final long v = pendingLoSeqTxns.getQuick(i);
+            if (v < min) {
+                min = v;
+            }
+        }
+        return min;
     }
 
     /**

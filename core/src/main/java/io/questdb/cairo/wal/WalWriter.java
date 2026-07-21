@@ -165,6 +165,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // Microsecond wall-clock of the OLDEST un-flushed pending commit (when pendingDurableSeqTxn was first
     // set after a flush). The flush trigger fires once now - pendingSinceMicros >= W. Guarded by `this`.
     private long pendingSinceMicros = -1L;
+    // The OLDEST un-flushed seqTxn of the current group-commit batch (the first commit after a flush), also
+    // registered on the shared SeqTxnTracker as this writer's contiguous-prefix pin (registerWriterPending).
+    // -1 == nothing pending. Guarded by `this`. Concurrent writers of one table flush independently, so the
+    // shared durable-ack frontier must only advance to min(oldest-un-flushed) across writers, not to this
+    // writer's own flushed seqTxn (CRITICAL 2).
+    private long pendingLoSeqTxn = -1L;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
@@ -2283,8 +2289,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     private synchronized void recordPendingDurable(long seqTxn) {
         if (pendingDurableSeqTxn < 0) {
-            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit).
+            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit) and
+            // register this writer's contiguous-prefix pin on the shared tracker at that oldest seqTxn, so a
+            // peer writer flushing a HIGHER seqTxn first cannot advance the durable-ack frontier past our
+            // still-unflushed batch (CRITICAL 2). putIfAbsent on the tracker: our later commits in this batch
+            // do NOT lower the pin.
             pendingSinceMicros = configuration.getMicrosecondClock().getTicks();
+            pendingLoSeqTxn = seqTxn;
+            seqTxnTracker.registerWriterPending(walId, seqTxn);
         }
         pendingDurableSeqTxn = seqTxn;
         // Register BEFORE the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
@@ -2327,10 +2339,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         events.fdatasync();
         sequencer.fdatasyncTxnLog(tableToken);
-        // Only NOW is the batch on disk: advance the durable-ack frontier and clear pending.
-        seqTxnTracker.setLocalDurableSeqTxn(flushTo);
+        // Only NOW is this writer's batch on disk. Drop our contiguous-prefix pin and let the shared frontier
+        // advance to the durable prefix across ALL writers (min oldest-un-flushed - 1, or getSeqTxn() when
+        // nothing is pending) — NOT to our own flushTo, which would over-claim a peer writer's still-unflushed
+        // lower seqTxn (CRITICAL 2). markWriterDurable recomputes the prefix; flushTo above only gates the
+        // nothing-pending early return.
+        seqTxnTracker.markWriterDurable(walId);
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
+        pendingLoSeqTxn = -1L;
         sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 
@@ -2379,6 +2396,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private synchronized void dropPendingDurable() {
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
+        pendingLoSeqTxn = -1L;
+        // DELIBERATELY leave this writer's contiguous-prefix pin on the shared tracker: this teardown did NOT
+        // device-flush the batch, so its data is non-durable. Removing the pin here would let the shared
+        // durable-ack frontier advance past our un-flushed seqTxn (CRITICAL 2 over-claim). The pin is cleared
+        // only by a real fdatasync (markWriterDurable) or by the recovery/reboot resetDurableFrontier().
         sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 
@@ -2396,6 +2418,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         distressed = true;
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
+        pendingLoSeqTxn = -1L;
+        // Leave the shared tracker pin (see dropPendingDurable): a power loss did NOT flush the batch, so the
+        // durable-ack frontier must stay honestly behind our un-flushed seqTxn.
         sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
 
