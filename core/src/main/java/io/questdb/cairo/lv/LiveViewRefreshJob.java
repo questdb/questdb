@@ -214,6 +214,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
+    // Coordinates of the out-of-order repair currently executing: the pinned base
+    // snapshot, the correction floor, the retire floor and the chosen executor.
+    // One instance per worker, refilled by planO3Repair at the start of each
+    // repair; the two executors only read it. Repairs never nest, so the single
+    // instance cannot be observed mid-refill.
+    private final LiveViewCheckpointRepairPlan repairPlan = new LiveViewCheckpointRepairPlan();
     // Positional cursor into windowFactory.getWindowFunctions() while a single
     // restoreFromHead walks the checkpoint's FUNCTION_SNAPSHOT blocks. The writer
     // emits one block per snapshot-capable function in window-function order, so
@@ -870,30 +876,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             base = base.getBaseFactory();
         }
         return base.getMetadata();
-    }
-
-    /**
-     * Returns the ring index of the newest retained checkpoint whose
-     * {@code maxTs} is strictly below {@code ceilTs}, or {@code -1} when the ring
-     * holds no such entry (every retained anchor sits at or above the ceiling, so
-     * the late row predates the whole ring and the caller must rebuild from the
-     * view boundary).
-     * <p>
-     * The retained-checkpoint ring is held in strictly increasing {@code maxTs}
-     * order (oldest at index 0), so the scan walks from the newest entry down and
-     * returns the first one under the ceiling - the closest sealed anchor below
-     * the late row, which yields the shortest resume replay {@code (maxTs, head]}.
-     * A head-hit resumes from the newest entry; this picks an OLDER entry only
-     * when the newest one (the head) sits at or above the late row - the
-     * bounded-miss case.
-     */
-    private static int findResumeAnchorBelow(LiveViewInstance instance, long ceilTs) {
-        for (int i = instance.getRetainedCheckpointCount() - 1; i >= 0; i--) {
-            if (instance.getRetainedCheckpointMaxTs(i) < ceilTs) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     /**
@@ -2870,13 +2852,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Out-of-order replay. Called from {@code incrementalRefresh}
      * after detection rolls back the in-WAL-order draft for the offending
-     * cycle. Picks the head-hit branch when an in-disk head exists and its
-     * {@code maxTimestamp <= lateRowTs}; falls back to head-miss replay from
-     * {@code viewLowerBoundTimestamp} otherwise. Either branch reads the base
-     * table via {@code TableReader} in ts-ascending order through the
-     * compiled SELECT's filter / anchor / window cursor stack, commits via
-     * {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
+     * cycle. Pins one applied base reader, plans the repair against that single
+     * snapshot ({@link #planO3Repair}), and hands the plan to one of the two
+     * executors: {@link #replayFromAnchor} when a sealed checkpoint sits strictly
+     * below the change, {@link #o3HeadMissReplay} otherwise. Either executor reads
+     * the base table via the pinned {@code TableReader} in ts-ascending order
+     * through the compiled SELECT's filter / anchor / window cursor stack, commits
+     * via {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
      * applies inline, and writes a fresh head .cp post-replay.
+     * <p>
+     * Planning and replay share one pinned reader (design section 12.1). The
+     * executors neither open nor close it: this method owns it for the whole
+     * repair, so a plan that rejects a resume can rebuild from the same snapshot
+     * its bounds were derived against instead of reopening at a newer one.
      * <p>
      * Replay only fires for snapshot-capable LVs - the per-function state
      * resets used here rely on every WindowFunction exposing its partition
@@ -3014,69 +3002,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        // Atomic snapshot of (lvSeqTxn, maxTs); without it a concurrent
-        // setHeadCheckpoint could pair a fresh lvSeqTxn with the prior
-        // maxTs and drive the head-hit decision off a torn read.
-        final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
-        final long headLvSeqTxn = headPair[0];
-        final long headMaxTs = headPair[1];
-        // Strict comparison is load-bearing. The head's state covers every row
-        // up to AND INCLUDING headMaxTs, and head-hit replay starts at
-        // headMaxTs + 1 (TimestampLowerBoundCursor admits ts >= lowTs). A late
-        // row at exactly headMaxTs is therefore not covered by the head yet also
-        // excluded from the replay window, so it would be silently dropped. The
-        // exact boundary routes to head-miss instead (full replay from the lower
-        // bound), which re-reads and merges the late row in ts order.
-        // A head with no maxTs cannot serve a head-hit: the replay floors at headMaxTs + 1,
-        // and LONG_NULL + 1 would admit every base row - including rows below the view's
-        // START FROM boundary, which this path (unlike head-miss) does not apply. Treat it as
-        // no head at all and route to the full head-miss replay, which floors at the boundary.
-        final boolean headHitEligible = headLvSeqTxn != Numbers.LONG_NULL
-                && headMaxTs != Numbers.LONG_NULL
-                && headMaxTs < lateRowTs;
-        LOG.info().$("live view O3 replay [view=").$(viewName)
-                .$(", lateRowTs=").$(lateRowTs)
-                .$(", advanceTo=").$(advanceTo)
-                .$(", headHitEligible=").$(headHitEligible)
-                .$(", headLvSeqTxn=").$(headLvSeqTxn)
-                .$(", headMaxTs=").$(headMaxTs).I$();
-
-        if (headHitEligible) {
-            // The head is simply the newest ring entry, so a head-hit is a
-            // resume from that newest anchor.
-            replayFromAnchor(instance, windowFactory, lateRowTs, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
-        } else {
-            // Bounded-miss: the late row sits at or below the head, so the head
-            // cannot anchor the replay. A DATA trigger (lateRowTs != LONG_NULL)
-            // may still find an OLDER sealed ring entry whose maxTs is strictly
-            // below the late row - resume from that anchor through the same helper
-            // instead of rebuilding the whole view from the boundary. Replay cost
-            // drops from O(view age) to O(head - anchor.maxTs), a few hundred rows
-            // near the head. A non-DATA / recovery trigger (LONG_NULL) keeps the
-            // frozen-prefix full rebuild, and a late row below every retained
-            // anchor falls back to it too.
-            //
-            // Apply-ahead is NOT resumed here yet: replayFromAnchor bails to the
-            // full head-miss rebuild whenever the base reader has advanced past
-            // advanceTo, because a back-dated row hidden in an unexamined seqTxn
-            // below the anchor would be dropped. Bounding that case to an anchor
-            // below the ahead range's minimum is step 6 (the minAheadTs guard).
-            final int anchorIdx = lateRowTs != Numbers.LONG_NULL
-                    ? findResumeAnchorBelow(instance, lateRowTs)
-                    : -1;
-            if (anchorIdx >= 0) {
-                replayFromAnchor(
-                        instance,
-                        windowFactory,
-                        lateRowTs,
-                        baseToken,
-                        advanceTo,
-                        instance.getRetainedCheckpointLvSeqTxn(anchorIdx),
-                        instance.getRetainedCheckpointMaxTs(anchorIdx)
-                );
+        // Pin one applied base reader for the whole repair, then plan against it.
+        // The executors run off this same reader and this same plan: a resume the
+        // plan rejects rebuilds from the snapshot its bounds were derived against,
+        // rather than reopening at whatever apply has reached by then.
+        final TableReader reader = waitForApply(baseToken, advanceTo);
+        try {
+            planO3Repair(instance, lateRowTs, baseToken, advanceTo, reader);
+            LOG.info().$("live view O3 replay [view=").$(viewName)
+                    .$(", lateRowTs=").$(lateRowTs)
+                    .$(", advanceTo=").$(advanceTo)
+                    .$(", pinnedSeqTxn=").$(repairPlan.getPinnedSeqTxn())
+                    .$(", correctionTs=").$(repairPlan.getCorrectionTs())
+                    .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
+                    .$(", anchorLvSeqTxn=").$(repairPlan.getAnchorLvSeqTxn())
+                    .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs()).I$();
+            if (repairPlan.isResumeFromAnchor()) {
+                replayFromAnchor(instance, windowFactory, repairPlan, reader);
             } else {
-                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo, false);
+                // No sealed anchor sits below the change (the whole ring predates
+                // it, the trigger carries no timestamp to search with, or apply
+                // raced ahead over an unclassifiable range), so the repair falls
+                // back to the O(view age) rebuild from the view boundary.
+                o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false);
             }
+        } finally {
+            reader.close();
         }
 
         // The replay rewrote the on-disk tier (REPLACE_RANGE); the in-mem tier
@@ -3096,6 +3047,54 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Fills {@link #repairPlan} with the coordinates one out-of-order repair works
+     * from: the pinned snapshot's {@code seqTxn}, the correction floor {@code C},
+     * the retire floor, and the executor the change qualifies for. This is the
+     * "pin and classify" half of design section 12.1, with the pin itself owned by
+     * the caller.
+     * <p>
+     * The one classification this needs from disk is the apply-ahead range: when
+     * {@code ApplyWal2TableJob} raced the reader past {@code advanceTo}, the pinned
+     * snapshot already holds transactions the forward drain never examined, and the
+     * lowest in-view timestamp among them decides both how far the retire floor
+     * drops and whether any sealed anchor can still be trusted.
+     * {@link #computeApplyAheadMinTs} reads the base WAL-E files to answer that, so
+     * it runs only when {@link LiveViewCheckpointRepairPlan#isApplyAheadClassificationRequired}
+     * says the answer can change the plan. It can throw on a torn or purged WAL-E,
+     * which the caller's pin ownership turns into a returned reader rather than a
+     * leaked one.
+     * <p>
+     * The head pair is read atomically: without that, a concurrent
+     * {@code setHeadCheckpoint} could pair a fresh {@code lvSeqTxn} with the prior
+     * {@code maxTs} and drive the anchor decision off a torn read.
+     */
+    private void planO3Repair(
+            LiveViewInstance instance,
+            long lateRowTs,
+            TableToken baseToken,
+            long advanceTo,
+            TableReader reader
+    ) {
+        final long pinnedSeqTxn = reader.getSeqTxn();
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        long applyAheadMinTs = Numbers.LONG_NULL;
+        if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, advanceTo, pinnedSeqTxn)) {
+            applyAheadMinTs = computeApplyAheadMinTs(baseToken, advanceTo, pinnedSeqTxn, viewLowerBoundTimestamp);
+        }
+        final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
+        repairPlan.of(
+                instance,
+                lateRowTs,
+                viewLowerBoundTimestamp,
+                advanceTo,
+                pinnedSeqTxn,
+                headPair[0],
+                headPair[1],
+                applyAheadMinTs
+        );
+    }
+
+    /**
      * Resume replay from a sealed checkpoint anchor: rolls window state back to
      * the anchor {@code .cp}'s snapshot moment (clear per-function maps, then
      * restore from disk), scans the base table from {@code anchorMaxTs + 1}
@@ -3105,18 +3104,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * reflects everything in {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the
      * replay only re-evaluates the tail above the anchor.
      * <p>
-     * The head is simply the newest ring entry, so a head-hit is a resume from
-     * the newest anchor; the bounded-miss path resumes from an older sealed anchor
-     * through this same body. The caller has already verified the anchor is
-     * hit-eligible (it exists and its {@code maxTimestamp < lateRowTs}).
+     * Pure execution: {@link LiveViewCheckpointRepairPlan} has already chosen the
+     * anchor, the commit point and the retire floor against the pinned snapshot,
+     * and has proven the anchor sits strictly below both the change and anything
+     * apply raced past the trigger. The head is simply the newest ring entry, so a
+     * head hit resumes from the newest anchor and a bounded miss from an older one
+     * through this same body.
      * <p>
-     * Before restoring, this retires every retained checkpoint the O3 at
-     * {@code lateRowTs} unsealed (entries with {@code maxTs >= lateRowTs},
-     * including the prior head) so no later resume ever anchors on state that
-     * predates this late row. For a head-hit the late row sits above the head, so
-     * nothing is unsealed and the retire is a no-op; for a bounded-miss it drops
-     * the poisoned entries between the anchor and the head. The anchor itself
-     * ({@code anchorMaxTs < lateRowTs}) always survives.
+     * The caller owns {@code reader} and closes it; this method only detaches it
+     * for the execution context and re-attaches it on the way out.
+     * <p>
+     * Before restoring, this retires every retained checkpoint the change unsealed
+     * (entries at or above the plan's retire floor, including the prior head) so no
+     * later resume ever anchors on state that predates it. For a head hit the late
+     * row sits above the head, so nothing is unsealed and the retire is a no-op;
+     * for a bounded miss it drops the poisoned entries between the anchor and the
+     * head. The anchor itself always survives - the plan picked it strictly below
+     * that floor.
      * <p>
      * Restore can still fail here (corrupt {@code .cp}, unsupported format
      * version). Structural corruption drives {@code restoreFromHead} ->
@@ -3137,132 +3141,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void replayFromAnchor(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
-            long lateRowTs,
-            TableToken baseToken,
-            long advanceTo,
-            long anchorLvSeqTxn,
-            long anchorMaxTs
+            LiveViewCheckpointRepairPlan plan,
+            TableReader reader
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
-        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
-        // The DATA trigger's authority to DELETE and to unseal retained checkpoints,
-        // clamped up to the view's lower bound (same rule as o3HeadMissReplay).
-        // replayFromAnchor never runs for a non-DATA trigger - the head-hit branch
-        // needs headMaxTs < lateRowTs and the bounded-miss branch gates on
-        // lateRowTs != LONG_NULL - so triggerLowTs is always a real timestamp here;
-        // the LONG_NULL guard is kept for defensive symmetry with the replay paths.
-        final long triggerLowTs = lateRowTs == Numbers.LONG_NULL
-                ? Numbers.LONG_NULL
-                : Math.max(lateRowTs, viewLowerBoundTimestamp);
-        TableReader reader = waitForApply(baseToken, advanceTo);
-        final long effectiveSeqTxn = reader.getSeqTxn();
-        // Commit / watermark point for this replay. Normally the O3 trigger seqTxn;
-        // an apply-ahead resume advances it to the base reader's effective seqTxn -
-        // the snapshot the scan below materialises - exactly as o3HeadMissReplay does.
-        long commitSeqTxn = advanceTo;
-        // Threshold at or above which this O3 unseals retained checkpoints. Normally
-        // the trigger ts; an apply-ahead resume lowers it to the ahead range's floor
-        // so entries a back-dated ahead row unsealed are retired too (see below).
-        long retireThreshold = triggerLowTs;
-        if (effectiveSeqTxn != advanceTo) {
-            // ApplyWal2TableJob has raced the base reader past the O3 trigger: the
-            // snapshot already reflects seqTxns in (advanceTo, effectiveSeqTxn] the
-            // forward drain has not examined. The anchor resume only re-reads base
-            // above anchorMaxTs, so a back-dated row below anchorMaxTs hidden in one
-            // of those unexamined seqTxns would be silently dropped, and advancing
-            // the watermark over them would lose it permanently. Resume only from a
-            // sealed anchor strictly below BOTH the trigger and the ahead range's
-            // minimum in-view ts; otherwise rebuild the whole view from the boundary
-            // (which sees the ahead rows and advances the watermark to exactly what
-            // it materialised). waitForApply guarantees effectiveSeqTxn >= advanceTo,
-            // so this is the strictly-ahead case.
-            //
-            // computeApplyAheadMinTs reads the base WAL-E off the pinned reader; a read
-            // fault (a torn / purged base WAL-E - the "applied base outlived its WAL"
-            // state) must return the pooled reader rather than leak it out of the shared
-            // pool. The main try/finally below does not cover this pre-detach call, so
-            // close and rethrow here. The no-anchor fallback further down already closes
-            // the reader before it recurses, so it stays leak-safe without this guard.
-            final long minAheadTs;
-            try {
-                minAheadTs = computeApplyAheadMinTs(baseToken, advanceTo, effectiveSeqTxn, viewLowerBoundTimestamp);
-            } catch (Throwable th) {
-                reader.close();
-                throw th;
-            }
-            // A LONG_NULL minAheadTs means the ahead range is not safely resumable (a
-            // structural / non-DATA commit, or no DATA commit at all) - force the rebuild.
-            final long ceilTs = minAheadTs == Numbers.LONG_NULL || triggerLowTs == Numbers.LONG_NULL
-                    ? Numbers.LONG_NULL
-                    : Math.min(triggerLowTs, minAheadTs);
-            final int aheadAnchorIdx = ceilTs == Numbers.LONG_NULL
-                    ? -1
-                    : findResumeAnchorBelow(instance, ceilTs);
-            if (aheadAnchorIdx < 0) {
-                // No sealed anchor below the ahead range's minimum (deep back-dating,
-                // a structural change, or a non-DATA ahead commit). Fall back to the
-                // full rebuild, forwarding this O3's own trigger ts so o3HeadMissReplay
-                // keeps its DELETE authority; it recomputes the ahead floor itself to
-                // retire the ahead-unsealed entries this resume would otherwise drop.
-                reader.close();
-                o3HeadMissReplay(instance, windowFactory, lateRowTs, baseToken, advanceTo, false);
-                return;
-            }
-            // Re-anchor to the sealed entry below the ahead floor, commit at the
-            // effective seqTxn the snapshot covers, and unseal every entry at or
-            // above that floor (the prior head plus any entry a back-dated ahead row
-            // invalidated). The replay stays bounded to (anchorMaxTs, effectiveSeqTxn].
-            anchorLvSeqTxn = instance.getRetainedCheckpointLvSeqTxn(aheadAnchorIdx);
-            anchorMaxTs = instance.getRetainedCheckpointMaxTs(aheadAnchorIdx);
-            commitSeqTxn = effectiveSeqTxn;
-            retireThreshold = ceilTs;
-        }
+        final long anchorLvSeqTxn = plan.getAnchorLvSeqTxn();
+        final long anchorMaxTs = plan.getAnchorMaxTs();
         // Replay starts strictly above anchorMaxTs because the anchor's state
         // already covers rows up to and including anchorMaxTs. The same value
         // doubles as the REPLACE_RANGE low boundary so the apply step
-        // rewrites only the affected partitions.
+        // rewrites only the affected partitions. The plan floors it at the START
+        // FROM boundary so this path applies the same row predicate as the seed,
+        // the forward drain and the head-miss replay.
+        final long replayLowTs = plan.getReplayLowTs();
+        // Commit / watermark point for this replay: the pinned snapshot's seqTxn.
+        // Equal to the O3 trigger seqTxn unless apply raced ahead of it, in which
+        // case the scan below materialises the ahead range too - exactly as
+        // o3HeadMissReplay does.
+        final long committedSeqTxn = plan.getCommitSeqTxn();
+        // Retire the checkpoints this O3 unsealed before restoring: entries at or
+        // above the plan's retire floor (the prior head on the bounded-miss path,
+        // plus any ahead-unsealed entry on an apply-ahead resume) predate the
+        // covered rows and must never anchor a later resume. The anchor survives -
+        // the plan picked it strictly below that floor - and for a head hit nothing
+        // is unsealed, so this is a no-op. Mirrors o3HeadMissReplay's retire.
         //
-        // Floored at the START FROM boundary so this path applies the same row
-        // predicate as the seed, the forward drain and the head-miss replay -
-        // the anchor resume is the one applied-base scan that does not start from
-        // the boundary. The clamp is redundant under the anchor's own invariant
-        // (a checkpoint is only ever written from seeded or drained output, which
-        // already applied the boundary, so anchorMaxTs >= viewLowerBoundTimestamp
-        // and anchorMaxTs + 1 is strictly above it), but that invariant is
-        // implicit and lives four call sites away. Stating it here costs one
-        // Math.max on a cold path and makes the property local: no anchor, however
-        // it was written, can pull this scan below the boundary. An anchor with
-        // maxTs LONG_NULL - the one that could, since LONG_NULL + 1 admits every
-        // base row - is already refused hit-eligibility upstream.
-        final long replayLowTs = Math.max(anchorMaxTs + 1, viewLowerBoundTimestamp);
-        // Retire the checkpoints this O3 unsealed before restoring: entries with
-        // maxTs >= retireThreshold (the prior head on the bounded-miss path, plus
-        // any ahead-unsealed entry on an apply-ahead resume) predate the covered
-        // rows and must never anchor a later resume. The anchor survives
-        // (anchorMaxTs < retireThreshold), and for a head-hit nothing is unsealed
-        // so this is a no-op. Mirrors o3HeadMissReplay's retire; the apply-ahead
-        // rebuild fallback above routes through it too.
-        //
-        // The retire also publishes the survivors durably at commitSeqTxn, ahead
-        // of the REPLACE_RANGE commit below: the same retireThreshold drives the
-        // in-memory drop and the manifest, so the two can never disagree about
-        // what this O3 unsealed. A publication failure does not abandon the
-        // replay - covered only advances on success, so the manifest left on disk
-        // is one a restart either trusts (its covered still equals the reconciled
-        // floor, meaning this commit never landed and the survivors really are
-        // still sealed there) or ignores.
-        // Same reader-lifetime guard as the apply-ahead read above: the retire
-        // publication runs off the pinned reader but before the main try/finally, so a
-        // fault here must return the reader to the pool rather than leak it.
-        try {
-            invalidateRetainedCheckpointsOnO3(instance, retireThreshold, commitSeqTxn);
-        } catch (Throwable th) {
-            reader.close();
-            throw th;
-        }
-        // Effectively-final snapshot of the commit / watermark point for the commit
-        // lambda and the bookkeeping below (commitSeqTxn is reassigned above).
-        final long committedSeqTxn = commitSeqTxn;
+        // The retire also publishes the survivors durably at committedSeqTxn, ahead
+        // of the REPLACE_RANGE commit below: one floor drives both the in-memory
+        // drop and the manifest, so the two can never disagree about what this O3
+        // unsealed. A publication failure does not abandon the replay - covered
+        // only advances on success, so the manifest left on disk is one a restart
+        // either trusts (its covered still equals the reconciled floor, meaning
+        // this commit never landed and the survivors really are still sealed there)
+        // or ignores.
+        invalidateRetainedCheckpointsOnO3(instance, plan.getRetireLowTs(), committedSeqTxn);
         boolean readerAttached = false;
         long appendedRows = 0;
         long o3ScanRows = 0;
@@ -3376,7 +3288,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 executionContext.clearReader();
                 engine.attachReader(reader);
             }
-            reader.close();
         }
 
         applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
@@ -3429,15 +3340,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", advanceTo=").$(committedSeqTxn)
                 .$(", anchorLvSeqTxn=").$(anchorLvSeqTxn)
                 .$(", anchorMaxTs=").$(anchorMaxTs)
-                .$(", applyAheadGap=").$(effectiveSeqTxn - advanceTo)
+                .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
 
     /**
+     * Pins a base reader, plans against it, and runs the head-miss rebuild - the
+     * entry point for callers that already know they need a rebuild and hold no
+     * pinned snapshot: restart restore, corrupt-checkpoint restore, base-metadata
+     * drift, mid-drain recovery and WAL-loss re-derive. They all pass a non-DATA
+     * trigger ({@code lateRowTs == LONG_NULL}), which authorises no deletion, so
+     * the plan reduces to the pinned snapshot's {@code seqTxn} and a whole-ring
+     * retire.
+     * <p>
+     * Apply-lag handling: a base-table {@code TableReader} obtained right after
+     * detection may not yet reflect {@code advanceTo}, because the global
+     * {@code ApplyWal2TableJob} runs asynchronously. {@link #waitForApply} polls
+     * until the reader's {@code getSeqTxn() >= advanceTo}, bounded by
+     * {@code cairo.live.view.flush.retry.max.duration} so a stalled apply trips the
+     * flush-retry budget rather than spinning forever.
+     * <p>
+     * {@link #o3Replay} does not come through here: it pins and plans once for both
+     * executors, and calls the plan-taking overload directly.
+     */
+    private void o3HeadMissReplay(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long lateRowTs,
+            TableToken baseToken,
+            long advanceTo,
+            boolean fullRebuild
+    ) throws SqlException {
+        final TableReader reader = waitForApply(baseToken, advanceTo);
+        try {
+            planO3Repair(instance, lateRowTs, baseToken, advanceTo, reader);
+            o3HeadMissReplay(instance, windowFactory, repairPlan, reader, fullRebuild);
+        } finally {
+            reader.close();
+        }
+    }
+
+    /**
      * Head-miss replay path: discards every window-function
-     * partition map and the anchor map, opens the base table at applied
-     * watermark &gt;= {@code advanceTo}, drives the compiled SELECT's
-     * filter / anchor / window cursor stack over the {@code TableReader}'s
+     * partition map and the anchor map, drives the compiled SELECT's
+     * filter / anchor / window cursor stack over the pinned {@code TableReader}'s
      * ts-sorted view starting from {@code viewLowerBoundTimestamp}, emits
      * a single REPLACE_RANGE commit covering everything from the lower
      * bound through positive infinity, and applies inline.
@@ -3445,15 +3391,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Cost is O(retained_rows x n_window_functions) of {@code computeNext}
      * plus the partition-rewrite I/O - acceptable for short-lived views
      * but several seconds to minutes for long-lived ones per the
-     * cost model. The head-hit branch (follow-up commit) will avoid the
-     * worst of this by starting from the head's {@code maxTimestamp}.
+     * cost model. {@link #replayFromAnchor} avoids the worst of this when the
+     * plan finds a sealed anchor below the change.
      * <p>
-     * Apply-lag handling: a base-table {@code TableReader} obtained right
-     * after detection may not yet reflect {@code advanceTo} because the
-     * global {@code ApplyWal2TableJob} runs asynchronously. The replay
-     * polls until the reader's {@code getSeqTxn() >= advanceTo}, bounded
-     * by {@code cairo.live.view.flush.retry.max.duration} so a stalled
-     * apply trips the flush-retry budget rather than spinning forever.
+     * Pure execution: {@code plan} carries the pinned snapshot's {@code seqTxn}
+     * (the commit and watermark point), the correction floor {@code C} and the
+     * retire floor, all derived once in {@link #planO3Repair}. The caller owns
+     * {@code reader} and closes it; this method only detaches it for the execution
+     * context and re-attaches it on the way out.
+     * <p>
+     * The rebuild commits at the pinned {@code seqTxn} rather than at the trigger.
+     * The scan from {@code viewLowerBoundTimestamp} materialises everything the
+     * snapshot holds, including transactions {@code ApplyWal2TableJob} raced past
+     * the trigger; leaving the watermarks at the trigger would make the forward
+     * path re-read those already-materialised seqTxns, and a trailing in-order
+     * commit (a lone row at the global max, say) would re-append a duplicate row.
      * <p>
      * {@code fullRebuild} distinguishes a wholesale rebuild (restart restore,
      * corrupt-checkpoint restore, base-metadata-drift / mid-drain recovery, WAL-loss
@@ -3469,44 +3421,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void o3HeadMissReplay(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
-            long lateRowTs,
-            TableToken baseToken,
-            long advanceTo,
+            LiveViewCheckpointRepairPlan plan,
+            TableReader reader,
             boolean fullRebuild
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
-        // The DATA trigger's authority to DELETE, expressed in the view's own coordinate space.
-        // A DATA commit authorises the replay to erase output at or above its lowest touched
-        // timestamp; a non-DATA / recovery trigger (LONG_NULL) authorises no deletion at all and
-        // leaves the frozen-prefix rule to govern (DROP PARTITION / TTL / TRUNCATE / restart).
-        //
-        // Clamping UP to the view's lower bound is what makes the trigger usable once a finite
-        // START FROM boundary is in play: a commit routinely reaches below the bound (its
-        // sub-boundary rows are simply not the view's), and the raw lateRowTs is then below every
-        // row the view could own. Abandoning the extension in that case - as this did - left the
-        // deletion floored at replayMinTs, the recompute's lowest SURVIVING row, so a replacement
-        // that dropped the lowest surviving row out of the view (a dedup upsert that fails the
-        // WHERE, say) put replayMinTs ABOVE the row it removed and the stale output row lived on.
-        // The bound is the lowest ts the view can hold, so it is the correct floor for the
-        // trigger, and for a BEGINNING view (bound == LONG_NULL == Long.MIN_VALUE) the clamp is
-        // an identity.
-        final long triggerLowTs = lateRowTs == Numbers.LONG_NULL
-                ? Numbers.LONG_NULL
-                : Math.max(lateRowTs, viewLowerBoundTimestamp);
-        TableReader reader = waitForApply(baseToken, advanceTo);
-        // The replay recomputes the whole view from the base reader's snapshot,
-        // which reflects every base row applied up to reader.getSeqTxn() - not
-        // just the O3 trigger seqTxn (advanceTo). When ApplyWal2TableJob has run
-        // ahead, that snapshot already incorporates seqTxns past advanceTo, and
-        // the head-miss scan from viewLowerBoundTimestamp materialises all of
-        // them. Advancing the watermarks to this effective seqTxn (rather than
-        // advanceTo) keeps the LV's processed/consumed point in step with what
-        // the replay actually wrote; otherwise the forward path re-reads those
-        // already-materialised seqTxns and a trailing in-order commit (e.g. a
-        // lone row at the global max) re-appends a duplicate row.
-        final long effectiveSeqTxn = reader.getSeqTxn();
+        // C, the DATA trigger's authority to DELETE, expressed in the view's own
+        // coordinate space: the lowest timestamp the triggering commit touched, clamped up
+        // to the view's lower bound. A non-DATA / recovery trigger (LONG_NULL) authorises
+        // no deletion at all and leaves the frozen-prefix rule to govern (DROP PARTITION /
+        // TTL / TRUNCATE / restart). See LiveViewCheckpointRepairPlan for why the clamp is
+        // what makes the trigger usable once a finite START FROM boundary is in play.
+        final long triggerLowTs = plan.getCorrectionTs();
+        final long effectiveSeqTxn = plan.getCommitSeqTxn();
         boolean readerAttached = false;
         long appendedRows = 0;
         long o3ScanRows = 0;
@@ -3519,46 +3448,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // ts-ascending, so the first appended row is the minimum). Base of the
         // REPLACE_RANGE low boundary decided at the commit site below.
         long replayMinTs = Numbers.LONG_NULL;
-        // The reader is pinned above, but everything that can throw off it -
-        // computeApplyAheadMinTs (opens the base WAL-E) and the retire publication -
-        // runs INSIDE this try so the finally always returns it to the pool. A WAL-E
-        // read fault on the apply-ahead floor (a torn / purged base WAL-E) would
-        // otherwise unwind past the bare reader and leak one pooled reader per refresh
-        // attempt, since an aborted replay never advances the watermark and the fault
-        // re-fires every cycle until the flush-retry budget trips.
         try {
             // Retire the checkpoints this O3 has unsealed. A DATA trigger keeps every
-            // entry with maxTs < the retire floor (still sealed - no un-incorporated
+            // entry below the plan's retire floor (still sealed - no un-incorporated
             // base row sits at or below them) and drops the rest, including the head; a
-            // non-DATA / recovery trigger (LONG_NULL) drops the whole ring
+            // non-DATA / recovery trigger (LONG_NULL floor) drops the whole ring
             // conservatively. Clearing the head puts the post-replay write on its
             // first-cp path. The follow-up write below seals a fresh head; until then a
             // restart rebuilds from the boundary.
             //
-            // The floor is derived only after pinning the reader so it can account for
+            // The plan derives that floor from the pinned snapshot so it accounts for
             // apply-ahead: when ApplyWal2TableJob has raced past the trigger, the
-            // snapshot this rebuild materialises includes seqTxns in (advanceTo,
-            // effectiveSeqTxn] the ring's entries predate, so a back-dated row among
-            // them at ts M un-seals every entry with maxTs >= M just as the trigger
-            // does. Lower the floor to that ahead range's minimum in-view ts
-            // (min(triggerLowTs, minAheadTs)); leaving it at triggerLowTs would strand a
-            // poisoned survivor in [minAheadTs, triggerLowTs) that a later resume could
-            // anchor on. An unresumable ahead range (structural / non-DATA commit) drops
-            // the whole ring (LONG_NULL). A non-DATA trigger is already the whole-ring
-            // case, so it needs no adjustment.
-            long retireLowTs = triggerLowTs;
-            if (effectiveSeqTxn != advanceTo && triggerLowTs != Numbers.LONG_NULL) {
-                final long minAheadTs = computeApplyAheadMinTs(baseToken, advanceTo, effectiveSeqTxn, viewLowerBoundTimestamp);
-                retireLowTs = minAheadTs == Numbers.LONG_NULL
-                        ? Numbers.LONG_NULL
-                        : Math.min(triggerLowTs, minAheadTs);
-            }
+            // snapshot this rebuild materialises includes seqTxns the ring's entries
+            // predate, so a back-dated row among them at ts M un-seals every entry with
+            // maxTs >= M just as the trigger does.
+            //
             // The retire publishes the survivors durably at effectiveSeqTxn - this
-            // rebuild's commit point - before the commit below, off the same
-            // retireLowTs that drives the in-memory drop. A non-DATA / recovery
-            // trigger empties the ring, so its publication is an empty manifest and a
-            // crash mid-rebuild leaves no anchor to select.
-            invalidateRetainedCheckpointsOnO3(instance, retireLowTs, effectiveSeqTxn);
+            // rebuild's commit point - before the commit below, off the same floor that
+            // drives the in-memory drop. A non-DATA / recovery trigger empties the ring,
+            // so its publication is an empty manifest and a crash mid-rebuild leaves no
+            // anchor to select.
+            invalidateRetainedCheckpointsOnO3(instance, plan.getRetireLowTs(), effectiveSeqTxn);
 
             engine.detachReader(reader);
             executionContext.of(reader);
@@ -3710,7 +3620,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 executionContext.clearReader();
                 engine.attachReader(reader);
             }
-            reader.close();
         }
 
         if (appendedRows > 0 || deletedGhostRange) {
@@ -3771,7 +3680,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(effectiveSeqTxn)
-                .$(", applyAheadGap=").$(effectiveSeqTxn - advanceTo)
+                .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
 

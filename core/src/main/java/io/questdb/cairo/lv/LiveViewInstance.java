@@ -69,7 +69,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The {@code WalWriter} for live-view-internal apply is acquired from the engine's
  * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
-public class LiveViewInstance implements QuietCloseable {
+public class LiveViewInstance implements LiveViewCheckpointRepairPlan.AnchorSource, QuietCloseable {
     private static final int HEAD_CHECKPOINT_BASE_SEQ_TXN = 3;
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
@@ -866,6 +866,16 @@ public class LiveViewInstance implements QuietCloseable {
         return anchorFunction;
     }
 
+    @Override
+    public long getAnchorLvSeqTxn(int index) {
+        return getRetainedCheckpointLvSeqTxn(index);
+    }
+
+    @Override
+    public long getAnchorMaxTs(int index) {
+        return getRetainedCheckpointMaxTs(index);
+    }
+
     public LiveViewWindow getAnchorWindow() {
         return anchorWindow;
     }
@@ -942,6 +952,27 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         return findFirstMissingOrRetypedColumn(baseMetadata) != null;
+    }
+
+    /**
+     * Returns the ring index of the newest retained checkpoint whose {@code maxTs}
+     * is strictly below {@code ceilTs}, or {@code -1} when the ring holds no such
+     * entry - every retained anchor sits at or above the ceiling, so the change
+     * predates the whole ring and the caller must rebuild from the view boundary.
+     * <p>
+     * The ring is held in strictly increasing {@code maxTs} order (oldest at index
+     * 0), so the scan walks from the newest entry down and returns the first one
+     * under the ceiling - the closest sealed anchor below the change, which yields
+     * the shortest resume replay.
+     */
+    @Override
+    public int findAnchorBelow(long ceilTs) {
+        for (int i = getRetainedCheckpointCount() - 1; i >= 0; i--) {
+            if (getRetainedCheckpointMaxTs(i) < ceilTs) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
