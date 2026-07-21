@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -4252,6 +4253,126 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return Long.MIN_VALUE;
+    }
+
+    /**
+     * A2 fast path for a proven in-order, single-segment WAL block-apply (the
+     * {@code processWalCommitBlock} :10273 branch). The block's columns are in
+     * {@code o3Columns[o3Lo, o3LoHi)} in ascending timestamp order. When the
+     * block (or its within-last-partition PREFIX) appends strictly after the
+     * committed max, that prefix is written to the last partition as lag and
+     * committed via the fast-lag mechanism ({@link #applyFromWalLagToLastPartition}
+     * -> {@link #applyLagToLastPartition}: advance transient row count,
+     * {@code updateIndexesParallel}, {@code publishPostingIndexesForLastPartitionFastLag},
+     * deferred compaction), BYPASSING {@code finishO3Commit}/{@code rebuildSidecars}.
+     * Identical to the single-txn covering path -> concurrency-safe covered
+     * fragments; does not touch {@code O3CopyJob}. seqTxn is finalised by the
+     * block caller (it overwrites setSeqTxn and asserts lagRowCount == 0).
+     * <p>
+     * Partition-boundary split: if the block straddles {@code partitionTimestampHi}
+     * the within-partition prefix is fast-committed here and the OVERFLOW row
+     * range is returned for the caller to route through the O3 path (which creates
+     * the new partition(s)). Falls back entirely to O3 (returns {@code o3Lo}) for:
+     * pre-existing lag, a parquet last partition (rejects lag), dedup mode, no
+     * last partition, or a block whose first row is not a pure append into the
+     * last partition.
+     *
+     * @return the O3 overflow low row: {@code o3LoHi} when the whole block was
+     * fast-committed (caller skips O3); {@code o3Lo} when nothing was
+     * fast-committed (caller O3s the whole block); or the split row
+     * {@code o3Lo < r < o3LoHi} (caller O3s {@code [r, o3LoHi)}).
+     */
+    private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
+        final long blockRows = o3LoHi - o3Lo;
+        final long blockMin = segmentCopyInfo.getMinTimestamp();
+        // Guards (fall back to the unchanged O3 path on any). Only a PURE APPEND
+        // into the last NATIVE partition qualifies:
+        //  - no pre-existing lag (block-apply never carries lag, but be defensive);
+        //  - a native (non-parquet) last partition that can accept lag;
+        //  - a PLAIN insert: exclude both UPSERT/DEFAULT dedup AND replace-range
+        //    (isCommitPlainInsert() covers both; isCommitDedupMode() alone misses
+        //    replace-range) -- those need the merge/replace semantics of O3;
+        //  - the block's first row sits at/after the committed max (pure append,
+        //    NOT late data / a merge) and inside the last partition.
+        // FORCE_FULL_COMMIT (commit-to == Long.MAX_VALUE) needs no guard: the
+        // fast-lag tail FULLY commits the block (lagRowCount -> 0), satisfying
+        // "commit everything"; the only thing deferred is covered COMPACTION,
+        // which is valid on disk. A partition-boundary straddle is handled below.
+        if (blockRows <= 0
+                || blockRows > Integer.MAX_VALUE
+                || txWriter.getLagRowCount() != 0
+                || lastPartitionTimestamp == Long.MIN_VALUE
+                || isLastPartitionParquet()
+                || !isCommitPlainInsert()
+                || txWriter.getMaxTimestamp() > blockMin
+                || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp) {
+            return o3Lo;
+        }
+        // Rows whose timestamp is within the last partition (<= partitionTimestampHi).
+        // The block is ascending, so this is a prefix. boundedBinarySearchIndexT
+        // reads the 16-byte (timestamp, rowId) WAL timestamp-index format.
+        final long prefixRows;
+        final long prefixMax;
+        if (segmentCopyInfo.getMaxTimestamp() <= partitionTimestampHi) {
+            prefixRows = blockRows;
+            prefixMax = segmentCopyInfo.getMaxTimestamp();
+        } else {
+            long lastPrefixIdx = Vect.boundedBinarySearchIndexT(timestampAddr, partitionTimestampHi, o3Lo, o3LoHi - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+            if (lastPrefixIdx < o3Lo) {
+                // Nothing lands in the last partition (whole block is beyond it):
+                // let O3 create the new partition(s).
+                return o3Lo;
+            }
+            prefixRows = lastPrefixIdx - o3Lo + 1;
+            prefixMax = getTimestampIndexValue(timestampAddr, lastPrefixIdx);
+        }
+        // Append the prefix (or whole block) to the last partition as lag, exactly
+        // like the single-txn "move to lag" path.
+        dispatchColumnTasks(prefixRows, IGNORE, o3Lo, 0, 1, cthAppendWalColumnToLastPartition);
+        addPhysicallyWrittenRows(prefixRows);
+        txWriter.setLagRowCount((int) prefixRows);
+        txWriter.setLagOrdered(true);
+        txWriter.setLagMinTimestamp(blockMin);
+        txWriter.setLagMaxTimestamp(prefixMax);
+        txWriter.setLagTxnCount(txWriter.getLagTxnCount() + blockTransactionCount);
+        // Full apply: prefixMax <= partitionTimestampHi, so this commits every
+        // appended lag row (lagRowCount -> 0) and indexes + covered-publishes them
+        // via the fast-lag path. The overflow (if any) stays in o3Columns for O3.
+        long applied = applyFromWalLagToLastPartition(prefixMax, false);
+        assert applied != Long.MIN_VALUE : "fast-append precondition passed but applyFromWalLagToLastPartition failed";
+        assert txWriter.getLagRowCount() == 0 : "fast-append left uncommitted lag";
+        final long overflowLo = o3Lo + prefixRows;
+        if (overflowLo < o3LoHi) {
+            // The prefix apply consumed the block's lag min/max (reset to
+            // MAX/MIN). processWalCommitFinishApply reads the commit range from
+            // them, so re-arm them to the OVERFLOW range [overflowLo, o3LoHi)
+            // before the caller routes it through O3.
+            txWriter.setLagMinTimestamp(getTimestampIndexValue(timestampAddr, overflowLo));
+            txWriter.setLagMaxTimestamp(segmentCopyInfo.getMaxTimestamp());
+        }
+        return overflowLo;
+    }
+
+    /**
+     * SPIKE (phase-3 Task 1): sorted-block sibling of
+     * {@link #tryFastAppendInOrderBlock}. Reached from the O3-sort branch
+     * ({@code copiedToMemory=true}) AFTER {@code processWalCommitBlock_sortWalSegmentTimestamps}
+     * has (a) built the timestamp merge index in {@code o3TimestampMem} and (b)
+     * shuffled the merge-index-ordered rows for ALL columns into
+     * {@code o3MemColumns1} (== {@code o3Columns}) -- crucially WITHOUT indexing:
+     * the covering column is not touched by {@code O3CopyJob} here. So a sorted
+     * block whose result is a pure append to the last partition can be committed
+     * via the identical fast-lag tail A2 uses, with no {@code O3CopyJob} covering
+     * pass (no A1/B1 entanglement). The gathered {@code o3Columns} is the append
+     * source, {@code o3Lo == 0}, and {@code timestampAddr} is the 16-byte sorted
+     * merge index -- all read by the shared append body, so the mechanism is
+     * unchanged from the in-order path (only the source is a gather vs a
+     * contiguous mapped range).
+     *
+     * @return the O3 overflow low row (see {@link #tryFastAppendInOrderBlock}).
+     */
+    private long tryFastAppendSortedBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
+        return tryFastAppendInOrderBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
     }
 
     private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
@@ -10254,6 +10375,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .I$();
 
         walRowsProcessed = segmentCopyInfo.getTotalRows();
+        if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
+            PostingIndexWriter.COVERING_MAX_SEGCOUNT_OBSERVED.accumulateAndGet(segmentCopyInfo.getSegmentCount(), Math::max);
+        }
         if (segmentCopyInfo.hasSegmentGaps()) {
             LOG.info().$("some segments have gaps in committed rows [table=").$(tableToken).I$();
             throw CairoException.txnApplyBlockError(tableToken);
@@ -10299,15 +10423,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             try {
                 lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                processWalCommitFinishApply(
-                        0,
-                        timestampAddr,
-                        o3Lo,
-                        o3LoHi,
-                        pressureControl,
-                        copiedToMemory,
-                        partitionTimestampHi
-                );
+                // A2 (fast-lag on the in-order block-apply path): a proven
+                // in-order, single-segment block that appends within the last
+                // partition is routed through the same fast-lag mechanism the
+                // single-txn path uses -- append the block's columns to the last
+                // partition as lag, then applyFromWalLagToLastPartition (advance
+                // transient count + updateIndexesParallel + covered fast-lag
+                // publish + deferred compaction) -- BYPASSING finishO3Commit /
+                // rebuildSidecars. This gives covering indexes correct + immutable
+                // covered fragments (the .d now holds the rows) and skips the
+                // O(partition) reseal; the win is general (no O3 sort/merge).
+                // Non-eligible blocks fall through to the O3 path unchanged.
+                long o3ApplyLo = o3Lo;
+                if (!copiedToMemory) {
+                    o3ApplyLo = tryFastAppendInOrderBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
+                } else {
+                    // SPIKE (phase-3 Task 1): the O3 sort has already gathered the
+                    // merge-index-ordered rows into o3MemColumns1 (== o3Columns)
+                    // for ALL columns WITHOUT indexing (indexing is a later, O3
+                    // pass). So a SORTED block whose result is a pure append can
+                    // take the identical fast-lag append tail as A2 -- append the
+                    // gathered rows to the last partition .d + fast-lag index /
+                    // covered publish + defer -- with NO O3CopyJob involvement
+                    // (no A1 convergence). The append body is source-agnostic
+                    // (reads o3Columns + o3Lo + timestampAddr), so it is shared.
+                    o3ApplyLo = tryFastAppendSortedBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
+                }
+                if (o3ApplyLo < o3LoHi) {
+                    // Either the whole block (o3ApplyLo == o3Lo) or, on a
+                    // partition-boundary straddle, only the OVERFLOW range
+                    // [o3ApplyLo, o3LoHi) whose prefix was already fast-committed.
+                    processWalCommitFinishApply(
+                            0,
+                            timestampAddr,
+                            o3ApplyLo,
+                            o3LoHi,
+                            pressureControl,
+                            copiedToMemory,
+                            partitionTimestampHi
+                    );
+                }
             } finally {
                 finishO3Append(0);
                 o3Columns = o3MemColumns1;
@@ -11605,6 +11760,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // so the chain walk is not the recovery path here.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                         indexer.getWriter().commit();
+                        if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
+                            PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.incrementAndGet();
+                        }
                     } finally {
                         // Publish staged seal-purge entries even when commit()'s
                         // MAX_GEN_COUNT auto-seal threw post-switch (poisoning the

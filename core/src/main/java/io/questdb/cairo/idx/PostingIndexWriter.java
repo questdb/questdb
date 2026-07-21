@@ -98,6 +98,45 @@ public class PostingIndexWriter implements IndexWriter {
     private static final int FSST_SAMPLE_TARGET_COUNT = 1024;
     private static final int INITIAL_KEY_CAPACITY = 64;
     private static final Log LOG = LogFactory.getLog(PostingIndexWriter.class);
+    // @TestOnly observability for the covering WAL-apply seal. A2 (fast-lag on
+    // the in-order block-apply path) should route the block through the fast-lag
+    // covered publish and DEFER compaction, so a covering block-apply must NOT
+    // full-reseal: COVERING_FULL_RESEAL_COUNT (bumped in rebuildSidecars) stays
+    // 0, while COVERING_FASTLAG_COMMIT_COUNT (bumped when the fast-lag covered
+    // publish commits) advances.
+    //
+    // The counters below are pure test observability. To keep test state out of
+    // the production hot path they are gated by COVERING_COUNTERS_ENABLED, which
+    // is false in production so the JIT dead-code-eliminates the always-false
+    // branch (and the AtomicLong op it guards). Only CoveringIndexBlockApplySealTest
+    // flips it true (in @Before) and back to false (in @After); it is a
+    // single-fork test-only switch and MUST NOT be relied on outside that class.
+    // A plain (non-volatile) boolean is sufficient: the tests apply the WAL
+    // synchronously via drainWalQueue() on the same thread that sets the flag,
+    // so there is no cross-thread visibility hazard, and a plain field lets the
+    // JIT fold the always-false production branch away entirely.
+    @TestOnly
+    public static boolean COVERING_COUNTERS_ENABLED = false;
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_FASTLAG_COMMIT_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_FULL_RESEAL_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly hard-cap observability. COVERING_AUTOSEAL_COUNT bumps each time
+    // flushAllPending's inline MAX_GEN_COUNT auto-seal fires; COVERING_MAX_GENCOUNT_OBSERVED
+    // tracks the largest genCount seen right after the gen-append (must never
+    // exceed MAX_GEN_COUNT). Together they let a test DIRECTLY assert the 128-gen
+    // ceiling is reached AND enforced on the fast-lag path, not merely inferred
+    // from correct reads.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_AUTOSEAL_COUNT = new java.util.concurrent.atomic.AtomicLong();
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_MAX_GENCOUNT_OBSERVED = new java.util.concurrent.atomic.AtomicLong();
+    // @TestOnly: largest segmentCopyInfo.getSegmentCount() observed in
+    // processWalCommitBlock. Lets a test prove a block was GENUINELY multi-segment
+    // (> 1) before asserting the sorted fast path fired. Gated by
+    // COVERING_COUNTERS_ENABLED like the others.
+    @TestOnly
+    public static final java.util.concurrent.atomic.AtomicLong COVERING_MAX_SEGCOUNT_OBSERVED = new java.util.concurrent.atomic.AtomicLong();
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
     private final double alignedBitWidthThreshold;
@@ -1335,6 +1374,9 @@ public class PostingIndexWriter implements IndexWriter {
         checkNotPoisoned();
         if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
             return;
+        }
+        if (COVERING_COUNTERS_ENABLED) {
+            COVERING_FULL_RESEAL_COUNT.incrementAndGet();
         }
         closeSidecarMems();
         long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
@@ -3297,6 +3339,9 @@ public class PostingIndexWriter implements IndexWriter {
         writeSidecarGenData((int) totalValues, genCount);
 
         genCount++;
+        if (COVERING_COUNTERS_ENABLED) {
+            COVERING_MAX_GENCOUNT_OBSERVED.accumulateAndGet(genCount, Math::max);
+        }
         this.maxValue = maxValue;
         // Persist the in-memory state to the chain. extendHead bumps the
         // head entry's GEN_COUNT/LEN/VALUE_MEM_SIZE/MAX_VALUE; appendNewEntry
@@ -3334,6 +3379,9 @@ public class PostingIndexWriter implements IndexWriter {
         // Soft cap on per-entry gen count; trades seal frequency against
         // entry size.
         if (genCount >= MAX_GEN_COUNT) {
+            if (COVERING_COUNTERS_ENABLED) {
+                COVERING_AUTOSEAL_COUNT.incrementAndGet();
+            }
             seal();
         }
     }
