@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class M4WindowFunctionTest extends AbstractCairoTest {
@@ -119,6 +120,54 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
             assertQuery("select ts, m4(ts, v, 1) over (order by ts) from t")
                     .noLeakCheck()
                     .fails(21, "target points must be at least 2");
+        });
+    }
+
+    @Test
+    public void testFiltersNullAndNaNRows() throws Exception {
+        // A NULL/NaN value must not poison a bucket's min/max the way an unfiltered scan would:
+        // M4Algorithm.select seeds a bucket's min/max from the first row it sees, and NaN
+        // comparisons are always false, so if that seed row is NaN the real min/max in the
+        // bucket would never be detected - nor would the null row itself ever be excluded from
+        // first/last. The old SUBSAMPLE cursor (SubsampleRecordCursorFactory.bufferInput())
+        // drops NULL ts / null-or-NaN value rows before bucketing; m4() must match it exactly.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, null),
+                    (2::timestamp, 5.0),
+                    (3::timestamp, 100.0),
+                    (4::timestamp, 1.0)
+                    """);
+            // Single bucket (target=4 -> numBuckets=1). With the null row dropped: first=5.0@ts2,
+            // min=1.0@ts4, max=100.0@ts3, last=1.0@ts4 - all three non-null rows are kept and the
+            // null row is excluded outright (an unfiltered scan would instead seed min/max on the
+            // null row at ts1 and never recover, wrongly keeping ts1 and dropping ts2/ts3).
+            assertQuery("select ts, v, m4(ts, v, 4) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\tnull\tfalse
+                            1970-01-01T00:00:00.000002Z\t5.0\ttrue
+                            1970-01-01T00:00:00.000003Z\t100.0\ttrue
+                            1970-01-01T00:00:00.000004Z\t1.0\ttrue
+                            """);
+
+            // Byte-identical to the old SUBSAMPLE cursor on the same data: same rows kept.
+            // Plain printSql/assertEquals (not the fluent assertQuery battery) - the SUBSAMPLE
+            // cursor's recordCursorSupportsRandomAccess()/getRecordB() combination doesn't fit
+            // assertQuery's noRandomAccess() expectations, same reason SubsampleTest.java uses a
+            // bespoke assertSql helper instead of assertQuery for its own SUBSAMPLE assertions.
+            printSql("select ts, v from t SUBSAMPLE m4(v, 4)");
+            TestUtils.assertEquals("""
+                    ts\tv
+                    1970-01-01T00:00:00.000002Z\t5.0
+                    1970-01-01T00:00:00.000003Z\t100.0
+                    1970-01-01T00:00:00.000004Z\t1.0
+                    """, sink);
         });
     }
 

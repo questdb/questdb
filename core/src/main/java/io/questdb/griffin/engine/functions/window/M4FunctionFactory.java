@@ -153,7 +153,11 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private long buffer;
         private long bufferCapacity; // in entries
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private long count;          // running row counter during pass1; becomes bufferSize
+        private long count;          // running non-null row counter during pass1; becomes bufferSize.
+        // Rows with a NULL ts or a null/NaN value are dropped from the buffer entirely (never
+        // appended, never counted), mirroring SubsampleRecordCursorFactory.bufferInput()/
+        // getValueAsDouble() - a null seeding a bucket's min/max would otherwise poison it forever
+        // (NaN comparisons are always false, so minVal/maxVal, once NaN, never update again).
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
         private ObjList<ExpressionNode> orderBy;
         // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
@@ -161,13 +165,22 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // for both passes, or these counters (and the buffer positions stashed in `selected`) desync
         // and the wrong rows get marked kept. A future change to the cached-cursor traversal order
         // must preserve this pass1/pass2 ordering invariant.
-        private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
+        // Because null rows are dropped from the buffer, buffer position is NOT the row ordinal -
+        // pass2Ordinal instead counts only the non-null rows pass2 has visited so far (recomputing
+        // isNullRow keeps it aligned with pass1's bufferCount, since both passes see rows in the
+        // same order).
+        private long pass2Ordinal;   // running non-null row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
+        // Resolved once at construction (valueArg's type never changes across rows), used by
+        // readValue() to replicate SubsampleRecordCursorFactory.getValueAsDouble()'s per-type
+        // null -> NaN mapping.
+        private final short valueTag;
 
         BucketSelectWindowFunction(Function tsArg, Function valueArg, long target, SubsampleAlgorithm algorithm, String name) {
             super(null);
             this.tsArg = tsArg;
             this.valueArg = valueArg;
+            this.valueTag = ColumnType.tagOf(valueArg.getType());
             this.target = target;
             this.algorithm = algorithm;
             this.name = name;
@@ -180,6 +193,13 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             Misc.free(valueArg);
             selected.close();
             freeBuffer();
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            tsArg.cursorClosed();
+            valueArg.cursorClosed();
         }
 
         @Override
@@ -228,7 +248,16 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             final long ts = tsArg.getTimestamp(record);
-            final double value = valueArg.getDouble(record);
+            if (ts == Numbers.LONG_NULL) {
+                // Dropped: not appended to the buffer, not counted - mirrors bufferInput().
+                return;
+            }
+            final double value = readValue(record);
+            if (Double.isNaN(value)) {
+                // Dropped: a null/NaN value must never seed (or otherwise poison) a bucket's
+                // min/max - mirrors bufferInput()'s "if (Double.isNaN(value)) continue;".
+                return;
+            }
             ensureCapacity();
             final long offset = count * SubsampleAlgorithm.ENTRY_SIZE;
             Unsafe.getUnsafe().putLong(buffer + offset, count);
@@ -239,11 +268,21 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            final boolean keep = selIdx < selected.size() && selected.get(selIdx) == pass2Ordinal;
-            if (keep) {
-                selIdx++;
+            final boolean keep;
+            if (isNullRow(record)) {
+                // Same row this was in pass1 (both passes visit rows in the same order), so this
+                // recomputation stays aligned with the bufferCount pass1 assigned to non-null rows.
+                keep = false;
+            } else {
+                final long bufferPos = pass2Ordinal++;
+                while (selIdx < selected.size() && selected.get(selIdx) < bufferPos) {
+                    selIdx++;
+                }
+                keep = selIdx < selected.size() && selected.get(selIdx) == bufferPos;
+                if (keep) {
+                    selIdx++;
+                }
             }
-            pass2Ordinal++;
             lastKeep = keep;
             // BOOLEAN is a 1-byte chain column (see ColumnType.TYPE_SIZE[BOOLEAN]); write a byte,
             // not a long, or we'd corrupt the next column's storage.
@@ -320,6 +359,44 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 Unsafe.free(buffer, bufferCapacity * SubsampleAlgorithm.ENTRY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
                 buffer = 0;
                 bufferCapacity = 0;
+            }
+        }
+
+        /**
+         * True when the row must be dropped from bucketing entirely: a NULL timestamp, or a
+         * null/NaN value. Exactly mirrors SubsampleRecordCursorFactory.bufferInput()'s
+         * {@code ts == Numbers.LONG_NULL} / {@code Double.isNaN(value)} skip so m4() buckets the
+         * same row set the old SUBSAMPLE cursor did.
+         */
+        private boolean isNullRow(Record record) {
+            return tsArg.getTimestamp(record) == Numbers.LONG_NULL || Double.isNaN(readValue(record));
+        }
+
+        /**
+         * Reads the value column as a double, mapping each type's NULL sentinel to NaN - mirrors
+         * SubsampleRecordCursorFactory.getValueAsDouble() (SHORT/BYTE have no null sentinel).
+         */
+        private double readValue(Record record) {
+            switch (valueTag) {
+                case ColumnType.DOUBLE:
+                    return valueArg.getDouble(record);
+                case ColumnType.FLOAT:
+                    // Float.NaN widens to Double.NaN, so no explicit mapping is needed here.
+                    return valueArg.getFloat(record);
+                case ColumnType.INT: {
+                    final int v = valueArg.getInt(record);
+                    return v != Numbers.INT_NULL ? v : Double.NaN;
+                }
+                case ColumnType.LONG: {
+                    final long v = valueArg.getLong(record);
+                    return v != Numbers.LONG_NULL ? v : Double.NaN;
+                }
+                case ColumnType.SHORT:
+                    return valueArg.getShort(record);
+                case ColumnType.BYTE:
+                    return valueArg.getByte(record);
+                default:
+                    return valueArg.getDouble(record);
             }
         }
     }
