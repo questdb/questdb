@@ -77,6 +77,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -5711,8 +5712,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Parses + binds {@code predicate} against {@code metadata} and asserts the result is a boolean
-     * expression, rewriting any parse/bind error as a clear "invalid EXPIRE ROWS predicate" positioned
-     * at {@code position}. Runs on a freshly-borrowed compiler (its own lexer/parser/functionParser).
+     * expression consuming the ENTIRE text, with no root-level aggregate and no bind variables. The
+     * stored text is embedded verbatim into every read's generated SQL, so anything that read-path
+     * parse would choke on must be rejected here. Any parse/bind error is rewritten as a clear
+     * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
+     * compiler (its own lexer/parser/functionParser).
      */
     @Override
     public ExpiryValidationResult validateExpiryPredicateOnMetadata(
@@ -5728,12 +5732,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 clear();
                 lexer.of(predicate);
                 node = parser.expr(lexer, (QueryModel) null, this);
+                // The expression parser stops at the first token it cannot absorb (e.g. `x > 5 oops`
+                // parses as `x > 5`), but the FULL text is what gets stored and embedded into every
+                // read's generated SQL, where the leftover token fails the parse. Require the whole
+                // predicate to be one expression, so what validates is exactly what reads execute.
+                final CharSequence trailingTok = SqlUtil.fetchNext(lexer);
+                if (trailingTok != null) {
+                    throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
+                }
                 f = functionParser.parseFunction(node, metadata, executionContext);
             } catch (SqlException | CairoException e) {
                 throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
             }
             if (f == null || !ColumnType.isBoolean(f.getType())) {
                 throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
+            }
+            // The read filter embeds the predicate as an argument of a CASE expression, where an
+            // aggregate is illegal ("Aggregate function cannot be passed as an argument"). The
+            // function parser rejects an aggregate only when it is an argument of another function,
+            // so a bare root-level aggregate (e.g. `bool_and(flag)`) passes the bind above; reject it
+            // here so the view does not get created with a policy that fails every read.
+            if (f instanceof GroupByFunction) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: aggregate functions are not supported");
+            }
+            // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
+            // every read with "undefined bind variable"; reject it at definition time instead.
+            if (expiryExpressionHasBindVariable(node)) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
             }
             final IntList referencedColumnIndexes = new IntList();
             collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
@@ -5845,6 +5870,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         for (int i = 0, n = node.args.size(); i < n; i++) {
             collectExpiryReferencedColumns(node.args.getQuick(i), metadata, referencedColumnIndexes);
         }
+    }
+
+    // True if the sub-tree contains a bind variable ($1 / :name). A stored predicate has no statement
+    // to supply bind values, so one would fail on every read.
+    private static boolean expiryExpressionHasBindVariable(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            return true;
+        }
+        if (expiryExpressionHasBindVariable(node.lhs) || expiryExpressionHasBindVariable(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasBindVariable(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean expiryExpressionHasClock(ExpressionNode node) {

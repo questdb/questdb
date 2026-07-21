@@ -59,6 +59,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
@@ -483,9 +484,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         } else {
             // Parse sampling interval expression.
             final CharSequence interval = GenericLexer.unquote(intervalExpr);
-            final int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
+            final int samplingIntervalEnd = CommonUtils.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
             assert samplingIntervalEnd < interval.length();
-            samplingInterval = TimestampSamplerFactory.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
+            samplingInterval = CommonUtils.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
         }

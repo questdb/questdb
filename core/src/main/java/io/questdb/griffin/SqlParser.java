@@ -393,6 +393,48 @@ public class SqlParser {
         return CommonUtils.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
+    /**
+     * Rejects a line comment or an unterminated block comment inside captured EXPIRE ROWS text
+     * ({@code [lo, hi)} of {@code content}). The captured text is stored verbatim and later embedded
+     * into single-line generated SQL (the read filter, the cleanup survivor queries, SHOW CREATE
+     * output), where a line comment swallows the closing tokens and fails every read of the view. A
+     * terminated block comment embeds safely and stays legal, as do comment markers inside quoted
+     * literals and identifiers.
+     */
+    private static void rejectCommentInExpiryClause(CharSequence content, int lo, int hi) throws SqlException {
+        for (int i = lo; i < hi; i++) {
+            final char c = content.charAt(i);
+            if (c == '\'' || c == '"') {
+                i++;
+                while (i < hi && content.charAt(i) != c) {
+                    i++;
+                }
+            } else if (c == '-' && i + 1 < hi && content.charAt(i + 1) == '-') {
+                throw SqlException.$(i, "line comments are not supported in EXPIRE ROWS clauses");
+            } else if (c == '/' && i + 1 < hi && content.charAt(i + 1) == '*') {
+                // block comments nest (see SqlUtil.fetchNext), so track depth to find the real close
+                int depth = 1;
+                int j = i + 2;
+                while (j < hi && depth > 0) {
+                    final char cj = content.charAt(j);
+                    if (cj == '/' && j + 1 < hi && content.charAt(j + 1) == '*') {
+                        depth++;
+                        j += 2;
+                    } else if (cj == '*' && j + 1 < hi && content.charAt(j + 1) == '/') {
+                        depth--;
+                        j += 2;
+                    } else {
+                        j++;
+                    }
+                }
+                if (depth > 0) {
+                    throw SqlException.$(i, "unterminated block comment in EXPIRE ROWS clause");
+                }
+                i = j - 1;
+            }
+        }
+    }
+
     private static long strideToMicros(int multiple, char unit, int position) throws SqlException {
         final long unitMicros = switch (unit) {
             case 's' -> 1_000_000L;
@@ -581,6 +623,7 @@ public class SqlParser {
                 // the unbalanced expression began.
                 throw SqlException.$(predicateStart, "unbalanced parentheses in EXPIRE ROWS predicate");
             }
+            rejectCommentInExpiryClause(lexer.getContent(), predicateStart, predicateEnd);
 
             final String rawPredicate = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
             if (rawPredicate.isEmpty()) {
@@ -595,9 +638,12 @@ public class SqlParser {
         if (foundCleanup) {
             expectTok(lexer, "every");
             tok = tok(lexer, "cleanup interval value (e.g., 1h, 30m, 24h)");
-            final int multiple = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-            final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-            cleanupIntervalMicros = strideToMicros(multiple, unit, lexer.lastTokenPosition());
+            // Strict <digits><unit> parse, shared with SAMPLE BY intervals: a lenient parse of e.g.
+            // "30ms" would read the trailing 's' as the unit and silently store a cadence the user did
+            // not write. strideToMicros then restricts the unit to s/m/h/d/w and checks for overflow.
+            final int unitIndex = CommonUtils.findPositiveIntervalEndIndex(tok, lexer.lastTokenPosition(), "cleanup");
+            final int multiple = (int) CommonUtils.parsePositiveInterval(tok, unitIndex, lexer.lastTokenPosition(), "cleanup", Numbers.INT_NULL, ' ');
+            cleanupIntervalMicros = strideToMicros(multiple, tok.charAt(unitIndex), lexer.lastTokenPosition());
             // Fetch the next clause keyword (WITH / IN / DEDUP / ';' / EOF) for the caller.
             tok = optTok(lexer);
         } else {
@@ -634,6 +680,7 @@ public class SqlParser {
                 break;
             }
         }
+        rejectCommentInExpiryClause(lexer.getContent(), startPos, end);
         final ColumnListCapture capture = new ColumnListCapture();
         capture.csv = Chars.toString(lexer.getContent(), startPos, end).trim();
         capture.foundCleanup = foundCleanup;

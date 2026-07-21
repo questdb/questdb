@@ -411,6 +411,152 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCleanupIntervalMalformedValueRejected() throws Exception {
+        // The CLEANUP EVERY stride must be <digits><unit s/m/h/d/w>, parsed by the same strict helper
+        // as SAMPLE BY intervals. A lenient parse of "30ms" reads the trailing 's' as the unit and the
+        // unparseable "30m" prefix as 1, silently storing a 1s cadence the user did not write.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 cleanup every 30ms",
+                    93,
+                    "expected single letter qualifier"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 cleanup every x5h",
+                    91,
+                    "expected single letter qualifier"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 cleanup every 0h",
+                    91,
+                    "zero is not a valid cleanup value"
+            );
+            // a well-formed stride still parses and round-trips
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0 cleanup every 90m");
+            drainWalAndMatViewQueues();
+            assertQuery("select expire_cleanup_every from materialized_views()")
+                    .noRandomAccess().noLeakCheck().returns("expire_cleanup_every\n90m\n");
+        });
+    }
+
+    @Test
+    public void testPredicateWithBindVariableRejected() throws Exception {
+        // A stored predicate has no statement to supply bind values, so "v > $1" would fail on every
+        // read with "undefined bind variable"; both DDL entry points reject it up front.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v > $1",
+                    25,
+                    "invalid EXPIRE ROWS predicate: bind variables are not supported"
+            );
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when v > $1",
+                    48,
+                    "invalid EXPIRE ROWS predicate: bind variables are not supported"
+            );
+            Assert.assertNull("no policy must have been stored", expiryPredicate("mv"));
+        });
+    }
+
+    @Test
+    public void testPredicateWithLineCommentRejected() throws Exception {
+        // The captured clause text is stored verbatim and embedded into single-line generated SQL (the
+        // read filter, the cleanup survivor queries, SHOW CREATE output), where a line comment swallows
+        // the closing tokens and fails every read of the view. All capture sites reject line comments;
+        // a terminated block comment embeds safely and stays legal.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 -- note",
+                    77,
+                    "line comments are not supported in EXPIRE ROWS clauses"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < max(v) over (partition by sym) -- note",
+                    104,
+                    "line comments are not supported in EXPIRE ROWS clauses"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows keep latest partition by sym -- note",
+                    93,
+                    "line comments are not supported in EXPIRE ROWS clauses"
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 /* dangling",
+                    77,
+                    "unterminated block comment in EXPIRE ROWS clause"
+            );
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when v < 2.0 -- note",
+                    56,
+                    "line comments are not supported in EXPIRE ROWS clauses"
+            );
+
+            // a terminated block comment is preserved in the stored text and every read still works
+            execute("alter materialized view mv set expire rows when /* half */ v < 2.0");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("/* half */ v < 2.0", expiryPredicate("mv"));
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n0\n");
+        });
+    }
+
+    @Test
+    public void testPredicateWithTrailingTokenRejected() throws Exception {
+        // The expression parser stops at the first token it cannot absorb, but the FULL captured text
+        // is what gets stored and embedded into every read's generated SQL; a leftover token there
+        // fails every read. Validation requires the whole predicate to be one expression.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 oops",
+                    25,
+                    "invalid EXPIRE ROWS predicate: unexpected token after expression: oops"
+            );
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when v < 2.0 oops",
+                    48,
+                    "invalid EXPIRE ROWS predicate: unexpected token after expression: oops"
+            );
+            Assert.assertNull("no policy must have been stored", expiryPredicate("mv"));
+        });
+    }
+
+    @Test
+    public void testRootLevelAggregatePredicateRejected() throws Exception {
+        // The read filter embeds the predicate as a CASE argument, where an aggregate is illegal. The
+        // function parser rejects an aggregate only when it is an argument of another function, so a
+        // bare root-level aggregate binds fine at validation; the explicit check closes that gap.
+        assertMemoryLeak(() -> {
+            execute("create table base (flag boolean, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when bool_and(flag)",
+                    25,
+                    "invalid EXPIRE ROWS predicate: aggregate functions are not supported"
+            );
+            // an aggregate nested under an operator is rejected by the function parser
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when max(v) > 1.0",
+                    25,
+                    "invalid EXPIRE ROWS predicate"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
     public void testCreateViewOverPoliciedBaseRejected() throws Exception {
         // A materialized view must not derive from a base that carries an EXPIRE ROWS policy: refresh reads
         // the RAW base, so it would copy the base's expired-but-not-yet-reclaimed rows.
