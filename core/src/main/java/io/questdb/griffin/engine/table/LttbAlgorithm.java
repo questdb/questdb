@@ -52,18 +52,18 @@ import io.questdb.std.Unsafe;
  *
  * @see SubsampleAlgorithm
  */
-class LttbAlgorithm implements SubsampleAlgorithm {
+public class LttbAlgorithm implements SubsampleAlgorithm {
     private final long gapThresholdMicros;
     // Reusable native lists for segment bookkeeping. Stored as cursor-lifetime
     // fields to avoid per-execution allocation. Cleared per execution.
     private DirectLongList segments;
     private DirectIntList targets;
 
-    LttbAlgorithm(long gapThresholdMicros) {
+    public LttbAlgorithm(long gapThresholdMicros) {
         this.gapThresholdMicros = gapThresholdMicros;
     }
 
-    void close() {
+    public void close() {
         if (segments != null) {
             segments.close();
             segments = null;
