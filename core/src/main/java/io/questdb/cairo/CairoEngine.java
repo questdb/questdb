@@ -32,6 +32,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRingCandidate;
 import io.questdb.cairo.lv.LiveViewCheckpointRingManifestReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
@@ -996,6 +998,35 @@ public class CairoEngine implements Closeable, WriterSource {
                             // over the same base.
                             dependentViewGraph.addLiveView(tableToken, definition.getBaseTableName());
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+                            // Publish the durable timeline's generation-based WAL
+                            // floor before any purge job can race startup recovery.
+                            // This performs only the bounded A/B/root validation;
+                            // selecting and restoring a logical root remains the
+                            // next implementation step. Replicas do not own local
+                            // checkpoint timelines and must not retain WAL for a
+                            // stale ex-primary artefact.
+                            if (!isReadOnlyMode()) {
+                                liveViewDirPath.of(configuration.getDbRoot())
+                                        .concat(tableToken)
+                                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                                LiveViewCheckpointLayout.timelinePath(sweepPath, liveViewDirPath);
+                                if (configuration.getFilesFacade().exists(sweepPath.$())) {
+                                    try (LiveViewCheckpointMetaStore timelineStore =
+                                                 new LiveViewCheckpointMetaStore(configuration)) {
+                                        timelineStore.of(liveViewDirPath);
+                                        if (timelineStore.isValid()) {
+                                            instance.recordCheckpointTimelineWalPurgeFloor(
+                                                    timelineStore.getWalPurgeFloor()
+                                            );
+                                        }
+                                    } catch (Exception e) {
+                                        LOG.error().$("could not validate live view checkpoint timeline [view=")
+                                                .$(tableToken)
+                                                .$(", msg=").$safe(e.getMessage())
+                                                .I$();
+                                    }
+                                }
+                            }
                             // Read the _checkpoints/_ring manifest, if any, and
                             // stash it on the instance as a candidate. The trust
                             // decision - covered == the reconciled applied floor -

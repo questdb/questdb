@@ -85,10 +85,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             @Nullable LiveViewWindow anchorWindow,
             long definitionTxn,
             long createdLvSeqTxn,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn,
             long maxTimestamp,
             long effectiveLvRowPosition
     ) {
-        if (definitionTxn < 0 || createdLvSeqTxn < 0 || effectiveLvRowPosition < 0) {
+        if (definitionTxn < 0
+                || createdLvSeqTxn < 0
+                || normalizedBaseSeqTxn < 0
+                || coveredLvSeqTxn < 0
+                || effectiveLvRowPosition < 0
+                || createdLvSeqTxn > coveredLvSeqTxn) {
             throw CairoException.critical(0).put("invalid live view normal checkpoint coordinates");
         }
         ensureDirectories(checkpointsDir);
@@ -121,6 +128,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         .put(" [stored=").put(superblock.definitionTxn)
                         .put(", current=").put(definitionTxn).put(']');
             }
+            if (metaStore.isValid()
+                    && (normalizedBaseSeqTxn < superblock.normalizedBaseSeqTxn
+                    || coveredLvSeqTxn < superblock.coveredLvSeqTxn)) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint generation watermarks must not move backwards")
+                        .put(" [storedBase=").put(superblock.normalizedBaseSeqTxn)
+                        .put(", nextBase=").put(normalizedBaseSeqTxn)
+                        .put(", storedLv=").put(superblock.coveredLvSeqTxn)
+                        .put(", nextLv=").put(coveredLvSeqTxn).put(']');
+            }
+
             final long generation = metaStore.isValid()
                     ? checkedIncrement(superblock.generation, "generation")
                     : 1;
@@ -306,6 +324,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             superblock.generation = generation;
             superblock.definitionTxn = definitionTxn;
+            superblock.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
+            superblock.coveredLvSeqTxn = coveredLvSeqTxn;
             superblock.nextCheckpointId = checkedIncrement(checkpointId, "checkpoint id");
             superblock.nextSegmentId = nextSegmentId;
             superblock.metadataBytes = checkedAdd(metaStore.isValid() ? superblock.metadataBytes : 0, metadataBytesAdded);
@@ -315,7 +335,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
 
-            return new Result(generation, checkpointId, logicalStateBytes, dataSegmentBytes, metadataBytesAdded);
+            return new Result(
+                    generation,
+                    checkpointId,
+                    logicalStateBytes,
+                    dataSegmentBytes,
+                    metadataBytesAdded,
+                    metaStore.getWalPurgeFloor()
+            );
         }
     }
 
@@ -515,13 +542,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final long generation;
         private final long logicalStateBytes;
         private final long metadataBytesAdded;
+        private final long walPurgeFloor;
 
-        private Result(long generation, long checkpointId, long logicalStateBytes, long dataBytesAdded, long metadataBytesAdded) {
+        private Result(
+                long generation,
+                long checkpointId,
+                long logicalStateBytes,
+                long dataBytesAdded,
+                long metadataBytesAdded,
+                long walPurgeFloor
+        ) {
             this.generation = generation;
             this.checkpointId = checkpointId;
             this.logicalStateBytes = logicalStateBytes;
             this.dataBytesAdded = dataBytesAdded;
             this.metadataBytesAdded = metadataBytesAdded;
+            this.walPurgeFloor = walPurgeFloor;
         }
 
         public long getCheckpointId() {
@@ -542,6 +578,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getMetadataBytesAdded() {
             return metadataBytesAdded;
+        }
+
+        public long getWalPurgeFloor() {
+            return walPurgeFloor;
         }
     }
 }

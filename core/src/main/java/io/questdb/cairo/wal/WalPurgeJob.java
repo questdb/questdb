@@ -590,6 +590,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (headBaseSeqTxn > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
             }
+            // The versioned timeline keeps both A/B generations recoverable.
+            // Its floor is therefore the minimum normalized base coordinate of
+            // both durable slots, published to the instance only after the
+            // superblock commit point. Recovery/repair owners may lower the same
+            // floor while pinned. Keep this as a separate arm while the legacy
+            // head/ring path coexists.
+            final long timelineFloor = instance.getCheckpointTimelineWalPurgeFloor();
+            if (timelineFloor > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, timelineFloor);
+            }
+
             // The head arm above is not enough on its own, because the premise it
             // rests on - "no head, so recovery rebuilds from the applied base
             // table" - breaks once the retained-checkpoint ring exists. An O3

@@ -60,7 +60,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef ref = ref(1, 0, 8);
-                tracker.setCurrentGeneration(0, ref, ref, ref);
+                tracker.setCurrentGeneration(0, 0 * 10, 0 * 20, ref, ref, ref);
 
                 final int threadCount = 4;
                 final int iterations = 2_000;
@@ -91,7 +91,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         for (long g = 1; g <= 200; g++) {
-                            tracker.setCurrentGeneration(g, ref, ref, ref);
+                            tracker.setCurrentGeneration(g, g * 10, g * 20, ref, ref, ref);
                             Thread.yield();
                         }
                     } catch (Throwable e) {
@@ -121,7 +121,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef ref = ref(1, 0, 8);
-                tracker.setCurrentGeneration(3, ref, ref, ref);
+                tracker.setCurrentGeneration(3, 3 * 10, 3 * 20, ref, ref, ref);
                 final LiveViewCheckpointGenerationPin pin = tracker.pin();
                 Assert.assertEquals(1, tracker.getActivePinCount());
                 pin.close();
@@ -143,15 +143,33 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef ref = ref(1, 0, 8);
-                tracker.setCurrentGeneration(5, ref, ref, ref);
+                tracker.setCurrentGeneration(5, 5 * 10, 5 * 20, ref, ref, ref);
                 try {
-                    tracker.setCurrentGeneration(4, ref, ref, ref);
+                    tracker.setCurrentGeneration(4, 4 * 10, 4 * 20, ref, ref, ref);
                     Assert.fail("expected a backwards-generation rejection");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "must not move backwards");
                 }
+                try {
+                    tracker.setCurrentGeneration(5, 51, 100, ref, ref, ref);
+                    Assert.fail("expected same-generation watermark mutation rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "without generation advance");
+                }
+                try {
+                    tracker.setCurrentGeneration(6, 49, 120, ref, ref, ref);
+                    Assert.fail("expected a backwards base-watermark rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "watermarks must not move backwards");
+                }
+                try {
+                    tracker.setCurrentGeneration(6, 60, 99, ref, ref, ref);
+                    Assert.fail("expected a backwards live-view-watermark rejection");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "watermarks must not move backwards");
+                }
                 // Re-recording the same generation is allowed (a recovery re-open).
-                tracker.setCurrentGeneration(5, ref, ref, ref);
+                tracker.setCurrentGeneration(5, 5 * 10, 5 * 20, ref, ref, ref);
                 Assert.assertEquals(5, tracker.getCurrentGeneration());
             } finally {
                 tracker.close();
@@ -165,11 +183,11 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef ref = ref(1, 0, 8);
-                tracker.setCurrentGeneration(1, ref, ref, ref);
+                tracker.setCurrentGeneration(1, 1 * 10, 1 * 20, ref, ref, ref);
                 final LiveViewCheckpointGenerationPin p1 = tracker.pin();
-                tracker.setCurrentGeneration(2, ref, ref, ref);
+                tracker.setCurrentGeneration(2, 2 * 10, 2 * 20, ref, ref, ref);
                 final LiveViewCheckpointGenerationPin p2 = tracker.pin();
-                tracker.setCurrentGeneration(3, ref, ref, ref);
+                tracker.setCurrentGeneration(3, 3 * 10, 3 * 20, ref, ref, ref);
                 final LiveViewCheckpointGenerationPin p3 = tracker.pin();
 
                 Assert.assertEquals(3, tracker.getActivePinCount());
@@ -197,7 +215,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef ref = ref(1, 0, 8);
-                tracker.setCurrentGeneration(4, ref, ref, ref);
+                tracker.setCurrentGeneration(4, 4 * 10, 4 * 20, ref, ref, ref);
                 final LiveViewCheckpointGenerationPin a = tracker.pin();
                 final LiveViewCheckpointGenerationPin b = tracker.pin();
                 final LiveViewCheckpointGenerationPin c = tracker.pin();
@@ -231,6 +249,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             try {
                 Assert.assertEquals(0, tracker.getActivePinCount());
                 Assert.assertEquals(LiveViewCheckpointGenerationTracker.NO_PINS, tracker.minPinnedGeneration());
+                Assert.assertEquals(-1, tracker.minPinnedNormalizedBaseSeqTxn());
                 Assert.assertEquals(LiveViewCheckpointGenerationTracker.NO_GENERATION, tracker.getCurrentGeneration());
                 Assert.assertFalse(tracker.isGenerationPinned(0));
             } finally {
@@ -247,11 +266,13 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
                 final LiveViewCheckpointPageRef timeline = ref(2, 4_096, 256);
                 final LiveViewCheckpointPageRef rowPos = new LiveViewCheckpointPageRef(); // null
                 final LiveViewCheckpointPageRef segDir = ref(9, 0, 24);
-                tracker.setCurrentGeneration(7, timeline, rowPos, segDir);
+                tracker.setCurrentGeneration(7, 7 * 10, 7 * 20, timeline, rowPos, segDir);
 
                 final LiveViewCheckpointGenerationPin pin = tracker.pin();
                 Assert.assertTrue(pin.isPinned());
                 Assert.assertEquals(7, pin.getGeneration());
+                Assert.assertEquals(70, pin.getNormalizedBaseSeqTxn());
+                Assert.assertEquals(140, pin.getCoveredLvSeqTxn());
 
                 Assert.assertFalse(pin.getTimelineRootRef().isNull());
                 Assert.assertEquals(2, pin.getTimelineRootRef().getSegmentId());
@@ -287,7 +308,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef ref = ref(1, 0, 8);
-                tracker.setCurrentGeneration(1, ref, ref, ref);
+                tracker.setCurrentGeneration(1, 1 * 10, 1 * 20, ref, ref, ref);
                 final LiveViewCheckpointGenerationPin first = tracker.pin();
                 first.close();
                 // A freed pin is pooled and reused, keeping the read path allocation-free.
@@ -306,15 +327,17 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
             final LiveViewCheckpointGenerationTracker tracker = new LiveViewCheckpointGenerationTracker();
             try {
                 final LiveViewCheckpointPageRef timelineG1 = ref(1, 100, 40);
-                tracker.setCurrentGeneration(1, timelineG1, ref(1, 200, 20), ref(1, 300, 10));
+                tracker.setCurrentGeneration(1, 1 * 10, 1 * 20, timelineG1, ref(1, 200, 20), ref(1, 300, 10));
                 final LiveViewCheckpointGenerationPin p1 = tracker.pin();
 
                 // Publish a new generation with different roots while p1 is held.
                 final LiveViewCheckpointPageRef timelineG2 = ref(2, 4_096, 256);
-                tracker.setCurrentGeneration(2, timelineG2, ref(2, 8_192, 128), ref(2, 0, 64));
+                tracker.setCurrentGeneration(2, 2 * 10, 2 * 20, timelineG2, ref(2, 8_192, 128), ref(2, 0, 64));
 
                 // Invariant 4: p1 still resolves generation 1's roots, not generation 2's.
                 Assert.assertEquals(1, p1.getGeneration());
+                Assert.assertEquals(10, p1.getNormalizedBaseSeqTxn());
+                Assert.assertEquals(20, p1.getCoveredLvSeqTxn());
                 Assert.assertEquals(1, p1.getTimelineRootRef().getSegmentId());
                 Assert.assertEquals(100, p1.getTimelineRootRef().getOffset());
                 Assert.assertEquals(40, p1.getTimelineRootRef().getLength());
@@ -322,12 +345,16 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
                 // A fresh pin snapshots the now-current generation 2.
                 final LiveViewCheckpointGenerationPin p2 = tracker.pin();
                 Assert.assertEquals(2, p2.getGeneration());
+                Assert.assertEquals(20, p2.getNormalizedBaseSeqTxn());
+                Assert.assertEquals(40, p2.getCoveredLvSeqTxn());
                 Assert.assertEquals(2, p2.getTimelineRootRef().getSegmentId());
                 Assert.assertEquals(4_096, p2.getTimelineRootRef().getOffset());
                 Assert.assertEquals(256, p2.getTimelineRootRef().getLength());
 
                 Assert.assertEquals(1, tracker.minPinnedGeneration());
+                Assert.assertEquals(10, tracker.minPinnedNormalizedBaseSeqTxn());
                 p1.close();
+                Assert.assertEquals(20, tracker.minPinnedNormalizedBaseSeqTxn());
                 p2.close();
             } finally {
                 tracker.close();
@@ -365,7 +392,7 @@ public class LiveViewCheckpointGenerationPinTest extends AbstractCairoTest {
                 //   gen4 -> {103, 104}, gen5 -> {104, 105}
                 LiveViewCheckpointGenerationPin pinnedOnG2 = null;
                 for (long gen = 1; gen <= 5; gen++) {
-                    tracker.setCurrentGeneration(gen, ref, ref, ref);
+                    tracker.setCurrentGeneration(gen, gen * 10, gen * 20, ref, ref, ref);
                     store.publishGeneration(gen, roots(rootFor(gen)));
                     if (gen == 2) {
                         pinnedOnG2 = tracker.pin();

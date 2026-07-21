@@ -362,4 +362,31 @@ public class LiveViewCheckpointMetaStoreTest extends AbstractCairoTest {
             rowPositionRoot.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
         }
     }
+
+    @Test
+    public void testWalPurgeFloorIncludesPinnedGenerationOlderThanBothSlots() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness harness = new Harness(); LiveViewCheckpointMetaStore store = openStore()) {
+                harness.append(10, 1);
+                harness.publish(store, 1);
+                final LiveViewCheckpointGenerationPin oldPin = store.pin();
+                try {
+                    harness.append(20, 2);
+                    harness.publish(store, 2);
+                    harness.append(30, 3);
+                    harness.publish(store, 3);
+
+                    Assert.assertEquals(200, store.getSuperblock().getWalPurgeFloor());
+                    Assert.assertEquals(
+                            "the generation-1 reader still needs its base WAL after both slots advance",
+                            100,
+                            store.getWalPurgeFloor()
+                    );
+                } finally {
+                    oldPin.close();
+                }
+                Assert.assertEquals(200, store.getWalPurgeFloor());
+            }
+        });
+    }
 }

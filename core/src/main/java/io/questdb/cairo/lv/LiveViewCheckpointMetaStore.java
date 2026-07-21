@@ -92,6 +92,20 @@ public class LiveViewCheckpointMetaStore implements Closeable {
     }
 
     /**
+     * Returns the base-WAL retention floor required by both durable A/B slots
+     * and every live generation pin owned by this store.
+     */
+    public long getWalPurgeFloor() {
+        ensureOpen();
+        if (!superblock.isValid()) {
+            return -1;
+        }
+        final long slotFloor = superblock.getWalPurgeFloor();
+        final long pinnedFloor = generationTracker.minPinnedNormalizedBaseSeqTxn();
+        return pinnedFloor < 0 ? slotFloor : Math.min(slotFloor, pinnedFloor);
+    }
+
+    /**
      * Opens the catalogue and exposes the newest generation that passes bounded
      * validation, falling back to the other valid slot before returning when
      * necessary. A fresh or doubly unusable catalogue remains validly open but has
@@ -161,6 +175,8 @@ public class LiveViewCheckpointMetaStore implements Closeable {
     private void installSelectedGeneration() {
         generationTracker.setCurrentGeneration(
                 superblock.generation,
+                superblock.normalizedBaseSeqTxn,
+                superblock.coveredLvSeqTxn,
                 superblock.timelineRootRef,
                 superblock.rowPositionDeltaRootRef,
                 superblock.segmentDirectoryRootRef

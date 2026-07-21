@@ -391,4 +391,49 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
             sb.publish();
         }
     }
+
+    @Test
+    public void testWalPurgeFloorTracksBothSlotsAndRejectsNegativeCoordinate() throws Exception {
+        assertMemoryLeak(() -> {
+            publish(1);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration);
+                 Path dir = new Path()) {
+                sb.of(checkpointsDir(dir));
+                Assert.assertEquals(13, sb.getWalPurgeFloor());
+            }
+
+            publish(2);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration);
+                 Path dir = new Path()) {
+                sb.of(checkpointsDir(dir));
+                Assert.assertEquals("the fallback slot still needs generation 1 WAL", 13, sb.getWalPurgeFloor());
+            }
+
+            publish(3);
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration);
+                 Path dir = new Path()) {
+                sb.of(checkpointsDir(dir));
+                Assert.assertEquals("generation 3 overwrites generation 1", 23, sb.getWalPurgeFloor());
+            }
+
+            // Forge a valid-CRC negative normalized coordinate in the fallback
+            // slot. It must be rejected as a slot, never interpreted as a
+            // sentinel that silently drops the WAL floor.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.putLong(
+                        LiveViewCheckpointSuperblock.SLOT_SIZE
+                                + LiveViewCheckpointSuperblock.SLOT_NORMALIZED_BASE_SEQTXN_OFFSET,
+                        -1
+                );
+                fixSlotCrc(mem, 1);
+            }
+            try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration);
+                 Path dir = new Path()) {
+                sb.of(checkpointsDir(dir));
+                Assert.assertEquals(3, sb.generation);
+                Assert.assertEquals(33, sb.getWalPurgeFloor());
+            }
+        });
+    }
 }

@@ -55,7 +55,9 @@ public final class LiveViewCheckpointGenerationPin implements QuietCloseable {
     private final LiveViewCheckpointPageRef rowPositionDeltaRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointPageRef segmentDirectoryRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointPageRef timelineRootRef = new LiveViewCheckpointPageRef();
+    private long coveredLvSeqTxn = -1;
     private long generation = LiveViewCheckpointGenerationTracker.NO_GENERATION;
+    private long normalizedBaseSeqTxn = -1;
     private LiveViewCheckpointGenerationTracker owner;
     private boolean pinned;
 
@@ -74,10 +76,11 @@ public final class LiveViewCheckpointGenerationPin implements QuietCloseable {
         }
         final LiveViewCheckpointGenerationTracker o = owner;
         final long g = generation;
+        final long baseSeqTxn = normalizedBaseSeqTxn;
         // Clear pinned before releasing so a re-entrant close observes the pin as
         // already released and returns without a double decrement.
         pinned = false;
-        o.release(g, this);
+        o.release(g, baseSeqTxn, this);
     }
 
     /**
@@ -86,6 +89,23 @@ public final class LiveViewCheckpointGenerationPin implements QuietCloseable {
     public long getGeneration() {
         ensurePinned();
         return generation;
+    }
+
+    /**
+     * @return the pinned generation's live-view-writer transaction watermark
+     */
+    public long getCoveredLvSeqTxn() {
+        ensurePinned();
+        return coveredLvSeqTxn;
+    }
+
+    /**
+     * @return the pinned generation's authoritative base-table transaction
+     * inclusion boundary
+     */
+    public long getNormalizedBaseSeqTxn() {
+        ensurePinned();
+        return normalizedBaseSeqTxn;
     }
 
     /**
@@ -129,12 +149,16 @@ public final class LiveViewCheckpointGenerationPin implements QuietCloseable {
     void arm(
             @NotNull LiveViewCheckpointGenerationTracker owner,
             long generation,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn,
             @NotNull LiveViewCheckpointPageRef timelineRootRef,
             @NotNull LiveViewCheckpointPageRef rowPositionDeltaRootRef,
             @NotNull LiveViewCheckpointPageRef segmentDirectoryRootRef
     ) {
         this.owner = owner;
         this.generation = generation;
+        this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
+        this.coveredLvSeqTxn = coveredLvSeqTxn;
         copyRef(this.timelineRootRef, timelineRootRef);
         copyRef(this.rowPositionDeltaRootRef, rowPositionDeltaRootRef);
         copyRef(this.segmentDirectoryRootRef, segmentDirectoryRootRef);
@@ -148,6 +172,8 @@ public final class LiveViewCheckpointGenerationPin implements QuietCloseable {
     void disarm() {
         owner = null;
         generation = LiveViewCheckpointGenerationTracker.NO_GENERATION;
+        normalizedBaseSeqTxn = -1;
+        coveredLvSeqTxn = -1;
         pinned = false;
         timelineRootRef.clear();
         rowPositionDeltaRootRef.clear();

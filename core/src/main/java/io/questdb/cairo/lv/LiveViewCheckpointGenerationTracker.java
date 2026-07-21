@@ -74,11 +74,14 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
     private final LiveViewCheckpointPageRef currentRowPositionDeltaRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointPageRef currentSegmentDirectoryRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointPageRef currentTimelineRootRef = new LiveViewCheckpointPageRef();
+    private long currentCoveredLvSeqTxn = -1;
     // One entry per live pin; holds that pin's captured generation. Duplicates are
     // expected (many readers on one generation) and each release removes exactly one.
     private final LongList pinnedGenerations = new LongList();
+    private final LongList pinnedNormalizedBaseSeqTxns = new LongList();
     private final ObjList<LiveViewCheckpointGenerationPin> pool = new ObjList<>();
     private long currentGeneration = NO_GENERATION;
+    private long currentNormalizedBaseSeqTxn = -1;
 
     /**
      * Releases pooled pins and clears the current-generation snapshot. Asserts no pin
@@ -90,8 +93,11 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
         assert pinnedGenerations.size() == 0
                 : "live view checkpoint generation pins leaked: " + pinnedGenerations.size();
         pinnedGenerations.clear();
+        pinnedNormalizedBaseSeqTxns.clear();
         pool.clear();
         currentGeneration = NO_GENERATION;
+        currentNormalizedBaseSeqTxn = -1;
+        currentCoveredLvSeqTxn = -1;
         currentTimelineRootRef.clear();
         currentRowPositionDeltaRootRef.clear();
         currentSegmentDirectoryRootRef.clear();
@@ -143,6 +149,20 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
     }
 
     /**
+     * @return the minimum base-table transaction boundary required by a live
+     * generation pin, or {@code -1} when no reader is pinned
+     */
+    public synchronized long minPinnedNormalizedBaseSeqTxn() {
+        final int n = pinnedNormalizedBaseSeqTxns.size();
+        long min = -1;
+        for (int i = 0; i < n; i++) {
+            final long seqTxn = pinnedNormalizedBaseSeqTxns.getQuick(i);
+            min = min < 0 ? seqTxn : Math.min(min, seqTxn);
+        }
+        return min;
+    }
+
+    /**
      * Takes a pin on the current published generation, snapshotting its root
      * references into the returned pin. Throws when no generation has been published.
      * The caller must {@link LiveViewCheckpointGenerationPin#close()} the pin.
@@ -156,11 +176,14 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
         pin.arm(
                 this,
                 currentGeneration,
+                currentNormalizedBaseSeqTxn,
+                currentCoveredLvSeqTxn,
                 currentTimelineRootRef,
                 currentRowPositionDeltaRootRef,
                 currentSegmentDirectoryRootRef
         );
         pinnedGenerations.add(currentGeneration);
+        pinnedNormalizedBaseSeqTxns.add(currentNormalizedBaseSeqTxn);
         return pin;
     }
 
@@ -186,20 +209,47 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
      */
     public synchronized void setCurrentGeneration(
             long generation,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn,
             @NotNull LiveViewCheckpointPageRef timelineRootRef,
             @NotNull LiveViewCheckpointPageRef rowPositionDeltaRootRef,
             @NotNull LiveViewCheckpointPageRef segmentDirectoryRootRef
     ) {
-        if (generation < 0) {
+        if (generation < 0 || normalizedBaseSeqTxn < 0 || coveredLvSeqTxn < 0) {
             throw CairoException.critical(0)
-                    .put("live view checkpoint generation must be non-negative [generation=").put(generation).put(']');
+                    .put("live view checkpoint generation coordinates must be non-negative")
+                    .put(" [generation=").put(generation)
+                    .put(", normalizedBaseSeqTxn=").put(normalizedBaseSeqTxn)
+                    .put(", coveredLvSeqTxn=").put(coveredLvSeqTxn).put(']');
         }
         if (currentGeneration != NO_GENERATION && generation < currentGeneration) {
             throw CairoException.critical(0)
                     .put("live view checkpoint generation must not move backwards [current=").put(currentGeneration)
                     .put(", next=").put(generation).put(']');
         }
+        if (generation == currentGeneration
+                && (normalizedBaseSeqTxn != currentNormalizedBaseSeqTxn
+                || coveredLvSeqTxn != currentCoveredLvSeqTxn)) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint generation watermarks changed without generation advance")
+                    .put(" [storedBase=").put(currentNormalizedBaseSeqTxn)
+                    .put(", nextBase=").put(normalizedBaseSeqTxn)
+                    .put(", storedLv=").put(currentCoveredLvSeqTxn)
+                    .put(", nextLv=").put(coveredLvSeqTxn).put(']');
+        }
+        if (currentGeneration != NO_GENERATION
+                && (normalizedBaseSeqTxn < currentNormalizedBaseSeqTxn
+                || coveredLvSeqTxn < currentCoveredLvSeqTxn)) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint generation watermarks must not move backwards")
+                    .put(" [storedBase=").put(currentNormalizedBaseSeqTxn)
+                    .put(", nextBase=").put(normalizedBaseSeqTxn)
+                    .put(", storedLv=").put(currentCoveredLvSeqTxn)
+                    .put(", nextLv=").put(coveredLvSeqTxn).put(']');
+        }
         currentGeneration = generation;
+        currentNormalizedBaseSeqTxn = normalizedBaseSeqTxn;
+        currentCoveredLvSeqTxn = coveredLvSeqTxn;
         copyRef(currentTimelineRootRef, timelineRootRef);
         copyRef(currentRowPositionDeltaRootRef, rowPositionDeltaRootRef);
         copyRef(currentSegmentDirectoryRootRef, segmentDirectoryRootRef);
@@ -209,10 +259,12 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
      * Returns {@code pin} to the pool and drops its generation from the live set.
      * Called by {@link LiveViewCheckpointGenerationPin#close()}.
      */
-    synchronized void release(long generation, @NotNull LiveViewCheckpointGenerationPin pin) {
-        // Removes exactly one occurrence of generation (the first), which is correct
-        // for a multiset of equal generations.
-        pinnedGenerations.remove(generation);
+    synchronized void release(long generation, long normalizedBaseSeqTxn, @NotNull LiveViewCheckpointGenerationPin pin) {
+        // Remove the matching records at the same index so the generation and
+        // its WAL coordinate remain one atomic accounting tuple.
+        final int index = pinIndex(generation, normalizedBaseSeqTxn);
+        pinnedGenerations.removeIndex(index);
+        pinnedNormalizedBaseSeqTxns.removeIndex(index);
         pin.disarm();
         pool.add(pin);
     }
@@ -229,5 +281,16 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
             return pin;
         }
         return new LiveViewCheckpointGenerationPin();
+    }
+
+    private int pinIndex(long generation, long normalizedBaseSeqTxn) {
+        for (int i = 0, n = pinnedGenerations.size(); i < n; i++) {
+            if (pinnedGenerations.getQuick(i) == generation
+                    && pinnedNormalizedBaseSeqTxns.getQuick(i) == normalizedBaseSeqTxn) {
+                return i;
+            }
+        }
+        throw CairoException.critical(0)
+                .put("live view checkpoint generation pin accounting is inconsistent");
     }
 }

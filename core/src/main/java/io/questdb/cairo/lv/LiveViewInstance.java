@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -175,6 +176,15 @@ public class LiveViewInstance implements QuietCloseable {
     // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES /
     // _BASE_SEQ_TXN.
     private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
+    // Base-WAL retention floor of the durable versioned checkpoint timeline:
+    // the minimum normalizedBaseSeqTxn required by either valid A/B slot.
+    // Published to this volatile mirror only after the superblock commit point,
+    // and adopted from bounded timeline validation at startup. Recovery and
+    // repair owners lower the floor for their pins before exposing them. The WAL
+    // purge job min-combines it with the legacy head/ring arms until those
+    // formats are removed. LONG_NULL means no usable timeline generation
+    // currently requires WAL.
+    private volatile long checkpointTimelineWalPurgeFloor = Numbers.LONG_NULL;
     // Elapsed wall-clock (micros) of the most recent restart restore-from-head
     // (tryRestoreFromHead: rehydrate the ring, restore the .cp, and
     // replay-to-applied). Numbers.LONG_NULL until a restore runs, which is
@@ -1001,6 +1011,10 @@ public class LiveViewInstance implements QuietCloseable {
         return freezeFrozenAppliedWatermark;
     }
 
+    public long getCheckpointTimelineWalPurgeFloor() {
+        return checkpointTimelineWalPurgeFloor;
+    }
+
     public long getHeadCheckpointBaseSeqTxn() {
         return headCheckpoint[HEAD_CHECKPOINT_BASE_SEQ_TXN];
     }
@@ -1642,6 +1656,19 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointRestoreMicros(long durationUs) {
         this.headCheckpointRestoreMicros = durationUs;
+    }
+
+    /**
+     * Publishes the WAL floor derived from a successfully committed timeline
+     * generation, or adopts the same durable value during startup. Callers must
+     * never pass a candidate computed before the superblock commit point.
+     */
+    public void recordCheckpointTimelineWalPurgeFloor(long walPurgeFloor) {
+        if (walPurgeFloor < 0) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint timeline WAL floor must be non-negative");
+        }
+        checkpointTimelineWalPurgeFloor = walPurgeFloor;
     }
 
     /**

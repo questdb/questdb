@@ -41,6 +41,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import org.junit.After;
 import org.junit.Assert;
@@ -86,6 +87,10 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "a pre-superblock crash must not advance the off-thread WAL floor",
+                        Numbers.LONG_NULL,
+                        instance.getCheckpointTimelineWalPurgeFloor());
                 try (LiveViewCheckpointMetaStore store = openStore(instance)) {
                     Assert.assertFalse("immutable-file publication is not the timeline commit point", store.isValid());
                 }
@@ -100,6 +105,13 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 ) {
                     Assert.assertEquals(1, pin.getGeneration());
                     Assert.assertEquals(1, reader.size(pin.getTimelineRootRef()));
+                    Assert.assertEquals(instance.getLastProcessedSeqTxn(), pin.getNormalizedBaseSeqTxn());
+                    Assert.assertEquals(store.getSuperblock().coveredLvSeqTxn, pin.getCoveredLvSeqTxn());
+                    Assert.assertEquals(
+                            "the first durable slot is its own WAL floor",
+                            pin.getNormalizedBaseSeqTxn(),
+                            store.getWalPurgeFloor());
+                    Assert.assertEquals(store.getWalPurgeFloor(), instance.getCheckpointTimelineWalPurgeFloor());
                     final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
                     Assert.assertTrue(reader.last(pin.getTimelineRootRef(), entry));
                     Assert.assertEquals(0, entry.checkpointId);
@@ -153,8 +165,18 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 ) {
                     Assert.assertEquals(3, pin.getGeneration());
                     Assert.assertEquals(3, reader.size(pin.getTimelineRootRef()));
-                    Assert.assertEquals(0, store.getSuperblock().normalizedBaseSeqTxn);
-                    Assert.assertEquals(0, store.getSuperblock().coveredLvSeqTxn);
+                    Assert.assertEquals(instance.getLastProcessedSeqTxn(), store.getSuperblock().normalizedBaseSeqTxn);
+                    Assert.assertEquals(
+                            engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken()).getWriterTxn(),
+                            store.getSuperblock().coveredLvSeqTxn
+                    );
+                    Assert.assertEquals(store.getSuperblock().normalizedBaseSeqTxn, pin.getNormalizedBaseSeqTxn());
+                    Assert.assertEquals(store.getSuperblock().coveredLvSeqTxn, pin.getCoveredLvSeqTxn());
+                    Assert.assertTrue(
+                            "the fallback A/B slot must retain the prior generation's base WAL",
+                            store.getWalPurgeFloor() < store.getSuperblock().normalizedBaseSeqTxn
+                    );
+                    Assert.assertEquals(store.getWalPurgeFloor(), instance.getCheckpointTimelineWalPurgeFloor());
 
                     final LongList rows = new LongList();
                     reader.iterateAll(pin.getTimelineRootRef(), entry -> {
@@ -280,5 +302,33 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
     private static String timestamp(int second) {
         return "2026-01-01T00:00:" + (second < 10 ? "0" : "") + second + ".000000Z";
+    }
+
+    @Test
+    public void testStartupAdoptsDurableTimelineWalFloorWithoutRestoringRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+            }
+
+            final LiveViewInstance before = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(before);
+            final long durableFloor = before.getCheckpointTimelineWalPurgeFloor();
+            Assert.assertTrue(durableFloor >= 0);
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance after = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(after);
+            Assert.assertEquals(durableFloor, after.getCheckpointTimelineWalPurgeFloor());
+            Assert.assertEquals(
+                    "watermark adoption must not start the later runtime-root restore step",
+                    Numbers.LONG_NULL,
+                    after.getHeadCheckpointRestoreMicros()
+            );
+        });
     }
 }

@@ -4439,21 +4439,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
                     checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
                 }
-                final long createdLvSeqTxn = engine.getTableSequencerAPI()
+                final long coveredLvSeqTxn = engine.getTableSequencerAPI()
                         .getTxnTracker(instance.getLiveViewToken())
                         .getWriterTxn();
+                final long createdLvSeqTxn = coveredLvSeqTxn;
                 path.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-                checkpointTimelineStoreWriter.append(
+                final LiveViewCheckpointTimelineStoreWriter.Result timelineResult = checkpointTimelineStoreWriter.append(
                         path,
                         functions,
                         anchorWindow,
                         instance.getLiveViewToken().getTableId(),
                         createdLvSeqTxn,
+                        baseSeqTxn,
+                        coveredLvSeqTxn,
                         batchMaxTs,
                         instance.getLvRowsTotal()
                 );
+                instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
             }
             final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
             // Test-only: omit the last N function-snapshot blocks to forge a

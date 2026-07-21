@@ -130,10 +130,13 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     private final FilesFacade ff;
     private final MemoryMARW mem;
     private final Path path = new Path();
+    private long coveredLvSeqTxnCeiling = -1;
     private long generationFloor = Long.MIN_VALUE;
+    private long normalizedBaseSeqTxnCeiling = -1;
     private boolean isOpen;
     private long oldestValidGeneration = Long.MAX_VALUE;
     private int selectedSlot = NO_SLOT;
+    private long walPurgeFloor = -1;
 
     public LiveViewCheckpointSuperblock(@NotNull CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -149,7 +152,10 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         mem.close(false);
         Misc.free(path);
         generationFloor = Long.MIN_VALUE;
+        normalizedBaseSeqTxnCeiling = -1;
+        coveredLvSeqTxnCeiling = -1;
         oldestValidGeneration = Long.MAX_VALUE;
+        walPurgeFloor = -1;
         isOpen = false;
         selectedSlot = NO_SLOT;
         resetFields();
@@ -173,6 +179,20 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     public long getOldestValidGeneration() {
         ensureOpen();
         return oldestValidGeneration;
+    }
+
+    /**
+     * Returns the oldest base-table transaction still required by either
+     * independently valid A/B slot. The value is a WAL retention floor, not the
+     * selected generation's recovery coordinate: the fallback slot remains a
+     * possible recovery source until a later publication overwrites it.
+     *
+     * @return the minimum {@code normalizedBaseSeqTxn} across valid slots, or
+     * {@code -1} when neither slot is valid
+     */
+    public long getWalPurgeFloor() {
+        ensureOpen();
+        return walPurgeFloor;
     }
 
     /**
@@ -223,6 +243,18 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                     .put(generationFloor == Long.MIN_VALUE ? -1 : generationFloor)
                     .put(", next=").put(generation).put(']');
         }
+        if (normalizedBaseSeqTxn < 0
+                || coveredLvSeqTxn < 0
+                || normalizedBaseSeqTxn < normalizedBaseSeqTxnCeiling
+                || coveredLvSeqTxn < coveredLvSeqTxnCeiling) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint generation watermarks must not move backwards")
+                    .put(" [storedBase=").put(normalizedBaseSeqTxnCeiling)
+                    .put(", nextBase=").put(normalizedBaseSeqTxn)
+                    .put(", storedLv=").put(coveredLvSeqTxnCeiling)
+                    .put(", nextLv=").put(coveredLvSeqTxn).put(']');
+        }
+
         final int target = selectedSlot == 0 ? 1 : 0;
         storeSlot((long) target * SLOT_SIZE);
         if (commitMode != CommitMode.NOSYNC) {
@@ -277,7 +309,15 @@ public class LiveViewCheckpointSuperblock implements Closeable {
             return false;
         }
         final int formatVersion = mem.getInt(base + SLOT_FORMAT_VERSION_OFFSET);
-        return formatVersion == SLOT_FORMAT_VERSION;
+        if (formatVersion != SLOT_FORMAT_VERSION) {
+            return false;
+        }
+        // These are authoritative publication coordinates. Reject impossible
+        // values during bounded slot validation rather than allowing a
+        // valid-CRC corrupt slot to release WAL by looking like "no floor".
+        return mem.getLong(base + SLOT_GENERATION_OFFSET) >= 0
+                && mem.getLong(base + SLOT_NORMALIZED_BASE_SEQTXN_OFFSET) >= 0
+                && mem.getLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET) >= 0;
     }
 
     private void loadSlot(long base) {
@@ -314,7 +354,10 @@ public class LiveViewCheckpointSuperblock implements Closeable {
         int best = NO_SLOT;
         long bestGeneration = Long.MIN_VALUE;
         generationFloor = Long.MIN_VALUE;
+        normalizedBaseSeqTxnCeiling = -1;
+        coveredLvSeqTxnCeiling = -1;
         oldestValidGeneration = Long.MAX_VALUE;
+        walPurgeFloor = -1;
         for (int slot = 0; slot < 2; slot++) {
             final long base = (long) slot * SLOT_SIZE;
             if (isSlotValid(base)) {
@@ -325,6 +368,13 @@ public class LiveViewCheckpointSuperblock implements Closeable {
                 }
                 generationFloor = Math.max(generationFloor, gen);
                 oldestValidGeneration = Math.min(oldestValidGeneration, gen);
+                final long normalizedBaseSeqTxn = mem.getLong(base + SLOT_NORMALIZED_BASE_SEQTXN_OFFSET);
+                final long coveredLvSeqTxn = mem.getLong(base + SLOT_COVERED_LV_SEQTXN_OFFSET);
+                normalizedBaseSeqTxnCeiling = Math.max(normalizedBaseSeqTxnCeiling, normalizedBaseSeqTxn);
+                coveredLvSeqTxnCeiling = Math.max(coveredLvSeqTxnCeiling, coveredLvSeqTxn);
+                walPurgeFloor = walPurgeFloor < 0
+                        ? normalizedBaseSeqTxn
+                        : Math.min(walPurgeFloor, normalizedBaseSeqTxn);
             }
         }
         if (best == NO_SLOT) {

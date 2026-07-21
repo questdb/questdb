@@ -19387,18 +19387,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testCheckpointRingWalPurgeFloorNotLoweredToOldestRingEntry() throws Exception {
-        // The floor follows the ring's NEWEST entry, never its oldest. The ring
-        // spans the whole retention horizon by design, so flooring at its oldest
-        // entry would pin base WAL across all of it - and the two arms the floor
-        // gained for the cleared-head case are exactly where that would creep
-        // in, since restart only ever resumes from one entry.
-        //
-        // A negative-space assertion, deliberately: it pins the arms as an UPPER
-        // bound on WAL retention, not a lower one. In the healthy steady state
-        // below every arm agrees at the newest entry, so a floor with no ring
-        // arms at all would pass too - what these segments catch is the floor
-        // being dragged DOWN, which is the only failure the item names.
+    public void testCheckpointTimelineWalPurgeFloorRetainsPriorSlotButNotOldestRingEntry() throws Exception {
+        // Legacy ring arms follow the newest entry, not the oldest. The versioned
+        // timeline independently keeps its two A/B generations recoverable.
+        // With generations 1..3, slots 3 and 2 therefore require base WAL from
+        // seqTxn 2 while the ring's oldest seqTxn 1 must not pin the full horizon.
+        // This locks both bounds of the combined floor.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
@@ -19419,9 +19413,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                // Three anchors spanning base seqTxn 1..3: the horizon the floor
-                // must not pin. Nothing failed here, so the head stands and both
-                // arms track the ring's tail.
+                // Three anchors span base seqTxn 1..3. The ring arms track the
+                // newest entry, while the two timeline slots hold generations 3
+                // and 2 after the third publication.
                 Assert.assertEquals(3, lv.getRetainedCheckpointCount());
                 Assert.assertEquals(1L, lv.getRetainedCheckpointBaseSeqTxn(0));
                 Assert.assertEquals(3L, lv.getRetainedCheckpointBaseSeqTxn(2));
@@ -19430,6 +19424,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         3L, lv.getRingNewestBaseSeqTxn());
                 Assert.assertEquals("the durable arm sits at the manifest's newest entry",
                         3L, lv.getLastPublishedRingNewestBaseSeqTxn());
+                Assert.assertEquals("the fallback timeline slot retains generation 2 WAL",
+                        2L, lv.getCheckpointTimelineWalPurgeFloor());
             }
 
             // A trailing base commit the view never consumes, to roll the writer
@@ -19440,15 +19436,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             engine.releaseInactive();
             drainPurgeJob();
 
-            // Every segment at or below the newest entry goes. Flooring at the
-            // oldest entry instead would keep seqTxn 2 and 3 - the retention
-            // horizon pinned as raw WAL, which is what the parent project's
-            // section 6.4 forbids.
+            // The ring's oldest entry does not retain segments 0 or 1. Segment 2
+            // remains because fallback timeline generation 2 needs seqTxn 3 for
+            // recovery after a torn generation-3 publication.
             assertSegmentExistence(false, "base", 1, 0);
             assertSegmentExistence(false, "base", 1, 1);
-            assertSegmentExistence(false, "base", 1, 2);
+            assertSegmentExistence(true, "base", 1, 2);
             // seqTxn 4 is unconsumed, so lvConsumed floors it regardless of the
-            // ring - the sweep did not simply take everything.
+            // timeline - the sweep did not simply take everything.
             assertSegmentExistence(true, "base", 1, 3);
 
             assertNoRefreshFaults("lv");
