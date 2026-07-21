@@ -46,6 +46,13 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected final String unsupportedTableMessage = "Table does not have any indexes";
     private final MillisecondClock clock;
     private final StringSink tempStringSink = new StringSink();
+    // The committed table _txn the rebuild is operating against. Set by
+    // reindex callers that have a TxReader handy (reindexAfterUpdate gets it
+    // from tableWriter; reindex0 reads it from the .txn file). Concrete
+    // doReindex implementations use this to tag PostingIndexWriter chain
+    // entries with txnAtSeal=currentTableTxn so a future recovery walk does
+    // not mis-classify the rebuilt index as abandoned.
+    protected long currentTableTxn = -1L;
     protected Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
@@ -120,6 +127,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 : txReader.getPartitionSize(partitionIndex);
 
         long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+        currentTableTxn = txReader.getTxn();
 
         doReindex(
                 ff,
@@ -133,7 +141,10 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionTimestamp,
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
-                indexValueBlockCapacity
+                indexValueBlockCapacity,
+                metadata.getColumnIndexType(columnIndex),
+                metadata,
+                columnIndex
         );
     }
 
@@ -169,7 +180,10 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 partitionTimestamp,
                 metadata.getTimestampType(),
                 partitionBy,
-                metadata.getIndexValueBlockCapacity(columnIndex)
+                metadata.getIndexValueBlockCapacity(columnIndex),
+                metadata.getColumnIndexType(columnIndex),
+                metadata,
+                columnIndex
         );
     }
 
@@ -209,6 +223,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
             try (TxReader txReader = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), metadata.getTimestampType(), partitionBy)) {
                 txReader.unsafeLoadAll();
+                currentTableTxn = txReader.getTxn();
                 path.trimTo(rootLen);
 
                 if (PartitionBy.isPartitioned(partitionBy)) {
@@ -359,7 +374,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionTimestamp,
             int timestampType,
             int partitionBy,
-            int indexValueBlockCapacity
+            int indexValueBlockCapacity,
+            byte indexType,
+            // The metadata reference and the column's dense index are
+            // required for POSTING covering rebuilds: the seal needs to
+            // look up covering column names/types from metadata. They are
+            // ignored by indexers that don't support covering.
+            RecordMetadata metadata,
+            int columnIndex
     );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);

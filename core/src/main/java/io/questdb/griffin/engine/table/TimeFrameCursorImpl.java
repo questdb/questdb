@@ -24,18 +24,19 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -49,11 +50,13 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
@@ -106,7 +109,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         try {
             this.metadata = metadata;
             this.frameAddressCache = new PageFrameAddressCache();
-            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
@@ -126,8 +129,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameCursor = Misc.free(frameCursor);
     }
 
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
+    }
+
     @Override
-    public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
+    public IndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
         int physicalColumnIndex = frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex);
         int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
@@ -135,7 +143,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
         int partitionIndex = framePartitionIndexes.get(frameIndex);
         assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
-        return tableReader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
+        return tableReader.getIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
 
     @Override
@@ -202,7 +210,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             TablePageFrameCursor frameCursor,
             int pageFrameMinRows,
             int pageFrameMaxRows,
-            int workerCount
+            int workerCount,
+            MemoryTracker memoryTracker
     ) {
         this.frameCursor = frameCursor;
         this.pageFrameMinRows = pageFrameMinRows;
@@ -214,6 +223,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
             columnIndexes.add(mapping.getColumnIndex(i));
         }
+        frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         tableReader = frameCursor.getTableReader();
         recordA.of(frameCursor);
@@ -320,6 +330,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 partitionTimestamps,
                 timeFrame
         );
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
     }
 
     @Override

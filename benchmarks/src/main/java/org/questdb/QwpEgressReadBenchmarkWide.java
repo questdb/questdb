@@ -35,6 +35,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -69,7 +70,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class QwpEgressReadBenchmarkWide {
 
-    private static final long DEFAULT_ROW_COUNT = 10_000_000L;
+    private static final long DEFAULT_ROW_COUNT = 1000_000_000L;
     // Distinct value count for each of s1..s5. Chosen high enough to stress the
     // SYMBOL dict path: 100_000 unique values per column means the connection-scoped
     // delta dict grows for most of the batch sequence rather than settling into a
@@ -146,7 +147,12 @@ public class QwpEgressReadBenchmarkWide {
         String[] s5Pool = buildSymbolPool("s5_");
         // auto_flush_rows sized so the ILP frame stays under the server's 2 MiB
         // WebSocket buffer given our 15-column row layout (~130 bytes/row encoded).
-        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=10000;")) {
+        String sfDir = Paths.get(System.getProperty("java.io.tmpdir"),
+                "qdb-sf-ingress-bench-" + System.nanoTime()).toString();
+
+        String sf = "sf_dir=" + sfDir + ";";
+
+        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=10000;" + sf)) {
             for (long i = 1; i <= ROW_COUNT; i++) {
                 int h1 = (int) (i % HIGH_CARD);
                 int h2 = (int) ((i + 20_000) % HIGH_CARD);
@@ -377,14 +383,14 @@ public class QwpEgressReadBenchmarkWide {
                             int[] d4Idx = batch.nonNullIndex(8);
                             int[] d5Idx = batch.nonNullIndex(9);
                             for (int r = 0; r < n; r++) {
-                                long ts = io.questdb.client.std.Unsafe.getUnsafe().getLong(tsBase + 8L * tsIdx[r]);
-                                long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
-                                long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
-                                long d1 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d1Base + 8L * d1Idx[r]);
-                                long d2 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d2Base + 8L * d2Idx[r]);
-                                long d3 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d3Base + 8L * d3Idx[r]);
-                                long d4 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d4Base + 8L * d4Idx[r]);
-                                long d5 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d5Base + 8L * d5Idx[r]);
+                                long ts = io.questdb.std.Unsafe.getLong(tsBase + 8L * tsIdx[r]);
+                                long id = io.questdb.std.Unsafe.getLong(idBase + 8L * idIdx[r]);
+                                long priceBits = io.questdb.std.Unsafe.getLong(priceBase + 8L * priceIdx[r]);
+                                long d1 = io.questdb.std.Unsafe.getLong(d1Base + 8L * d1Idx[r]);
+                                long d2 = io.questdb.std.Unsafe.getLong(d2Base + 8L * d2Idx[r]);
+                                long d3 = io.questdb.std.Unsafe.getLong(d3Base + 8L * d3Idx[r]);
+                                long d4 = io.questdb.std.Unsafe.getLong(d4Base + 8L * d4Idx[r]);
+                                long d5 = io.questdb.std.Unsafe.getLong(d5Base + 8L * d5Idx[r]);
                                 DirectUtf8Sequence sym = batch.getStrA(3, r);
                                 DirectUtf8Sequence note = batch.getStrB(4, r);
                                 DirectUtf8Sequence s1 = batch.getStrA(10, r);
@@ -430,16 +436,7 @@ public class QwpEgressReadBenchmarkWide {
     // Helpers
     // ------------------------------------------------------------------
 
-    private static final class Result {
-        final long bytes;
-        final long elapsedNanos;
-        final long rows;
-
-        Result(long elapsedNanos, long rows, long bytes) {
-            this.elapsedNanos = elapsedNanos;
-            this.rows = rows;
-            this.bytes = bytes;
-        }
+    private record Result(long elapsedNanos, long rows, long bytes) {
     }
 
     static {

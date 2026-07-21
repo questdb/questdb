@@ -63,9 +63,10 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.CarrierLocal;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<IntHashSet> tlSet = ThreadLocal.withInitial(IntHashSet::new);
+    private static final CarrierLocal<IntHashSet> tlSet = CarrierLocal.withInitial(IntHashSet::new);
 
     @Override
     public String getSignature() {

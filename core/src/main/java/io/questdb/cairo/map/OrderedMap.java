@@ -46,6 +46,7 @@ import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -126,6 +127,11 @@ public class OrderedMap implements Map, Reopenable {
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
     private int mask;
+    // Per-query native memory tracker bound by the owning factory at cursor start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private int nResizes;
     // Holds a list of [compressed_offset, hash_code] pairs.
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
@@ -153,7 +159,7 @@ public class OrderedMap implements Map, Reopenable {
             int maxResizes,
             int memoryTag
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag, true);
     }
 
     public OrderedMap(
@@ -164,7 +170,19 @@ public class OrderedMap implements Map, Reopenable {
             double loadFactor,
             int maxResizes
     ) {
-        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST);
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, true);
+    }
+
+    public OrderedMap(
+            long heapSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            boolean openOnInit
+    ) {
+        this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST, openOnInit);
     }
 
     OrderedMap(
@@ -175,7 +193,8 @@ public class OrderedMap implements Map, Reopenable {
             double loadFactor,
             int maxResizes,
             int heapMemoryTag,
-            int listMemoryTag
+            int listMemoryTag,
+            boolean openOnInit
     ) {
         assert heapSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
@@ -186,17 +205,22 @@ public class OrderedMap implements Map, Reopenable {
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
             validateBatchAddressable(heapSize);
-            heapAddr = kPos = Unsafe.malloc(heapSize, heapMemoryTag);
-            this.heapSize = heapSize;
-            heapLimit = heapAddr + heapSize;
-            this.keyCapacity = (int) (keyCapacity / loadFactor);
-            this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
-            mask = this.keyCapacity - 1;
-            free = (int) (this.keyCapacity * loadFactor);
-            offsetsAddr = Unsafe.malloc((long) this.keyCapacity << 3, listMemoryTag);
-            Vect.memset(offsetsAddr, (long) this.keyCapacity << 3, 0);
+            final int computedKeyCapacity = Math.max(Numbers.ceilPow2((int) (keyCapacity / loadFactor)), MIN_KEY_CAPACITY);
+            this.initialKeyCapacity = computedKeyCapacity;
             nResizes = 0;
             this.maxResizes = maxResizes;
+            if (openOnInit) {
+                heapAddr = kPos = Unsafe.malloc(heapSize, heapMemoryTag, memoryTracker);
+                this.heapSize = heapSize;
+                heapLimit = heapAddr + heapSize;
+                this.keyCapacity = computedKeyCapacity;
+                mask = this.keyCapacity - 1;
+                free = (int) (this.keyCapacity * loadFactor);
+                offsetsAddr = Unsafe.malloc((long) this.keyCapacity << 3, listMemoryTag, memoryTracker);
+                Vect.memset(offsetsAddr, (long) this.keyCapacity << 3, 0);
+            }
+            // else: heapAddr / offsetsAddr stay 0, keyCapacity stays 0; first reopen()
+            // allocates initial backing under whatever MemoryTracker is bound at that time.
 
             final int keyColumnCount = keyTypes.getColumnCount();
             long keySize = 0;
@@ -242,11 +266,13 @@ public class OrderedMap implements Map, Reopenable {
             value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
             value3 = new FlyweightPackedMapValue(valueSize, valueOffsets);
 
-            if (keySize + valueSize >= heapLimit - heapAddr) {
+            // Validate against initialHeapSize so both eager and lazy modes catch the
+            // misconfiguration up front, before any cursor opens.
+            if (keySize + valueSize >= initialHeapSize) {
                 throw CairoException.nonCritical()
                         .put("page size is too small to fit a single key, consider increasing `cairo.sql.small.map.page.size` [expected=")
                         .put(keySize + valueSize).put(", actual=")
-                        .put(heapLimit - heapAddr)
+                        .put(initialHeapSize)
                         .put(']');
             }
 
@@ -281,9 +307,9 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public void close() {
         if (heapAddr != 0) {
-            offsetsAddr = Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag);
+            offsetsAddr = Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag, memoryTracker);
             keyCapacity = 0;
-            heapAddr = Unsafe.free(heapAddr, heapSize, heapMemoryTag);
+            heapAddr = Unsafe.free(heapAddr, heapSize, heapMemoryTag, memoryTracker);
             heapLimit = kPos = 0;
             free = 0;
             size = 0;
@@ -291,7 +317,7 @@ public class OrderedMap implements Map, Reopenable {
             nResizes = 0;
         }
         if (batchEmptyValueStart != 0) {
-            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag);
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag, memoryTracker);
         }
     }
 
@@ -410,10 +436,10 @@ public class OrderedMap implements Map, Reopenable {
     public void restoreInitialCapacity() {
         if (heapSize != initialHeapSize || keyCapacity != initialKeyCapacity) {
             try {
-                heapAddr = kPos = Unsafe.realloc(heapAddr, heapLimit - heapAddr, heapSize = initialHeapSize, heapMemoryTag);
+                heapAddr = kPos = Unsafe.realloc(heapAddr, heapLimit - heapAddr, heapSize = initialHeapSize, heapMemoryTag, memoryTracker);
                 heapLimit = heapAddr + initialHeapSize;
                 int newKeyCapacity = initialKeyCapacity < MIN_KEY_CAPACITY ? MIN_KEY_CAPACITY : Numbers.ceilPow2(initialKeyCapacity);
-                offsetsAddr = Unsafe.realloc(offsetsAddr, (long) keyCapacity << 3, (long) newKeyCapacity << 3, listMemoryTag);
+                offsetsAddr = Unsafe.realloc(offsetsAddr, (long) keyCapacity << 3, (long) newKeyCapacity << 3, listMemoryTag, memoryTracker);
                 keyCapacity = newKeyCapacity;
                 mask = keyCapacity - 1;
                 clear();
@@ -427,7 +453,7 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
         if (batchEmptyValueStart != 0) {
-            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag);
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag, memoryTracker);
         }
         if (updater == null || valueSize == 0) {
             return;
@@ -435,7 +461,7 @@ public class OrderedMap implements Map, Reopenable {
         // OrderedMap.clear() only resets kPos and the offsets array - it does NOT zero
         // the heap. probeBatch therefore cannot rely on fresh slots being zeroed, so
         // we always keep the scratch buffer and memcpy it into every new entry.
-        final long buf = Unsafe.malloc(valueSize, heapMemoryTag);
+        final long buf = Unsafe.malloc(valueSize, heapMemoryTag, memoryTracker);
         try {
             Vect.memset(buf, valueSize, 0);
             // Populate the empty value into the scratch buffer using value as a flyweight.
@@ -445,7 +471,7 @@ public class OrderedMap implements Map, Reopenable {
             updater.updateEmpty(value);
             batchEmptyValueStart = buf;
         } catch (Throwable th) {
-            Unsafe.free(buf, valueSize, heapMemoryTag);
+            Unsafe.free(buf, valueSize, heapMemoryTag, memoryTracker);
             throw th;
         }
     }
@@ -457,6 +483,11 @@ public class OrderedMap implements Map, Reopenable {
             throw CairoException.nonCritical().put("map capacity overflow");
         }
         rehash(Numbers.ceilPow2((int) requiredCapacity));
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override
@@ -798,7 +829,7 @@ public class OrderedMap implements Map, Reopenable {
             return;
         }
 
-        final long newOffsetsAddr = Unsafe.malloc(newKeyCapacity << 3, listMemoryTag);
+        final long newOffsetsAddr = Unsafe.malloc(newKeyCapacity << 3, listMemoryTag, memoryTracker);
         Vect.memset(newOffsetsAddr, newKeyCapacity << 3, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
@@ -819,7 +850,7 @@ public class OrderedMap implements Map, Reopenable {
             Unsafe.putInt(newOffsetAddr, rawOffset);
             Unsafe.putInt(newOffsetAddr + 4, hashCodeLo);
         }
-        Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag);
+        Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag, memoryTracker);
         offsetsAddr = newOffsetsAddr;
         mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
@@ -843,7 +874,7 @@ public class OrderedMap implements Map, Reopenable {
             throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
         }
         validateBatchAddressable(kCapacity);
-        long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag);
+        long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag, memoryTracker);
 
         this.heapSize = kCapacity;
         long delta = kAddr - heapAddr;

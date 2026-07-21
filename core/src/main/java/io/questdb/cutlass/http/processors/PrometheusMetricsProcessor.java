@@ -172,6 +172,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, HttpReq
     public static class RequestStatePool implements QuietCloseable {
         private final int maxPoolSize;
         private final ObjList<RequestState> objects = new ObjList<>();
+        private volatile boolean closed = false;
 
         public RequestStatePool(int maxPoolSize) {
             assert maxPoolSize > 0;
@@ -179,7 +180,8 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, HttpReq
         }
 
         @Override
-        public void close() {
+        public synchronized void close() {
+            closed = true;
             for (int i = 0, n = objects.size(); i < n; i++) {
                 objects.getQuick(i).free();
             }
@@ -199,6 +201,13 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, HttpReq
         }
 
         public synchronized void push(RequestState requestState) {
+            // If the pool has been closed (e.g. during HttpServer.close(), when idle
+            // connections still in the factory pool return their state), free the
+            // buffer directly rather than adding to the cleared list.
+            if (closed) {
+                requestState.free();
+                return;
+            }
             if (objects.size() < maxPoolSize) {
                 objects.add(requestState);
             } else {

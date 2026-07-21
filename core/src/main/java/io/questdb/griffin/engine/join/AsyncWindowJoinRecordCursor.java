@@ -25,10 +25,12 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
@@ -48,6 +50,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
@@ -62,6 +65,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final boolean isMasterFiltered;
     private final PageFrameMemoryRecord masterRecord;
     private final Record record;
+    private final RecordCursorFactory slaveFactory;
     private final RecordMetadata slaveMetadata;
     private final ConcurrentTimeFrameState slaveTimeFrameState;
     private boolean allFramesActive;
@@ -82,16 +86,18 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     public AsyncWindowJoinRecordCursor(
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull RecordMetadata slaveMetadata,
+            @NotNull RecordCursorFactory slaveFactory,
             @Nullable IntList columnIndex,
             int columnSplit,
             boolean isMasterFiltered
     ) {
         try {
+            // True during construction so the catch can close() a partially built cursor.
             this.isOpen = true;
             this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.groupByFunctions = groupByFunctions;
-            this.slaveMetadata = slaveMetadata;
+            this.slaveFactory = slaveFactory;
+            this.slaveMetadata = slaveFactory.getMetadata();
             this.columnSplit = columnSplit;
             this.isMasterFiltered = isMasterFiltered;
             this.crossIndex = columnIndex;
@@ -106,6 +112,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             } else {
                 this.record = jr;
             }
+            // Start closed so the first of() runs atom.reopen(), opening the lazy allocators and
+            // binding the per-query tracker. Skipping it would leave the chunk index unallocated.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
@@ -221,7 +230,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    executionContext.getSharedQueryWorkerCount()
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
             try {
                 masterFrameSequence.getAtom().initTimeFrameCursors(
@@ -243,7 +253,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         try {
             if (frameIndex == -1) {
                 fetchNextFrame();
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
 
             // We have rows in the current frame we still need to dispatch
@@ -269,7 +279,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     throwTimeoutException();
                 }
 
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
         } finally {
             masterFrameSequence.getAtom().setSkipAggregation(oldSkipAggregation);
@@ -301,6 +311,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             collectCursor(true);
             masterFrameSequence.await();
         }
+        // calculateSize() must leave the cursor exhausted so that a following hasNext()
+        // returns false. The no-filter path counts frame row counts from metadata without
+        // dispatching every frame, so advance the cursor state past the last frame here.
+        frameIndex = frameLimit;
+        frameRowIndex = frameRowCount;
     }
 
     private void collectCursor(boolean forceCollect) {
@@ -337,12 +352,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                             .I$();
 
                     if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
+                        throw task.buildError();
                     }
 
                     allFramesActive &= masterFrameSequence.isActive();
@@ -377,6 +387,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
             }
             LOG.error().$("filter error [ex=").$(th).I$();
+            // Preserve typed user-facing errors (ImplicitCastException / NumericException)
+            // raised via task.buildError() so the caller can recognise them.
+            if (th instanceof ImplicitCastException || th instanceof NumericException) {
+                throw (RuntimeException) th;
+            }
             throw CairoException.nonCritical().put(th.getMessage());
         }
     }
@@ -463,16 +478,18 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     void of(
             PageFrameSequence<? extends AsyncWindowJoinAtom> masterFrameSequence,
-            TablePageFrameCursor slaveFrameCursor,
+            int slaveOrder,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.masterFrameSequence = masterFrameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.masterFrameSequence = masterFrameSequence;
-        this.slaveFrameCursor = slaveFrameCursor;
+        // Acquire after reopen() so a reopen breach leaves no slave cursor to free.
+        this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
         this.executionContext = executionContext;
         allFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;

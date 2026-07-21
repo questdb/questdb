@@ -107,7 +107,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
-                TableReader reader = engine.getReader(x, -1);
+                TableReader reader = engine.getReader(x, -1, null);
                 TableWriter writer = engine.getWriter(x, "test");
                 Assert.assertEquals(1, engine.getBusyReaderCount());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
@@ -230,8 +230,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Job job = new ServerMain.EngineMaintenanceJob(engine);
                 Assert.assertNotNull(job);
 
-                Assert.assertTrue(job.run(0));
-                Assert.assertFalse(job.run(0));
+                Assert.assertTrue(job.run());
+                Assert.assertFalse(job.run());
 
                 Assert.assertEquals(2, listener.count);
             }
@@ -573,7 +573,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertWriter(engine, x);
                 try {
-                    engine.getReader(x, 2);
+                    engine.getReader(x, 2, null);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }

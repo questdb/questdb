@@ -25,12 +25,12 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Files;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import org.jetbrains.annotations.NotNull;
 
 public class FileNameExtractorUtf8Sequence implements Utf8Sequence {
 
-    private final static ThreadLocal<FileNameExtractorUtf8Sequence> SINGLETON = new ThreadLocal<>(FileNameExtractorUtf8Sequence::new);
+    private final static CarrierLocal<FileNameExtractorUtf8Sequence> SINGLETON = new CarrierLocal<>(FileNameExtractorUtf8Sequence::new);
     private Utf8Sequence base;
     private int hi;
     private int lo;

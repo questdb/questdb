@@ -452,6 +452,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void setHardSuspended(final TableToken tableToken, boolean hardSuspended) {
+        getSeqTxnTracker(tableToken).setHardSuspended(hardSuspended);
+    }
+
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
         getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
     }

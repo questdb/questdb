@@ -29,13 +29,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Misc;
 
 public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -47,13 +48,14 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         this.base = base;
         cursor = new RecordAsAFieldRecordCursor(base.recordCursorSupportsRandomAccess());
         GenericRecordMetadata metadata = (GenericRecordMetadata) getMetadata();
-        metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));
+        metadata.add(new TableColumnMetadata(SqlUtil.toColumnName(columnAlias), ColumnType.RECORD, base.getMetadata()));
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
+            baseCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
@@ -147,6 +149,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(((RecordAsAFieldRecord) record).base, atRowId);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override

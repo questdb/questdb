@@ -51,14 +51,16 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
                         (27),
                         (27)
                     """);
-            assertSql(
-                    "weighted_stddev\n10.9848\n",
-                    "SELECT round(weighted_stddev_freq(value, freq), 4) weighted_stddev FROM freq_weights"
-            );
-            assertSql(
-                    "stddev\n10.9848\n",
-                    "SELECT round(stddev_samp(value), 4) stddev FROM samples"
-            );
+            assertQuery("SELECT round(weighted_stddev_freq(value, freq), 4) weighted_stddev FROM freq_weights")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev\n10.9848\n");
+            assertQuery("SELECT round(stddev_samp(value), 4) stddev FROM samples")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev\n10.9848\n");
         });
     }
 
@@ -66,9 +68,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     public void testWeightedStddevFreqAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT 17.2151921 value, rnd_double() weight FROM long_sequence(100))");
-            assertSql(
-                    "weighted_stddev_freq\n0.0\n", "SELECT weighted_stddev_freq(value, weight) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(value, weight) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n0.0\n");
         });
     }
 
@@ -76,10 +80,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     public void testWeightedStddevFreqDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT x::DOUBLE x FROM long_sequence(100))");
-            assertSql(
-                    "weighted_stddev_freq\n23.687784005919827\n",
-                    "SELECT weighted_stddev_freq(x, 101.0 - x) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(x, 101.0 - x) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n23.687784005919827\n");
         });
     }
 
@@ -89,10 +94,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE tango(x DOUBLE)");
             execute("INSERT INTO 'tango' VALUES (null)");
             execute("INSERT INTO 'tango' SELECT x FROM long_sequence(100)");
-            assertSql(
-                    "weighted_stddev_freq\n23.687784005919827\n",
-                    "SELECT weighted_stddev_freq(x, 101.0 - x) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(x, 101.0 - x) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n23.687784005919827\n");
         });
     }
 
@@ -100,10 +106,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     public void testWeightedStddevFreqFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT x::FLOAT value, (101.0 - x)::FLOAT weight FROM long_sequence(100))");
-            assertSql(
-                    "weighted_stddev_freq\n23.687784005919827\n",
-                    "SELECT weighted_stddev_freq(value, weight) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(value, weight) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n23.687784005919827\n");
         });
     }
 
@@ -111,9 +118,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     public void testWeightedStddevFreqHugeValuesAndWeights() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT 100_000_000 * x x FROM long_sequence(1_000_000))");
-            assertSql(
-                    "weighted_stddev_freq\n2.357023782494708E13\n", "SELECT weighted_stddev_freq(x, x) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(x, x) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n2.357023782494708E13\n");
         });
     }
 
@@ -121,10 +130,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     public void testWeightedStddevFreqIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT x::INT value, (101 - x) weight FROM long_sequence(100))");
-            assertSql(
-                    "weighted_stddev_freq\n23.687784005919827\n",
-                    "SELECT weighted_stddev_freq(value, weight) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(value, weight) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n23.687784005919827\n");
         });
     }
 
@@ -132,34 +142,39 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
     public void testWeightedStddevFreqNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango(x int)");
-            assertSql(
-                    "weighted_stddev_freq\nnull\n", "SELECT weighted_stddev_freq(x, x) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(x, x) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\nnull\n");
         });
     }
 
     @Test
     public void testWeightedStddevFreqNullValues() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "weighted_stddev_freq\nnull\n",
-                "SELECT weighted_stddev_freq(x, 1.0) FROM (SELECT null::double x FROM long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT weighted_stddev_freq(x, 1.0) FROM (SELECT null::double x FROM long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("weighted_stddev_freq\nnull\n"));
     }
 
     @Test
     public void testWeightedStddevFreqNullValuesAndWeights() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "weighted_stddev_freq\nnull\n",
-                "SELECT weighted_stddev_freq(x, x) FROM (SELECT null::double x FROM long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT weighted_stddev_freq(x, x) FROM (SELECT null::double x FROM long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("weighted_stddev_freq\nnull\n"));
     }
 
     @Test
     public void testWeightedStddevFreqNullWeights() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "weighted_stddev_freq\nnull\n",
-                "SELECT weighted_stddev_freq(1.0, x) FROM (SELECT null::double x FROM long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("SELECT weighted_stddev_freq(1.0, x) FROM (SELECT null::double x FROM long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("weighted_stddev_freq\nnull\n"));
     }
 
     @Test
@@ -167,9 +182,11 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango(x double)");
             execute("INSERT INTO 'tango' VALUES (17.2151920)");
-            assertSql(
-                    "weighted_stddev_freq\n0.0\n", "SELECT weighted_stddev_freq(x, x) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(x, x) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n0.0\n");
         });
     }
 
@@ -203,20 +220,22 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
             double stddev0 = Double.parseDouble(hour0Stddev.trim().split("\n")[1]);
             double stddev2 = Double.parseDouble(hour2Stddev.trim().split("\n")[1]);
 
-            assertSql(
-                    "ts\tround\n" +
+            assertQuery("SELECT ts, round(weighted_stddev_freq(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("ts\tround\n" +
                             "1970-01-01T00:00:00.000000Z\t" + stddev0 + "\n" +
                             "1970-01-01T01:00:00.000000Z\t" + stddev0 + "\n" +
-                            "1970-01-01T02:00:00.000000Z\t" + stddev2 + "\n",
-                    "SELECT ts, round(weighted_stddev_freq(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(PREV)"
-            );
-            assertSql(
-                    "ts\tround\n" +
+                            "1970-01-01T02:00:00.000000Z\t" + stddev2 + "\n");
+            assertQuery("SELECT ts, round(weighted_stddev_freq(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("ts\tround\n" +
                             "1970-01-01T00:00:00.000000Z\t" + stddev0 + "\n" +
                             "1970-01-01T01:00:00.000000Z\tnull\n" +
-                            "1970-01-01T02:00:00.000000Z\t" + stddev2 + "\n",
-                    "SELECT ts, round(weighted_stddev_freq(value, weight), 8) FROM test_fill SAMPLE BY 1h FILL(NULL)"
-            );
+                            "1970-01-01T02:00:00.000000Z\t" + stddev2 + "\n");
         });
     }
 
@@ -225,51 +244,56 @@ public class WeightedStdDevFreqGroupByFunctionFactoryTest extends AbstractCairoT
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango as (SELECT x::DOUBLE x FROM long_sequence(100))");
             execute("INSERT INTO 'tango' VALUES (null)");
-            assertSql(
-                    "weighted_stddev_freq\n23.687784005919827\n",
-                    "SELECT weighted_stddev_freq(x, 101.0 - x) FROM tango"
-            );
+            assertQuery("SELECT weighted_stddev_freq(x, 101.0 - x) FROM tango")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("weighted_stddev_freq\n23.687784005919827\n");
         });
     }
 
     @Test
     public void testWeightedStddevFreqZeroAndNegativeWeight() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_stddev_freq(x, 0) FROM long_sequence(10)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_stddev_freq
                             null
-                            """,
-                    "SELECT weighted_stddev_freq(x, 0) FROM long_sequence(10)"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("""
+                    SELECT weighted_stddev_freq(
+                        x,
+                        CASE WHEN x < 3 THEN 1 ELSE 0 END
+                    ) FROM long_sequence(10)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_stddev_freq
                             0.7071067811865476
-                            """,
-                    """
-                            SELECT weighted_stddev_freq(
-                                x,
-                                CASE WHEN x < 3 THEN 1 ELSE 0 END
-                            ) FROM long_sequence(10)
-                            """
-            );
+                            """);
             // Weights sum to zero
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_stddev_freq(x, x - 6) FROM long_sequence(11)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_stddev_freq
                             null
-                            """,
-                    "SELECT weighted_stddev_freq(x, x - 6) FROM long_sequence(11)"
-            );
+                            """);
             // Weights all negative
-            assertSql(
-                    """
+            assertQuery("SELECT weighted_stddev_freq(x, x - 12) FROM long_sequence(11)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             weighted_stddev_freq
                             null
-                            """,
-                    "SELECT weighted_stddev_freq(x, x - 12) FROM long_sequence(11)"
-            );
+                            """);
         });
     }
 

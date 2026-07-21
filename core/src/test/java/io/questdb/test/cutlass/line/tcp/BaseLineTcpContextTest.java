@@ -141,6 +141,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
+
+            @Override
+            public boolean isLegacy() {
+                // ILP TCP IO and writer Jobs use assign(int worker, Job) for
+                // workerId-keyed per-worker state; both pools must be legacy.
+                return true;
+            }
         });
     }
 
@@ -412,7 +419,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        public boolean run(@NotNull WorkerContext workerContext) {
             Assert.fail("This is a mock job, not designed to run in a worker pool");
             return false;
         }

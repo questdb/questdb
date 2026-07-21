@@ -28,12 +28,14 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -50,6 +52,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
@@ -59,9 +62,11 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -188,7 +193,18 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 listColumnFilter.clear();
                 for (int i = 0, size = orderBy.size(); i < size; i++) {
                     ExpressionNode tok = orderBy.getQuick(i);
-                    int index = metadata.getColumnIndexQuiet(tok.token);
+                    // Defensive, not currently exercised: this streaming fast path (empty chainTypes)
+                    // is reached today only when the window ORDER BY is a dismissable designated-timestamp
+                    // order, whose token arrives as a clean column name, so no protected alias reaches the
+                    // strip below - no query drives it and it is not covered by a test. It is kept for
+                    // parity with toOrderIndices (the else branch) and every other window factory, which
+                    // all unquote a compiler-protected alias (dotted or operator token) through SqlUtil:
+                    // were one ever to reach here, a bare metadata lookup would miss it and add(0) would
+                    // corrupt the sort key.
+                    int index = SqlUtil.getColumnIndexQuiet(metadata, tok.token);
+                    if (index < 0) {
+                        throw SqlException.invalidColumn(tok.position, tok.token);
+                    }
                     listColumnFilter.add(index + 1);
                 }
 
@@ -340,6 +356,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
         private RecordValueSink recordValueSink;
+        // For the streaming (WindowRecordCursorFactory) path the MapValue stores only the ORDER BY
+        // columns, compacted. This maps each compacted rank-map slot back to its base column index so
+        // init() can populate the rank maps from the right symbol tables. Null on the cached path.
+        private int[] streamingSymbolTableIndices;
 
         public RankOverPartitionFunction(ColumnTypes keyColumnTypes,
                                          VirtualRecord partitionByRecord,
@@ -349,7 +369,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                                          String name) {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
-            this.keyColumnTypes = keyColumnTypes;
+            // Snapshot the key types: the streaming path builds the map lazily in
+            // initRecordComparator(), by which point the generator has rebuilt its shared key-types
+            // buffer for a later window column's PARTITION BY.
+            this.keyColumnTypes = copyKeyTypes(keyColumnTypes);
             this.configuration = configuration;
             this.dense = dense;
             this.name = name;
@@ -370,18 +393,23 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
             long count;
-            if (mapValue.isNew()) {
+            boolean isNew = mapValue.isNew();
+            if (isNew) {
                 rank = 1;
                 count = 1;
             } else {
                 rank = mapValue.getLong(chainTypeIndex);
                 count = mapValue.getLong(chainTypeIndex + 1);
+                // The MapValue holds the previous row's ORDER BY columns (compacted). setLeft caches
+                // them by value, so we can overwrite the slots with the current row and then compare
+                // the cached previous row against it - the comparator never touches the live record,
+                // which lets the MapValue store only the ORDER BY columns instead of the whole row.
                 recordComparator.setLeft(mapValue);
-                if (recordComparator.compare(record) != 0) {
-                    rank = dense ? rank + 1 : count;
-                }
             }
             recordValueSink.copy(record, mapValue);
+            if (!isNew && recordComparator.compare(mapValue) != 0) {
+                rank = dense ? rank + 1 : count;
+            }
             mapValue.putLong(chainTypeIndex, rank);
             mapValue.putLong(chainTypeIndex + 1, count + 1);
         }
@@ -405,7 +433,21 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
-            SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+            if (streamingSymbolTableIndices != null) {
+                // Streaming path: rank maps are indexed by compacted ORDER BY position, but the symbol
+                // tables live at the base column indices, so build each one through the mapping.
+                if (rankMaps != null) {
+                    for (int i = 0, n = rankMaps.size(); i < n; i++) {
+                        DirectIntList rankMap = rankMaps.getQuick(i);
+                        if (rankMap != null) {
+                            SortKeyEncoder.buildRankMap(symbolTableSource.getSymbolTable(streamingSymbolTableIndices[i]), rankMap);
+                        }
+                    }
+                    recordComparator.setRankMaps(rankMaps);
+                }
+            } else {
+                SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+            }
         }
 
         @Override
@@ -420,28 +462,77 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             }
 
             if (chainTypes.getColumnCount() == 0) { // for WindowRecordCursorFactory
-                EntityColumnFilter entityColumnFilter = sqlGenerator.getEntityColumnFilter();
-                for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
-                    chainTypes.add(metadata.getColumnType(i));
+                // Only the ORDER BY columns decide whether two consecutive rows are peers, so the
+                // MapValue holds just those (compacted) plus the running rank and count. Copying the
+                // whole projected row would force pass-through columns the MapValue cannot store
+                // (UUID, STRING, VARCHAR, BINARY, LONG256, arrays, ...) through RecordValueSinkFactory
+                // and crash compilation. The value sink reads the ORDER BY columns from the live
+                // record at their base indices and writes them into MapValue slots 0..k-1; the
+                // comparator and rank maps are built over a matching compacted metadata so they read
+                // those same slots back.
+                final int orderByCount = orderIndices.size();
+
+                ListColumnFilter listColumnFilter = sqlGenerator.getIndexColumnFilter();
+                listColumnFilter.clear();
+                final GenericRecordMetadata orderByMetadata = new GenericRecordMetadata();
+                final IntList compactOrderIndices = new IntList(orderByCount);
+                streamingSymbolTableIndices = new int[orderByCount];
+                for (int i = 0; i < orderByCount; i++) {
+                    final int encoded = orderIndices.getQuick(i);
+                    final int orderByColumn = Math.abs(encoded) - 1;
+                    listColumnFilter.add(orderByColumn + 1);
+                    final TableColumnMetadata src = metadata.getColumnMetadata(orderByColumn);
+                    final int orderByColumnType = src.getColumnType();
+                    // The compacted MapValue holds the previous row's ORDER BY values, and computeNext
+                    // caches them through setLeft, overwrites the slots with the current row, then
+                    // compares. That is sound only when each value is cached by value: a var-size
+                    // column (STRING, VARCHAR, BINARY, array, INTERVAL) or a non-static symbol would be
+                    // cached as a flyweight aliasing the record and get corrupted by the overwrite,
+                    // silently producing wrong ranks. Only the designated timestamp and static indexed
+                    // SYMBOLs reach the streaming path today; assert the cached-by-value invariant so a
+                    // future routing change that admits another type fails fast here instead of
+                    // returning wrong results.
+                    assert ColumnType.isFixedSize(orderByColumnType)
+                            || (ColumnType.isSymbol(orderByColumnType) && src.isSymbolTableStatic())
+                            : "streaming rank ORDER BY column must be fixed-size or a static symbol, was "
+                            + ColumnType.nameOf(orderByColumnType);
+                    // Synthetic unique names keep duplicate ORDER BY columns from clashing; only the
+                    // type and the static-symbol flag matter to the comparator and the rank maps.
+                    orderByMetadata.add(new TableColumnMetadata(
+                            "k" + i,
+                            orderByColumnType,
+                            IndexType.NONE,
+                            0,
+                            src.isSymbolTableStatic(),
+                            null
+                    ));
+                    compactOrderIndices.add(encoded < 0 ? -(i + 1) : (i + 1));
+                    streamingSymbolTableIndices[i] = orderByColumn;
+                    chainTypes.add(orderByColumnType);
                 }
 
-                chainTypeIndex = metadata.getColumnCount();
-                entityColumnFilter.of(chainTypeIndex);
-                recordValueSink = RecordValueSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, entityColumnFilter);
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
-                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
+                chainTypeIndex = orderByCount;
+                recordValueSink = RecordValueSinkFactory.getInstance(sqlGenerator.getAsm(), metadata, listColumnFilter);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(orderByMetadata, compactOrderIndices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, compactOrderIndices);
                 chainTypes.add(ColumnType.LONG);
                 chainTypes.add(ColumnType.LONG);
+                // Lazy: reopen() allocates the backing after setMemoryTracker() binds
+                // the per-query tracker, keeping malloc/free on the per-query counter.
                 this.map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
-                        chainTypes
+                        chainTypes,
+                        false,
+                        false
                 );
             } else { // for CachedWindowRecordCursorFactory
                 map = MapFactory.createUnorderedMap(
                         configuration,
                         keyColumnTypes,
-                        RANK_COLUMN_TYPES
+                        RANK_COLUMN_TYPES,
+                        false,
+                        false
                 );
                 this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
@@ -492,6 +583,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            if (map != null) {
+                map.setMemoryTracker(tracker);
+            }
         }
 
         @Override

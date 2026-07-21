@@ -31,11 +31,17 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
@@ -256,6 +262,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    byte getDefaultSymbolIndexType();
+
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -354,9 +362,19 @@ public interface CairoConfiguration {
 
     long getMatViewMaxRefreshStepUs();
 
+    int getMatViewRefreshBusyRetryLimit();
+
+    long getMatViewRefreshBusyRetryTimeout();
+
     long getMatViewRefreshIntervalsUpdatePeriod();
 
-    long getMatViewRefreshOomRetryTimeout();
+    int getMatViewRefreshMaxClusters();
+
+    /**
+     * @return the per-event byte limit applied to one materialized view refresh
+     * attempt. {@code 0} means unlimited; only the global RSS limit applies.
+     */
+    long getMatViewRefreshMemoryLimitBytes();
 
     long getMatViewRowsPerQueryEstimate();
 
@@ -492,11 +510,103 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
+    /**
+     * Threshold at which the adaptive posting-index row-id encoder forces
+     * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
+     * {@code >= getPostingIndexAdaptiveDeltaAtOrAbove()} row IDs the writer
+     * skips EF and emits DELTA directly. Default 2000.
+     * <p>
+     * The size-only adaptive pick is essentially a coin-flip at large counts
+     * because both encodings produce similar byte sizes, but DELTA reads
+     * markedly faster (per-block unpack, cache-line-friendly) than EF for
+     * dense keys that span a long high-bits bitmap. For Zipfian-skewed
+     * workloads with hot keys at 100k+ row IDs the threshold lifts point /
+     * scan / range queries by 15-60% with no measurable regression on
+     * uniform-distribution scenarios where keys stay below the threshold.
+     * <p>
+     * Set to {@link Integer#MAX_VALUE} to restore pure size comparison.
+     */
+    default int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return 2000;
+    }
+
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Maximum bytes the posting index writer's per-key spill buffers may hold
+     * before it triggers a mid-stream {@code flushAllPending} + free cycle to
+     * bound peak RSS during long indexing runs (ALTER ADD INDEX TYPE POSTING,
+     * IndexBuilder, the per-O3-seal rebuild loop). Returning {@code 0} or a
+     * negative value disables the back-pressure entirely (legacy behaviour:
+     * accumulate until {@code seal()}). Default is 256 MiB.
+     */
+    default long getPostingIndexerSpillBytesMax() {
+        return 256L << 20;
+    }
+
+    int getPostingSealGenThreshold();
+
+    /**
+     * Hard cap on the per-writer in-memory outbox of superseded posting-seal
+     * generations awaiting publish to the global purge queue. When the cap
+     * is reached the writer evicts the oldest entry and emits a critical
+     * log message -- the file the entry pointed at is then left on disk (a
+     * bounded leak); no writer-open scan reclaims it.
+     * <p>
+     * Sized for steady-state operation where the purge queue is healthy. If
+     * the queue is saturated for an extended period (e.g. background job
+     * disabled) the outbox saturates and oldest entries are dropped, leaking
+     * their files until the partition is rewritten -- keep the purge job
+     * running to avoid this.
+     */
+    default int getPostingSealPurgeOutboxMax() {
+        return 8192;
+    }
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
+    long getQueryContinuationWakeIntervalMillis();
+
+    /**
+     * @return the per-query byte limit applied to user SQL execution. {@code 0}
+     * means unlimited; only the global RSS limit applies.
+     */
+    long getQueryMemoryLimitBytes();
+
     int getQueryRegistryPoolSize();
+
+    /**
+     * Operator override for the zstd compression level used on QWP egress
+     * {@code RESULT_BATCH} frames. Default {@code 0} means "honor the
+     * client-negotiated level" -- the server uses whatever the client
+     * advertised via {@code X-QWP-Accept-Encoding}, clamped to the wire
+     * range {@code [COMPRESSION_ZSTD_MIN_LEVEL, COMPRESSION_ZSTD_MAX_LEVEL]}.
+     * <p>
+     * A value in {@code [1, 9]} forces every ZSTD-negotiated connection on
+     * this server to use that level regardless of what the client asked
+     * for; out-of-range values are clamped at the override site. A misbehaving
+     * client cannot raise the server's CPU spend above the operator's chosen
+     * ceiling. The {@code X-QWP-Content-Encoding} response header echoes
+     * the effective (post-override) level so the client can observe what was
+     * actually used.
+     * <p>
+     * Read from the configuration object on every handshake (not cached at
+     * processor construction), so a live config reload takes effect on the
+     * next new connection. Connections already established keep their
+     * already-built ZSTD contexts -- runtime mutation of an in-flight cctx
+     * level is not safe.
+     */
+    default int getQwpEgressForcedZstdLevel() {
+        return 0;
+    }
 
     /**
      * Source of the role / cluster / node identity emitted in the QWP egress
@@ -505,8 +615,8 @@ public interface CairoConfiguration {
      * live replication role so clients can route reads to primary vs replica.
      */
     @NotNull
-    default io.questdb.cutlass.qwp.codec.QwpServerInfoProvider getQwpServerInfoProvider() {
-        return io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider.INSTANCE;
+    default QwpServerInfoProvider getQwpServerInfoProvider() {
+        return DefaultQwpServerInfoProvider.INSTANCE;
     }
 
     @NotNull
@@ -542,6 +652,13 @@ public interface CairoConfiguration {
     }
 
     boolean getSampleByDefaultAlignmentCalendar();
+
+    /**
+     * Selects the sort backend the SAMPLE BY FILL fast path stacks above
+     * the GROUP BY output. Returns one of {@link SampleBySortStrategy}'s int
+     * constants. The default is {@link SampleBySortStrategy#LIGHT_ENCODED}.
+     */
+    int getSampleByFillSortStrategy();
 
     int getSampleByIndexSearchPageSize();
 
@@ -677,7 +794,7 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
+    long getSqlParquetCacheMemorySize();
 
     int getSqlPivotMaxProducedColumns();
 
@@ -693,25 +810,42 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaterializationThreshold();
 
-    int getSqlSortKeyMaxPages();
+    long getSqlSortKeyMaxBytes();
 
     long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValueMaxPages();
+    long getSqlSortLightValueMaxBytes();
 
     long getSqlSortLightValuePageSize();
 
-    int getSqlSortValueMaxPages();
+    long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
 
+    long getSqlWindowCacheMaxBytes();
+
+    /**
+     * Resolves which config key the CachedWindow record-store cap was sourced from. Returned as a
+     * property path string (e.g. "cairo.sql.window.cache.max.bytes") so error messages can name the
+     * actual binding constraint when growth fails. The new bytes key wins when explicitly set; the
+     * legacy pages key wins when only it is explicit; the new bytes default wins otherwise.
+     */
+    String getSqlWindowCacheMaxPagesConfigKey();
+
+    /**
+     * Effective cap (in pages of {@link #getSqlWindowStorePageSize()}) on the CachedWindow record
+     * store, after reconciling cairo.sql.window.cache.max.bytes and the legacy
+     * cairo.sql.window.store.max.pages. Paired with {@link #getSqlWindowCacheMaxPagesConfigKey()}.
+     */
+    int getSqlWindowCacheMaxPagesResolved();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
 
-    int getSqlWindowRowIdMaxPages();
+    long getSqlWindowRowIdMaxBytes();
 
     int getSqlWindowRowIdPageSize();
 
@@ -719,7 +853,7 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
-    int getSqlWindowTreeKeyMaxPages();
+    long getSqlWindowTreeKeyMaxBytes();
 
     int getSqlWindowTreeKeyPageSize();
 
@@ -756,6 +890,14 @@ public interface CairoConfiguration {
     @NotNull
     TextConfiguration getTextConfiguration();
 
+    /**
+     * Number of {@link TimerShards} shards (one daemon thread each) used
+     * to fire timer-based wakeups for parked SQL continuations and other
+     * {@link DelayedFireable} entries. Higher values reduce
+     * {@code DelayQueue} lock contention but cost one always-on thread per shard.
+     */
+    int getTimerShardCount();
+
     int getTxnScoreboardEntryCount();
 
     int getUnorderedPageFrameReduceQueueCapacity();
@@ -771,7 +913,39 @@ public interface CairoConfiguration {
 
     int getWalApplyLookAheadTransactionCount();
 
+    /**
+     * @return the per-event byte limit applied to one WAL apply batch.
+     * {@code 0} means unlimited; only the global RSS limit applies.
+     */
+    long getWalApplyMemoryLimitBytes();
+
+    /**
+     * Set of table directory names (e.g. {@code my_table~3}) whose WAL transactions must not be
+     * applied by the ApplyWal2Table job ("hard suspended" tables). Directory names are matched, not
+     * logical names, so the suspension binds to the physical table across a rename and a fresh table
+     * reusing the name is unaffected. Configured via {@code cairo.wal.apply.suspended.tables}
+     * (comma-separated) and reloadable. The runtime set extended through
+     * {@code ALTER TABLE ... SUSPEND WAL} is held separately on the engine.
+     *
+     * @return the configured set, or null when none are configured (treated as empty).
+     */
+    @Nullable
+    default ObjHashSet<String> getWalApplySuspendedTables() {
+        return null;
+    }
+
     long getWalApplyTableTimeQuota();
+
+    /**
+     * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and
+     * {@code ALTER TABLE ... SUSPEND WAL}) also deny WAL writes, rejecting commits like a dropped
+     * table but with a distinct exception. When false, suspension only excludes the table from WAL
+     * apply while writes keep buffering for later. Configured via
+     * {@code cairo.wal.apply.suspended.write.denied} and reloadable.
+     */
+    default boolean isWalApplySuspendedWriteDenied() {
+        return false;
+    }
 
     long getWalDataAppendPageSize();
 
@@ -840,6 +1014,18 @@ public interface CairoConfiguration {
     boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**
+     * Rollback flag for the by-name column emit to UNION siblings in the SQL optimizer's top-down
+     * column propagation. The optimizer matches UNION columns by position; the legacy by-name emit
+     * could prune one branch inconsistently and crash code generation when branch aliases differed.
+     * When {@code true}, restores the legacy by-name behavior. Defaults to {@code false}.
+     *
+     * @return whether to restore the legacy by-name UNION column propagation
+     */
+    default boolean isCairoSqlLegacyUnionColumnPropagation() {
+        return false;
+    }
+
+    /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
      * @return enable/disable flag for recovering from the checkpoint
@@ -861,9 +1047,29 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewCoveringIndexEnabled();
+
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
+
+    /**
+     * Returns true if the materialized view with the given name is in the configured refresh block
+     * list ({@code cairo.mat.view.refresh.block.list}). Blocked views are skipped by every refresh
+     * path; they may still be invalidated by a base-table/parent cascade or an explicit INVALIDATE.
+     * Invalidation is safe for a blocked view: it runs no view SQL (so it can't trigger the crash
+     * the block list guards against) and it releases the base table's WAL retention. This is an
+     * operator escape hatch for a view whose refresh keeps crashing the database: blocking it lets
+     * the database start and stay up. Because a blocked view that is never invalidated never advances
+     * its last refreshed base txn, it can pin the base table's WAL retention until it is dropped or
+     * removed from the block list. This applies equally to all
+     * refresh types: the block skip in the refresh job short-circuits before the refresh-intervals
+     * caching bump, so blocked timer and manual views stop caching intervals just like immediate
+     * views, and the base WAL is pinned just as hard.
+     */
+    default boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return false;
+    }
 
     boolean isMatViewRefreshMissingWalFilesFatal();
 
@@ -883,9 +1089,17 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
+    boolean isPostingIndexAutoIncludeTimestamp();
+
     boolean isQueryTracingEnabled();
 
     boolean isReadOnlyInstance();
+
+    // Test-only seam, with no backing production property: always true in a running server, so
+    // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a
+    // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach
+    // DistinctTimeSeriesRecordCursorFactory.
+    boolean isSqlDistinctGroupByRewriteEnabled();
 
     boolean isSqlJitDebugEnabled();
 
@@ -904,6 +1118,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelWindowJoinEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
+
+    boolean isSqlWindowCachedLightEnabled();
 
     boolean isTableTypeConversionEnabled();
 

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -64,11 +63,18 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             RecordCursorFactory slaveFactory
     ) {
         try {
+            // True during construction so the catch below can close() a partially built
+            // cursor and free what was already allocated.
             this.isOpen = true;
             this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.groupByFunctions = groupByFunctions;
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(groupByFunctions);
+            // Construction succeeded: start closed so the first of() runs atom.reopen(),
+            // which opens the lazy (openOnInit=false) allocators and ASOF maps and binds the
+            // per-query tracker before any allocation. Skipping reopen() on the first cursor
+            // would leave the allocator's chunk index unallocated and the tracker unbound.
+            this.isOpen = false;
         } catch (Throwable th) {
             close();
             throw th;
@@ -157,7 +163,8 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    executionContext.getSharedQueryWorkerCount()
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
             try {
                 frameSequence.getAtom().initTimeFrameCursors(
@@ -174,8 +181,10 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     }
 
     private void buildValue() {
+        // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         // Merge all per-worker values into the owner value
@@ -201,24 +210,28 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     void of(UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
+        // Assign before reopen() so close() can drain a partially reopened atom on a breach.
+        this.frameSequence = frameSequence;
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
         }
-        this.frameSequence = frameSequence;
         this.executionContext = executionContext;
 
         // Get slave page frame cursor for time frame initialization
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
-        // Initialize record functions with a symbol table source that routes lookups
-        // to the correct source (master or slave) based on column mappings
+        // Initialize the symbol table source that routes lookups to the correct source
+        // (master or slave) based on column mappings
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
 
-        // Initialize record with the owner's map value
+        // Initialize record with the owner's map value. The atom initializes the group by
+        // functions (this cursor's groupByFunctions) in initTimeFrameCursors(), before any frame
+        // is dispatched, and donates the owner state to the per-worker clones. Re-initializing
+        // them here would re-run stateful initialization, such as a cursor comparison re-executing
+        // its scalar sub-query, and could diverge from the state the workers observe.
         recordA.of(atom.getOwnerMapValue());
-        Function.init(groupByFunctions, symbolTableSource, executionContext, null);
 
         isValueBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

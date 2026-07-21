@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -602,6 +603,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -704,6 +706,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -729,6 +732,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -753,6 +757,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -804,6 +809,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -906,6 +912,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -931,6 +938,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -955,6 +963,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -975,6 +984,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -995,6 +1005,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 0
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -1017,6 +1028,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0
         );
+        f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -1038,6 +1050,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0
         );
+        f.reopen();
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -1081,6 +1094,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         }
 
         try (BaseWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
+            // Partition functions construct with a closed (lazy) map; reopen as the
+            // owning window cursor would before driving the function.
+            if (f instanceof Reopenable) {
+                ((Reopenable) f).reopen();
+            }
             for (int s = 0; s < records.length; s++) {
                 try {
                     f.computeNext(records[s]);
@@ -1160,6 +1178,11 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         }
 
         try (BaseWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
+            // Partition functions construct with a closed (lazy) map; reopen as the
+            // owning window cursor would before driving the function.
+            if (f instanceof Reopenable) {
+                ((Reopenable) f).reopen();
+            }
             for (int s = 0; s < records.length; s++) {
                 try {
                     f.computeNext(records[s]);

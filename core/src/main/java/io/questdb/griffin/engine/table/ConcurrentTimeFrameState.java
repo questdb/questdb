@@ -36,6 +36,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
@@ -77,6 +78,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
     private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     private int frameCount;
     private TablePageFrameCursor frameCursor;
+    private MemoryTracker memoryTracker;
     private int partitionCount;
 
     public ConcurrentTimeFrameState() {
@@ -126,6 +128,15 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         return addressCache;
     }
 
+    /**
+     * Per-query tracker captured at {@link #of} for the slave time-frame
+     * cursors to charge their decoded parquet buffers; {@code null} leaves them
+     * on global-only accounting.
+     */
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public int getFrameCount() {
         return frameCount;
     }
@@ -170,9 +181,11 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
             boolean isExternal,
             int pageFrameMinRows,
             int pageFrameMaxRows,
-            int workerCount
+            int workerCount,
+            MemoryTracker memoryTracker
     ) {
         this.frameCursor = frameCursor;
+        this.memoryTracker = memoryTracker;
 
         populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
         partitionCount = partitionTimestamps.size();

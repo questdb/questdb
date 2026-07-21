@@ -26,11 +26,11 @@ package io.questdb.std.str;
 
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.SecurePath;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
@@ -52,11 +52,21 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private static final boolean PARANOIA_MODE = false;
-    private static final AtomicInteger threadLocalInstanceCounter = new AtomicInteger();
-    public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::newTLPath);
-    public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::newTLPath);
+    // Tracks every live carrier-local Path with its birth thread + stack, dumped only when a
+    // NATIVE_PATH_THREAD_LOCAL leak check fails (see dumpLiveThreadLocalAttributions). Unlike
+    // THREAD_LOCAL_PATH_PARANOIA_MODE this produces no output during a healthy run, so test JVMs
+    // can keep it on; the registry add/remove per carrier-local birth/close is the only cost.
+    private static final boolean TL_ATTRIBUTION = Boolean.getBoolean("questdb.path.tl.attribution");
+    private static final AtomicInteger carrierLocalInstanceCounter = new AtomicInteger();
+    // Maps each live carrier-local Path to its birth ordinal (the instance counter value at
+    // creation) so a dump can flag births that happened after a caller-supplied baseline.
+    private static final java.util.concurrent.ConcurrentHashMap<Path, Integer> liveTlPaths = TL_ATTRIBUTION
+            ? new java.util.concurrent.ConcurrentHashMap<>()
+            : null;
+    public static final CarrierLocal<Path> PATH = new CarrierLocal<>(Path::newTLPath);
+    public static final CarrierLocal<Path> PATH2 = new CarrierLocal<>(Path::newTLPath);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final Exception creationStackTrace;
     private final int initialCapacity;
@@ -65,6 +75,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private boolean ascii;
     private int capacity;
     private long headPtr;
+    private int[] ryuE10;
     private long tailPtr;
 
     public Path() {
@@ -92,15 +103,54 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         creationStackTrace = stackTrace;
     }
 
-
     public static void clearThreadLocals() {
         // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
         // when running tests. Despite all the effort to find the exact cause, it was not possible
         // and this is the best solution so far. This approach will remove the thread local
         // on close and the next time a new object is created.
-        PATH.close();
-        PATH2.close();
+        PATH.removeAndFree();
+        PATH2.removeAndFree();
         SecurePath.clearThreadLocals();
+    }
+
+    /**
+     * Renders the birth thread and creation stack of every still-open thread-local Path.
+     * Test infrastructure appends this to a NATIVE_PATH_THREAD_LOCAL leak-check failure:
+     * entries whose thread is absent from the live-thread list are the leakers (the thread
+     * died without running a Path cleaner), and entries born after {@code baselineBirthCount}
+     * (see {@link #getThreadLocalBirthCount()}, snapshotted when the leak check baselined) are
+     * flagged IN-WINDOW -- one of those accounts for the measured delta. Empty unless
+     * -Dquestdb.path.tl.attribution=true.
+     */
+    public static String dumpLiveThreadLocalAttributions(long baselineBirthCount) {
+        if (!TL_ATTRIBUTION) {
+            return "thread-local Path attribution off; enable with -Dquestdb.path.tl.attribution=true";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<Path, Integer> e : liveTlPaths.entrySet()) {
+            Exception birth = e.getKey().creationStackTrace;
+            if (birth == null) {
+                continue;
+            }
+            sb.append('\n').append(birth.getMessage());
+            if (e.getValue() > baselineBirthCount) {
+                sb.append(" [IN-WINDOW]");
+            }
+            StackTraceElement[] stack = birth.getStackTrace();
+            for (int i = 0, n = Math.min(stack.length, 14); i < n; i++) {
+                sb.append("\n    at ").append(stack[i]);
+            }
+        }
+        return sb.length() == 0 ? " none" : sb.toString();
+    }
+
+    /**
+     * Monotonic count of thread-local Path births; only advances when attribution or paranoia
+     * mode is on. Leak checks snapshot it at baseline and pass it to
+     * {@link #dumpLiveThreadLocalAttributions(long)} so in-window births stand out.
+     */
+    public static long getThreadLocalBirthCount() {
+        return carrierLocalInstanceCounter.get();
     }
 
     public static Path getThreadLocal(CharSequence root) {
@@ -157,6 +207,9 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
                     System.err.print("Closing ");
                     creationStackTrace.printStackTrace(System.err);
                 }
+            }
+            if (TL_ATTRIBUTION && creationStackTrace != null) {
+                liveTlPaths.remove(this);
             }
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
@@ -408,6 +461,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         }
     }
 
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
+    }
+
     public Path seekZ() {
         int count = 0;
         while (count < capacity) {
@@ -466,13 +527,23 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     }
 
     private static Path newTLPath() {
-        if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
-            Exception ex = new Exception("ThreadLocal Path " + threadLocalInstanceCounter.incrementAndGet());
-            synchronized (System.err) {
-                System.err.print("Creating ");
-                ex.printStackTrace(System.err);
+        if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE || TL_ATTRIBUTION) {
+            // The thread name is the payload: a leak report only shows a byte-count delta, and
+            // the allocating thread may be dead by then -- this trace is the sole attribution.
+            final int birthOrdinal = carrierLocalInstanceCounter.incrementAndGet();
+            Exception ex = new Exception("CarrierLocal Path " + birthOrdinal
+                    + " on thread '" + Thread.currentThread().getName() + '\'');
+            if (ParanoiaState.THREAD_LOCAL_PATH_PARANOIA_MODE) {
+                synchronized (System.err) {
+                    System.err.print("Creating ");
+                    ex.printStackTrace(System.err);
+                }
             }
-            return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
+            Path path = new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL, ex);
+            if (TL_ATTRIBUTION) {
+                liveTlPaths.put(path, birthOrdinal);
+            }
+            return path;
         } else {
             return new Path(255, MemoryTag.NATIVE_PATH_THREAD_LOCAL);
         }

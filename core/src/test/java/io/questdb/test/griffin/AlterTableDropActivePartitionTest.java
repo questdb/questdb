@@ -100,9 +100,13 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                         insert("insert into " + tableName + " values(5, '2023-10-15T00:00:02.000000Z')");
                         dropPartition(tableName, "2023-10-12");
                         dropPartition(tableName, LastPartitionTs);
-                        assertSql(replaceTimestampSuffix(TableHeader +
-                                "1\t2023-10-10T00:00:00.000000Z\n" +
-                                "2\t2023-10-11T00:00:00.000000Z\n"), tableName);
+                        assertQuery(tableName)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("timestamp")
+                                .returns(replaceTimestampSuffix(TableHeader +
+                                        "1\t2023-10-10T00:00:00.000000Z\n" +
+                                        "2\t2023-10-11T00:00:00.000000Z\n"));
                         insert("insert into " + tableName + " values(5, '2023-10-12T00:00:00.000000Z')");
                         insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
 
@@ -219,9 +223,13 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                         assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                         insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
                         insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')"); // spurious row from the future
-                        assertSql(replaceTimestampSuffix(TableHeader +
-                                "5\t2023-10-15T00:00:00.000000Z\n" +
-                                "1\t2023-10-16T00:00:00.000000Z\n"), tableName); // new active partition
+                        assertQuery(tableName)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("timestamp")
+                                .returns(replaceTimestampSuffix(TableHeader +
+                                        "5\t2023-10-15T00:00:00.000000Z\n" +
+                                        "1\t2023-10-16T00:00:00.000000Z\n")); // new active partition
                         dropPartition(tableName, "2023-10-16");
                         dropPartition(tableName, LastPartitionTs);
                         assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
@@ -257,9 +265,13 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                         dropPartition(tableName, LastPartitionTs); // drop active partition
 
                         dropPartition(tableName, "2023-10-12"); // drop new active partition
-                        assertSql(replaceTimestampSuffix(TableHeader +
-                                "1\t2023-10-10T00:00:00.000000Z\n" +
-                                "2\t2023-10-11T00:00:00.000000Z\n"), tableName);
+                        assertQuery(tableName)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("timestamp")
+                                .returns(replaceTimestampSuffix(TableHeader +
+                                        "1\t2023-10-10T00:00:00.000000Z\n" +
+                                        "2\t2023-10-11T00:00:00.000000Z\n"));
 
                         insert("insert into " + tableName + " values(5, '2023-10-12T00:00:17.000000Z')");
                         insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')");
@@ -515,7 +527,11 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 TableReader reader0 = getReader(tableName);
                                 TableReader reader1 = getReader(tableName)
                         ) {
-                            assertSql(replaceTimestampSuffix(expectedTable), tableName);
+                            assertQuery(tableName)
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("timestamp")
+                                    .returns(replaceTimestampSuffix(expectedTable));
                             Assert.assertEquals(6, reader0.size());
                             Assert.assertEquals(6, reader1.size());
 
@@ -524,11 +540,19 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             reader1.reload();
                             Assert.assertEquals(5, reader0.size());
                             Assert.assertEquals(5, reader1.size());
-                            assertSql(replaceTimestampSuffix(expectedTableAfterFirstDrop), tableName);
+                            assertQuery(tableName)
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("timestamp")
+                                    .returns(replaceTimestampSuffix(expectedTableAfterFirstDrop));
 
                             insert("insert into " + tableName + " values(8, '2023-10-12T00:00:05.000001Z')");
                             insert("insert into " + tableName + " values(7, '2023-10-15T00:00:01.000000Z')");
-                            assertSql(replaceTimestampSuffix(expectedTableInTransaction), tableName);
+                            assertQuery(tableName)
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("timestamp")
+                                    .returns(replaceTimestampSuffix(expectedTableInTransaction));
                             reader0.reload();
                             reader1.reload();
                             Assert.assertEquals(7, reader0.size());
@@ -593,13 +617,21 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
 
-                        assertSql(replaceTimestampSuffix(expectedTable), tableName);
+                        assertQuery(tableName)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("timestamp")
+                                .returns(replaceTimestampSuffix(expectedTable));
 
                         writer.removePartition(lastTs);
 
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
-                        assertSql(replaceTimestampSuffix(expectedTableAfterDrop), tableName);
+                        assertQuery(tableName)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("timestamp")
+                                .returns(replaceTimestampSuffix(expectedTableAfterDrop));
                         reader0.reload();
                         reader1.reload();
                         Assert.assertEquals(6, reader0.size());
@@ -722,13 +754,21 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             Assert.assertEquals(6, reader0.size());
                             Assert.assertEquals(6, reader1.size());
 
-                            assertSql(replaceTimestampSuffix(expectedTable), tableName);
+                            assertQuery(tableName)
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("timestamp")
+                                    .returns(replaceTimestampSuffix(expectedTable));
 
                             writer.removePartition(lastTs);
 
                             Assert.assertEquals(6, reader0.size());
                             Assert.assertEquals(6, reader1.size());
-                            assertSql(replaceTimestampSuffix(expectedTableAfterDrop), tableName);
+                            assertQuery(tableName)
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("timestamp")
+                                    .returns(replaceTimestampSuffix(expectedTableAfterDrop));
                             reader0.reload();
                             reader1.reload();
                             Assert.assertEquals(6, reader0.size());
@@ -847,7 +887,11 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
 
                                 Assert.assertEquals(2, reader0.size());
                                 Assert.assertEquals(3, reader1.size());
-                                assertSql(replaceTimestampSuffix(expectedTableInTransaction), tableName);
+                                assertQuery(tableName)
+                                        .noLeakCheck()
+                                        .expectSize()
+                                        .timestamp("timestamp")
+                                        .returns(replaceTimestampSuffix(expectedTableInTransaction));
 
                                 dropPartition(tableName, LastPartitionTs);
 
@@ -980,9 +1024,13 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
         );
     }
 
-    private void assertTableX(String tableName, String expectedRows, String expectedMinMaxCount) throws SqlException {
+    private void assertTableX(String tableName, String expectedRows, String expectedMinMaxCount) throws Exception {
         engine.releaseAllReaders();
-        assertSql(replaceTimestampSuffix(expectedRows), tableName);
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("timestamp")
+                .returns(replaceTimestampSuffix(expectedRows));
         engine.releaseAllWriters();
         try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs)) {
             TestUtils.txnPartitionConditionally(path, txn);
@@ -991,10 +1039,14 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
         } finally {
             Misc.free(workerPool);
         }
-        assertSql(replaceTimestampSuffix(expectedMinMaxCount), "select min(timestamp), max(timestamp), count() from " + tableName);
+        assertQuery("select min(timestamp), max(timestamp), count() from " + tableName)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns(replaceTimestampSuffix(expectedMinMaxCount));
     }
 
-    private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
+    private void createTableX(String tableName, String expected, String... insertStmt) throws Exception {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                 .col("id", ColumnType.INT)
                 .timestamp(timestampType.getTimestampType());
@@ -1004,7 +1056,11 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
         for (int i = 0, n = insertStmt.length; i < n; i++) {
             insert(insertStmt[i]);
         }
-        assertSql(replaceTimestampSuffix(expected), tableName);
+        assertQuery(tableName)
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("timestamp")
+                .returns(replaceTimestampSuffix(expected));
 
         workerPool = new TestWorkerPool(1);
         O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine, 1);
@@ -1029,7 +1085,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
 
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n")
+                ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n")
                 : expected;
     }
 }

@@ -105,6 +105,20 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     public void halt() {
+        halt(System.nanoTime() + WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+    }
+
+    /**
+     * Halts every managed pool, bounding the combined wait by an absolute deadline.
+     * <p>
+     * The deadline is shared across all pools: each pool gets the time remaining until the deadline,
+     * so a single wedged pool cannot reset the budget for the next one. This keeps server shutdown
+     * bounded even when a worker thread is stuck. See {@link WorkerPool#halt(long)} for the
+     * log-and-proceed behaviour and its tradeoff.
+     *
+     * @param deadlineNanos absolute deadline from {@link System#nanoTime()} by which all pools should be halted
+     */
+    public void halt(long deadlineNanos) {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
         // flag, but we ensure it is true at the end.
@@ -112,13 +126,13 @@ public abstract class WorkerPoolManager implements Target {
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             CharSequence name = poolNames.getQuick(i);
             WorkerPool pool = dedicatedPools.get(name);
-            closePool(pool, "closing dedicated pool [name=");
+            closePool(pool, "closing dedicated pool [name=", deadlineNanos);
         }
         dedicatedPools.clear();
 
-        closePool(sharedPoolNetwork, "closing shared Network pool [name=");
-        closePool(sharedPoolQuery, "closing shared Query pool [name=");
-        closePool(sharedPoolWrite, "closing shared Write pool [name=");
+        closePool(sharedPoolNetwork, "closing shared Network pool [name=", deadlineNanos);
+        closePool(sharedPoolQuery, "closing shared Query pool [name=", deadlineNanos);
+        closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos);
 
         closed.set(true);
     }
@@ -162,12 +176,14 @@ public abstract class WorkerPoolManager implements Target {
         }
     }
 
-    private void closePool(WorkerPool p, String message) {
+    private void closePool(WorkerPool p, String message, long deadlineNanos) {
         if (p != null) {
             LOG.debug().$(message).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
-            p.halt();
+            // Hand the pool only the time remaining until the shared deadline so the bound holds
+            // across all pools rather than restarting per pool.
+            p.halt(Math.max(1, deadlineNanos - System.nanoTime()));
         }
     }
 

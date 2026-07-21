@@ -326,11 +326,15 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             if (useDirectAccess) {
                 this.chain = null;
             } else {
+                final long valuePageSize = configuration.getSqlSortValuePageSize();
+                // master migrated sort-value budget from page-count to bytes; derive maxPages the
+                // same way EncodedSortRecordCursor does (getSqlSortValueMaxPages was removed).
+                final int valueMaxPages = (int) Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(valuePageSize));
                 this.chain = new RecordChain(
                         metadata,
                         recordSink,
-                        configuration.getSqlSortValuePageSize(),
-                        configuration.getSqlSortValueMaxPages()
+                        valuePageSize,
+                        valueMaxPages
                 );
             }
             this.buffer = 0;

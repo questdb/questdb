@@ -203,6 +203,7 @@ public class FrameImpl implements Frame {
         }
         boolean isIndexed = metadata.isColumnIndexed(columnIndex);
         int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(columnIndex) : 0;
+        byte indexType = metadata.getColumnIndexType(columnIndex);
         int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
         long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, rowCount);
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -216,6 +217,7 @@ public class FrameImpl implements Frame {
                 columnTxn,
                 columnType,
                 indexBlockCapacity,
+                indexType,
                 columnTop,
                 columnIndex,
                 createNew,

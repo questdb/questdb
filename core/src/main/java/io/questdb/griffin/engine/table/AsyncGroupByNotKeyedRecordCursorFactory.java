@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -48,6 +49,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.groupby.MaxTimestampGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -70,11 +73,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private static final UnorderedPageFrameReducer AGGREGATE_VECT = AsyncGroupByNotKeyedRecordCursorFactory::aggregateVect;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
 
-    private final RecordCursorFactory base;
-    private final AsyncGroupByNotKeyedRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private RecordCursorFactory base;
+    private AsyncGroupByNotKeyedRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final boolean vectorized;
     private final int workerCount;
     private ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors;
@@ -115,6 +118,27 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
 
+            // Mark min/max over the designated timestamp column as designated so they
+            // skip the per-frame column scan. Per-frame data is sorted ASC by the
+            // designated timestamp, so the first row is the frame minimum and the last
+            // row is the frame maximum.
+            final int designatedTsIndex = baseMetadata.getTimestampIndex();
+            if (designatedTsIndex >= 0) {
+                for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                    if (batchColumnIndexes[i] != designatedTsIndex) {
+                        continue;
+                    }
+                    if (!markDesignatedTimestamp(groupByFunctions.getQuick(i))) {
+                        continue;
+                    }
+                    if (perWorkerGroupByFunctions != null) {
+                        for (int w = 0, wn = perWorkerGroupByFunctions.size(); w < wn; w++) {
+                            markDesignatedTimestamp(perWorkerGroupByFunctions.getQuick(w).getQuick(i));
+                        }
+                    }
+                }
+            }
+
             AsyncGroupByNotKeyedAtom atom = new AsyncGroupByNotKeyedAtom(
                     asm,
                     configuration,
@@ -152,7 +176,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
-            close();
+            Misc.free(this, e);
             throw e;
         }
     }
@@ -166,8 +190,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence, executionContext);
-        return cursor;
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -177,16 +208,32 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        if (sharedRecordFunctions == null) {
+            throw new UnsupportedOperationException();
+        }
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
         int idx = sharedId - 1;
         AsyncGroupByNotKeyedSharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            assert sharedRecordFunctions != null;
             assert idx < sharedRecordFunctions.size();
             shared = new AsyncGroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), frameSequence.getAtom().getOwnerMapValue());
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // Donate the owner state to the consumer's aligned clones before they initialize, so
+        // stateful functions inside aggregate arguments - such as cursor comparisons caching a
+        // scalar sub-query result - never re-run their expensive and potentially
+        // nondeterministic initialization in a shared consumer. The donation is open-order
+        // independent: it marks the clones state-inherited so their init skips
+        // self-execution, and the donated value itself is never read - shared consumers only
+        // materialize the owner's map value through VirtualRecord - while the owner initializes
+        // exactly once in the atom when the primary cursor opens.
+        final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
+        assert groupByFunctions.size() == sharedFunctions.size();
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
         }
         shared.of(executionContext, frameSequence);
         return shared;
@@ -199,7 +246,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public boolean supportsSharedCursors() {
-        return true;
+        return sharedRecordFunctions != null;
     }
 
     @Override
@@ -307,7 +354,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final int functionCount = functions.size();
         try {
-            if (frameMemory.hasColumnTops()) {
+            if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -435,7 +482,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -469,6 +516,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
     }
 
+    private static boolean markDesignatedTimestamp(GroupByFunction f) {
+        if (f instanceof MinTimestampGroupByFunction mf) {
+            mf.setDesignated(true);
+            return true;
+        }
+        if (f instanceof MaxTimestampGroupByFunction mf) {
+            mf.setDesignated(true);
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Releases resources held by this factory.
      * <p>
@@ -478,12 +537,29 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
      */
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.freeObjList(groupByFunctions);
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncGroupByNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

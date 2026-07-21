@@ -171,6 +171,30 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
+    /**
+     * Append ONLY the flat element data of {@code value} (no dataSize/shape header) at
+     * {@code addr}, exactly as {@link #appendCompactPlainValue} / {@link #appendPlainValue}
+     * write their data portion: a vanilla DOUBLE array is bulk-copied, a non-vanilla array
+     * (e.g. a slice / transpose) is copied element-by-element honouring its strides. The caller
+     * has already written the shape + any alignment padding and sized the destination for
+     * {@code getCardinality() * elemSize} bytes. No-op for a null / empty array.
+     */
+    public static void appendArrayData(long addr, ArrayView value) {
+        if (value == null || value.isNull() || value.getCardinality() == 0) {
+            return;
+        }
+        if (value.isVanilla()) {
+            short elemType = value.getElemType();
+            if (elemType == ColumnType.DOUBLE) {
+                value.flatView().appendPlainDoubleValue(addr, value.getFlatViewOffset(), value.getFlatViewLength());
+            } else {
+                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            appendToMemRecursive(value, 0, 0, addr);
+        }
+    }
+
     public static void appendDoubleFromArrayToSink(
             @NotNull ArrayView array,
             int index,
@@ -398,7 +422,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static long getPlainValueSize(long arrayAddress) {
-        return Long.BYTES + Unsafe.getLong(arrayAddress);
+        final long totalSize = Unsafe.getLong(arrayAddress);
+        // Null arrays only write the 8-byte NULL_LEN marker, no payload follows.
+        return totalSize <= 0 ? Long.BYTES : Long.BYTES + totalSize;
     }
 
     public static long getPlainValueSize(@NotNull ArrayView value) {

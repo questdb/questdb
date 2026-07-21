@@ -137,7 +137,7 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDate(valueIndex + 1, srcVal);
         }

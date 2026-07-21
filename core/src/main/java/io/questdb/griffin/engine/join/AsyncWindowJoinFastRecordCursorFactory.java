@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
@@ -55,7 +56,6 @@ import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.griffin.engine.table.AsyncFilterUtils;
-import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
@@ -100,12 +100,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinFastRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
     private final int workerCount;
+    private AsyncWindowJoinRecordCursor cursor;
+    private PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
 
     public AsyncWindowJoinFastRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -147,7 +147,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         this.cursor = new AsyncWindowJoinRecordCursor(
                 groupByFunctions,
-                slaveFactory.getMetadata(),
+                slaveFactory,
                 columnIndex,
                 columnSplit,
                 masterFilter != null
@@ -238,9 +238,16 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int masterOrder = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int slaveOrder = slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        final TablePageFrameCursor slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
-        cursor.of(execute(executionContext, collectSubSeq, masterOrder), slaveFrameCursor, executionContext);
-        return cursor;
+        final PageFrameSequence<AsyncWindowJoinFastAtom> masterFrameSequence = execute(executionContext, collectSubSeq, masterOrder);
+        try {
+            cursor.of(masterFrameSequence, slaveOrder, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -1240,7 +1247,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-        if (compiledFilter == null || frameMemory.hasColumnTops()) {
+        if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
             AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
         } else {
             applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2226,10 +2233,24 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(frameSequence);
-        Misc.free(cursor);
-        Misc.free(joinMetadata);
+        final AsyncWindowJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final PageFrameSequence<AsyncWindowJoinFastAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable failure = Misc.freeBestEffort(null, masterFactory);
+        if (slaveFactory != masterFactory) {
+            failure = Misc.freeBestEffort(failure, slaveFactory);
+        }
+        failure = Misc.freeBestEffort(failure, frameSequence);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, joinMetadata);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

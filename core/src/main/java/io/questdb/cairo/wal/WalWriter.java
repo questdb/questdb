@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -38,6 +37,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -51,6 +51,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -113,6 +114,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final Runnable NOOP = () -> {
     };
+    // Number of empty seed transactions ALTER TABLE ... REBASE WAL commits on the new table. Coupled to
+    // the replication uploader's rebase_new path, which skips seqTxn 1 and starts at seqTxn 2: keep this
+    // >= 2 so an idle rebased table still has a seqTxn 2 to settle on instead of busy-spinning the
+    // uploader. See commitRebaseSeed().
+    private static final int REBASE_SEED_TXN_COUNT = 2;
 
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
@@ -217,7 +223,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
-                false,
+                IndexType.NONE,
                 configuration.getIndexValueBlockSize(),
                 false,
                 securityContext
@@ -230,7 +236,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey,
             SecurityContext securityContext
@@ -245,7 +251,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isDedupKey
         );
@@ -606,6 +612,49 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 "name=" + walName +
                 ", table=" + tableToken.getTableName() +
                 '}';
+    }
+
+    /**
+     * Commits two empty (0-row) DATA transactions as the first transactions (seqTxn 1 and seqTxn 2) of a
+     * table created by ALTER TABLE ... REBASE WAL, so real data starts at seqTxn 3. The replication
+     * uploader skips seqTxn 1 and records seqTxn 2 as the table's first available txn (first_txn=2) in
+     * the replication index, leaving the replica unable to apply onto the empty table until a physical
+     * copy arrives.
+     * <p>
+     * Two seeds, not one: the uploader's rebase_new path starts at seqTxn 2, so the sequencer's max_txn
+     * must be at least 2 the instant the rebase completes - otherwise a rebased table left idle (no data
+     * written afterwards) would have max_txn=1 with nothing at seqTxn 2 to advance onto. The uploader
+     * would then never record the table in the index and would busy-spin re-reading an empty txn range on
+     * every poll (100% CPU, log/JNI flood) until data finally reaches seqTxn 2. The second empty seed
+     * gives the uploader a no-op transaction to settle on (records first_txn=2, last_txn=2), so an idle
+     * rebased table parks instead of spinning.
+     */
+    public void commitRebaseSeed() {
+        try {
+            // Each appendData + getSequencerTxn pair is one sequencer transaction (segment_txn 0 and 1 ->
+            // seqTxn 1 and 2). Both seeds are identical 0-row commits, so no per-txn state needs resetting
+            // in between (currentTxnStartRowNum and segmentRowCount both stay 0).
+            for (int i = 0; i < REBASE_SEED_TXN_COUNT; i++) {
+                lastSegmentTxn = events.appendData(
+                        WalTxnType.DATA,
+                        0,
+                        0,
+                        0,
+                        0,
+                        false,
+                        WAL_DEFAULT_BASE_TABLE_TXN,
+                        WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                        WAL_DEFAULT_LAST_PERIOD_HI,
+                        0,
+                        0,
+                        WAL_DEDUP_MODE_DEFAULT
+                );
+                getSequencerTxn();
+            }
+        } catch (Throwable th) {
+            rollback0();
+            throw th;
+        }
     }
 
     @Override
@@ -1073,8 +1122,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxn);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v)
+        IndexFactory.keyFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn);
+        IndexFactory.keyFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link key file [from=").$(tempPath)
@@ -1088,8 +1138,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxn);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
+        IndexFactory.valueFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn, -1L);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE, -1L);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link value file [from=").$(tempPath)
@@ -1541,12 +1592,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // ACCESS_DENIED error, caused by the fact hard link destination file is open.
         // For those reasons we do not put maximum effort into removing the files here.
 
+        // Symbol map files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
         path.trimTo(rootLen);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE, -1L);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.keyFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
@@ -2141,12 +2193,29 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         public long structureVersion;
 
         @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            if (metadata.getColumnIndexQuiet(columnName) < 0) {
+                throw CairoException.nonCritical().put("column does not exist [name=").put(columnName).put(']');
+            }
+            structureVersion++;
+        }
+
+        @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+            // Validation only checks the indexed column exists. INCLUDE
+            // column validity (existence, no self-reference, no duplicates)
+            // is enforced at SQL compile time in
+            // SqlCompilerImpl.validateAndAddCoveringColumns.
+            addIndex(columnName, indexValueBlockSize, indexType);
+        }
+
+        @Override
         public void addColumn(
                 CharSequence columnName,
                 int columnType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
@@ -2158,7 +2227,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, byte indexType, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
             int existingType = metadata.getColumnType(columnIndex);
@@ -2269,12 +2338,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private class MetadataWriterService implements MetadataServiceStub {
 
         @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            // WAL writer accepts add-index without local changes — the sequencer
+            // metadata is updated when the WAL transaction is applied.
+        }
+
+        @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+            // ADD INDEX (with or without INCLUDE) is non-structural for the
+            // WAL writer's local metadata — see comment on the 3-arg
+            // override. Sequencer metadata captures the INCLUDE list via
+            // SequencerMetadataService.addIndex's 4-arg override.
+            addIndex(columnName, indexValueBlockSize, indexType);
+        }
+
+        @Override
         public void addColumn(
                 CharSequence columnName,
                 int columnType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
@@ -2373,7 +2457,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int newType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 SecurityContext securityContext
@@ -2402,7 +2486,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     newType,
                                     symbolCapacity,
                                     symbolCacheFlag,
-                                    isIndexed,
+                                    indexType,
                                     indexValueBlockCapacity
                             );
                             path.trimTo(pathSize).slash().put(segmentId);

@@ -25,14 +25,17 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.DataSource;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -46,9 +49,8 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -301,6 +303,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public void toTop() {
             delegate.toTop();
         }
@@ -327,18 +334,57 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return columnIndex < columnSplit ? baseFrame.getBitmapIndexReader(columnIndex, direction) : null;
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
 
         @Override
+        public byte getColumnSource(int columnIndex) {
+            // Below the split columns delegate 1:1 to the base (so a covered base
+            // column still reports COVERED and drives the worker covered-decode
+            // arm); the synthetic null-padding columns above the split are DIRECT.
+            return columnIndex < columnSplit ? baseFrame.getColumnSource(columnIndex) : DataSource.DIRECT;
+        }
+
+        @Override
+        public int getCoveredIncludeIndex(int columnIndex) {
+            // Per-column: below the split delegate to the base; synthetic null
+            // columns above the split have no sidecar include index.
+            return columnIndex < columnSplit ? baseFrame.getCoveredIncludeIndex(columnIndex) : -1;
+        }
+
+        @Override
+        public int[] getCoveredIncludeIndices() {
+            // Per-frame set of sidecar columns to decode -- pass through to base.
+            return baseFrame.getCoveredIncludeIndices();
+        }
+
+        @Override
+        public int getCoveredKey() {
+            // Per-frame resolved WHERE symbol key -- pass through to base.
+            return baseFrame.getCoveredKey();
+        }
+
+        @Override
+        public long getCoveredRowHi() {
+            // Per-frame base row range -- pass through to base.
+            return baseFrame.getCoveredRowHi();
+        }
+
+        @Override
+        public long getCoveredRowLo() {
+            // Per-frame base row range -- pass through to base.
+            return baseFrame.getCoveredRowLo();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return columnIndex < columnSplit ? baseFrame.getIndexReader(columnIndex, direction) : null;
         }
 
         @Override
@@ -352,8 +398,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            return baseFrame.getParquetPartitionDecoder();
+        public ParquetDecoder getParquetDecoder() {
+            return baseFrame.getParquetDecoder();
         }
 
         @Override
@@ -472,8 +518,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public void setStreamingMode(boolean enabled) {
-            baseCursor.setStreamingMode(enabled);
+        public void setScanProfile(ReaderScanProfile profile) {
+            baseCursor.setScanProfile(profile);
         }
 
         @Override
@@ -521,7 +567,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+        public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
         }
 
@@ -608,6 +654,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public void seekEstimate(long timestamp) {
             baseCursor.seekEstimate(timestamp);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override

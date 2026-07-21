@@ -112,7 +112,7 @@ public class HashTest {
     public void testHashMem64SequentialIntKeyShardDistribution() throws Exception {
         // 4-byte keys hit only the int-tail branch (no 8-byte polynomial chunk).
         assertMemShardBalance("hashMem64 4-byte sequential", 4, (addr, i) -> {
-            Unsafe.getUnsafe().putInt(addr, i);
+            Unsafe.putInt(addr, i);
             return 4;
         });
     }
@@ -121,8 +121,8 @@ public class HashTest {
     public void testHashMem64SequentialLongIntKeyShardDistribution() throws Exception {
         // 12-byte keys exercise one 8-byte polynomial iteration plus the 4-byte int tail.
         assertMemShardBalance("hashMem64 12-byte sequential", 12, (addr, i) -> {
-            Unsafe.getUnsafe().putLong(addr, i);
-            Unsafe.getUnsafe().putInt(addr + 8, ~i);
+            Unsafe.putLong(addr, i);
+            Unsafe.putInt(addr + 8, ~i);
             return 12;
         });
     }

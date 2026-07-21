@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -822,7 +823,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
         assertFail(5, "unknown function name: xyz(BOOLEAN,SYMBOL)", "a or xyz(a,c)", metadata);
     }
 
@@ -1478,7 +1479,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testInvalidConstant() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, true, null));
+        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, IndexType.NONE, 0, true, null));
         assertFail(4, "invalid constant: 1c", "a + 1c", metadata);
     }
 
@@ -1530,6 +1531,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
             if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
                 assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
+            } else if (type == ColumnType.CURSOR) {
+                // a NULL literal is a scalar, never a cursor (scalar sub-query), so it must not overload to CURSOR
+                assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(ColumnType.NULL, type));
             } else {
                 assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
             }
@@ -1657,7 +1661,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL, IndexType.NONE, 0, false, null));
 
         final Function function = parseFunction("length(b) - length(a)",
                 metadata,

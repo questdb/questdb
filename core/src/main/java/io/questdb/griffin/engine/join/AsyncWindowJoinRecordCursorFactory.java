@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
@@ -54,7 +55,6 @@ import io.questdb.griffin.engine.groupby.FlyweightMapValue;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
-import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
@@ -105,11 +105,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVectWithPrevailing;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
-    private final JoinRecordMetadata joinMetadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
+    private AsyncWindowJoinRecordCursor cursor;
+    private PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
+    private JoinRecordMetadata joinMetadata;
+    private RecordCursorFactory masterFactory;
+    private RecordCursorFactory slaveFactory;
     private final int workerCount;
 
     public AsyncWindowJoinRecordCursorFactory(
@@ -159,7 +159,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.joinMetadata = joinMetadata;
         this.cursor = new AsyncWindowJoinRecordCursor(
                 groupByFunctions,
-                slaveFactory.getMetadata(),
+                slaveFactory,
                 columnIndex,
                 columnSplit,
                 masterFilter != null
@@ -270,9 +270,16 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int masterOrder = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int slaveOrder = slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        final TablePageFrameCursor slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
-        cursor.of(execute(executionContext, collectSubSeq, masterOrder), slaveFrameCursor, executionContext);
-        return cursor;
+        final PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence = execute(executionContext, collectSubSeq, masterOrder);
+        try {
+            cursor.of(masterFrameSequence, slaveOrder, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -1552,7 +1559,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -1702,7 +1709,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -1882,7 +1889,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2059,7 +2066,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2323,7 +2330,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2481,7 +2488,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2638,7 +2645,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2784,7 +2791,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -3111,10 +3118,24 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(frameSequence);
-        Misc.free(cursor);
-        Misc.free(joinMetadata);
+        final AsyncWindowJoinRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final PageFrameSequence<AsyncWindowJoinAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final JoinRecordMetadata joinMetadata = this.joinMetadata;
+        this.joinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, masterFactory);
+        if (slaveFactory != masterFactory) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, joinMetadata);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

@@ -46,8 +46,10 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class NullIfDecimalFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "nullif(ΞΞ)";
@@ -56,8 +58,8 @@ public class NullIfDecimalFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {

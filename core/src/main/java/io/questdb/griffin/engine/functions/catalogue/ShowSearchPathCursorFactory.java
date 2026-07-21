@@ -44,8 +44,7 @@ public class ShowSearchPathCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+        return cursor.of(executionContext.getCircuitBreaker());
     }
 
     @Override

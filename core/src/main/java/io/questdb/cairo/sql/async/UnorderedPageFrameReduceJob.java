@@ -49,27 +49,35 @@ import org.jetbrains.annotations.Nullable;
  */
 public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameReduceJob.class);
+    private final CairoEngine engine;
     private final MessageBus messageBus;
     private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private PageFrameMemoryRecord record;
 
     public UnorderedPageFrameReduceJob(CairoEngine engine, MessageBus messageBus) {
+        this.engine = engine;
         this.messageBus = messageBus;
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
     }
 
     /**
-     * Tries to consume a single task from the unordered queue.
+     * Tries to consume a single task from the unordered queue. Returns {@code true} when the
+     * queue was empty (nothing consumed), {@code false} when a task was processed.
      */
-    public static void consumeQueue(
+    public static boolean consumeQueue(
             RingQueue<UnorderedPageFrameReduceTask> queue,
             MCSequence subSeq,
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreakerWrapper circuitBreaker,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence);
+        return consumeQueue(-1, queue, subSeq, record, circuitBreaker, stealingFrameSequence);
+    }
+
+    @Override
+    public Job cloneInstance() {
+        return new UnorderedPageFrameReduceJob(engine, messageBus);
     }
 
     @Override
@@ -79,9 +87,22 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    public void recycleInstance() {
+        record.clear();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
         return !consumeQueue(
-                workerId,
+                workerContext.carrierId(),
                 messageBus.getUnorderedPageFrameReduceQueue(),
                 messageBus.getUnorderedPageFrameReduceSubSeq(),
                 record,

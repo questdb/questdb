@@ -24,22 +24,46 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * QWP egress message-kind discriminator. The first byte of every egress payload
- * identifies which of the egress message types it carries. See
- * {@code docs/QWP_EGRESS_EXTENSION.md} sec 5 for the authoritative list.
+ * identifies which of the egress message types it carries. See the QWP egress
+ * protocol reference at
+ * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/}
+ * for the authoritative list.
  */
 public final class QwpEgressMsgKind {
     /**
      * Server-to-client connection-cache reset. Body:
-     * {@code reset_mask:u8} with bit 0 = SYMBOL dict, bit 1 = schema cache.
+     * {@code reset_mask:u8} with bit 0 = SYMBOL dict.
      * Sent between result boundaries when a cache reaches its configured
      * soft cap. Recipient clears the indicated caches; subsequent RESULT_BATCH
-     * and schema-reference frames assume a fresh starting state. See
-     * {@code docs/QWP_EGRESS_EXTENSION.md} sec 12.
+     * frames assume a fresh starting state. See the QWP egress protocol
+     * reference at
+     * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/}.
      */
     public static final byte CACHE_RESET = 0x17;
     public static final byte CANCEL = 0x14;
+    /**
+     * {@code SERVER_INFO.capabilities} bit: the server parses the optional
+     * {@code query_flags:varint} trailer on {@code QUERY_REQUEST}. Clients append
+     * the trailer only when this bit is set.
+     */
+    public static final int CAP_QUERY_FLAGS = 0x00000002;
+    /**
+     * {@code SERVER_INFO.capabilities} bit advertising that the frame ends with
+     * an additional {@code zone_id:u16_len+utf8} field after {@code node_id}.
+     * Servers set the bit when the operator has configured a zone; clients use
+     * the value to prefer same-zone endpoints (see
+     * {@code https://questdb.com/docs/high-availability/client-failover/concepts/}
+     * and the QWP egress protocol reference at
+     * {@code https://questdb.com/docs/connect/wire-protocols/qwp-egress-websocket/}).
+     * When the bit is
+     * unset, the trailer is absent entirely so a client built against the
+     * zone-less layout sees the byte layout it expects.
+     */
+    public static final int CAP_ZONE = 0x00000001;
     public static final byte CREDIT = 0x15;
     /**
      * Server-to-client ack for successful non-SELECT queries (DDL, INSERT,
@@ -49,6 +73,17 @@ public final class QwpEgressMsgKind {
      */
     public static final byte EXEC_DONE = 0x16;
     public static final byte QUERY_ERROR = 0x13;
+    /**
+     * {@code QUERY_REQUEST.query_flags} bit: reset the SYMBOL dict before this
+     * query, scoping it to the query rather than the connection. Reuses the
+     * {@link #RESET_MASK_DICT} path: the dict clears at the query boundary and
+     * the {@code CACHE_RESET} frame precedes the next {@code RESULT_BATCH}, so a
+     * non-SELECT carrying the flag clears the dict at once but defers the
+     * client-visible reset to the following result-producing query. Declared
+     * {@code int} so masking against the 64-bit {@code query_flags} varint never
+     * sign-extends a flag constant.
+     */
+    public static final int QUERY_FLAG_RESET_DICT = 0x01;
     public static final byte QUERY_REQUEST = 0x10;
     /**
      * Reset mask bit: clear the connection-scoped SYMBOL dict.
@@ -56,13 +91,6 @@ public final class QwpEgressMsgKind {
      * {@code RESULT_BATCH} delta section starts at {@code deltaStart=0}.
      */
     public static final byte RESET_MASK_DICT = 0x01;
-    /**
-     * Reset mask bit: clear the connection-scoped schema-id cache.
-     * After receiving, the peer discards every previously assigned schema
-     * id; the next {@code RESULT_BATCH} ships the schema in full mode
-     * (not reference mode) with a fresh id.
-     */
-    public static final byte RESET_MASK_SCHEMAS = 0x02;
     public static final byte RESULT_BATCH = 0x11;
     public static final byte RESULT_END = 0x12;
     /**
@@ -92,18 +120,44 @@ public final class QwpEgressMsgKind {
     public static final byte ROLE_STANDALONE = 0;
     /**
      * Server-to-client. Unsolicited frame delivered as the first QWP message on
-     * every v2 WebSocket connection (see {@code QwpConstants.VERSION_2}). Carries
-     * the server's replication role, monotonic role epoch, cluster and node
+     * every WebSocket connection. Carries the server's replication role,
+     * monotonic role epoch, cluster and node
      * identifiers, a capabilities bitfield, and the server's wall-clock
      * nanoseconds at send time.
      * <p>
      * Body layout (little-endian): {@code msg_kind:u8, role:u8, epoch:u64,
      * capabilities:u32, server_wall_ns:i64, cluster_id:u16_len+utf8,
-     * node_id:u16_len+utf8}. The byte-value 0x17 is claimed by
-     * {@link #CACHE_RESET}; SERVER_INFO lives at 0x18.
+     * node_id:u16_len+utf8} followed by an optional {@code zone_id:u16_len+utf8}
+     * gated by the {@link #CAP_ZONE} bit in {@code capabilities}. The byte-value
+     * 0x17 is claimed by {@link #CACHE_RESET}; SERVER_INFO lives at 0x18.
      */
     public static final byte SERVER_INFO = 0x18;
+    private static final byte[] ROLE_NAME_BYTES_PRIMARY = "PRIMARY".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_PRIMARY_CATCHUP = "PRIMARY_CATCHUP".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_REPLICA = "REPLICA".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_STANDALONE = "STANDALONE".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_UNKNOWN = "UNKNOWN".getBytes(StandardCharsets.US_ASCII);
 
     private QwpEgressMsgKind() {
+    }
+
+    public static String roleName(byte role) {
+        return switch (role) {
+            case ROLE_STANDALONE -> "STANDALONE";
+            case ROLE_PRIMARY -> "PRIMARY";
+            case ROLE_REPLICA -> "REPLICA";
+            case ROLE_PRIMARY_CATCHUP -> "PRIMARY_CATCHUP";
+            default -> "UNKNOWN";
+        };
+    }
+
+    public static byte[] roleNameBytes(byte role) {
+        return switch (role) {
+            case ROLE_STANDALONE -> ROLE_NAME_BYTES_STANDALONE;
+            case ROLE_PRIMARY -> ROLE_NAME_BYTES_PRIMARY;
+            case ROLE_REPLICA -> ROLE_NAME_BYTES_REPLICA;
+            case ROLE_PRIMARY_CATCHUP -> ROLE_NAME_BYTES_PRIMARY_CATCHUP;
+            default -> ROLE_NAME_BYTES_UNKNOWN;
+        };
     }
 }

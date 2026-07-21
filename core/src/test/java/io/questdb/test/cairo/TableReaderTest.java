@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -36,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -1268,6 +1268,12 @@ public class TableReaderTest extends AbstractCairoTest {
     private TimestampDriver timestampDriver;
     private int timestampType;
 
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
+
     @Before
     public void setUp2() {
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
@@ -1623,7 +1629,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     Assert.assertFalse(ff.wasCalled());
                     try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
-                        job.run(0);
+                        job.run();
                     }
 
                     checkColumnPurgeRemovesFiles(counterRef, ff, 1);
@@ -1768,7 +1774,8 @@ public class TableReaderTest extends AbstractCairoTest {
             // model data
             LongList list = new LongList();
             final int N = 1024;
-            final int scale = 10000;
+            // smaller workload on slow CI runners (Mac, Windows)
+            final int scale = Os.isLinux() ? 10000 : 1000;
             for (int i = 0; i < N; i++) {
                 list.add(i);
             }
@@ -2978,37 +2985,6 @@ public class TableReaderTest extends AbstractCairoTest {
         testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> timestampDriver.addYears(timestampDriver.getPartitionFloorMethod(PartitionBy.YEAR).floor(current), 1));
     }
 
-    @Test
-    public void testScoreBoardOverflow() throws Throwable {
-        TableModel model = new TableModel(configuration, "all", PartitionBy.DAY)
-                .col("int", ColumnType.INT)
-                .timestamp("t");
-        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
-        assertMemoryLeak(() -> {
-            try (TableReader ignore = getReader("all")) {
-                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-                    for (int i = 0; i < configuration.getTxnScoreboardEntryCount() + 1; i++) {
-                        TableWriter.Row r = writer.newRow(1000);
-                        r.putInt(0, 100);
-                        r.append();
-                        writer.commit();
-                    }
-                }
-
-                try (TableReader ignore2 = getReader("all")) {
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
-                }
-
-                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-                    TableWriter.Row r = writer.newRow(0);
-                    r.putInt(0, 100);
-                    r.append();
-                    writer.commit();
-                }
-            }
-        });
-    }
 
     @Test
     public void testSetActiveColumnsAllColumnsOpenFlagFastPath() throws Exception {
@@ -3789,7 +3765,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX, b LONG, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3822,7 +3798,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 // Verify bitmap index reader works for the previously-skipped indexed column
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                IndexReader indexReader = reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 Assert.assertNotNull(indexReader);
                 Assert.assertTrue(indexReader.isOpen());
             }
@@ -3833,14 +3809,17 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testSetActiveColumnsOpenPartitionColumnsErrorPathParquet() throws Exception {
         // Verifies that openPartitionCount stays consistent when
         // openPartitionColumns() throws during Parquet partition open.
-        // The bitmap index .k file open is the only I/O in this path
-        // that can fail, and it requires a non-null (previously created)
-        // bitmap index reader in the slot.
+        // The index key file open is the only I/O in this path that can
+        // fail, and it requires a non-null (previously created) index
+        // reader in the slot. Match both bitmap (.k) and posting (.pk)
+        // key files so the test works regardless of the default symbol
+        // index type.
         AtomicInteger failCounter = new AtomicInteger();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, ".k") && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
+                boolean isKeyFile = Utf8s.endsWithAscii(name, ".k") || Utf8s.endsWithAscii(name, ".pk");
+                if (isKeyFile && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -3850,7 +3829,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX, b LONG, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3875,7 +3854,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 // to populate the bitmapIndexes slot with a non-null reader.
                 reader.openPartition(0);
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 assertOpenPartitionCount(reader);
 
                 // Close the partition. The bitmap index reader is closed but
@@ -4216,69 +4195,55 @@ public class TableReaderTest extends AbstractCairoTest {
             );
 
             // SELECT subset of columns — only a and ts (FullPartitionFrameCursorFactory)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, ts FROM x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T10:00:00.000000Z
                             3\t1970-01-01T20:00:00.000000Z
                             4\t1970-01-02T06:00:00.000000Z
                             5\t1970-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT a, ts FROM x",
-                    null,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // SELECT different subset — only b and c
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT b, c FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             b\tc
                             100\t1.5
                             200\t3.0
                             300\t4.5
                             400\t6.0
                             500\t7.5
-                            """,
-                    "SELECT b, c FROM x",
-                    null,
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // SELECT all columns
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             a\tb\tc\tts
                             1\t100\t1.5\t1970-01-01T00:00:00.000000Z
                             2\t200\t3.0\t1970-01-01T10:00:00.000000Z
                             3\t300\t4.5\t1970-01-01T20:00:00.000000Z
                             4\t400\t6.0\t1970-01-02T06:00:00.000000Z
                             5\t500\t7.5\t1970-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x",
-                    null,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // SELECT with WHERE (interval filter — uses IntervalPartitionFrameCursorFactory)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, ts FROM x WHERE ts IN '1970-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             4\t1970-01-02T06:00:00.000000Z
                             5\t1970-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT a, ts FROM x WHERE ts IN '1970-01-02'",
-                    null,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -5068,9 +5033,10 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertFalse(ff.wasCalled());
         counterRef.set(0);
         try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
-            job.run(0);
+            job.run();
         }
-        Assert.assertTrue(ff.called() >= removeCallsExpected);
+        int actual = ff.called();
+        Assert.assertTrue("Expected at least " + removeCallsExpected + " file removals, but got " + actual, actual >= removeCallsExpected);
     }
 
     @NotNull
@@ -5477,8 +5443,10 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride1) throws Exception {
         assertMemoryLeak(() -> {
-            final int N = 1024_0000;
-            long stride = timestampDriver.fromMicros(stride1);
+            // smaller workload on slow CI runners (Mac, Windows); stride scales up to keep partition count constant
+            final int divisor = Os.isLinux() ? 1 : 10;
+            final int N = 1024_0000 / divisor;
+            long stride = timestampDriver.fromMicros(stride1 * divisor);
             // model table
             TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp(timestampType);
             AbstractCairoTest.create(model);

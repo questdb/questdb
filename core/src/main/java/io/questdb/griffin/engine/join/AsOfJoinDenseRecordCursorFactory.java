@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
@@ -42,6 +43,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -49,7 +51,7 @@ import org.jetbrains.annotations.Nullable;
 public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
     private final RecordSink masterKeyCopier;
     private final RecordSink slaveKeyCopier;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public AsOfJoinDenseRecordCursorFactory(
             CairoConfiguration configuration,
@@ -76,8 +78,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         try {
             long maxSinkTargetHeapSize = (long)
                     configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
-            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE);
+            fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE, false, false);
+            bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE, false, false);
             this.cursor = new AsOfJoinDenseRecordCursor(
                     columnSplit,
                     fwdScanKeyToRowId,
@@ -100,8 +102,16 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(symbolTranslatingRecord);
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -160,15 +170,24 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            super.of(masterCursor, slaveCursor, circuitBreaker);
-            masterKeyRecord = masterRecord;
+            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
             }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Scan maps (via super) and sinks bind lazily before of() reopens them; malloc/free nets on the per-query counter.
+            super.setMemoryTracker(tracker);
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
         }
 
         @Override

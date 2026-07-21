@@ -98,6 +98,76 @@ public class RecordArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFixedWidthSchemaSkipsAuxMem() throws Exception {
+        // Verifies the auxMem-skip path: when every column is fixed-width (varOffset == 0),
+        // RecordArray computes row offsets as N * fixOffset instead of allocating the
+        // per-row index. beginRecord/recordAtRowIndex/hasNext must round-trip correctly.
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("a", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("b", ColumnType.LONG));
+
+            // sink is not invoked because we only beginRecord + putLong directly
+            try (RecordArray chain = new RecordArray(metadata, null, SIZE_4M, Integer.MAX_VALUE)) {
+                final int N = 1_000;
+                for (int i = 0; i < N; i++) {
+                    chain.beginRecord();
+                    chain.putLong(i);
+                    chain.putLong(i * 100L);
+                }
+
+                final Record rec = chain.getRecord();
+                for (int i = 0; i < N; i++) {
+                    chain.recordAtRowIndex(rec, i);
+                    Assert.assertEquals(i, rec.getLong(0));
+                    Assert.assertEquals(i * 100L, rec.getLong(1));
+                }
+
+                // Sequential walk via hasNext should yield the same values in order.
+                chain.toTop();
+                long expected = 0;
+                while (chain.hasNext()) {
+                    Assert.assertEquals(expected, rec.getLong(0));
+                    Assert.assertEquals(expected * 100L, rec.getLong(1));
+                    expected++;
+                }
+                Assert.assertEquals(N, expected);
+            }
+        });
+    }
+
+    @Test
+    public void testFixedWidthSchemaReuseAfterClear() throws Exception {
+        // Round-trip beginRecord + clear() + beginRecord on an all-fixed-width schema
+        // so the auxMem == null path is exercised through the reuse cycle (the LIGHT
+        // window cursor reopens the narrow chain after close + clear).
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("a", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("b", ColumnType.LONG));
+
+            try (RecordArray chain = new RecordArray(metadata, null, SIZE_4M, Integer.MAX_VALUE)) {
+                final int N = 1_000;
+                for (int round = 0; round < 2; round++) {
+                    chain.clear();
+                    for (int i = 0; i < N; i++) {
+                        chain.beginRecord();
+                        chain.putLong(i + round);
+                        chain.putLong((i + round) * 100L);
+                    }
+
+                    final Record rec = chain.getRecord();
+                    for (int i = 0; i < N; i++) {
+                        chain.recordAtRowIndex(rec, i);
+                        Assert.assertEquals(i + round, rec.getLong(0));
+                        Assert.assertEquals((i + round) * 100L, rec.getLong(1));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReuseWithClear() throws Exception {
         testChainReuseWithClearFunction(RecordArray::clear);
     }

@@ -37,18 +37,31 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastLongToSymbolFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Lk)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
@@ -61,7 +74,11 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sink = new StringSink();
-        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
+        // The sentinel is Numbers.LONG_NULL rather than the default -1 so that -1
+        // (a perfectly legal LONG input) can be stored as a key without colliding
+        // with the "empty slot" marker. LONG_NULL itself never reaches this map
+        // because it is filtered upstream in getInt()/getSymbol().
+        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap(16, 0.5, Numbers.LONG_NULL);
         private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
 
@@ -130,6 +147,11 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isSymbolTableStatic() {
+            return false;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
             return false;
         }
 

@@ -325,6 +325,28 @@ impl<W: Write> ChunkedWriter<W> {
         let size = self.writer.end(Some(additional_meta))?;
         Ok(size)
     }
+
+    /// Returns the byte offset of the parquet footer within the file.
+    /// Only valid after `finish()` has been called.
+    pub fn parquet_footer_offset(&self) -> u64 {
+        self.writer.parquet_footer_offset()
+    }
+
+    /// Returns the thrift row groups accumulated during writing.
+    /// Only valid after `finish()` has been called.
+    pub fn row_groups(&self) -> &[parquet2::thrift_format::RowGroup] {
+        self.writer.row_groups()
+    }
+
+    /// Returns the parquet schema descriptor.
+    pub fn schema(&self) -> &SchemaDescriptor {
+        self.writer.schema()
+    }
+
+    /// Returns bloom filter bitsets captured during write, per row group per column.
+    pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
+        self.writer.bloom_bitsets()
+    }
 }
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
@@ -428,10 +450,19 @@ pub fn create_row_group_from_partitions(
         };
 
         // Build the per-partition Column slice for this column index.
-        let columns: Vec<Column> = partitions
+        let mut columns: Vec<Column> = partitions
             .iter()
             .map(|partition| partition.columns[col_idx])
             .collect();
+
+        // The strided designated-timestamp encoder iterates the whole merge
+        // index (it takes no row-group bounds). When write_chunk splits a
+        // partition into multiple row groups, narrow that single column to this
+        // row group's window so it isn't re-emitted in full for every group.
+        if columns.len() == 1 && columns[0].strided_timestamp_16 {
+            columns[0] =
+                columns[0].strided_row_group_slice(first_partition_start, last_partition_end)?;
+        }
 
         let pages = encode_column_chunk(
             col_encoding,

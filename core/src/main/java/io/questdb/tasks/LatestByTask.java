@@ -34,8 +34,8 @@ import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
 public class LatestByTask implements QuietCloseable, Mutable {
-    // We're using page frame memory only and do single scan, hence cache size of 1.
-    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
+    // Single sequential scan; no LRU caching needed across frames.
+    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(0L);
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;

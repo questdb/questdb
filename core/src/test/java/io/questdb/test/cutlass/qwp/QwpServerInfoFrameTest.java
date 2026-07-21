@@ -101,7 +101,7 @@ public class QwpServerInfoFrameTest {
         int cap = 128;
         long buf = Unsafe.allocateMemory(cap);
         try {
-            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
+            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION, (byte) 0, 0, 0);
             // Write a RESULT_END body instead of SERVER_INFO; decoder must reject.
             long bodyEnd = QwpEgressFrameWriter.writeResultEnd(bodyStart, 1L, 0L, 0L);
             int qwpSize = (int) (bodyEnd - buf);
@@ -118,11 +118,11 @@ public class QwpServerInfoFrameTest {
         int cap = 128;
         long buf = Unsafe.allocateMemory(cap);
         try {
-            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
+            long bodyStart = QwpEgressFrameWriter.writeMessageHeader(buf, QwpConstants.VERSION, (byte) 0, 0, 0);
             long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
                     bodyStart, 64,
                     io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.ROLE_PRIMARY,
-                    1L, 0, 0L, "cluster", "node");
+                    1L, 0, 0L, "cluster", "node", null);
             int fullQwpSize = (int) (bodyEnd - buf);
             QwpEgressFrameWriter.patchPayloadLength(buf, fullQwpSize - QwpConstants.HEADER_SIZE);
             // Shave off the last 4 bytes so node_id length declares more than is present.
@@ -130,6 +130,53 @@ public class QwpServerInfoFrameTest {
         } finally {
             Unsafe.freeMemory(buf);
         }
+    }
+
+    @Test
+    public void testZoneIdRoundTripWhenCapZoneSet() throws Exception {
+        QwpServerInfo info = encodeAndDecodeWithZone(
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.ROLE_REPLICA,
+                3L,
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_ZONE,
+                0L,
+                "prod-east",
+                "replica-b",
+                "eu-west-1a"
+        );
+        Assert.assertEquals(QwpEgressMsgKind.ROLE_REPLICA, info.getRole());
+        Assert.assertEquals("eu-west-1a", info.getZoneId());
+        Assert.assertNotEquals(0, info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_ZONE);
+    }
+
+    @Test
+    public void testZoneIdEmptyStringWhenCapZoneSet() throws Exception {
+        // Setting CAP_ZONE with a null zoneId is the spec-mandated way to
+        // emit an empty zone string: writer truncates null to "" and the
+        // trailer is still present (length 0). Decoder returns "".
+        QwpServerInfo info = encodeAndDecodeWithZone(
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.ROLE_PRIMARY,
+                0L,
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_ZONE,
+                0L,
+                "c",
+                "n",
+                null
+        );
+        Assert.assertEquals("", info.getZoneId());
+    }
+
+    @Test
+    public void testZoneAbsentWhenCapZoneUnset() throws Exception {
+        QwpServerInfo info = encodeAndDecode(
+                io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.ROLE_STANDALONE,
+                0L,
+                0,
+                0L,
+                "questdb",
+                ""
+        );
+        Assert.assertNull("zoneId must be null when CAP_ZONE bit is unset",
+                info.getZoneId());
     }
 
     @Test
@@ -171,14 +218,27 @@ public class QwpServerInfoFrameTest {
             String clusterId,
             String nodeId
     ) throws Exception {
-        int cap = 128 + (clusterId.length() + nodeId.length()) * 4;
+        return encodeAndDecodeWithZone(role, epoch, capabilities, wallNs, clusterId, nodeId, null);
+    }
+
+    private static QwpServerInfo encodeAndDecodeWithZone(
+            byte role,
+            long epoch,
+            int capabilities,
+            long wallNs,
+            String clusterId,
+            String nodeId,
+            String zoneId
+    ) throws Exception {
+        int zoneLen = zoneId == null ? 0 : zoneId.length();
+        int cap = 128 + (clusterId.length() + nodeId.length() + zoneLen) * 4;
         long buf = Unsafe.allocateMemory(cap);
         try {
             long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                    buf, QwpConstants.VERSION_2, (byte) 0, 0, 0);
+                    buf, QwpConstants.VERSION, (byte) 0, 0, 0);
             int bodyCap = cap - QwpConstants.HEADER_SIZE;
             long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
-                    bodyStart, bodyCap, role, epoch, capabilities, wallNs, clusterId, nodeId);
+                    bodyStart, bodyCap, role, epoch, capabilities, wallNs, clusterId, nodeId, zoneId);
             Assert.assertTrue("writeServerInfo returned -1 with cap=" + cap, bodyEnd > 0);
             int qwpSize = (int) (bodyEnd - buf);
             int payloadLen = qwpSize - QwpConstants.HEADER_SIZE;

@@ -37,11 +37,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjLongMatrix;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -89,7 +87,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final Counter listenerStateChangeCounter;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
-    private final int testConnectionBufSize;
     protected volatile boolean closed = false;
     protected long heartbeatIntervalMs;
     protected long serverFd;
@@ -99,7 +96,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private volatile boolean listening;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     private int port;
-    private long testConnectionBuf;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -110,9 +106,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.connectionCountGauge = configuration.getConnectionCountGauge();
         this.listenerStateChangeCounter = configuration.listenerStateChangeCounter();
         this.nf = configuration.getNetworkFacade();
-
-        this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
-        this.testConnectionBuf = Unsafe.malloc(testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
 
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCycle());
@@ -169,8 +162,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             nf.close(serverFd, LOG);
             serverFd = -1;
         }
-
-        testConnectionBuf = Unsafe.free(testConnectionBuf, testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
@@ -179,9 +170,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
-        final long cursor = bullyUntilClosed(disconnectPubSeq);
+        // A negative cursor means the dispatcher is closed -- either up front, or close() flipped
+        // it during the bully loop (bullyUntilClosed only returns < 0 when closed). close() drains
+        // the disconnect queue once and never again, so enqueuing now would strand this checked-out
+        // context (e.g. a parked sleep() unwinding at shutdown), which no close() sweep can see.
+        // Free it directly instead.
+        final long cursor = closed ? -1 : bullyUntilClosed(disconnectPubSeq);
         if (cursor < 0) {
             assert closed;
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
             return;
         }
         disconnectQueue.get(cursor).context = context;
@@ -233,9 +230,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
-        final long cursor = bullyUntilClosed(interestPubSeq);
+        // Same as disconnect(): a negative cursor means the dispatcher is closed (up front, or
+        // close() flipped it mid-bully). The interest queue was swept once by close(), so
+        // re-registering would strand this checked-out context (e.g. a parked sleep() re-arming
+        // at shutdown). Disconnect it directly instead of leaking its socket.
+        final long cursor = closed ? -1 : bullyUntilClosed(interestPubSeq);
         if (cursor < 0) {
             assert closed;
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
             return;
         }
         IOEvent<C> evt = interestQueue.get(cursor);
@@ -278,6 +280,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     private void checkConnectionLimitAndRestartListener() {
+        if (closed) {
+            // Never re-create the listener socket during or after shutdown: doDisconnect()
+            // runs in here while freeing a context that reached disconnect()/registerChannel()
+            // after close(), and a drop below the limit would otherwise re-open serverFd.
+            return;
+        }
         final int activeConnectionLimit = configuration.getLimit();
         final int connCount = connectionCount.get();
         if (connCount < activeConnectionLimit) {
@@ -453,6 +461,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
+            return;
+        }
+        if (!context.tryDisconnect()) {
+            // A concurrent caller already claimed this context -- e.g. close()'s pendingHeartbeats
+            // sweep racing a worker's post-close disconnect()/registerChannel() of a context that is
+            // still tracked in pendingHeartbeats. The winner frees it once; a second free here would
+            // double-close the fd (fd-aliasing) and double-free the context's native buffers.
             return;
         }
 

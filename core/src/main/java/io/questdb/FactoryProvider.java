@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -37,6 +38,8 @@ import io.questdb.cutlass.http.RejectProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportRequestHeaderProcessor;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.SocketFactory;
+import io.questdb.std.MemoryTrackerProvider;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
@@ -45,9 +48,6 @@ public interface FactoryProvider extends QuietCloseable {
     @Override
     default void close() {
     }
-
-    @NotNull
-    TickCalendarServiceFactory getTickCalendarServiceFactory();
 
     @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
@@ -73,6 +73,22 @@ public interface FactoryProvider extends QuietCloseable {
     @NotNull
     SocketFactory getLineSocketFactory();
 
+    /**
+     * Per-engine source of per-workload {@link io.questdb.std.MemoryTracker}
+     * instances. Called once at engine construction; the returned provider is
+     * owned by the engine and closed from {@code CairoEngine.close()}.
+     * <p>
+     * The OSS default returns a {@link PerQueryMemoryTrackerProvider} backed by
+     * the supplied {@link CairoConfiguration}; the provider reads each workload's
+     * limit from that configuration on every acquisition, so a dynamic reload of
+     * the limit takes effect without rebuilding the provider. An enterprise build
+     * overrides this to return its per-principal implementation.
+     */
+    @NotNull
+    default MemoryTrackerProvider getMemoryTrackerProvider(@NotNull CairoConfiguration cairoConfiguration) {
+        return new PerQueryMemoryTrackerProvider(cairoConfiguration);
+    }
+
     @NotNull
     SocketFactory getPGWireSocketFactory();
 
@@ -91,6 +107,9 @@ public interface FactoryProvider extends QuietCloseable {
     default TextImportRequestHeaderProcessor getTextImportRequestHeaderProcessor() {
         return TextImportRequestHeaderProcessor.DEFAULT;
     }
+
+    @NotNull
+    TickCalendarServiceFactory getTickCalendarServiceFactory();
 
     @NotNull
     WalJobFactory getWalJobFactory();

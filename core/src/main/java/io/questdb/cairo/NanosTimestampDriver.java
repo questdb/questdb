@@ -98,7 +98,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorYYYY, NanosFormatUtils.YEAR_FORMAT);
 
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Timestamp = this::appendToMem;
-    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = this::append;
+    private final ColumnTypeConverter.Fixed2VarConverter converterTimestamp2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
     private NanosTimestampDriver() {
@@ -484,6 +484,12 @@ public class NanosTimestampDriver implements TimestampDriver {
             return Numbers.INT_NULL;
         }
         return Nanos.getIsoYear(timestamp);
+    }
+
+    @Override
+    public long getMaxDesignatedTimestamp() {
+        // nanos are not capped below the long range, so a designated timestamp can reach Long.MAX_VALUE
+        return Long.MAX_VALUE;
     }
 
     @Override

@@ -43,6 +43,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -54,26 +55,31 @@ import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
 
-public class LineWalAppender {
+/**
+ * Appends parsed line protocol measurements to WAL tables.
+ * <p>
+ * Instances hold mutable scratch buffers and are not thread-safe: each thread
+ * of execution must use its own appender. {@link LineTcpMeasurementScheduler}
+ * keeps one appender per network IO worker and LineHttpProcessorState owns one
+ * per connection.
+ */
+public class LineWalAppender implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
-    private final Decimal256 decimal256;
-    private final Long256Impl long256;
+    private final Decimal256 decimal256 = new Decimal256();
+    private final Long256Impl long256 = new Long256Impl();
     private final int maxFileNameLength;
     private final int maxMetadataChangeRetries;
     private final boolean stringToCharCastAllowed;
-    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
+    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     private byte timestampUnit;
 
-    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength, int maxMetadataChangeRetries) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, int maxFileNameLength, int maxMetadataChangeRetries) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.maxFileNameLength = maxFileNameLength;
         this.maxMetadataChangeRetries = maxMetadataChangeRetries;
         this.timestampUnit = timestampUnit;
-        this.long256 = new Long256Impl();
-        this.decimal256 = new Decimal256();
-        this.utf8Sink = utf8Sink;
     }
 
     public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
@@ -87,6 +93,11 @@ public class LineWalAppender {
                 }
             }
         }
+    }
+
+    @Override
+    public void close() {
+        utf8Sink.close();
     }
 
     public void setTimestampAdapter(byte precision) {

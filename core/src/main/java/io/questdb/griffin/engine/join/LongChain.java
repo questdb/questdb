@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -49,12 +51,24 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     private long heapPos;
     private long heapSize;
     private long heapStart;
+    // Per-query native memory tracker bound by the owning cursor before the
+    // backing heap is (re)allocated. Null when no per-query limit applies; all
+    // Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    @Nullable
+    private MemoryTracker memoryTracker;
 
     public LongChain(long valuePageSize, int valueMaxPages) {
-        heapSize = initialHeapSize = valuePageSize;
-        heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
-        heapLimit = heapStart + heapSize;
-        maxHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_HEAP_SIZE_LIMIT);
+        this(valuePageSize, valueMaxPages, false);
+    }
+
+    public LongChain(long valuePageSize, int valueMaxPages, boolean keepClosed) {
+        this.initialHeapSize = valuePageSize;
+        this.maxHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_HEAP_SIZE_LIMIT);
+        if (!keepClosed) {
+            heapSize = initialHeapSize;
+            heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+            heapLimit = heapStart + heapSize;
+        }
     }
 
     @Override
@@ -65,7 +79,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     @Override
     public void close() {
         if (heapStart != 0) {
-            heapStart = Unsafe.free(heapStart, heapSize, MemoryTag.NATIVE_DEFAULT);
+            heapStart = Unsafe.free(heapStart, heapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
             heapLimit = heapPos = 0;
             heapSize = 0;
         }
@@ -91,9 +105,13 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     public void reopen() {
         if (heapStart == 0) {
             heapSize = initialHeapSize;
-            heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
+            heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
             heapLimit = heapStart + heapSize;
         }
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
     }
 
     private static int compressOffset(long rawOffset) {
@@ -110,7 +128,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             if (newHeapSize > maxHeapSize) {
                 throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in LongChain");
             }
-            long newHeapPos = Unsafe.realloc(heapStart, heapSize, newHeapSize, MemoryTag.NATIVE_DEFAULT);
+            long newHeapPos = Unsafe.realloc(heapStart, heapSize, newHeapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
 
             heapSize = newHeapSize;
             long delta = newHeapPos - heapStart;

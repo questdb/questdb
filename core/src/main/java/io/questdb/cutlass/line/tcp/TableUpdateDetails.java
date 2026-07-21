@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -65,13 +66,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
-    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = _ -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
     private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
@@ -201,8 +203,16 @@ public class TableUpdateDetails implements Closeable {
             if (writerAPI != null) {
                 try {
                     if (commitOnClose) {
-                        authorizeCommit();
-                        writerAPI.commit();
+                        final Lock lock = engine.getRoleSwitchReadLock();
+                        lock.lock();
+                        try {
+                            if (!engine.isReadOnlyMode()) {
+                                authorizeCommit();
+                                writerAPI.commit();
+                            }
+                        } finally {
+                            lock.unlock();
+                        }
                     }
                 } catch (CairoException ex) {
                     if (!ex.isTableDropped()) {
@@ -222,21 +232,50 @@ public class TableUpdateDetails implements Closeable {
 
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
+            // Cheap early-out: if the node is already read-only before we attempt to
+            // acquire the lock, skip the lock acquire entirely. This is NOT the
+            // authoritative refusal -- the in-lock re-check below is.
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            // Hold the role-switch lock across the authoritative re-check and the
+            // actual commit. The role-flip path in EntCairoEngine acquires the same
+            // lock around the REPLICA flag publish, so either:
+            //   (a) the flip runs first: we see REPLICA on the in-lock re-check and
+            //       refuse without committing; or
+            //   (b) we run first: we commit as PRIMARY and the flip waits; when the
+            //       flip publishes REPLICA afterwards the row is already safely committed
+            //       on the (still-PRIMARY-at-that-moment) node.
+            // This closes the TOCTOU window between the gate-read and writerAPI.commit().
+            final Lock lock = engine.getRoleSwitchReadLock();
+            lock.lock();
             try {
-                authorizeCommit();
-                if (withLag) {
-                    writerAPI.ic();
-                } else {
-                    writerAPI.commit();
+                // Authoritative in-lock re-check. The read-only refusal is thrown from outside
+                // the commit try/catch below so it propagates as-is (ILP-TCP disconnects, ILP-HTTP
+                // returns SECURITY_ERROR) and is never confused with a genuine ACL denial from
+                // authorizeCommit(): a real authorization failure must still roll back the writer
+                // and surface as a wrapped CommitFailedException, exactly as before this gate existed.
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.readOnlyAccess();
                 }
-            } catch (CairoException ex) {
-                if (!ex.isTableDropped()) {
+                try {
+                    authorizeCommit();
+                    if (withLag) {
+                        writerAPI.ic();
+                    } else {
+                        writerAPI.commit();
+                    }
+                } catch (CairoException ex) {
+                    if (!ex.isTableDropped()) {
+                        handleCommitException(ex);
+                    }
+                    throw CommitFailedException.instance(ex, ex.isTableDropped());
+                } catch (Throwable ex) {
                     handleCommitException(ex);
+                    throw CommitFailedException.instance(ex, false);
                 }
-                throw CommitFailedException.instance(ex, ex.isTableDropped());
-            } catch (Throwable ex) {
-                handleCommitException(ex);
-                throw CommitFailedException.instance(ex, false);
+            } finally {
+                lock.unlock();
             }
         }
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
@@ -458,8 +497,16 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    authorizeCommit();
-                    writerAPI.commit();
+                    final Lock lock = engine.getRoleSwitchReadLock();
+                    lock.lock();
+                    try {
+                        if (!engine.isReadOnlyMode()) {
+                            authorizeCommit();
+                            writerAPI.commit();
+                        }
+                    } finally {
+                        lock.unlock();
+                    }
                 }
             } catch (Throwable ex) {
                 LOG.error().$("writer commit failed, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
@@ -518,7 +565,7 @@ public class TableUpdateDetails implements Closeable {
                         new TableColumnMetadata(
                                 columnNameUtf16,
                                 columnType,
-                                false,
+                                IndexType.NONE,
                                 0,
                                 false,
                                 null,
@@ -588,7 +635,7 @@ public class TableUpdateDetails implements Closeable {
                             new TableColumnMetadata(
                                     that.getColumnName(i),
                                     that.getColumnType(i),
-                                    that.isColumnIndexed(i),
+                                    that.getColumnIndexType(i),
                                     that.getIndexValueBlockCapacity(i),
                                     that.isSymbolTableStatic(i),
                                     that.getMetadata(i),

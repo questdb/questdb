@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -74,11 +75,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
 
-    private final RecordCursorFactory base;
-    private final AsyncGroupByRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
-    private final ObjList<Function> recordFunctions; // includes groupByFunctions
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private RecordCursorFactory base;
+    private AsyncGroupByRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private ObjList<Function> recordFunctions; // includes groupByFunctions
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
     private ObjList<AsyncGroupBySharedCursor> sharedCursors;
 
@@ -141,7 +142,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -155,8 +156,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence, executionContext);
-        return cursor;
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -165,7 +173,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
@@ -503,7 +511,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         try {
             atom.resetLocalStats(slotId);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
                 AsyncFilterUtils.applyCompiledFilter(
@@ -560,12 +568,29 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncGroupByRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final ObjList<Function> recordFunctions = this.recordFunctions;
+        this.recordFunctions = null;
+        final ObjList<AsyncGroupBySharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions); // groupByFunctions are included in recordFunctions
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

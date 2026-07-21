@@ -39,6 +39,7 @@ import java.io.Closeable;
 public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, DirectUtf8Sequence, Closeable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final DirectByteSink sink;
+    private int[] ryuE10;
 
     public DirectUtf8Sink(long initialCapacity) {
         this(initialCapacity, true);
@@ -163,6 +164,14 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
 
     public void resetCapacity() {
         sink.resetCapacity();
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override

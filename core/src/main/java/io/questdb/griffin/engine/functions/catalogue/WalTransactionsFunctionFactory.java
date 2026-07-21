@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.FunctionFactory;
@@ -137,6 +138,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     throw e;
                 }
             }
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             return cursor;
         }
 
@@ -154,6 +156,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TimestampDriver timestampDriver;
             TransactionRecord record = new TransactionRecord();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private TransactionLogCursor logCursor;
 
             private TableListRecordCursor(TimestampDriver timestampDriver) {
@@ -172,6 +175,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 return logCursor.hasNext();
             }
 

@@ -138,7 +138,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || Numbers.isNull(destValue.getFloat(valueIndex + 1))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putFloat(valueIndex + 1, srcVal);
         }

@@ -63,15 +63,18 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
                 currentGeoHash = 0;
                 return true;
             }
-        } else {
-            currentIsNull = false;
         }
 
-        // Read geohash value from packed array (non-null values only)
         long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
         currentGeoHash = readValue(valueAddress, valueSize);
         currentValueIndex++;
-        return false;
+
+        if (nullBitmapAddress == 0) {
+            // Sentinel mode: all-ones truncated to valueSize bytes encodes null.
+            // readValue zero-extends, so the sentinel decodes as (-1L >>> ((8 - valueSize) * 8)).
+            currentIsNull = currentGeoHash == (-1L >>> ((8 - valueSize) * 8));
+        }
+        return currentIsNull;
     }
 
     @Override

@@ -67,6 +67,21 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
+    /**
+     * Publishes the new {@code _pm} snapshot and makes it durable: patches the
+     * committed {@code parquet_meta_file_size} into the header (the MVCC commit
+     * signal), then fsyncs. The caller MUST invoke this after
+     * {@link #updateFileMetadata()} and the index build, and before the matching
+     * {@code _txn} commit. The header patch is the last {@code _pm} write, so a
+     * failure before it leaves the committed header and footer intact; the fsync
+     * (skipped when {@code sync} is false, i.e. NOSYNC commit mode) stops a power
+     * loss from leaving {@code _txn} pointing at a footer the page cache lost.
+     */
+    public void commitParquetMeta(boolean sync) {
+        assert ptr != 0;
+        commitParquetMeta(ptr, sync);
+    }
+
     public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
         copyRowGroup(ptr, rowGroupIndex);
@@ -86,11 +101,25 @@ public class PartitionUpdater implements QuietCloseable {
         copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
     }
 
+    public long getResultParquetMetaFileSize() {
+        assert ptr != 0;
+        return getResultParquetMetaFileSize(ptr);
+    }
+
     public long getResultUnusedBytes() {
         assert ptr != 0;
         return getResultUnusedBytes(ptr);
     }
 
+    /**
+     * Binds this updater to the source/target fds and sizes for an in-place
+     * {@code _pm} update. Three easily-confused sizes: {@code parquetMetaFileSize}
+     * is the parse anchor (the committed head from {@code _txn}, not the raw
+     * header a rolled-back update may leave ahead); {@code appendBase} is the
+     * header offset where new footer bytes land (equals the anchor outside the
+     * crash window); {@code existingParquetFileSize} is the {@code data.parquet}
+     * size, with {@code <= 0} selecting the full-create path.
+     */
     public void of(
             @Transient LPSZ srcPath,
             int readerFd,
@@ -104,7 +133,11 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long parquetMetaFileSize,
+            long appendBase,
+            long existingParquetFileSize
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -123,7 +156,11 @@ public class PartitionUpdater implements QuietCloseable {
                 rowGroupSize,
                 dataPageSize,
                 bloomFilterFpp,
-                minCompressionRatio
+                minCompressionRatio,
+                parquetMetaFd,
+                parquetMetaFileSize,
+                appendBase,
+                existingParquetFileSize
         );
     }
 
@@ -183,6 +220,8 @@ public class PartitionUpdater implements QuietCloseable {
         }
     }
 
+    private static native void commitParquetMeta(long impl, boolean sync) throws CairoException;
+
     private static native void copyRowGroup(
             long impl,
             int rowGroupIndex
@@ -210,10 +249,16 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long parquetMetaFileSize,
+            long appendBase,
+            long existingParquetFileSize
     ) throws CairoException;
 
     private static native void destroy(long impl);
+
+    private static native long getResultParquetMetaFileSize(long impl);
 
     private static native long getResultUnusedBytes(long impl);
 

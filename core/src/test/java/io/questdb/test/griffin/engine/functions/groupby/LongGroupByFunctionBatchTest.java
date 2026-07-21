@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.groupby.AvgLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunction;
@@ -54,6 +55,88 @@ public class LongGroupByFunctionBatchTest {
             Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
             lastAllocated = 0;
             lastSize = 0;
+        }
+    }
+
+    @Test
+    public void testAvgLongBatch() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(1, Numbers.LONG_NULL, 2, Numbers.LONG_NULL, 3);
+            function.computeBatch(value, ptr, 5, 0);
+
+            Assert.assertEquals(2.0, function.getDouble(value), 0.0);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testAvgLongBatchAccumulates() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(1, 2, 3);
+            function.computeBatch(value, ptr, 3, 0);
+
+            ptr = allocateLongs(4, 5, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals((1 + 2 + 3 + 4 + 5) / 5.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testAvgLongBatchAllNull() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    // After a finite batch followed by an all-null batch, the previous count must be
+    // preserved (sumLongAcc overwrites the count pointer; restore on the empty path).
+    @Test
+    public void testAvgLongBatchAllNullPreservesPrevCount() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(10, 20);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(15.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testAvgLongBatchMixedNull() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(10, Numbers.LONG_NULL, 20);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(15.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testAvgLongBatchZeroCountKeepsNaN() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeBatch(value, 0, 0, 0);
+
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testAvgLongSetEmpty() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }
     }
 
