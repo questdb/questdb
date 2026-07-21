@@ -27,6 +27,7 @@ package org.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
@@ -67,8 +68,17 @@ import java.util.Arrays;
  * <p>
  * Tunables (system properties): {@code composite.bench.k} (measured iterations/table, default 2000),
  * {@code composite.bench.warmup} (warmup iterations/table, default 100), {@code composite.bench.exch}
- * (distinct exch values = rows/batch, default 6), {@code composite.bench.step.us} (microseconds between
- * consecutive rows, default 1000).
+ * (distinct exch values = rows/batch, default 6; {@code exch=1} makes every batch a SINGLE-CELL ordered
+ * append-only commit -- the composite single-cell fast-append's target shape), {@code
+ * composite.bench.step.us} (microseconds between consecutive rows, default 1000), {@code
+ * composite.bench.fastappend} (boolean, default {@code false}) -- overrides {@link
+ * CairoConfiguration#isWalCompositeFastAppendEnabled()} for this run's engine so the SAME benchmark can
+ * measure flag-off (today's full composite O3 path on every commit, the baseline) vs flag-on (the
+ * fast-append early-return, when the commit shape and the kept-open cell qualify) across two separate
+ * process invocations. The engagement of the fast path is reported directly from the writer's own static
+ * counters ({@link TableWriter#getCompositeFastAppendEligibleCount()} / {@link
+ * TableWriter#getCompositeFastAppendCommittedCount()}) around the composite loop, so a run's printed
+ * output is also the engagement proof, not just a timing number.
  * <p>
  * Build (note {@code -am} so the benchmark links the in-tree core, not the installed jar) and run via
  * this class's plain {@code main} (manual {@code System.nanoTime} timing + percentile table -- the
@@ -92,18 +102,27 @@ public class CompositeIngestionBenchmark {
     private static final long STEP_MICROS = Long.getLong("composite.bench.step.us", 1000L);
     private static final int WARMUP_ITERATIONS = Integer.getInteger("composite.bench.warmup", 100);
     private static final int K = Integer.getInteger("composite.bench.k", 2000);
+    // Composite single-cell fast-append (spec 1) override: forces isWalCompositeFastAppendEnabled() for
+    // this run's engine regardless of the production default (off). Default false preserves this
+    // benchmark's pre-existing behavior (full composite O3 path on every commit).
+    private static final boolean FASTAPPEND_ENABLED = Boolean.getBoolean("composite.bench.fastappend");
     // Anchor seed data at 2024-01-01T00:00:00Z.
     private static final String BASE_TS = "2024-01-01T00:00:00.000000Z";
 
     public static void main(String[] args) throws Exception {
         System.out.printf(
-                "CompositeIngestionBenchmark: %d exch values, %d rows/batch, %d warmup + %d measured commits/table%n",
-                NUM_EXCH, BATCH_ROWS, WARMUP_ITERATIONS, K);
+                "CompositeIngestionBenchmark: %d exch values, %d rows/batch, %d warmup + %d measured commits/table, fastappend=%b%n",
+                NUM_EXCH, BATCH_ROWS, WARMUP_ITERATIONS, K, FASTAPPEND_ENABLED);
         System.out.println();
 
         final Path root = Files.createTempDirectory("composite-ingest-bench-");
         try {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString());
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString()) {
+                @Override
+                public boolean isWalCompositeFastAppendEnabled() {
+                    return FASTAPPEND_ENABLED;
+                }
+            };
             try (CairoEngine engine = new CairoEngine(configuration);
                  SqlCompiler compiler = engine.getSqlCompiler()) {
 
@@ -130,9 +149,22 @@ public class CompositeIngestionBenchmark {
                 System.out.printf("%-14s %10s %10s %10s %10s %10s%n",
                         "table", "avg_us", "p50_us", "p90_us", "p99_us", "min_us");
 
+                // Engagement proof (Task 4): snapshot the writer's own static fast-append counters
+                // immediately around the ci loop -- they are JVM-wide (see TableWriter's own field docs)
+                // but nothing else touches "ci" in this window, and "pi" (dimCount==0) never increments
+                // them regardless of the flag, so a before/after delta here attributes cleanly.
+                final long fastAppendEligibleBefore = TableWriter.getCompositeFastAppendEligibleCount();
+                final long fastAppendCommittedBefore = TableWriter.getCompositeFastAppendCommittedCount();
                 final long[] compositeTimings = runCommitLoop(engine, ctx, "ci");
+                final long fastAppendEligibleDelta = TableWriter.getCompositeFastAppendEligibleCount() - fastAppendEligibleBefore;
+                final long fastAppendCommittedDelta = TableWriter.getCompositeFastAppendCommittedCount() - fastAppendCommittedBefore;
                 final Stats compositeStats = Stats.of(compositeTimings);
                 printStats("composite(ci)", compositeStats);
+                final long totalCiCommits = WARMUP_ITERATIONS + K;
+                System.out.printf(
+                        "composite fast-append engagement: flag=%b eligible=%d committed=%d of %d total ci commits (%d warmup + %d measured)%n",
+                        FASTAPPEND_ENABLED, fastAppendEligibleDelta, fastAppendCommittedDelta, totalCiCommits,
+                        WARMUP_ITERATIONS, K);
                 final long compositeRows = queryRowCount(compiler, ctx, "ci");
                 final long expectedRows = (long) (WARMUP_ITERATIONS + K) * BATCH_ROWS;
                 if (compositeRows != expectedRows) {
