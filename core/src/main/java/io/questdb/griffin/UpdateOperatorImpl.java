@@ -293,10 +293,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
     private void checkPartitionCanUpdate(TableToken tableToken, int rowPartitionIndex) {
         if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
-            // WAL-tolerable: the read-only flag is set only by sequenced operations, so WAL apply
-            // skips this transaction identically on every instance instead of suspending the table
-            // (a retry can never succeed). The parquet check below must stay non-tolerable: the
-            // format flag flips per instance, so a skip keyed on it would diverge across replicas.
+            // The read-only flag is sequenced, so this fails deterministically on every instance.
+            // Although partition-manipulation errors are generally WAL-tolerable, UPDATE commands
+            // must remain unapplied: skipping one would lose DML already acknowledged at sequencing.
             throw CairoException.partitionManipulationRecoverable()
                     .put("cannot update read-only partition [table=").put(tableToken.getTableName())
                     .put(", partitionTimestamp=").ts(

@@ -956,20 +956,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (e.isTableDropped()) {
                 throw e;
             }
-            final LogRecord log;
-            if (!e.isWALTolerable()) {
-                log = LOG.error();
-            } else {
-                // a tolerated UPDATE skip discards a data change, so it logs critical
-                log = cmdType == CMD_UPDATE_TABLE ? LOG.critical() : LOG.info();
-            }
+            // UPDATE is acknowledged when sequenced. Even if its underlying error is normally
+            // WAL-tolerable, advancing the apply watermark would silently lose acknowledged DML.
+            final boolean tolerable = e.isWALTolerable() && cmdType != CMD_UPDATE_TABLE;
+            final LogRecord log = tolerable ? LOG.info() : LOG.error();
             log.$("error applying SQL to wal table [table=").$(tableWriter.getTableToken())
                     .$(", sql=").$(sql)
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
 
-            if (!e.isWALTolerable()) {
+            if (!tolerable) {
                 throw e;
             } else {
                 // Mark as applied.

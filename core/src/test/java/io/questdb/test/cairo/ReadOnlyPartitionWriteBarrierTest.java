@@ -37,9 +37,10 @@ import org.junit.Test;
  * Asserts the read-only partition write-barrier invariant: once a
  * partition's {@code read_only} bit is set, every {@link TableWriter}
  * data-modification path (in-order INSERT, O3 INSERT, UPDATE) must
- * silently drop or hard-reject the write. On WAL apply, the UPDATE
- * rejection downgrades to a deterministic whole-transaction skip
- * (WAL-tolerable) so the table never suspends over it.
+ * silently drop or hard-reject the write. On WAL apply, an UPDATE that reaches a read-only
+ * partition must remain unapplied and suspend the table; advancing the apply
+ * watermark would permanently lose a statement already acknowledged by the
+ * sequencer.
  */
 public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
 
@@ -231,11 +232,11 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalUpdateReadOnlyPartitionSkipsTransaction() throws Exception {
-        // A WAL-applied UPDATE matching rows in a read-only partition must not
-        // suspend the table: the read-only flag is sequenced state, so every
-        // instance skips the transaction identically. The seqTxn watermark
-        // advances and later transactions keep applying.
+    public void testWalUpdateReadOnlyPartitionSuspendsWithoutAdvancingApplyTxn() throws Exception {
+        // UPDATE is acknowledged when it is sequenced. If apply later discovers
+        // that a matched partition is read-only, the transaction must remain at
+        // the apply watermark so an operator can see and resolve it; skipping it
+        // would turn the earlier acknowledgement into silent data loss.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_rw_wal_upd (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t_rw_wal_upd VALUES (1, '2020-01-01T00:00:00'), (2, '2020-01-03T00:00:00')");
@@ -247,30 +248,30 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
                 writer.bumpPartitionTableVersion();
                 writer.commit();
             }
+            final long appliedSeqTxnBeforeUpdate;
+            try (TableWriter writer = getWriter(tt)) {
+                appliedSeqTxnBeforeUpdate = writer.getAppliedSeqTxn();
+            }
 
             update("UPDATE t_rw_wal_upd SET x = 999 WHERE ts IN '2020-01-01'");
-            drainWalQueue();
-
-            Assert.assertFalse("UPDATE over a read-only partition must not suspend the table",
-                    engine.getTableSequencerAPI().isSuspended(tt));
-
-            // the skipped transaction must not block later ones
             execute("INSERT INTO t_rw_wal_upd VALUES (3, '2020-01-04T00:00:00')");
             drainWalQueue();
+
+            Assert.assertTrue("UPDATE over a read-only partition must suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
             try (TableWriter writer = getWriter(tt)) {
-                Assert.assertEquals("seqTxn watermark must advance past the skipped txn",
-                        3, writer.getAppliedSeqTxn());
+                Assert.assertEquals("failed UPDATE and following INSERT must remain unapplied",
+                        appliedSeqTxnBeforeUpdate, writer.getAppliedSeqTxn());
             }
             assertQuery("t_rw_wal_upd").noLeakCheck().timestamp("ts").expectSize().returns(
                     "x\tts\n" +
                             "1\t2020-01-01T00:00:00.000000Z\n" +
-                            "2\t2020-01-03T00:00:00.000000Z\n" +
-                            "3\t2020-01-04T00:00:00.000000Z\n");
+                            "2\t2020-01-03T00:00:00.000000Z\n");
         });
     }
 
     @Test
-    public void testWalUpdateSpanningHotAndReadOnlyPartitionsSkipsWholeStatement() throws Exception {
+    public void testWalUpdateSpanningHotAndReadOnlyPartitionsSuspendsAndRollsBack() throws Exception {
         // The read-only partition sits AFTER the hot one in scan order, so the
         // row loop has already staged hot-partition updates when it trips the
         // read-only check: the rollback must discard them - all-or-nothing.
@@ -288,7 +289,7 @@ public class ReadOnlyPartitionWriteBarrierTest extends AbstractCairoTest {
             update("UPDATE t_rw_wal_span SET x = x + 1000");
             drainWalQueue();
 
-            Assert.assertFalse("spanning UPDATE must not suspend the table",
+            Assert.assertTrue("spanning UPDATE must suspend the table",
                     engine.getTableSequencerAPI().isSuspended(tt));
             assertQuery("t_rw_wal_span").noLeakCheck().timestamp("ts").expectSize().returns(
                     "x\tts\n" +

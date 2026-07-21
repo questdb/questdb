@@ -923,16 +923,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Do not catch rollback exceptions, let the calling code handle distressed writer
             rollback();
 
-            if (ex.isWALTolerable()) {
+            // UPDATE is acknowledged when sequenced, before this apply runs. Never advance past a
+            // failed UPDATE: doing so would permanently lose an acknowledged data change. Some
+            // partition errors are tolerable for idempotent structural commands, but not for DML.
+            if (ex.isWALTolerable() && operation.getCmdType() != CMD_UPDATE_TABLE) {
                 // Mark the transaction as applied and ignore it.
-                // An ignored UPDATE discards a data change, so it logs critical; other
-                // command skips (e.g. partition manipulation no-ops) stay at info.
-                LogRecord log = operation.getCmdType() == TableWriterTask.CMD_UPDATE_TABLE ? LOG.critical() : LOG.info();
-                log.$("ignoring WAL transaction the writer cannot apply [table=").$(tableToken)
-                        .$(", seqTxn=").$(seqTxn)
-                        .$(", error=").$safe(ex.getFlyweightMessage())
-                        .I$();
-
                 commitSeqTxn(seqTxn);
                 return 0;
             } else {
