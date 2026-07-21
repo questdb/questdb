@@ -110,6 +110,19 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
     }
 
     /**
+     * Finds the greatest entry whose {@code maxTimestamp} is less than or equal
+     * to {@code frontierTimestamp}. Timestamp ties return their greatest
+     * checkpoint id. Recovery uses this to select the newest logical boundary
+     * that cannot sit beyond the durable live-view frontier.
+     */
+    public boolean floor(@NotNull LiveViewCheckpointPageRef rootRef, long frontierTimestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
+        if (frontierTimestamp == Long.MAX_VALUE) {
+            return last(rootRef, out);
+        }
+        return predecessor(rootRef, frontierTimestamp + 1, out);
+    }
+
+    /**
      * Visits every entry in ascending key order.
      */
     public void iterateAll(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull Visitor visitor) {

@@ -523,10 +523,98 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             Assert.assertNotNull(after);
             Assert.assertEquals(durableFloor, after.getCheckpointTimelineWalPurgeFloor());
             Assert.assertEquals(
-                    "watermark adoption must not start the later runtime-root restore step",
+                    "catalogue load must not restore mutable runtime before the refresh worker pins the generation",
                     Numbers.LONG_NULL,
                     after.getHeadCheckpointRestoreMicros()
             );
+        });
+    }
+
+    @Test
+    public void testRestartRestoresTimelineAndRebuildsOnlyCheckpointToFrontierGap() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 100);
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1); // first cadence event always seals
+                appendAndRefresh(job, 20, 2); // durable output beyond the root, no seal
+            }
+
+            final LiveViewInstance before = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(before);
+            Assert.assertNotEquals(Numbers.LONG_NULL, before.getHeadCheckpointLvSeqTxn());
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(
+                    "ACTIVE startup must not rediscover the still-present legacy .cp",
+                    Numbers.LONG_NULL,
+                    reloaded.getHeadCheckpointLvSeqTxn()
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // A fresh base notification drives the single-shot recovery,
+                // then ordinary refresh continues from the reconciled boundary.
+                appendAndRefresh(job, 30, 3);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(3, reloaded.getLvRowsTotal());
+                Assert.assertEquals(
+                        "a valid timeline root plus (B,F] replay must not fall back to START FROM",
+                        0,
+                        reloaded.getO3BoundaryReplayRows()
+                );
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t6.0\n");
+        });
+    }
+
+    @Test
+    public void testRestartExcludesApplyAheadO3BelowFrontierUntilOrdinaryClassification() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 100);
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1); // timeline root B=10
+                appendAndRefresh(job, 30, 2); // durable frontier F=30
+            }
+
+            // Base apply runs ahead of live-view materialization. Its timestamp
+            // lies below F, so a recovery scan of the current applied base would
+            // incorrectly incorporate it before the reconciled base seqTxn.
+            execute("INSERT INTO base VALUES ('2026-01-01T00:00:20.000000Z', 'a', 5)");
+            drainWalQueue();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            Assert.assertTrue(
+                    "the apply-ahead txn must remain above recovery's base boundary and enter the ordinary O3 path",
+                    reloaded.getO3BoundaryReplayRows() > 0
+            );
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t6.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t8.0\n");
         });
     }
 

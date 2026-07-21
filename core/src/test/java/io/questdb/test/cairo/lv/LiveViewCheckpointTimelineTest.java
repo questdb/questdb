@@ -159,6 +159,7 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 // Long.MAX_VALUE is a valid designated timestamp: predecessor of it
                 // is the entry strictly below, not "infinity".
                 h.assertPredecessor(Long.MAX_VALUE);      // -> (Long.MAX_VALUE - 1, 1)
+                h.assertFloor(Long.MAX_VALUE);            // -> (Long.MAX_VALUE, 2)
                 h.assertRange(100, Long.MAX_VALUE);        // excludes Long.MAX_VALUE
             }
         });
@@ -179,6 +180,7 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 for (int q = 0; q < 300; q++) {
                     final long c = rnd.nextLong(160) - 40;
                     h.assertPredecessor(c);
+                    h.assertFloor(c);
                     h.assertSuccessor(c);
                     final long lo = rnd.nextLong(160) - 40;
                     final long hi = lo + rnd.nextLong(60);
@@ -339,6 +341,17 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             Assert.assertFalse(reader.findExact(root, ts, id, out));
         }
 
+        void assertFloor(long frontierTimestamp) {
+            final long[] expected = oracleFloor(frontierTimestamp);
+            final boolean found = reader.floor(root, frontierTimestamp, out);
+            if (expected == null) {
+                Assert.assertFalse("expected no floor for frontier=" + frontierTimestamp, found);
+                return;
+            }
+            Assert.assertTrue("expected a floor for frontier=" + frontierTimestamp, found);
+            assertEntry(expected, out);
+        }
+
         void assertIterateAll() {
             final List<long[]> got = new ArrayList<>();
             reader.iterateAll(root, entry -> got.add(snapshot(entry)));
@@ -466,6 +479,19 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                 }
             }
             return null;
+        }
+
+        private long[] oracleFloor(long frontierTimestamp) {
+            long[] best = null;
+            for (int i = 0; i < oracle.size(); i++) {
+                final long[] e = oracle.get(i);
+                if (e[0] <= frontierTimestamp) {
+                    best = e;
+                } else {
+                    break;
+                }
+            }
+            return best;
         }
 
         private long[] oraclePredecessor(long correctionTimestamp) {

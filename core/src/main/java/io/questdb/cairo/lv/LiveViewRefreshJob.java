@@ -271,6 +271,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // window.processRow. Single instance reused across cycles; rebound via
     // of() each replay.
     private final TimestampLowerBoundCursor tsLowerBoundCursor = new TimestampLowerBoundCursor();
+    private final TimestampUpperBoundCursor tsUpperBoundCursor = new TimestampUpperBoundCursor();
     // Per-turn budget accounting. Reset on entry to refreshInstance; consulted
     // at the per-base-seqTxn boundary inside incrementalRefresh so a long
     // backlog does not monopolise the worker. The budget bounds (max commits
@@ -1165,7 +1166,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 )) {
                     drainBaseWal(
                             instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
-                            cursorTimestampIndex, viewLowerBoundTimestamp, filter, fromSeqTxn, toSeqTxn,
+                            cursorTimestampIndex, viewLowerBoundTimestamp, Long.MAX_VALUE, filter, fromSeqTxn, toSeqTxn,
                             null, null, populateTier, latestSeenTsSnapshot
                     );
                 }
@@ -1187,7 +1188,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             drainBaseWal(
                     instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
-                    cursorTimestampIndex, viewLowerBoundTimestamp, filter, fromSeqTxn, toSeqTxn,
+                    cursorTimestampIndex, viewLowerBoundTimestamp, Long.MAX_VALUE, filter, fromSeqTxn, toSeqTxn,
                     walWriter, copier, populateTier, latestSeenTsSnapshot
             );
             // Publish ahead of the commit below and of the no-row branch's bare
@@ -1706,6 +1707,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             int baseTimestampIndex,
             int cursorTimestampIndex,
             long viewLowerBoundTimestamp,
+            long viewUpperBoundTimestamp,
             Function filter,
             long fromSeqTxn,
             long toSeqTxn,
@@ -1945,6 +1947,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // skip-prefix cursor drops exactly the sub-floor prefix.
                 tsLowerBoundCursor.of(walRecordCursor, baseTimestampIndex, viewLowerBoundTimestamp);
                 RecordCursor source = tsLowerBoundCursor;
+                if (viewUpperBoundTimestamp != Long.MAX_VALUE) {
+                    tsUpperBoundCursor.of(source, baseTimestampIndex, viewUpperBoundTimestamp);
+                    source = tsUpperBoundCursor;
+                }
                 if (filter != null) {
                     filteringCursor.of(source, filter, executionContext);
                     source = filteringCursor;
@@ -4592,6 +4598,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long fromSeqTxn,
             long toSeqTxn
     ) throws SqlException {
+        return replayToApplied(
+                instance,
+                windowFactory,
+                fromSeqTxn,
+                toSeqTxn,
+                instance.getDefinition().getViewLowerBoundTimestamp(),
+                Long.MAX_VALUE
+        );
+    }
+
+    private long replayToApplied(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long fromSeqTxn,
+            long toSeqTxn,
+            long lowTimestampInclusive,
+            long highTimestampInclusive
+    ) throws SqlException {
         RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
         final Function filter = filterFactory.getFilter();
         RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
@@ -4599,7 +4623,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
         final int baseTimestampIndex = baseMetadata.getTimestampIndex();
         buildColumnMappings(baseMetadata, baseToken);
-        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         final RecordMetadata outMetadata = windowFactory.getMetadata();
         final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
@@ -4617,7 +4640,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // skips every WAL write and every staging-buffer mirror.
             drainBaseWal(
                     instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
-                    cursorTimestampIndex, viewLowerBoundTimestamp, filter, from, toSeqTxn,
+                    cursorTimestampIndex, lowTimestampInclusive, highTimestampInclusive, filter, from, toSeqTxn,
                     null, null, false, instance.getLatestSeenTs()
             );
             if (drainResult.o3Detected) {
@@ -5106,6 +5129,165 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.setLvRowsTotal(restoredHeadState.lvRowsTotal + replayedRows);
         promoteRestoredHeadIntoRing(instance, headLvSeqTxn, manifestBaseSeqTxn);
         instance.setCheckpointRestoreSucceeded();
+    }
+
+    /**
+     * ACTIVE-view restart recovery from the versioned checkpoint timeline. The
+     * durable live-view table supplies the materialization frontier, row count,
+     * and live-view writer txn; its in-band max-base-seqTxn supplies the
+     * transaction inclusion boundary. Root selection and restore remain under
+     * one generation pin inside the timeline reader.
+     */
+    private void tryRestoreFromTimeline(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        final long durableBaseSeqTxn = instance.getAppliedWatermark();
+        final long durableFrontierTimestamp;
+        final long durableLvRowCount;
+        final long durableLvSeqTxn;
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            durableLvRowCount = lvReader.size();
+            durableFrontierTimestamp = durableLvRowCount == 0 ? Numbers.LONG_NULL : lvReader.getMaxTimestamp();
+            durableLvSeqTxn = lvReader.getSeqTxn();
+        }
+
+        if (durableLvRowCount == 0
+                && instance.getStateReader().getLastProcessedSeqTxn()
+                < instance.getStateReader().getSubscribeFromSeqTxn()) {
+            // Identity state is already the exact runtime for a never-materialized
+            // ACTIVE view. Avoid creating an empty timeline file merely to prove it.
+            return;
+        }
+
+        try (
+                Path checkpointsDir = new Path();
+                Path timelinePath = new Path()
+        ) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            if (!engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
+                rebuildTimelineRecoveryFromAppliedBase(
+                        instance,
+                        windowFactory,
+                        durableBaseSeqTxn,
+                        "timeline is absent"
+                );
+                return;
+            }
+
+            final LiveViewCheckpointTimelineStoreReader.Result restored;
+            try (LiveViewCheckpointTimelineStoreReader timelineReader =
+                         new LiveViewCheckpointTimelineStoreReader(engine.getConfiguration())) {
+                timelineReader.of(checkpointsDir);
+                // Allocate/open the caller-owned maps before the page reader
+                // validates and restores into them, matching legacy restore.
+                windowFactory.openForLiveViewRestore(executionContext);
+                restored = timelineReader.restoreLatestCompatible(
+                        durableFrontierTimestamp,
+                        durableBaseSeqTxn,
+                        durableLvSeqTxn,
+                        durableLvRowCount,
+                        instance.getLiveViewToken().getTableId(),
+                        windowFactory.getWindowFunctions(),
+                        instance.getAnchorWindow()
+                );
+            }
+
+            instance.forceSetLatestSeenTs(restored.maxTimestamp);
+            instance.setLvRowsTotal(restored.effectiveLvRowPosition);
+
+            long replayedRows = 0;
+            if (restored.maxTimestamp != Long.MAX_VALUE) {
+                final long lowTimestamp = Math.max(
+                        instance.getDefinition().getViewLowerBoundTimestamp(),
+                        restored.maxTimestamp + 1
+                );
+                replayedRows = replayToApplied(
+                        instance,
+                        windowFactory,
+                        restored.normalizedBaseSeqTxn,
+                        durableBaseSeqTxn,
+                        lowTimestamp,
+                        durableFrontierTimestamp
+                );
+            }
+            if (replayedRows == REPLAY_TO_APPLIED_O3) {
+                // The legacy O3 path completed a full, timestamp-ordered rewrite.
+                // Phase 5 replaces this hand-off with bounded timeline repair.
+                instance.setCheckpointRestoreSucceeded();
+                return;
+            }
+
+            final long rebuiltLvRows = restored.effectiveLvRowPosition + replayedRows;
+            if (rebuiltLvRows != durableLvRowCount
+                    || instance.getLatestSeenTs() != durableFrontierTimestamp) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint timeline rebuild does not match durable materialization")
+                        .put(" [rootRows=").put(restored.effectiveLvRowPosition)
+                        .put(", replayedRows=").put(replayedRows)
+                        .put(", durableRows=").put(durableLvRowCount)
+                        .put(", rebuiltFrontier=").put(instance.getLatestSeenTs())
+                        .put(", durableFrontier=").put(durableFrontierTimestamp).put(']');
+            }
+
+            instance.setLastProcessedSeqTxn(durableBaseSeqTxn);
+            instance.setAppliedWatermark(durableBaseSeqTxn);
+            instance.setLvRowsTotal(rebuiltLvRows);
+            instance.setHeadCheckpoint(
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    0,
+                    Numbers.LONG_NULL
+            );
+            instance.setCheckpointRestoreSucceeded();
+            LOG.info().$("restored live view from checkpoint timeline [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", generation=").$(restored.generation)
+                    .$(", checkpointId=").$(restored.checkpointId)
+                    .$(", boundary=").$ts(restored.maxTimestamp)
+                    .$(", frontier=").$ts(durableFrontierTimestamp)
+                    .$(", baseSeqTxn=").$(durableBaseSeqTxn)
+                    .$(", replayedRows=").$(replayedRows).I$();
+        } catch (Throwable t) {
+            LOG.error().$("could not restore live view from checkpoint timeline, rebuilding derived state [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            rebuildTimelineRecoveryFromAppliedBase(
+                    instance,
+                    windowFactory,
+                    durableBaseSeqTxn,
+                    "timeline restore failed"
+            );
+        }
+    }
+
+    private void rebuildTimelineRecoveryFromAppliedBase(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long durableBaseSeqTxn,
+            CharSequence cause
+    ) {
+        LOG.info().$("live view restart rebuilding from applied base [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", cause=").$(cause)
+                .$(", appliedWatermark=").$(durableBaseSeqTxn).I$();
+        try {
+            o3HeadMissReplay(
+                    instance,
+                    windowFactory,
+                    Numbers.LONG_NULL,
+                    instance.getDefinition().getBaseTableToken(),
+                    durableBaseSeqTxn,
+                    true
+            );
+            instance.setCheckpointRestoreSucceeded();
+        } catch (Throwable t) {
+            LOG.critical().$("live view restart applied-base rebuild failed [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            instance.setPendingInvalidationReason("live view restart timeline recovery failed");
+        }
     }
 
     /**
@@ -6669,13 +6851,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 didWork |= retryPendingLiveViewApply(instance);
             }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
-            // The 2a.7 restart-restore runs inside refreshInstance on the
-            // first cycle for any LV with a stamped head .cp - even when
-            // there are no new base commits to consume. Letting the worker
-            // skip such LVs would defer restore to the next inbound commit,
-            // which for a quiescent base could be hours away.
+            // Timeline recovery runs inside refreshInstance on the first cycle
+            // of every ACTIVE primary, even when there are no new base commits.
+            // The recovery itself cheaply recognizes an empty identity view;
+            // scheduling it once avoids reopening the LV table on every fallback
+            // scan merely to decide that no recovery is needed.
             final boolean needsRestore = !instance.isCheckpointRestoreAttempted()
-                    && instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL;
+                    && !leadOnly
+                    && instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE;
             // A SEEDING view needs a refresh tick to drive its sweep even when
             // no new base commits have arrived since CREATE - the sweep
             // covers existing history, not future commits.
@@ -6839,7 +7022,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         final long appliedMaxBaseSeqTxn = engine.readLiveViewAppliedMaxBaseSeqTxn(token);
-        if (appliedMaxBaseSeqTxn > instance.getStateReader().getLastProcessedSeqTxn()) {
+        if (appliedMaxBaseSeqTxn >= 0
+                && appliedMaxBaseSeqTxn != instance.getStateReader().getLastProcessedSeqTxn()) {
             try {
                 // waitForUnfrozen=false: this runs on the refresh worker while it holds the
                 // refresh latch, so the startCheckpoint handshake already serialises the
@@ -7072,16 +7256,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (isApplyLagDeferred(instance, true)) {
                 return false;
             }
-            // Labels the refresh body so a compromised head-checkpoint restore
+            // Labels the refresh body so a compromised timeline recovery
             // can break straight to the out-of-latch invalidation below, skipping
             // the refresh + flush that would otherwise materialise the
             // inconsistent accumulators to disk.
             refreshBody:
             try {
-                // First cycle after restart restores from the head .cp, or - for
-                // a view that has materialised rows but has no anchor at all -
-                // rebuilds, because the drain below would recompute from cold
-                // accumulators and durably flush wrong cumulative aggregates.
+                // First cycle after restart restores the newest compatible
+                // timeline root, or rebuilds derived state when the timeline is
+                // absent/unusable. The drain below must never start over durable
+                // output with cold accumulators.
                 // Single-shot per LV lifetime - the flag flips true whether the
                 // restore succeeded, missed, or failed.
                 // An in-process promote keeps the same LiveViewInstance but flips it from replica
@@ -7113,27 +7297,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // purely in RAM from replicated disk (the leadReconstruction branches below) and must
                     // never do durable recovery here: reconcileAppliedFloorAfterRestart would rewrite
                     // _lv.s -- which the global apply job owns on a replica, so it would race that write --
-                    // and tryRestoreFromHead's replay REPLACE_RANGE-rewrites the on-disk tier and writes a
-                    // fresh head .cp. A node that has only ever been a replica has no local .cp (.cp does
-                    // not replicate), but one restarted read-only over an ex-primary's files does, so
-                    // without this role gate its first cycle would reach tryRestoreFromHead. The asserts in
-                    // publishCheckpointRing / maybeWriteHeadCheckpoint catch it under -ea; with assertions
-                    // disabled the writes proceed and invalidate the replica's view. The flag is still
-                    // burned above, so a later in-process promote re-arms this recovery through the
-                    // promote-edge branch just above (which runs it once the node is primary).
+                    // and timeline fallback can REPLACE_RANGE-rewrite the on-disk tier. A node restarted
+                    // read-only over an ex-primary's files may retain a local timeline, but it must not
+                    // consume it until promotion. The flag is still burned above, so a later in-process
+                    // promote re-arms this recovery through the promote-edge branch just above.
                     if (!leadReconstruction) {
                         // Reconcile a durable floor left behind by a crash between the
-                        // inline apply and the trailing _lv.s persist, before the head
-                        // .cp restore reads appliedWatermark as disk truth.
+                        // inline apply and the trailing _lv.s persist, before timeline
+                        // selection reconciles its generation coordinates.
                         reconcileAppliedFloorAfterRestart(instance);
-                        if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL
-                                || needsHeadlessRestartRecovery(instance, leadReconstruction)) {
-                            // Baseline observability: time the whole restore (rehydrate
-                            // ring, restore the .cp, replay-to-applied). Recorded once
+                        if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            // Baseline observability: time bounded generation selection,
+                            // root restore, and the (B,F] replay. Recorded once
                             // per LV lifetime regardless of outcome. Surfaced via
                             // live_views().head_checkpoint_restore_micros.
                             final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
-                            tryRestoreFromHead(instance, getWindowFactory(instance));
+                            tryRestoreFromTimeline(instance, getWindowFactory(instance));
                             instance.recordCheckpointRestoreMicros(
                                     engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
                             );
@@ -7141,8 +7320,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // The restore could not rebuild a consistent window
                                 // state (replay-to-applied failed mid-gap leaving the
                                 // accumulators a partial advance over disk, a dedup
-                                // replay failed, or the head .cp was a version-too-old
-                                // snapshot). Do NOT run the incremental refresh + flush
+                                // replay failed, or no safe derived-state rebuild was
+                                // possible). Do NOT run the incremental refresh + flush
                                 // below: they would advance and flush the inconsistent
                                 // accumulators, leaving the (about-to-be-invalidated)
                                 // view serving corrupted content off its own on-disk

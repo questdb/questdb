@@ -34,8 +34,6 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointRingCandidate;
-import io.questdb.cairo.lv.LiveViewCheckpointRingManifestReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -759,11 +757,6 @@ public class CairoEngine implements Closeable, WriterSource {
             // Reusable scratch for the per-LV checkpoint sweep (see the LV
             // branch below). Allocated once per buildViewGraphs() call.
             final StringSink sweepNameSink = new StringSink();
-            // Parse scratch for the _ring manifest, reused across views. The
-            // per-view candidate cannot share it - the refresh worker reads the
-            // candidate long after this loop has moved on - so it copies out of
-            // this reader and only the copy is retained.
-            final LiveViewCheckpointRingManifestReader ringManifestReader = new LiveViewCheckpointRingManifestReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -1000,11 +993,10 @@ public class CairoEngine implements Closeable, WriterSource {
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
                             // Publish the durable timeline's generation-based WAL
                             // floor before any purge job can race startup recovery.
-                            // This performs only the bounded A/B/root validation;
-                            // selecting and restoring a logical root remains the
-                            // next implementation step. Replicas do not own local
-                            // checkpoint timelines and must not retain WAL for a
-                            // stale ex-primary artefact.
+                            // The refresh worker re-opens the same bounded-selected
+                            // generation and pins it while choosing/restoring a root.
+                            // Replicas do not own local checkpoint timelines and
+                            // must not retain WAL for a stale ex-primary artefact.
                             if (!isReadOnlyMode()) {
                                 liveViewDirPath.of(configuration.getDbRoot())
                                         .concat(tableToken)
@@ -1027,96 +1019,9 @@ public class CairoEngine implements Closeable, WriterSource {
                                     }
                                 }
                             }
-                            // Read the _checkpoints/_ring manifest, if any, and
-                            // stash it on the instance as a candidate. The trust
-                            // decision - covered == the reconciled applied floor -
-                            // belongs to the refresh worker: this thread sees only
-                            // the raw _lv.s, which trails the view's real durable
-                            // position by design, and reconcileAppliedFloorAfterRestart
-                            // clamps it back up long after buildViewGraphs has
-                            // returned. Deciding here would discard the ring on
-                            // exactly the crash restarts it exists for.
-                            //
-                            // The manifest is an allow-list, never an inventory,
-                            // which is what makes rebuilding the ring safe at all:
-                            // a selective O3 invalidation drops unsealed entries
-                            // with best-effort removeQuiet, so a stale (poisoned)
-                            // .cp whose unlink failed lingers below the highest
-                            // survivor with lvSeqTxn <= appliedWatermark,
-                            // indistinguishable on disk from a sealed one.
-                            // Scanning the directory would resurrect it as an
-                            // anchor and let a later O3 resume from pre-late-row
-                            // window state; an unlisted .cp is garbage by
-                            // construction.
-                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
-                            LiveViewCheckpointRingCandidate ringCandidate = new LiveViewCheckpointRingCandidate();
-                            LiveViewRecovery.readRingCandidate(
-                                    configuration.getFilesFacade(),
-                                    sweepPath,
-                                    liveViewDirPath,
-                                    tableToken,
-                                    reader,
-                                    ringManifestReader,
-                                    ringCandidate
-                            );
-                            if (ringCandidate.isStructurallyValid()) {
-                                instance.setCheckpointRingCandidate(ringCandidate);
-                                // Hold WalPurgeJob's base WAL floor at the newest
-                                // listed entry until the refresh worker decides
-                                // trust. The head stamped below carries that
-                                // window only when the sweep finds a .cp: find
-                                // none while the manifest lists one and a
-                                // caught-up view is selected for a restore by
-                                // nothing, so the rehydrate that would stamp this
-                                // arm waits for a base commit while purge does
-                                // not. Floor only - naming the head off an
-                                // unverified manifest would pre-empt the trust
-                                // rule, where holding WAL only costs retention.
-                                final int ringEntryCount = ringCandidate.getEntryCount();
-                                if (ringEntryCount > 0) {
-                                    instance.adoptCheckpointRingPurgeFloor(
-                                            ringCandidate.getEntryBaseSeqTxn(ringEntryCount - 1)
-                                    );
-                                }
-                            } else {
-                                // Absent, corrupt, version-skewed, or naming a
-                                // .cp that is gone. Sweep without an allow-list,
-                                // which is the legacy behaviour exactly.
-                                ringCandidate = null;
-                            }
-                            // Startup sweep: clean .cp.tmp orphans
-                            // and any .cp whose lvSeqTxn outran the applied
-                            // watermark, then retain only the highest survivor
-                            // plus whatever the manifest lists. Stamp the
-                            // survivor's lvSeqTxn on the instance so the first
-                            // refresh cycle knows to attempt restore; maxTs /
-                            // stateBytes stay LONG_NULL / 0 until that cycle reads
-                            // the manifest.
-                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
-                            final long headSeqTxn = LiveViewRecovery.sweepCheckpoints(
-                                    configuration.getFilesFacade(),
-                                    sweepPath,
-                                    liveViewDirPath,
-                                    stateReader.getAppliedWatermark(),
-                                    sweepNameSink,
-                                    ringCandidate
-                            );
-                            if (headSeqTxn != Numbers.LONG_NULL) {
-                                // The head base seqTxn is only known once the first refresh
-                                // reads the .cp manifest, but WalPurgeJob may run before that
-                                // and must not purge the (headBase, applied] base WAL that
-                                // tryRestoreFromHead's replay needs. Stamp subscribeFromSeqTxn
-                                // as a safe lower bound (the head base never sits below the
-                                // point the view began consuming) so the replay range is held
-                                // until the first cycle re-stamps the exact base seqTxn.
-                                instance.setHeadCheckpoint(
-                                        headSeqTxn,
-                                        stateReader.getSubscribeFromSeqTxn(),
-                                        Numbers.LONG_NULL,
-                                        0L,
-                                        Numbers.LONG_NULL
-                                );
-                            }
+                            // ACTIVE-view recovery never enumerates .cp files or
+                            // reads _ring. Those unreleased formats are ignored;
+                            // a missing/unusable timeline rebuilds derived state.
                             // Seed checkpoints live in a disjoint .scp
                             // namespace. For a view loaded mid-sweep, retain the
                             // highest .scp and stamp its key so the first

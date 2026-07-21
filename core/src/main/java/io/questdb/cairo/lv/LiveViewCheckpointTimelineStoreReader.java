@@ -138,40 +138,66 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
+            return restorePinned(pin, maxTimestamp, checkpointId, expectedDefinitionTxn, functions, anchorWindow);
+        }
+    }
+
+    /**
+     * Selects and restores the newest root compatible with the reconciled
+     * durable live-view coordinates. Selection and lazy root/page validation
+     * run under the same generation pin, so publication cannot mix tree roots
+     * from different generations.
+     */
+    public Result restoreLatestCompatible(
+            long durableFrontierTimestamp,
+            long durableBaseSeqTxn,
+            long durableLvSeqTxn,
+            long durableLvRowCount,
+            long expectedDefinitionTxn,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow
+    ) {
+        ensureOpen();
+        try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != expectedDefinitionTxn) {
+                throw invalid("definition identity mismatch [stored=").put(superblock.definitionTxn)
+                        .put(", expected=").put(expectedDefinitionTxn).put(']');
+            }
+            if (pin.getNormalizedBaseSeqTxn() > durableBaseSeqTxn
+                    || pin.getCoveredLvSeqTxn() > durableLvSeqTxn) {
+                throw invalid("generation is ahead of durable materialization")
+                        .put(" [generationBase=").put(pin.getNormalizedBaseSeqTxn())
+                        .put(", durableBase=").put(durableBaseSeqTxn)
+                        .put(", generationLv=").put(pin.getCoveredLvSeqTxn())
+                        .put(", durableLv=").put(durableLvSeqTxn).put(']');
+            }
+
             final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
-            if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
-                throw invalid("logical root not found [maxTimestamp=").put(maxTimestamp)
-                        .put(", checkpointId=").put(checkpointId).put(']');
+            if (!timelineReader.floor(pin.getTimelineRootRef(), durableFrontierTimestamp, entry)) {
+                throw invalid("has no root at or below durable frontier [frontier=")
+                        .put(durableFrontierTimestamp).put(']');
             }
-            root.of(checkpointsDir, entry.rootRef);
-            if (root.getCheckpointId() != checkpointId
-                    || root.getMaxTimestamp() != maxTimestamp
-                    || root.getDefinitionTxn() != expectedDefinitionTxn) {
-                throw invalid("logical entry and checkpoint root identity mismatch");
-            }
-            final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
-            root.getFunctionDirectoryRef(functionDirectoryRef);
-            functionDirectory.of(checkpointsDir, functionDirectoryRef);
-            segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
-
-            validateAnchor(anchorWindow);
-            validateFunctions(functions);
-            restoreFunctions(functions);
-            restoreAnchor(anchorWindow);
-
             final long effectiveLvRowPosition = deltaReader.effectivePosition(
                     pin.getRowPositionDeltaRootRef(),
                     entry
             );
-            return new Result(
-                    pin.getGeneration(),
-                    pin.getNormalizedBaseSeqTxn(),
-                    pin.getCoveredLvSeqTxn(),
-                    entry.createdLvSeqTxn,
+            if (entry.createdLvSeqTxn > durableLvSeqTxn
+                    || effectiveLvRowPosition < 0
+                    || effectiveLvRowPosition > durableLvRowCount) {
+                throw invalid("logical root is incompatible with durable materialization")
+                        .put(" [createdLvSeqTxn=").put(entry.createdLvSeqTxn)
+                        .put(", durableLvSeqTxn=").put(durableLvSeqTxn)
+                        .put(", effectiveLvRowPosition=").put(effectiveLvRowPosition)
+                        .put(", durableLvRowCount=").put(durableLvRowCount).put(']');
+            }
+            return restorePinned(
+                    pin,
                     entry.maxTimestamp,
                     entry.checkpointId,
-                    effectiveLvRowPosition,
-                    entry.logicalStateBytes
+                    expectedDefinitionTxn,
+                    functions,
+                    anchorWindow
             );
         }
     }
@@ -274,6 +300,51 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         dataReaders[slot].of(checkpointsDir, segmentId, fileLength);
         dataSegmentIds[slot] = segmentId;
         return dataReaders[slot];
+    }
+
+    private Result restorePinned(
+            @NotNull LiveViewCheckpointGenerationPin pin,
+            long maxTimestamp,
+            long checkpointId,
+            long expectedDefinitionTxn,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow
+    ) {
+        final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
+        if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
+            throw invalid("logical root not found [maxTimestamp=").put(maxTimestamp)
+                    .put(", checkpointId=").put(checkpointId).put(']');
+        }
+        root.of(checkpointsDir, entry.rootRef);
+        if (root.getCheckpointId() != checkpointId
+                || root.getMaxTimestamp() != maxTimestamp
+                || root.getDefinitionTxn() != expectedDefinitionTxn) {
+            throw invalid("logical entry and checkpoint root identity mismatch");
+        }
+        final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+        root.getFunctionDirectoryRef(functionDirectoryRef);
+        functionDirectory.of(checkpointsDir, functionDirectoryRef);
+        segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+
+        validateAnchor(anchorWindow);
+        validateFunctions(functions);
+        restoreFunctions(functions);
+        restoreAnchor(anchorWindow);
+
+        final long effectiveLvRowPosition = deltaReader.effectivePosition(
+                pin.getRowPositionDeltaRootRef(),
+                entry
+        );
+        return new Result(
+                pin.getGeneration(),
+                pin.getNormalizedBaseSeqTxn(),
+                pin.getCoveredLvSeqTxn(),
+                entry.createdLvSeqTxn,
+                entry.maxTimestamp,
+                entry.checkpointId,
+                effectiveLvRowPosition,
+                entry.logicalStateBytes
+        );
     }
 
     private void restoreAnchor(@Nullable LiveViewWindow anchorWindow) {

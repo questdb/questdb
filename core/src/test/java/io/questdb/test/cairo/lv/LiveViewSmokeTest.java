@@ -4852,12 +4852,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testLvRowsTotalSurvivesRestart() throws Exception {
-        // Per the MANIFEST schema, lvRowPosition is the cumulative live-view
-        // row count through the checkpointed lvSeqTxn. Drive a refresh that
-        // writes N rows, confirm the in-memory counter and the persisted
-        // manifest both read N, restart, confirm the counter restored from
-        // the head .cp, then write M more rows and confirm the next head
-        // records N + M.
+        // Drive a refresh that writes N rows, confirm both legacy and timeline
+        // checkpoints record N, restart, confirm the counter is restored from
+        // the selected timeline root, then write M more rows and confirm the
+        // next checkpoint records N + M.
         //
         // Force the row-trigger cadence to 1 so each batch produces a
         // dedicated head .cp under test; default cadence is too high for a
@@ -4913,8 +4911,8 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 }
             }
 
-            // Simulated restart re-seeds the counter from the head manifest
-            // on the first post-restart refresh cycle.
+            // Simulated restart re-seeds the counter from the timeline root's
+            // effective row position on the first post-restart refresh cycle.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -4924,7 +4922,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
             }
             Assert.assertEquals(
-                    "post-restart counter restored from the head manifest",
+                    "post-restart counter restored from the timeline root",
                     firstBatch,
                     reloaded.getLvRowsTotal()
             );
@@ -12668,7 +12666,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testPostRestartCommitPreservesAnchorMap() throws Exception {
         // The first post-restart refresh cycle must NOT wipe
-        // the anchor map that tryRestoreFromHead just rehydrated. Without
+        // the anchor map that timeline recovery just rehydrated. Without
         // the 2c.4 fix, getIncrementalCursor would drive
         // AnchorDispatchingCursor.toTop -> LiveViewWindow.toTop and clear
         // the map before the first new row arrived. The test seeds two
@@ -12708,20 +12706,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
             }
 
-            // Simulate restart: clear in-memory registry, rebuild from
-            // on-disk state. The startup sweep restamps the head .cp's
-            // lvSeqTxn on the reloaded instance.
+            // Simulate restart: ACTIVE startup ignores the legacy head. The
+            // first fallback tick selects and restores the timeline root.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
-            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertEquals(Numbers.LONG_NULL, reloaded.getHeadCheckpointLvSeqTxn());
 
-            // Drive a single refresh tick with no new commits: this fires
-            // tryRestoreFromHead alone (mirroring testRestartRestoresFrom
-            // HeadCheckpoint) and validates the rehydrate side of the
-            // contract.
+            // Drive a single refresh tick with no new commits and validate the
+            // timeline rehydrate side of the contract.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
@@ -15806,11 +15801,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testRestartRestoresFromHeadCheckpoint() throws Exception {
-        // A simulated restart should re-discover the head .cp
-        // via the startup sweep, then the first refresh-worker tick rehydrates
-        // the LV's window-function state from the head and advances
-        // lastProcessedSeqTxn to the manifest's baseSeqTxn.
+    public void testRestartRestoresFromCheckpointTimeline() throws Exception {
+        // A simulated restart must ignore the legacy head .cp, then the first
+        // refresh-worker tick selects a bounded-valid timeline generation and
+        // rehydrates the LV's window-function state from its newest compatible root.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
@@ -15837,17 +15831,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertEquals("two partitions seeded pre-restart", 2L, preFunctionMapSize);
             }
 
-            // Simulate restart: clear the in-memory registry and rebuild
-            // from on-disk _lv + _lv.s. The sweep should re-discover the
-            // head .cp via the lvSeqTxn embedded in its filename.
+            // Simulate restart: clear the in-memory registry and rebuild from
+            // on-disk _lv + _lv.s. ACTIVE startup does not enumerate .cp files.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
 
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
             Assert.assertEquals(
-                    "startup sweep stamped head lvSeqTxn from filename",
-                    preHeadLvSeqTxn,
+                    "startup ignored the still-present legacy head",
+                    Numbers.LONG_NULL,
                     reloaded.getHeadCheckpointLvSeqTxn()
             );
             Assert.assertFalse(
@@ -15856,8 +15849,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             );
 
             // Drive a single refresh cycle. There are no new base commits, but
-            // the fallback scan still calls refreshInstance, which runs the
-            // restore on the first cycle for an LV with a stamped head.
+            // the fallback scan still schedules materialized ACTIVE recovery.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
@@ -15867,7 +15859,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     reloaded.isCheckpointRestoreAttempted()
             );
             Assert.assertEquals(
-                    "lastProcessedSeqTxn matches manifest.baseSeqTxn after restore",
+                    "lastProcessedSeqTxn matches the reconciled base boundary after restore",
                     preLastProcessed,
                     reloaded.getLastProcessedSeqTxn()
             );

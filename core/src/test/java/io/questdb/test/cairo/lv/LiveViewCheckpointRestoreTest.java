@@ -30,9 +30,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.file.BlockFileReader;
-import io.questdb.cairo.lv.LiveViewCheckpointRingManifest;
-import io.questdb.cairo.lv.LiveViewCheckpointRingManifestReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -257,22 +254,11 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testRestoreBringsBackCheckpointRingManifestOverLiveAheadOne() throws Exception {
-        // Section 8 argues the _ring manifest rides the snapshot "automatically" -
-        // copyLiveViewCheckpointDir copies every non-.tmp file in _checkpoints/ and
-        // restoreLiveViewCheckpointDir wipes and restores the lot - so the design
-        // asks for no code here. Nothing asserted it. Section 11.7 lists the
-        // round-trip, and this is it: the property is free by construction, but only
-        // while nothing in either copy loop grows a name filter, and a filter is
-        // exactly the kind of thing someone adds to "skip the derived files".
-        //
-        // The live-ahead shape is the one that bites, and it is the same one
-        // testRestoreBringsBackCheckpointHeadOverLiveAheadHead pins for the head: the
-        // database keeps ingesting after CHECKPOINT CREATE, so by restore time the
-        // live _ring lists anchors the restore is about to delete, at a covered above
-        // the floor it is about to roll back to. Restoring the snapshot's own
-        // manifest beside its own .cp files is what keeps the allow-list and the
-        // disk agreeing.
+    public void testRestoreIgnoresLegacyRingAndRecoversDerivedState() throws Exception {
+        // The database keeps ingesting after CHECKPOINT CREATE, so restore rolls
+        // the materialization coordinates back over a live-ahead checkpoint dir.
+        // ACTIVE startup must ignore the restored legacy .cp/_ring artifacts and
+        // recover correctly from a bounded-valid timeline or applied-base rebuild.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                 "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
@@ -280,9 +266,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
-            final long checkpointCovered;
-            final long checkpointGeneration;
-            final int checkpointEntries;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
@@ -290,54 +273,31 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
 
                 execute("CHECKPOINT CREATE");
-                final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(lv);
-                checkpointEntries = lv.getRetainedCheckpointCount();
-                Assert.assertTrue("the checkpoint must capture a populated ring", checkpointEntries > 0);
-                checkpointCovered = lv.getLastPublishedRingCoveredBaseSeqTxn();
-                checkpointGeneration = lv.getLastPublishedRingGeneration();
 
                 // The database keeps running while the operator copies the volume.
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('2026-01-01T00:00:03.000000Z', 'a', 3.0), " +
                         "('2026-01-01T00:00:04.000000Z', 'a', 4.0)");
                 driveRefreshToQuiescence(job);
-                Assert.assertTrue(
-                        "the live manifest must have run ahead of the checkpoint's",
-                        lv.getLastPublishedRingCoveredBaseSeqTxn() > checkpointCovered
-                );
             }
 
             restoreFromCheckpoint();
 
-            // The snapshot's manifest is back, over the live-ahead one: same
-            // generation and covered it was captured at, not the ones the two
-            // post-checkpoint flushes published.
-            final LiveViewCheckpointRingManifestReader manifest = new LiveViewCheckpointRingManifestReader();
-            readRingManifest("lv", manifest);
-            Assert.assertEquals(
-                    "restore must lay the checkpoint's manifest back down over the live-ahead one",
-                    checkpointGeneration,
-                    manifest.getGeneration()
-            );
-            Assert.assertEquals(checkpointCovered, manifest.getCoveredBaseSeqTxn());
-            Assert.assertEquals(checkpointEntries, manifest.getEntryCount());
-
-            // And it validates against the _lv.s the restore rolled back with, so the
-            // first refresh cycle trusts it rather than paying a scan: covered equals
-            // the reconciled floor because both came out of the same frozen instant -
-            // the checkpoint agent stops the refresh worker before copying either.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:05.000000Z', 'a', 10.0)");
                 driveRefreshToQuiescence(job);
             }
-            assertQuery("SELECT checkpoint_ring_recovered_entries, checkpoint_ring_recovery_fallback_count FROM live_views()")
-                    .noLeakCheck().noRandomAccess()
-                    .returns("checkpoint_ring_recovered_entries\tcheckpoint_ring_recovery_fallback_count\n"
-                            + checkpointEntries + "\t0\n");
+            final LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            Assert.assertTrue(restored.isCheckpointRestoreSucceeded());
+            Assert.assertEquals(
+                    "timeline recovery must not rehydrate the obsolete ring manifest",
+                    Numbers.LONG_NULL,
+                    restored.getCheckpointRingRecoveredEntries()
+            );
 
-            // The accumulator came back with it: 3.0 carried from the restored
-            // anchor, not a cold 0.0.
+            // Derived runtime state matches the authoritative restored tables;
+            // the new row continues from 3.0 rather than a cold 0.0.
             assertQuery("SELECT ts, sym, x, running FROM lv ORDER BY ts")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -1290,23 +1250,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
             }
         }
         return head;
-    }
-
-    // Reads the live view's durable _checkpoints/_ring. Addresses the file through
-    // LiveViewCheckpointRingManifest.ringManifestPath so the test and the publication
-    // path cannot drift apart on the layout, and reads the fields only after the
-    // mapping is gone - the reader owns copies. Mirrors LiveViewSmokeTest's helper.
-    private void readRingManifest(String viewName, LiveViewCheckpointRingManifestReader manifest) {
-        final TableToken token = engine.verifyTableName(viewName);
-        try (Path path = new Path();
-             Path liveViewDir = new Path();
-             BlockFileReader reader = new BlockFileReader(configuration)) {
-            liveViewDir.of(configuration.getDbRoot()).concat(token);
-            Assert.assertTrue("_ring must exist", configuration.getFilesFacade()
-                    .exists(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$()));
-            reader.of(LiveViewCheckpointRingManifest.ringManifestPath(path, liveViewDir).$());
-            manifest.of(reader, token);
-        }
     }
 
     private void assertCheckpointsDirExists(String viewName) {
