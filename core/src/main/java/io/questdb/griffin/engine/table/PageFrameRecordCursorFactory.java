@@ -185,7 +185,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         if (!(partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory fullFrameFactory)) {
             throw CairoException.nonCritical().put("timestamp range cursor requires a full partition scan");
         }
-        if (!rowCursorFactory.isEntity() || rowCursorFactory.isUsingIndex()) {
+        if (!isBackwardTimestampRangeSupported()) {
             throw CairoException.nonCritical().put("backward timestamp range cursor requires an entity row cursor");
         }
         if (bwdRecordCursor == null) {
@@ -268,6 +268,19 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     public boolean hasFilter() {
         return filter != null;
+    }
+
+    /**
+     * Reports, without opening anything, whether
+     * {@link #getCursorInTimestampRangeBackward(SqlExecutionContext, long, long)} would
+     * be accepted. A planner that walks down to discover a bound asks first: an
+     * index-backed factory is a legitimate compile, so being unable to descend through
+     * it is a reason to plan a different bound rather than to fail the query.
+     */
+    public boolean isBackwardTimestampRangeSupported() {
+        return partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory
+                && rowCursorFactory.isEntity()
+                && !rowCursorFactory.isUsingIndex();
     }
 
     public boolean isIntervalScan() {

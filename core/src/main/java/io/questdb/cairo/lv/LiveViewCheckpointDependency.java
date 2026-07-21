@@ -118,6 +118,21 @@ public final class LiveViewCheckpointDependency {
         return -frameLo;
     }
 
+    /**
+     * Returns the finite look-behind row count {@code Nmax} for a bounded ROWS
+     * descriptor. Unlike the RANGE width this needs no unit normalization - the
+     * parser already carries a row count - but it is equally a per-key quantity:
+     * {@code Nmax} rows of the <b>same partition key</b>, not {@code Nmax} rows of
+     * the cursor. That is why neither bound follows from timestamp arithmetic and
+     * both have to be discovered by scanning.
+     */
+    public long getRowsPrecedingCount() {
+        if (!isFiniteRows()) {
+            throw new IllegalStateException("not a finite ROWS dependency");
+        }
+        return -frameLo;
+    }
+
     public StructuralConvergence getStructuralConvergence() {
         return structuralConvergence;
     }
@@ -134,6 +149,21 @@ public final class LiveViewCheckpointDependency {
      */
     public boolean isFiniteRange() {
         return kind == DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW
+                && frameLo != Long.MIN_VALUE
+                && frameLo <= 0
+                && frameHi == 0
+                && ColumnType.isTimestamp(timestampType);
+    }
+
+    /**
+     * Returns true when this descriptor is a {@code ROWS N PRECEDING ... CURRENT ROW}
+     * frame with a finite {@code N} - the only ROWS shape whose bounds a repair can
+     * discover at all. Both bounds are data-dependent: a change of {@code N} rows
+     * spans however much time the key's own rows happen to span, so the planner
+     * counts rows per key instead of adding a width to a timestamp.
+     */
+    public boolean isFiniteRows() {
+        return kind == DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW
                 && frameLo != Long.MIN_VALUE
                 && frameLo <= 0
                 && frameHi == 0

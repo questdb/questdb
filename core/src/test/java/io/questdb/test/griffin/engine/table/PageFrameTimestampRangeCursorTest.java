@@ -97,6 +97,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
             // One factory serves every repair of one view and caches a single backward
             // interval cursor, so each call must re-stamp both bounds of its range.
             try (PageFrameRecordCursorFactory factory = newFullScanFactory("x")) {
+                Assert.assertTrue(factory.isBackwardTimestampRangeSupported());
                 assertBackwardTimestamps(factory, ts(4), ts(6), ts(6), ts(5), ts(4));
                 assertBackwardTimestamps(factory, ts(16), ts(18), ts(18), ts(17), ts(16));
                 // An empty range does not poison the next call.
@@ -212,6 +213,11 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 // order. Substituting a descending entity cursor for it would silently
                 // change which rows the scan reads, so the descending opener refuses it
                 // rather than counting predecessors over the wrong rows.
+                //
+                // A planner that walks down to discover a bound asks before opening
+                // anything: an index-backed factory is a legitimate compile, so it plans
+                // a different bound rather than failing the query on the exception.
+                Assert.assertFalse(factory.isBackwardTimestampRangeSupported());
                 try {
                     factory.getCursorInTimestampRangeBackward(sqlExecutionContext, ts(1), ts(2));
                     Assert.fail();
@@ -227,6 +233,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSteppedTable("x", "DAY");
             try (PageFrameRecordCursorFactory factory = newIntervalScanFactory("x", ts(0), ts(4))) {
+                Assert.assertFalse(factory.isBackwardTimestampRangeSupported());
                 try {
                     factory.getCursorInTimestampRangeBackward(sqlExecutionContext, ts(1), ts(2));
                     Assert.fail();

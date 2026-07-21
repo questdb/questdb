@@ -10028,7 +10028,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata,
                         functions,
                         anchorableWindowFunctions,
-                        lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null
+                        lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
+                        lvCompile
+                                ? LiveViewCheckpointFunctionCompiler.rowsPlan(functions, columns, baseMetadata, configuration, asm)
+                                : null
                 );
             } else {
                 factoryMetadata.clear();

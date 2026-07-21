@@ -31,6 +31,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
+import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -133,7 +134,85 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(0, rows.dependency.getFrameHi());
             Assert.assertEquals(NumericConvergence.EXACT, rows.dependency.getNumericConvergence());
+            Assert.assertEquals(3, rows.dependency.getRowsPrecedingCount());
+            Assert.assertTrue(rows.dependency.isFiniteRows());
+            Assert.assertFalse(rows.dependency.isFiniteRange());
+            Assert.assertFalse(range.dependency.isFiniteRows());
+            // The two plans are mutually exclusive by construction: a factory whose
+            // functions are all finite RANGE has no finite ROWS function, and vice versa.
             Assert.assertNull(rows.rangePlan);
+            Assert.assertNotNull(rows.rowsPlan);
+            Assert.assertNull(range.rowsPlan);
+        });
+    }
+
+    @Test
+    public void testRowsDependencyBuildsAKeyedUnionPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            // Two ROWS functions over the same domain: the plan unions them and keeps the
+            // widest look-behind, because the dependency floor has to satisfy both.
+            final Metadata rows = compileMetadata(
+                    "select ts, sym, "
+                            + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s, "
+                            + "count(x) over (partition by sym order by ts rows between 5 preceding and current row) c "
+                            + "from base",
+                    0
+            );
+            Assert.assertNotNull(rows.rowsPlan);
+            Assert.assertEquals(2, rows.rowsPlan.getFunctionCount());
+            Assert.assertEquals(5, rows.rowsPlan.getMaxPrecedingRows());
+            Assert.assertEquals(rows.dependency.getPartitionSignature(), rows.rowsPlan.getPartitionSignature());
+            Assert.assertEquals(rows.dependency.getOrderSignature(), rows.rowsPlan.getOrderSignature());
+            Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, rows.rowsPlan.getTimestampType());
+            // The key projector is resolved against the base factory's own metadata, so
+            // its indexes are the ones a page-frame record answers to.
+            Assert.assertEquals(0, rows.rowsPlan.getTimestampIndex());
+            Assert.assertEquals(1, rows.rowsPlan.getPartitionByColumnCount());
+            Assert.assertEquals(1, rows.rowsPlan.getPartitionByColumnIndex(0));
+            Assert.assertNotNull(rows.rowsPlan.getKeySink());
+            Assert.assertEquals(1, rows.rowsPlan.getKeyColumnTypes().getColumnCount());
+            Assert.assertEquals(ColumnType.SYMBOL, rows.rowsPlan.getKeyColumnTypes().getColumnType(0));
+        });
+    }
+
+    /**
+     * Every ROWS shape below compiles and stays a valid live view. Declining the repair
+     * plan costs such a view only the localized path it does not have today - which is
+     * why these are silent refusals rather than the CREATE-time rejections the RANGE
+     * side uses.
+     */
+    @Test
+    public void testRowsShapesOutsideTheDiscoverableContractDeclineThePlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            // A mixed factory has no single contract: the RANGE half is bounded by a
+            // timestamp width and the ROWS half by a row count.
+            assertNoRowsPlan("select ts, sym, "
+                    + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                    + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s "
+                    + "from base");
+            // An unbounded look-behind has no floor to discover at all.
+            assertNoRowsPlan("select ts, sym, sum(x) over (partition by sym order by ts "
+                    + "rows between unbounded preceding and current row) s from base");
+            // A frame with no ORDER BY counts row positions in an order nothing pins, so
+            // the replay's ts-ordered cursor need not reproduce them.
+            assertNoRowsPlan("select ts, sym, sum(x) over (partition by sym "
+                    + "rows between 3 preceding and current row) s from base");
+            // A key the projector cannot read out of a page-frame record. The contract
+            // holds, the projector does not.
+            assertNoRowsPlan("select ts, sym, sum(x) over (partition by concat(sym, 'z') order by ts "
+                    + "rows between 3 preceding and current row) s from base");
+
+            // Two bounded ROWS functions on different key domains would have to be
+            // planned as two key domains and their timestamp ranges unioned, which the
+            // first rollout does not do.
+            execute("create table two_keys (ts timestamp, sym symbol, sym2 symbol, x double) "
+                    + "timestamp(ts) partition by day wal");
+            assertNoRowsPlan("select ts, sym, "
+                    + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s, "
+                    + "count(x) over (partition by sym2 order by ts rows between 3 preceding and current row) c "
+                    + "from two_keys");
         });
     }
 
@@ -272,6 +351,10 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertNoRowsPlan(String sql) throws Exception {
+        Assert.assertNull(sql, compileMetadata(sql, 0).rowsPlan);
+    }
+
     private static void assertNotFiniteRange(String sql) throws Exception {
         final Metadata metadata = compileMetadata(sql, 0);
         Assert.assertFalse(sql, metadata.dependency.isFiniteRange());
@@ -295,7 +378,8 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             return new Metadata(
                     function.checkpointFunctionIdentity(),
                     function.checkpointDependency(),
-                    windowFactory.getCheckpointRangePlan()
+                    windowFactory.getCheckpointRangePlan(),
+                    windowFactory.getCheckpointRowsPlan()
             );
         } finally {
             sqlExecutionContext.setLiveViewCompile(false);
@@ -306,15 +390,18 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         private final LiveViewCheckpointDependency dependency;
         private final LiveViewCheckpointFunctionIdentity identity;
         private final LiveViewCheckpointRangePlan rangePlan;
+        private final LiveViewCheckpointRowsPlan rowsPlan;
 
         private Metadata(
                 LiveViewCheckpointFunctionIdentity identity,
                 LiveViewCheckpointDependency dependency,
-                LiveViewCheckpointRangePlan rangePlan
+                LiveViewCheckpointRangePlan rangePlan,
+                LiveViewCheckpointRowsPlan rowsPlan
         ) {
             this.identity = identity;
             this.dependency = dependency;
             this.rangePlan = rangePlan;
+            this.rowsPlan = rowsPlan;
         }
     }
 }

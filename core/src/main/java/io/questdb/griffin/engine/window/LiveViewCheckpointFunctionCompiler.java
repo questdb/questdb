@@ -24,13 +24,20 @@
 
 package io.questdb.griffin.engine.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.StructuralConvergence;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
+import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
+import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
@@ -39,6 +46,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -162,6 +170,116 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
+     * Builds the union of the finite ROWS dependencies a streaming live-view factory
+     * carries, or null when the view has no bounded ROWS repair contract. The ROWS
+     * counterpart of {@link #rangePlan}, with one deliberate difference: an unusable
+     * shape declines the plan instead of failing the compile.
+     * <p>
+     * That asymmetry is the point. {@code validateRange} already narrowed what
+     * {@code CREATE LIVE VIEW} accepts for RANGE, so a mismatched RANGE domain is a
+     * shape the product has decided to reject. Every ROWS shape below is accepted today
+     * and must stay accepted; declining the plan costs such a view only the localized
+     * repair path, which is what it has now.
+     * <p>
+     * The plan is declined when any window function is not a finite ROWS frame (a mixed
+     * ROWS/RANGE factory has no single contract), when two functions disagree on the
+     * key/order domain, when a window is not ordered by the designated timestamp
+     * ascending (the row positions {@code Nmax} counts would then be positions in an
+     * order the replay's cursor does not produce), when the frame is keyless or
+     * zero-wide, or when a PARTITION BY expression is not a plain base column. The last
+     * is a projector limitation rather than a contract one:
+     * {@link LiveViewCheckpointRowsBounds} reads keys straight out of a page-frame
+     * record, and an arbitrary expression would need the window's own partition-by
+     * functions rebound to the discovery cursor and back.
+     *
+     * @param baseMetadata  the base factory's metadata, which the key projector's column
+     *                      indexes and the designated timestamp are resolved against
+     * @param configuration for the projector's codegen
+     * @param asm           the compiler's bytecode assembler
+     */
+    @Nullable
+    public static LiveViewCheckpointRowsPlan rowsPlan(
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<QueryColumn> columns,
+            @NotNull RecordMetadata baseMetadata,
+            @NotNull CairoConfiguration configuration,
+            @NotNull BytecodeAssembler asm
+    ) {
+        final int timestampIndex = baseMetadata.getTimestampIndex();
+        if (timestampIndex == -1) {
+            return null;
+        }
+        LiveViewCheckpointDependency firstRows = null;
+        ObjList<ExpressionNode> partitionBy = null;
+        int rowsFunctionCount = 0;
+        long maxPrecedingRows = 0;
+
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (!(function instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency == null || !dependency.isFiniteRows()) {
+                return null;
+            }
+            if (!(columns.getQuick(i) instanceof WindowExpression window)
+                    || !isOrderedByDesignatedTimestampAsc(window, baseMetadata)) {
+                return null;
+            }
+            if (firstRows == null) {
+                firstRows = dependency;
+                partitionBy = window.getPartitionBy();
+            } else if (!firstRows.getPartitionSignature().equals(dependency.getPartitionSignature())
+                    || !firstRows.getOrderSignature().equals(dependency.getOrderSignature())
+                    || firstRows.getTimestampType() != dependency.getTimestampType()) {
+                return null;
+            }
+            maxPrecedingRows = Math.max(maxPrecedingRows, dependency.getRowsPrecedingCount());
+            rowsFunctionCount++;
+        }
+
+        // An empty PARTITION BY leaves nothing to count per key, and a zero-wide frame
+        // has no look-behind to bound. Neither is reachable through a checkpoint-capable
+        // function today - both compile to scalar window functions that carry no
+        // checkpoint state - so declining them costs no view its repair path.
+        if (firstRows == null || partitionBy.size() == 0 || maxPrecedingRows < 1) {
+            return null;
+        }
+        final IntList partitionByColumnIndexes = new IntList(partitionBy.size());
+        final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
+        final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            final ExpressionNode node = partitionBy.getQuick(i);
+            if (node.type != ExpressionNode.LITERAL) {
+                return null;
+            }
+            final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
+            if (columnIndex == -1) {
+                return null;
+            }
+            partitionByColumnIndexes.add(columnIndex);
+            keyColumnFilter.add(columnIndex + 1);
+            keyColumnTypes.add(baseMetadata.getColumnType(columnIndex));
+        }
+        // No writeSymbolAsString is set, so a SYMBOL key column is projected as its
+        // table-local integer. That is stable for one reader's lifetime, which is exactly
+        // the scope one repair plans and replays in.
+        final RecordSink keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter);
+        return new LiveViewCheckpointRowsPlan(
+                rowsFunctionCount,
+                maxPrecedingRows,
+                firstRows.getPartitionSignature(),
+                firstRows.getOrderSignature(),
+                partitionByColumnIndexes,
+                keyColumnTypes,
+                keySink,
+                timestampIndex,
+                firstRows.getTimestampType()
+        );
+    }
+
+    /**
      * Validates the ordering domain of a {@code RANGE W PRECEDING ... CURRENT ROW} frame -
      * the one RANGE shape whose forward influence boundary {@code H} follows from timestamp
      * arithmetic, and therefore the only one this phase plans a localized repair against.
@@ -238,6 +356,22 @@ public final class LiveViewCheckpointFunctionCompiler {
                 : identity.getFactorySignature() + " OVER " + identity.getCanonicalWindowName();
     }
 
+    /**
+     * Whether the window's rows arrive in the order both repair bounds are expressed
+     * in: the base table's designated timestamp, ascending. A frame ordered by anything
+     * else counts row positions the replay's own ts-ordered cursor does not reproduce,
+     * so neither the RANGE width nor the ROWS count describes the frame the user asked
+     * for.
+     */
+    private static boolean isOrderedByDesignatedTimestampAsc(WindowExpression window, RecordMetadata baseMetadata) {
+        final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+        final int timestampIndex = baseMetadata.getTimestampIndex();
+        return timestampIndex != -1
+                && orderBy.size() == 1
+                && window.getOrderByDirection().getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING
+                && SqlUtil.getColumnIndexQuiet(baseMetadata, orderBy.getQuick(0).token) == timestampIndex;
+    }
+
     private static boolean isRanking(CharSequence name) {
         return Chars.equalsIgnoreCase(name, "row_number")
                 || Chars.equalsIgnoreCase(name, "rank")
@@ -295,13 +429,8 @@ public final class LiveViewCheckpointFunctionCompiler {
             WindowExpression window,
             RecordMetadata baseMetadata
     ) throws SqlException {
-        final ObjList<ExpressionNode> orderBy = window.getOrderBy();
-        final int timestampIndex = baseMetadata.getTimestampIndex();
-        final boolean valid = timestampIndex != -1
-                && orderBy.size() == 1
-                && window.getOrderByDirection().getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING
-                && SqlUtil.getColumnIndexQuiet(baseMetadata, orderBy.getQuick(0).token) == timestampIndex;
-        if (!valid) {
+        if (!isOrderedByDesignatedTimestampAsc(window, baseMetadata)) {
+            final ObjList<ExpressionNode> orderBy = window.getOrderBy();
             final int position = orderBy.size() > 0 ? orderBy.getQuick(0).position : window.getAst().position;
             throw SqlException.$(position, "live view RANGE window function must ORDER BY the designated timestamp ASC [function=")
                     .put(functionName).put("()]");
