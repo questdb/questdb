@@ -93,6 +93,10 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     private static final int LOCALIZATION_O3_SECOND = 315;
     // Look-behind of the localization fixture's RANGE frame, in seconds.
     private static final int LOCALIZATION_RANGE_WIDTH_SECONDS = 30;
+    // Anchor of the localization fixture's anchored views. Buckets by the minute over
+    // rows spaced 10s apart, so one segment holds six of the history's commits and the
+    // out-of-order row at 315s lands in [300s, 360s).
+    private static final String LOCALIZATION_ANCHOR_EXPRESSION = "timestamp_floor('1m', ts)";
 
     @After
     public void unpinClock() {
@@ -108,6 +112,58 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testAnchorSegmentBoundsAnAnchoredRankingRebuild() throws Exception {
+        // The shape the finite-influence scope cut turned away unanchored and gave back
+        // anchored. row_number() has no frame to bound anything with - which is exactly
+        // why the unanchored form has no finite H - but the anchor restarts its counter
+        // at every bucket, and that restart is the whole contract. The bounds are the
+        // cumulative sum's, to the row: they come from the segment, not the function.
+        final ReplayCost cost = runAnchoredOldO3BoundaryRebuild("row_number()");
+        Assert.assertEquals("the rebuild must read exactly the change's segment", 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 10, cost.emittedRows);
+    }
+
+    @Test
+    public void testAnchorSegmentBoundsTheOldO3BoundaryRebuild() throws Exception {
+        // The third way to reach the same two-sided bound, and the one that needs no
+        // frame at all. An anchored cumulative sum resets on every bucket crossing, so
+        // one segment is a wall in both directions: the state a row at R holds is the
+        // rows from its segment's start, and the change reaches no output past that
+        // segment's end. Both walls follow from the designated timestamp alone, so
+        // unlike the ROWS discovery the planning reads no base row to find them.
+        //
+        // The anchor buckets by the minute over rows spaced 10s apart, and the change
+        // lands at 315s. L is 300s and H 360s, so the scan admits 300s..350s - six groups
+        // of 2 rows - plus the O3 commit's own 2 at 315s, and the replacement re-emits
+        // 315s..350s.
+        final ReplayCost cost = runAnchoredOldO3BoundaryRebuild("sum(x)");
+        Assert.assertEquals("the rebuild must read exactly the change's segment", 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 10, cost.emittedRows);
+        // The whole-history rebuild this replaces, for scale.
+        Assert.assertEquals(82, 2L * LOCALIZATION_HISTORY_COMMITS + 2);
+    }
+
+    @Test
+    public void testAnchorSegmentDeclinesAViewTheAnchorDoesNotWhollyReset() throws Exception {
+        // The safety boundary of the anchor bound, and the one the anchor clause alone
+        // cannot see. The runtime dispatches the reset only to the functions whose frame
+        // is UNBOUNDED PRECEDING ... CURRENT ROW, so the bounded ROWS window declared
+        // beside the anchored one keeps sliding across every bucket crossing - its state
+        // reaches below the segment start, and a repair localized on the segment would
+        // warm it up over rows the frame does not contain. The whole factory therefore
+        // declines the plan and pays the unbounded rebuild.
+        final String slidingWindow = "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r";
+        final String viewSql = "SELECT ts, sym, sum(x) OVER w AS s, " + slidingWindow + " FROM base "
+                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + LOCALIZATION_ANCHOR_EXPRESSION + ")";
+        final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
+                + " ORDER BY ts) AS s, " + slidingWindow + " FROM base";
+        final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, oracleSql, false);
+        final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
+        Assert.assertEquals("no bound is derived, so the whole history is read", historyRows, cost.scannedRows);
+        Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
+    }
+
+    @Test
     public void testRangeDependencyBoundsTheOldO3BoundaryRebuild() throws Exception {
         // The two-sided RANGE bound, on the fixture the pathology was built
         // for. The change is older than every surviving anchor, so the repair
@@ -119,7 +175,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // W is 30s over rows spaced 10s apart. L lands at 285s and H one microsecond
         // past 345s, so the scan admits 290s..345s - six groups of 2 rows - plus the O3
         // commit's own 2 at 315s.
-        final ReplayCost cost = runOldO3BoundaryRebuild(
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + LOCALIZATION_RANGE_WIDTH_SECONDS
                         + "' SECOND PRECEDING AND CURRENT ROW"
         );
@@ -153,7 +209,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // fifteen join the same base-rows-scanned counter the replay reports through.
         // 29 against the 82 an unbounded rebuild reads is what the discovery buys here,
         // and a shape whose keys are sparser buys proportionally less.
-        final ReplayCost cost = runOldO3BoundaryRebuild(
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW"
         );
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
@@ -175,7 +231,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // Here the same two rows arrive inside a replace-range band, so the base ends up
         // holding exactly what the insert above leaves it and the output is identical -
         // only the commit's authority to delete differs, and it costs the localization.
-        final ReplayCost cost = runOldO3BoundaryRebuild(
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "sum(x)",
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 true
@@ -195,7 +251,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // belongs. The whole factory therefore declines the plan and pays the unbounded
         // rebuild, which reconstructs every function from the START FROM boundary and needs
         // no dependency floor at all.
-        final ReplayCost cost = runOldO3BoundaryRebuild(
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "lag(x, 5)",
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
@@ -348,31 +404,44 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         assertNoRefreshFaults("lv");
     }
 
-    // Drives a long in-order history, collapses the ring onto its top RETENTION_COUNT anchors,
-    // then commits one out-of-order row below every one of them so the repair has to take the
-    // boundary rebuild. Returns what that rebuild cost: base rows read and output rows
-    // re-emitted. Both counters are asserted zero before the out-of-order commit, so the
-    // values that come back are that one repair's and nothing else's. The view is checked
-    // against the from-base recompute either way - a bounded rebuild that gets the answer
-    // wrong is worse than an unbounded one - and then again after three further in-order
-    // commits, which is what proves the runtime state and not merely the durable output.
-    private ReplayCost runOldO3BoundaryRebuild(String windowFrame) throws Exception {
-        return runOldO3BoundaryRebuild("sum(x)", windowFrame, false);
+    /**
+     * The anchored shape of the fixture: one window function on a named WINDOW that
+     * buckets by the minute, whose oracle spells the same segmentation as an extra
+     * PARTITION BY term. Every accepted anchored function reaches the same bounds
+     * through it, because the segment and not the function is what produces them.
+     */
+    private ReplayCost runAnchoredOldO3BoundaryRebuild(String windowExpression) throws Exception {
+        final String viewSql = "SELECT ts, sym, " + windowExpression + " OVER w AS s FROM base "
+                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + LOCALIZATION_ANCHOR_EXPRESSION + ")";
+        final String oracleSql = "SELECT ts, sym, " + windowExpression + " OVER (PARTITION BY sym, "
+                + LOCALIZATION_ANCHOR_EXPRESSION + " ORDER BY ts) AS s FROM base";
+        return runOldO3BoundaryRebuild(viewSql, oracleSql, false);
     }
 
     /**
-     * Drives one repair whose change sits below every surviving anchor and reports what
-     * it cost. With {@code o3AsReplaceRange} the same two rows arrive inside a
-     * replace-range band instead of a plain insert: the data the base ends up holding is
-     * identical, and so is the output, but the commit now carries a deletion the repair
-     * cannot see the effect of.
-     *
-     * @param windowExpression the view's single window function, applied over
-     *                         {@code windowFrame}
+     * Drives a long in-order history, collapses the ring onto its top RETENTION_COUNT
+     * anchors, then commits one out-of-order row below every one of them so the repair
+     * has to take the boundary rebuild. Returns what that rebuild cost: base rows read
+     * and output rows re-emitted. Both counters are asserted zero before the
+     * out-of-order commit, so the values that come back are that one repair's and
+     * nothing else's. The view is checked against the from-base recompute either way -
+     * a bounded rebuild that gets the answer wrong is worse than an unbounded one - and
+     * then again after three further in-order commits, which is what proves the runtime
+     * state and not merely the durable output.
+     * <p>
+     * The view and its oracle are the same statement for a frame-bounded view, but an
+     * anchored one has to declare its ANCHOR on a named WINDOW - syntax only a live view
+     * accepts - so its oracle spells the same segmentation as an extra PARTITION BY
+     * term.
+     * <p>
+     * With {@code o3AsReplaceRange} the same two rows arrive inside a replace-range band
+     * instead of a plain insert: the data the base ends up holding is identical, and so
+     * is the output, but the commit now carries a deletion the repair cannot see the
+     * effect of.
      */
     private ReplayCost runOldO3BoundaryRebuild(
-            String windowExpression,
-            String windowFrame,
+            String viewSql,
+            String oracleSql,
             boolean o3AsReplaceRange
     ) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -380,7 +449,6 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 0L);
 
-        final String viewSql = "SELECT ts, sym, " + windowExpression + " OVER (" + windowFrame + ") AS s FROM base";
         final ReplayCost cost = new ReplayCost();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -411,7 +479,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 // In-order appends never replay, so the counters start clean.
                 Assert.assertEquals(0, lv.getO3ReplayScanRows());
                 Assert.assertEquals(0, lv.getO3BoundaryReplayRows());
-                assertViewMatchesRecompute(viewSql);
+                assertViewMatchesRecompute(oracleSql);
 
                 setCurrentMicros((LOCALIZATION_HISTORY_COMMITS + 1) * 200_000L);
                 if (o3AsReplaceRange) {
@@ -443,7 +511,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 );
                 cost.scannedRows = lv.getO3ReplayScanRows();
                 cost.emittedRows = lv.getO3BoundaryReplayRows();
-                assertViewMatchesRecompute(viewSql);
+                assertViewMatchesRecompute(oracleSql);
 
                 // Keep ingesting in order. A repair that converged below the frontier
                 // left the runtime state it entered with in place rather than the state
@@ -467,12 +535,32 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                         cost.emittedRows,
                         lv.getO3BoundaryReplayRows()
                 );
-                assertViewMatchesRecompute(viewSql);
+                assertViewMatchesRecompute(oracleSql);
             }
 
             execute("DROP LIVE VIEW lv");
         });
         return cost;
+    }
+
+    private ReplayCost runOldO3BoundaryRebuildOverFrame(String windowFrame) throws Exception {
+        return runOldO3BoundaryRebuildOverFrame("sum(x)", windowFrame, false);
+    }
+
+    /**
+     * The frame-bounded shape of the fixture: one window function over one frame, whose
+     * live-view statement doubles as its own from-base oracle.
+     *
+     * @param windowExpression the view's single window function, applied over
+     *                         {@code windowFrame}
+     */
+    private ReplayCost runOldO3BoundaryRebuildOverFrame(
+            String windowExpression,
+            String windowFrame,
+            boolean o3AsReplaceRange
+    ) throws Exception {
+        final String sql = "SELECT ts, sym, " + windowExpression + " OVER (" + windowFrame + ") AS s FROM base";
+        return runOldO3BoundaryRebuild(sql, sql, o3AsReplaceRange);
     }
 
     // Appends one fixture row - (ts, sym, x) - without committing, so the caller chooses the

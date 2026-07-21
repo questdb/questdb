@@ -26,12 +26,19 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointScratchOverlay;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.ObjList;
@@ -45,12 +52,63 @@ import org.junit.Test;
  * the published window state before replaying on top of it.
  * <p>
  * Its contract is narrow but load-bearing: whatever the replay does to the live
- * function instances, the state the repair entered with has to come back. A silent
- * failure here does not corrupt the durable output the repair just wrote - it
- * corrupts every row the view emits afterwards, because the in-order path keeps
- * accumulating on whatever the repair left behind.
+ * function instances and the anchor map, the state the repair entered with has to
+ * come back. A silent failure here does not corrupt the durable output the repair
+ * just wrote - it corrupts every row the view emits afterwards, because the in-order
+ * path keeps accumulating on whatever the repair left behind.
  */
 public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
+    // Projects the anchor window's single LONG partition key straight off the record.
+    private static final RecordSink KEY_SINK = new RecordSink() {
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putLong(r.getLong(0));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+        }
+    };
+    // The view is unanchored, so the overlay carries function state alone.
+    private static final LiveViewWindow NO_ANCHOR = null;
+
+    @Test
+    public void testAnchorMapSurvivesAReplayThatWipedIt() throws Exception {
+        // A localized repair over an anchored view clears the anchor map before
+        // replaying, so the first row of each partition in the replayed segment resets
+        // the functions on it. The frontier the runtime entered with therefore exists
+        // nowhere else, and only the overlay puts it back. The follow-up row is what
+        // proves the anchor VALUES came back and not merely the keys: with the same
+        // anchor it must not reset, which is exactly what a garbled or lost value would
+        // do.
+        assertMemoryLeak(() -> {
+            final ResetCountingStub function = new ResetCountingStub();
+            final ObjList<WindowFunction> functions = functions(function);
+            final KeyRecord record = new KeyRecord();
+            try (
+                    LiveViewWindow window = anchorWindow(functions);
+                    LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()
+            ) {
+                record.key = 1;
+                window.processRow(record);
+                record.key = 2;
+                window.processRow(record);
+                Assert.assertEquals(2, window.getAnchorMapSize());
+                Assert.assertEquals(2, function.resets);
+
+                overlay.capture(functions, window);
+                window.toTop();
+                Assert.assertEquals(0, window.getAnchorMapSize());
+
+                overlay.restore(functions, window);
+                Assert.assertEquals(2, window.getAnchorMapSize());
+
+                record.key = 1;
+                window.processRow(record);
+                Assert.assertEquals("a restored anchor value must not re-fire the reset", 2, function.resets);
+            }
+        });
+    }
 
     @Test
     public void testCaptureDiscardsAnEarlierUnrestoredCapture() throws Exception {
@@ -60,11 +118,11 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final StateStub f = new StateStub(7L);
             final ObjList<WindowFunction> functions = functions(f);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
-                overlay.capture(functions);
+                overlay.capture(functions, NO_ANCHOR);
                 f.state = 8L;
-                overlay.capture(functions);
+                overlay.capture(functions, NO_ANCHOR);
                 f.state = 9L;
-                overlay.restore(functions);
+                overlay.restore(functions, NO_ANCHOR);
                 Assert.assertEquals(8L, f.state);
             }
         });
@@ -79,9 +137,9 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final StateStub captured = new StateStub(1L);
             final StateStub added = new StateStub(2L);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
-                overlay.capture(functions(captured));
+                overlay.capture(functions(captured), NO_ANCHOR);
                 try {
-                    overlay.restore(functions(captured, added));
+                    overlay.restore(functions(captured, added), NO_ANCHOR);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "overlay is short of captured functions");
@@ -96,12 +154,42 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final StateStub first = new StateStub(1L);
             final StateStub second = new StateStub(2L);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
-                overlay.capture(functions(first, second));
+                overlay.capture(functions(first, second), NO_ANCHOR);
                 try {
-                    overlay.restore(functions(first));
+                    overlay.restore(functions(first), NO_ANCHOR);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "overlay holds unclaimed function state");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRestoreRejectsAnAnchorArmThatDoesNotMatchTheRuntime() throws Exception {
+        // The anchor payload is optional, so a capture and a restore that disagree about
+        // whether it is there would silently leave the anchor map holding whatever the
+        // replay rebuilt. Reconcile it the same way the function frames are reconciled.
+        assertMemoryLeak(() -> {
+            final ObjList<WindowFunction> functions = functions(new ResetCountingStub());
+            try (
+                    LiveViewWindow window = anchorWindow(functions);
+                    LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()
+            ) {
+                overlay.capture(functions, NO_ANCHOR);
+                try {
+                    overlay.restore(functions, window);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "anchor state does not match the runtime");
+                }
+
+                overlay.capture(functions, window);
+                try {
+                    overlay.restore(functions, NO_ANCHOR);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "anchor state does not match the runtime");
                 }
             }
         });
@@ -113,7 +201,7 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final ObjList<WindowFunction> functions = functions(new StateStub(1L));
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
                 try {
-                    overlay.restore(functions);
+                    overlay.restore(functions, NO_ANCHOR);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "overlay holds no captured state");
@@ -135,13 +223,13 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
             final ObjList<WindowFunction> functions = functions(first, incapable, second);
             try (LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay()) {
                 Assert.assertFalse(overlay.isCaptured());
-                overlay.capture(functions);
+                overlay.capture(functions, NO_ANCHOR);
                 Assert.assertTrue(overlay.isCaptured());
 
                 first.state = -1L;
                 second.state = -2L;
 
-                overlay.restore(functions);
+                overlay.restore(functions, NO_ANCHOR);
                 Assert.assertEquals(11L, first.state);
                 Assert.assertEquals(22L, second.state);
                 // Each restored function was told its state was about to be replaced.
@@ -153,6 +241,29 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
                 Assert.assertFalse(overlay.isCaptured());
             }
         });
+    }
+
+    /**
+     * An anchored window over a single LONG partition key, with a constant anchor
+     * expression so every row of the same key sits in the same segment. Enough to drive
+     * the overlay's anchor arm without a compiled live view: the map is keyed and
+     * populated by {@code processRow}, which is the only thing the overlay reads.
+     */
+    private LiveViewWindow anchorWindow(ObjList<WindowFunction> functions) {
+        final SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
+        return new LiveViewWindow(
+                configuration,
+                "w",
+                new LongConstant(1_000L),
+                ColumnType.LONG,
+                keyTypes,
+                MapFactory.createUnorderedMap(configuration, keyTypes, LiveViewWindow.anchorMapValueTypes()),
+                KEY_SINK,
+                functions,
+                false,
+                null,
+                null
+        );
     }
 
     private static ObjList<WindowFunction> functions(WindowFunction... fns) {
@@ -188,6 +299,47 @@ public class LiveViewCheckpointScratchOverlayTest extends AbstractCairoTest {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+    }
+
+    /** A record whose only column is the anchor window's LONG partition key. */
+    private static class KeyRecord implements Record {
+        private long key;
+
+        @Override
+        public long getLong(int col) {
+            return key;
+        }
+    }
+
+    /**
+     * A function with no checkpoint state that counts the anchor's reset dispatches,
+     * which is how the tests observe whether a restored anchor value was believed.
+     */
+    private static class ResetCountingStub extends BaseWindowFunction {
+        private int resets;
+
+        private ResetCountingStub() {
+            super(null);
+        }
+
+        @Override
+        public String getName() {
+            return "reset-counting";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            resets++;
         }
     }
 

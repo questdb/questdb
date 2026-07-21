@@ -68,10 +68,11 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     /**
      * Builds the fixed segment boundary an anchored live view resets on, or null when
-     * the anchor has none. The anchor counterpart of {@link #rangePlan} and
-     * {@link #rowsPlan}: those read the frame descriptors the window functions carry,
-     * this one reads the anchor expression the definition carries, because an anchored
-     * window's dependency is the segment rather than any function's frame.
+     * the anchor has none or does not govern the whole view. The anchor counterpart of
+     * {@link #rangePlan} and {@link #rowsPlan}: those read the frame descriptors the
+     * window functions carry, this one reads the anchor expression the definition
+     * carries, because an anchored window's dependency is the segment rather than any
+     * function's frame.
      * <p>
      * The recognized shape is a calendar-period floor of the base's designated
      * timestamp, in the two forms the definition can hold it:
@@ -88,22 +89,37 @@ public final class LiveViewCheckpointFunctionCompiler {
      * Everything else declines, including the time-zone-aware daily anchor: it desugars
      * to {@code timestamp_floor_utc}, whose buckets change width at a DST transition and
      * so have no closed-form end. Declining costs a view only the localized repair path.
+     * <p>
+     * The segment arithmetic is only half the contract. It bounds a repair because the
+     * anchor resets state at every boundary, so the plan is withheld unless
+     * {@link #isAnchorSegmentLocal} confirms that every window function in the factory
+     * is one the anchor actually resets. A view mixing an anchored window with a bounded
+     * ROWS/RANGE one keeps that second window sliding across bucket crossings, and its
+     * state is no more segment-local than the anchor is frame-local.
      *
-     * @param spec              the definition's captured anchored window
-     * @param anchorNode        the parsed anchor expression, already desugared for a
-     *                          DAILY anchor
-     * @param projectedMetadata the metadata the anchor expression resolves against - the
-     *                          same one the runtime anchor function is compiled with
+     * @param spec                       the definition's captured anchored window
+     * @param anchorNode                 the parsed anchor expression, already desugared
+     *                                   for a DAILY anchor
+     * @param projectedMetadata          the metadata the anchor expression resolves
+     *                                   against - the same one the runtime anchor
+     *                                   function is compiled with
+     * @param windowFunctions            every window function the compiled factory
+     *                                   carries
+     * @param anchorableWindowFunctions  the subset the anchor dispatches
+     *                                   {@code resetPartition} to
      */
     public static @Nullable LiveViewCheckpointAnchorPlan anchorPlan(
             @NotNull LiveViewDefinition.LvAnchorSpec spec,
             @Nullable ExpressionNode anchorNode,
-            @NotNull RecordMetadata projectedMetadata
+            @NotNull RecordMetadata projectedMetadata,
+            @NotNull ObjList<WindowFunction> windowFunctions,
+            @Nullable ObjList<WindowFunction> anchorableWindowFunctions
     ) {
         final int timestampIndex = projectedMetadata.getTimestampIndex();
         if (timestampIndex == -1 || anchorNode == null || anchorNode.type != ExpressionNode.FUNCTION
                 || anchorNode.token == null
-                || !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)) {
+                || !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)
+                || !isAnchorSegmentLocal(windowFunctions, anchorableWindowFunctions)) {
             return null;
         }
         final ExpressionNode unitNode;
@@ -441,6 +457,46 @@ public final class LiveViewCheckpointFunctionCompiler {
         return identity.getCanonicalWindowName().isEmpty()
                 ? identity.getFactorySignature()
                 : identity.getFactorySignature() + " OVER " + identity.getCanonicalWindowName();
+    }
+
+    /**
+     * Whether the anchor's segment determines the state of every window function in the
+     * factory, which is what lets a repair reconstruct that state by replaying one
+     * segment. Two independent things have to hold, and each has its own way of failing:
+     * <ul>
+     *     <li>every window function is one the anchor resets. The runtime dispatches
+     *     {@code resetPartition} only to the functions whose frame is
+     *     {@code UNBOUNDED PRECEDING ... CURRENT ROW} - a bounded ROWS/RANGE window
+     *     declared beside the anchored one must keep sliding across bucket crossings -
+     *     so a factory holding one of those has a function whose state reaches below the
+     *     segment start;</li>
+     *     <li>every function's state is keyed and resettable. A function that carries no
+     *     checkpoint dependency at all, or whose per-partition state the anchor cannot
+     *     put back to identity, is not described by the reset the replay relies on.
+     *     {@code supportsKeyReset} is the descriptor for exactly that.</li>
+     * </ul>
+     * A factory with no window function at all answers false: there is nothing for the
+     * anchor to be a dependency contract over.
+     */
+    private static boolean isAnchorSegmentLocal(
+            ObjList<WindowFunction> windowFunctions,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
+        final int functionCount = windowFunctions.size();
+        if (functionCount == 0
+                || anchorableWindowFunctions == null
+                || anchorableWindowFunctions.size() != functionCount) {
+            return false;
+        }
+        for (int i = 0; i < functionCount; i++) {
+            final LiveViewCheckpointDependency dependency = windowFunctions.getQuick(i).checkpointDependency();
+            if (dependency == null
+                    || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT
+                    || !dependency.supportsKeyReset()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

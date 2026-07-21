@@ -34,6 +34,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * In-RAM copy of the compiled factory's window-function state, taken before a
@@ -60,6 +61,13 @@ import org.jetbrains.annotations.NotNull;
  * filter, and the frame count is reconciled on the way back so a mismatched pair
  * fails loudly instead of restoring one function's bytes into another.
  * <p>
+ * An anchored view's per-partition last-seen anchor value is runtime state on the
+ * same terms, and it travels here through {@link LiveViewWindow}'s own snapshot
+ * contract. The repair clears the anchor map before replaying - which is what makes
+ * the first row of each partition in the replayed segment reset the functions on it -
+ * so without this arm the runtime would come back holding a frontier rebuilt from
+ * {@code [L, H)} rather than the one it entered with.
+ * <p>
  * One instance per refresh worker, reused across repairs. The buffer is released
  * as soon as the state is handed back: it is as large as the whole window state,
  * and a repair that converges below the runtime frontier is rare enough that
@@ -68,6 +76,10 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
     private static final long PAGE_SIZE = 64 * 1024;
+    // (offset, length) of the captured anchor map's payload within mem, or
+    // (-1, -1) when the view carries no anchor.
+    private long anchorLength = -1;
+    private long anchorOffset = -1;
     private boolean captured;
     // (offset, length) of each captured function's payload within mem, in
     // window-function order and skipping the functions that carry no checkpoint
@@ -76,11 +88,12 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
     private MemoryCARW mem;
 
     /**
-     * Copies every checkpoint-capable function's state out of the compiled factory.
-     * Discards whatever the overlay held before, so a repair that failed to restore
-     * cannot leak stale state into the next one.
+     * Copies every checkpoint-capable function's state, and the anchor map when the
+     * view has one, out of the compiled factory. Discards whatever the overlay held
+     * before, so a repair that failed to restore cannot leak stale state into the
+     * next one.
      */
-    public void capture(@NotNull ObjList<WindowFunction> functions) {
+    public void capture(@NotNull ObjList<WindowFunction> functions, @Nullable LiveViewWindow anchorWindow) {
         clear();
         mem = Vm.getCARWInstance(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -93,12 +106,19 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
             frames.add(payloadStart);
             frames.add(mem.getAppendOffset() - payloadStart);
         }
+        if (anchorWindow != null) {
+            anchorOffset = mem.getAppendOffset();
+            anchorWindow.snapshot(mem);
+            anchorLength = mem.getAppendOffset() - anchorOffset;
+        }
         captured = true;
     }
 
     /** Drops the captured state and releases the buffer holding it. */
     public void clear() {
         frames.clear();
+        anchorOffset = -1;
+        anchorLength = -1;
         captured = false;
         mem = Misc.free(mem);
     }
@@ -113,14 +133,22 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
     }
 
     /**
-     * Puts the captured state back into the same functions it came from. The
-     * function objects are the compiled factory's, so their format versions and key
+     * Puts the captured state back into the same functions and anchor window it came
+     * from. Those objects are the compiled factory's, so their format versions and key
      * shapes are the ones the capture wrote with; a disagreement here is a bug
      * rather than corruption, and {@link LiveViewFunctionSnapshot} throws on it.
      */
-    public void restore(@NotNull ObjList<WindowFunction> functions) {
+    public void restore(@NotNull ObjList<WindowFunction> functions, @Nullable LiveViewWindow anchorWindow) {
         if (!captured) {
             throw CairoException.critical(0).put("live view repair overlay holds no captured state");
+        }
+        if ((anchorWindow != null) != (anchorOffset >= 0)) {
+            throw CairoException.critical(0)
+                    .put("live view repair overlay anchor state does not match the runtime [captured=")
+                    .put(anchorOffset >= 0)
+                    .put(", expected=")
+                    .put(anchorWindow != null)
+                    .put(']');
         }
         int frame = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -150,6 +178,12 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
                     .put(", restored=")
                     .put(frame / 2)
                     .put(']');
+        }
+        if (anchorWindow != null) {
+            // Rehydrates the map and both retained frontier generations, and validates the
+            // window name, key schema and anchor value type on the way in - the same
+            // contract a checkpoint restore reads this payload under.
+            anchorWindow.restore(mem, anchorOffset, anchorLength);
         }
         clear();
     }

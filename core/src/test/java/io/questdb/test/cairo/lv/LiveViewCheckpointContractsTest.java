@@ -50,7 +50,7 @@ public class LiveViewCheckpointContractsTest {
         // force a conscious update to this test and the expected-disposition
         // map below.
         Assert.assertEquals(6, DependencyKind.values().length);
-        Assert.assertEquals(4, Disposition.values().length);
+        Assert.assertEquals(3, Disposition.values().length);
     }
 
     @Test
@@ -172,15 +172,15 @@ public class LiveViewCheckpointContractsTest {
     @Test
     public void testUnanchoredRankIsCutButAnchoredSegmentStaysEligible() {
         // The scope cut: unanchored row_number/rank/dense_rank are rejected
-        // with no finite H, while their anchored, segment-reset forms remain
-        // proven and return with the fixed-anchor path.
+        // with no finite H, while their anchored, segment-reset forms are
+        // eligible through the fixed-anchor path they returned with.
         Assert.assertEquals(Disposition.REJECT, DependencyKind.UNANCHORED_RANK.getDisposition());
         Assert.assertTrue(DependencyKind.UNANCHORED_RANK.isRejectedPermanently());
         Assert.assertFalse(DependencyKind.UNANCHORED_RANK.isEligibleNow());
 
-        Assert.assertEquals(Disposition.ELIGIBLE_NOT_YET_WIRED, DependencyKind.FIXED_ANCHOR_SEGMENT.getDisposition());
-        Assert.assertFalse(
-                "the anchored segment is proven but not wired yet",
+        Assert.assertEquals(Disposition.ELIGIBLE, DependencyKind.FIXED_ANCHOR_SEGMENT.getDisposition());
+        Assert.assertTrue(
+                "the anchored segment bounds a repair by its own [L, H)",
                 DependencyKind.FIXED_ANCHOR_SEGMENT.isEligibleNow()
         );
     }
@@ -192,7 +192,7 @@ public class LiveViewCheckpointContractsTest {
         final Map<DependencyKind, Disposition> expected = new EnumMap<>(DependencyKind.class);
         expected.put(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, Disposition.ELIGIBLE);
         expected.put(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, Disposition.ELIGIBLE);
-        expected.put(DependencyKind.FIXED_ANCHOR_SEGMENT, Disposition.ELIGIBLE_NOT_YET_WIRED);
+        expected.put(DependencyKind.FIXED_ANCHOR_SEGMENT, Disposition.ELIGIBLE);
         expected.put(DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET, Disposition.REJECT);
         expected.put(DependencyKind.UNANCHORED_RANK, Disposition.REJECT);
         expected.put(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, Disposition.REJECT_INITIALLY);

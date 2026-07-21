@@ -948,7 +948,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     fn,
                     anchoredFunctions,
                     isAnchorMonotoneWithBaseOrder(anchorNode, projectedMeta),
-                    LiveViewCheckpointFunctionCompiler.anchorPlan(spec, anchorNode, projectedMeta),
+                    LiveViewCheckpointFunctionCompiler.anchorPlan(
+                            spec,
+                            anchorNode,
+                            projectedMeta,
+                            wf.getWindowFunctions(),
+                            anchoredFunctions
+                    ),
                     instance.getMemoryTracker()
             );
             // Commit the anchor Function and window together, only after the full
@@ -3335,9 +3341,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * The second thing it reads from disk is the live-view table's own frontier, the
      * lower bound on {@code D} the output floor {@code R} is clamped to. Only a
-     * DATA-triggered repair over a view with a finite RANGE or ROWS dependency can
-     * localize, so the reader opens only for that case: a non-DATA trigger rebuilds the
-     * whole view and a view without a dependency has no floor to raise.
+     * DATA-triggered repair over a view with a finite RANGE, ROWS or anchor-segment
+     * dependency can localize, so the reader opens only for that case: a non-DATA trigger
+     * rebuilds the whole view and a view without a dependency has no floor to raise.
      * <p>
      * A finite ROWS dependency costs one more read than a RANGE one. Its bounds are
      * per-key row counts rather than timestamp arithmetic, so the plan calls back into
@@ -3352,11 +3358,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The runtime frontier it passes is the view's own {@code latestSeenTs}, but only
      * when the repair could actually put the runtime window state back: the state
      * travels through the checkpoint freeze/restore contract, so a view without
-     * checkpoint-state support has no way to save it, and an anchored view's anchor
-     * map is not carried by that contract at all. A view with neither cannot have a
-     * finite RANGE or ROWS plan today - the compiler classifies an anchored window as
-     * {@code FIXED_ANCHOR_SEGMENT} and a non-capable one seals no checkpoint - so
-     * this is the invariant stated where it is relied on rather than a second gate.
+     * checkpoint-state support has no way to save it. An anchored view's anchor map
+     * rides on that same contract - {@link LiveViewCheckpointScratchOverlay} carries it
+     * beside the function state - so an anchored view quotes its frontier here too.
      */
     private void planO3Repair(
             LiveViewInstance instance,
@@ -3387,10 +3391,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long rangeFrameWidth = Numbers.LONG_NULL;
         long durableOutputMaxTs = Numbers.LONG_NULL;
         LiveViewCheckpointRepairPlan.RowsBoundSource rowsBoundSource = null;
+        LiveViewCheckpointAnchorPlan anchorPlan = null;
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final LiveViewCheckpointRangePlan rangePlan = windowFactory.getCheckpointRangePlan();
-        // The compiler produces at most one of the two plans - a factory whose window
-        // functions are all finite RANGE has no ROWS union and vice versa - so this
-        // reads whichever one the view carries rather than choosing between them.
+        // The compiler produces at most one of the three plans - a factory whose window
+        // functions are all finite RANGE has no ROWS union, an anchored one has neither -
+        // so this reads whichever one the view carries rather than choosing between them.
         final LiveViewCheckpointRowsPlan rowsPlan = rangePlan == null ? windowFactory.getCheckpointRowsPlan() : null;
         if (lateRowTs != Numbers.LONG_NULL) {
             if (rangePlan != null) {
@@ -3405,9 +3411,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 rowsBoundDiscovery.of(rowsPlan, windowFactory, reader);
                 rowsBoundSource = rowsBoundDiscovery;
                 durableOutputMaxTs = readDurableOutputMaxTs(instance);
+            } else if (rowsPlan == null && anchorWindow != null) {
+                // Null unless the compiler proved both halves of the anchor contract: a
+                // closed-form segment boundary, and every window function reset by it. The
+                // segment bounds the repair from both sides without reading a base row, so
+                // unlike the ROWS path this costs only the live-view frontier read.
+                anchorPlan = anchorWindow.getCheckpointAnchorPlan();
+                if (anchorPlan != null) {
+                    durableOutputMaxTs = readDurableOutputMaxTs(instance);
+                }
             }
         }
-        final long runtimeFrontierTs = instance.isSnapshotCapability() && instance.getAnchorWindow() == null
+        // The runtime state a converging repair puts back travels through the checkpoint
+        // freeze/restore contract, so a view without checkpoint-state support cannot save
+        // it. An anchored view's anchor map rides along on the same contract, which is
+        // what lets its frontier be quoted here at all.
+        final long runtimeFrontierTs = instance.isSnapshotCapability()
                 ? instance.getLatestSeenTs()
                 : Numbers.LONG_NULL;
         final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
@@ -3422,6 +3441,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 applyAheadMinTs,
                 rangeFrameWidth,
                 rowsBoundSource,
+                anchorPlan,
                 effectiveInsertOnly,
                 durableOutputMaxTs,
                 effectiveChangeMaxTs,
@@ -4043,7 +4063,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // instances - the compiled cursor stack owns them and there is only
                     // one of it - so the overlay is what keeps the repair from
                     // overwriting state it has already proved correct.
-                    repairOverlay.capture(windowFactory.getWindowFunctions());
+                    repairOverlay.capture(windowFactory.getWindowFunctions(), anchorWindow);
                     overlayCaptured = true;
                 }
                 // Reset per-function accumulator state and the anchor map to
@@ -4311,7 +4331,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // generation that describes the state the primary is about to hold is
             // already published, so a crash from here on restores that generation
             // rather than a runtime nothing recorded.
-            settleRepairRuntime(windowFactory);
+            settleRepairRuntime(windowFactory, anchorWindow);
             if (!replacementReconciled) {
                 // The replacement is in the live view's WAL but not in its table. No
                 // watermark may walk past output the table does not hold, so this turn
@@ -4394,7 +4414,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // worse than either. A settle that fails here has already marked the
                 // window state for rebuild, so let the original failure propagate.
                 try {
-                    settleRepairRuntime(windowFactory);
+                    settleRepairRuntime(windowFactory, anchorWindow);
                 } catch (Throwable t) {
                     LOG.critical().$("could not settle live view repair runtime [view=")
                             .$(viewName)
@@ -4544,7 +4564,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Performs the repair's single runtime exchange. A {@code KEEP_PRIMARY}
-     * disposition hands the scratch overlay back to the compiled factory; a
+     * disposition hands the scratch overlay - the window-function state, plus the
+     * anchor map for an anchored view - back to the compiled factory; a
      * {@code PROMOTE_REPLAY} one leaves the state the replay produced standing,
      * which is already the runtime. Either way it runs at most once per repair:
      * the publication records the exchange before it happens, so an unwinding
@@ -4554,7 +4575,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * it marks the window state dirty on the way out and the refresh failure
      * handler recomputes it from the applied base rather than continuing over it.
      */
-    private void settleRepairRuntime(WindowRecordCursorFactory windowFactory) {
+    private void settleRepairRuntime(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
         if (repairPublication.isRuntimeSettled()) {
             return;
         }
@@ -4562,7 +4583,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         repairPublication.runtimePromoted();
         if (keepPrimary) {
             try {
-                repairOverlay.restore(windowFactory.getWindowFunctions());
+                repairOverlay.restore(windowFactory.getWindowFunctions(), anchorWindow);
             } catch (Throwable t) {
                 windowStateDirty = true;
                 throw t;

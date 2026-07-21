@@ -214,13 +214,12 @@ public final class LiveViewCheckpointContracts {
         /**
          * Fixed compiler-derived anchor segment, including anchored
          * {@code row_number}/{@code rank}/{@code dense_rank} with per-segment
-         * reset. The segment boundaries give an exact {@code [L, H)}. Not wired
-         * yet.
+         * reset. The segment boundaries give an exact {@code [L, H)}.
          */
         FIXED_ANCHOR_SEGMENT(
                 "segment start, clamped to S",
                 "segment end, exclusive",
-                Disposition.ELIGIBLE_NOT_YET_WIRED
+                Disposition.ELIGIBLE
         ),
         /**
          * Unbounded cumulative aggregate without a fixed reset. No finite
@@ -277,9 +276,7 @@ public final class LiveViewCheckpointContracts {
         }
 
         /**
-         * Whether {@code CREATE LIVE VIEW} may accept this shape today. The
-         * anchored path ({@link Disposition#ELIGIBLE_NOT_YET_WIRED}) is proven
-         * but not wired, so it is not yet accepted.
+         * Whether {@code CREATE LIVE VIEW} may accept this shape today.
          */
         public boolean isEligibleNow() {
             return disposition == Disposition.ELIGIBLE;
@@ -303,11 +300,6 @@ public final class LiveViewCheckpointContracts {
          * Finite {@code L} and {@code H} proven now; accepted at CREATE.
          */
         ELIGIBLE,
-        /**
-         * Finite via a fixed compiler-derived anchor segment; proven, but not
-         * yet wired, so not yet accepted at CREATE.
-         */
-        ELIGIBLE_NOT_YET_WIRED,
         /**
          * No finite {@code H}; rejected at CREATE permanently.
          */

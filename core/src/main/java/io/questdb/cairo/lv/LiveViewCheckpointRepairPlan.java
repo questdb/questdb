@@ -60,17 +60,23 @@ import org.jetbrains.annotations.Nullable;
  *     <li>{@code L} - {@link #getReplayLowTs() replayLowTs}, the inclusive
  *     timestamp the replay <b>scans</b> from: the earliest row needed to
  *     reconstruct state immediately before the output floor. A resume floors it at
- *     the anchor's {@code maxTs + 1}; a boundary rebuild floors it at
- *     {@code max(S, R - W)} for a bounded RANGE view and at {@code S} otherwise.</li>
+ *     the anchor's {@code maxTs + 1}; a boundary rebuild floors it at whatever the
+ *     view's finite dependency proves - {@code max(S, R - W)} for a bounded RANGE
+ *     view, a discovered per-key floor for a bounded ROWS one, the start of
+ *     {@code R}'s segment for an anchored one - and at {@code S} when the view
+ *     carries none.</li>
  *     <li>{@code R} - {@link #getOutputLowTs() outputLowTs}, the inclusive
  *     timestamp the replay <b>emits and replaces</b> from. Never below {@code L}:
  *     rows in {@code [L, R)} are fed to warm the window state up and produce no
  *     output, because their durable output is already correct.</li>
  *     <li>{@code H} - {@link #getHighBoundTag() highBoundTag} plus
  *     {@link #getHighTsExclusive() highTsExclusive}, the tagged exclusive bound
- *     after which every eligible function has converged. {@code FINITE(changeMaxTs
- *     + W + 1)} for a bounded RANGE view whose pre-repair runtime state provably
- *     survives the repair, {@link HighBoundTag#EOF} otherwise.</li>
+ *     after which every eligible function has converged. Finite for a view whose
+ *     dependency proves one and whose pre-repair runtime state survives the repair -
+ *     {@code changeMaxTs + W + 1} for a bounded RANGE view, the discovered
+ *     convergence timestamp for a bounded ROWS one, the end of
+ *     {@code changeMaxTs}'s segment for an anchored one - and
+ *     {@link HighBoundTag#EOF} otherwise.</li>
  * </ul>
  * The high bound is tagged rather than a bare {@code long} because no timestamp
  * value can also mean infinity: an exclusive bound one past
@@ -120,6 +126,17 @@ import org.jetbrains.annotations.Nullable;
  *     ends on, losing exactly those keys. RANGE promotes safely because its frame
  *     at any row at or above {@code R} spans no further back than {@code L}.</li>
  * </ul>
+ * <p>
+ * An anchored view reaches the same two bounds without a frame at all. Its anchor
+ * resets every function on it the moment the anchor value changes, so one segment -
+ * a maximal run of rows sharing an anchor value - is a wall in both directions, and
+ * {@link LiveViewCheckpointAnchorPlan} puts both walls where timestamp arithmetic
+ * alone says they are: {@code L} is the start of the segment holding {@code R} and
+ * {@code H} the end of the segment holding {@code changeMaxTs}. Both are
+ * key-independent, so the anchor path needs no insert-only proof - it is the RANGE
+ * path's shape with the segment standing in for the width. The one thing it does
+ * need is that every window function on the view is actually reset by that anchor,
+ * which the compiler decides before it hands the plan over.
  * <p>
  * A later extension adds the affected/output key domains {@code A}/{@code Q} to
  * the plan itself. For the timestamp-global RANGE replacement they are degenerate:
@@ -409,6 +426,13 @@ public final class LiveViewCheckpointRepairPlan {
      *                                 consulted alongside a finite {@code rangeFrameWidth}:
      *                                 the two describe the same frame in incompatible
      *                                 units, and the compiler produces at most one of them
+     * @param anchorPlan               the view's fixed anchor segment, or null when the view
+     *                                 is unanchored, the anchor has no closed-form segment
+     *                                 boundary, or a window function on it is not reset by
+     *                                 that anchor. Consulted only when neither frame
+     *                                 dependency is present: an anchored window carries the
+     *                                 {@code FIXED_ANCHOR_SEGMENT} dependency kind, so it
+     *                                 produces neither a RANGE nor a ROWS plan
      * @param insertOnlyChangeSet      whether every change this repair incorporates only
      *                                 added rows. Gates the ROWS discovery, whose affected
      *                                 key domain is read off the post-change snapshot and
@@ -448,6 +472,7 @@ public final class LiveViewCheckpointRepairPlan {
             long applyAheadMinTs,
             long rangeFrameWidth,
             @Nullable RowsBoundSource rowsBoundSource,
+            @Nullable LiveViewCheckpointAnchorPlan anchorPlan,
             boolean insertOnlyChangeSet,
             long durableOutputMaxTs,
             long changeMaxTs,
@@ -543,6 +568,7 @@ public final class LiveViewCheckpointRepairPlan {
                     viewLowerBoundTimestamp,
                     rangeFrameWidth,
                     rowsBoundSource,
+                    anchorPlan,
                     insertOnlyChangeSet,
                     durableOutputMaxTs,
                     runtimeFrontierTs
@@ -560,6 +586,72 @@ public final class LiveViewCheckpointRepairPlan {
         final long result = value - width;
         // width >= 0, so a result ABOVE value can only be wrap-around.
         return result > value ? Long.MIN_VALUE : result;
+    }
+
+    /**
+     * Derives {@code L} and the tagged {@code H} for a localized boundary rebuild over a
+     * fixed anchor segment, or leaves the rebuild unlocalized and pinned to end-of-frame.
+     * <p>
+     * The anchor is a wall in both directions. A row at {@code t} reads state only from
+     * rows in {@code [segmentStart(t), t]}, because the anchor reset at
+     * {@code segmentStart(t)} put every function on it back to identity; and a row at
+     * {@code m} reaches output only within {@code m}'s own segment, because the reset at
+     * the next boundary throws away everything below it. So
+     * {@code L = max(S, segmentStart(R))} and
+     * {@code H = segmentEndExclusive(changeMaxTs)}, and both are pure timestamp
+     * arithmetic over the designated timestamp - no key domain, and so no insert-only
+     * proof, enters either one. {@code segmentStart} is monotone, so the floor derived at
+     * {@code R} bounds every row above it as well.
+     * <p>
+     * The guards are the RANGE path's, in the same order and for the same reasons:
+     * <ul>
+     *     <li>{@code changeMaxTs} is unknown, so nothing says which segment the change
+     *     stops in; or the runtime frontier is unknown or sits above the durable output,
+     *     which are the two conditions that decide whether the pre-repair runtime state
+     *     is both correct and recoverable.</li>
+     *     <li>{@code R} lands back on {@code S}, where the rebuild reads and re-emits the
+     *     whole view history whatever {@code L} says.</li>
+     *     <li>the segment has no representable end - a sub-resolution anchor period, or
+     *     the topmost segment, both of which
+     *     {@link LiveViewCheckpointAnchorPlan#getSegmentEndExclusive(long)} reports as
+     *     {@link Numbers#LONG_NULL}. That is {@code H = EOF}, and an anchored view
+     *     promoting the replay's state would lose every partition whose rows all sit
+     *     below {@code L} - the same reason the ROWS path declines an {@code EOF}
+     *     bound.</li>
+     *     <li>{@code H} does not clear {@code R}, which happens only when every changed
+     *     row sits below the view's own boundary; and the runtime frontier sits below
+     *     {@code H}, which is what proves the change is outside the segment the runtime
+     *     currently holds.</li>
+     * </ul>
+     * The floor is deliberately <b>not</b> {@code segmentStart(changeMaxTs)}: the
+     * replacement re-emits from {@code R}, and when a non-durable lead dropped {@code R}
+     * into an earlier segment the replay has to reconstruct that segment's state too.
+     */
+    private void deriveAnchorBounds(
+            long viewLowerBoundTimestamp,
+            long outputFloor,
+            LiveViewCheckpointAnchorPlan anchorPlan,
+            long durableOutputMaxTs,
+            long runtimeFrontierTs
+    ) {
+        if (changeMaxTs == Numbers.LONG_NULL
+                || runtimeFrontierTs == Numbers.LONG_NULL
+                || durableOutputMaxTs < runtimeFrontierTs
+                || outputFloor <= viewLowerBoundTimestamp) {
+            return;
+        }
+        final long highTs = anchorPlan.getSegmentEndExclusive(changeMaxTs);
+        if (highTs == Numbers.LONG_NULL || highTs <= outputFloor || runtimeFrontierTs < highTs) {
+            return;
+        }
+        outputLowTs = outputFloor;
+        // getSegmentStart reports Long.MIN_VALUE for a segment that is open below - every
+        // row under a non-zero alignment origin shares one - and the clamp resolves it to
+        // S, which is as far down as the rebuild would read anyway.
+        replayLowTs = Math.max(viewLowerBoundTimestamp, anchorPlan.getSegmentStart(outputFloor));
+        localized = true;
+        highBoundTag = HighBoundTag.FINITE;
+        highTsExclusive = highTs;
     }
 
     /**
@@ -689,6 +781,7 @@ public final class LiveViewCheckpointRepairPlan {
             long viewLowerBoundTimestamp,
             long rangeFrameWidth,
             RowsBoundSource rowsBoundSource,
+            LiveViewCheckpointAnchorPlan anchorPlan,
             boolean insertOnlyChangeSet,
             long durableOutputMaxTs,
             long runtimeFrontierTs
@@ -714,6 +807,14 @@ public final class LiveViewCheckpointRepairPlan {
                     outputFloor,
                     rowsBoundSource,
                     insertOnlyChangeSet,
+                    durableOutputMaxTs,
+                    runtimeFrontierTs
+            );
+        } else if (anchorPlan != null) {
+            deriveAnchorBounds(
+                    viewLowerBoundTimestamp,
+                    outputFloor,
+                    anchorPlan,
                     durableOutputMaxTs,
                     runtimeFrontierTs
             );
