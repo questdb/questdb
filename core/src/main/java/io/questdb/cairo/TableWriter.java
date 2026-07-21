@@ -4283,6 +4283,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@code o3Lo < r < o3LoHi} (caller O3s {@code [r, o3LoHi)}).
      */
     private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
+        // @TestOnly override (default false, JIT-elided in production): force every
+        // block through the unchanged O3 path so a differential test can prove the
+        // fast path is result-equivalent to O3.
+        if (PostingIndexWriter.COVERING_FASTPATH_DISABLED) {
+            return o3Lo;
+        }
         final long blockRows = o3LoHi - o3Lo;
         final long blockMin = segmentCopyInfo.getMinTimestamp();
         // Guards (fall back to the unchanged O3 path on any). Only a PURE APPEND

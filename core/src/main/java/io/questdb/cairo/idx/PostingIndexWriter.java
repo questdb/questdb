@@ -117,6 +117,16 @@ public class PostingIndexWriter implements IndexWriter {
     // JIT fold the always-false production branch away entirely.
     @TestOnly
     public static boolean COVERING_COUNTERS_ENABLED = false;
+    // @TestOnly override: when true, TableWriter.tryFastAppendInOrderBlock returns
+    // immediately, forcing every block through the unchanged O3 + rebuildSidecars
+    // path. Only the differential-equivalence fuzz flips it (to apply the SAME
+    // stream both with and without the fast path and assert byte-identical
+    // results). Default false -> never set in production, so the JIT
+    // dead-code-eliminates the always-false guard at the top of the fast path.
+    // Plain (non-volatile) boolean: the tests apply the WAL synchronously on the
+    // thread that sets the flag, so there is no cross-thread visibility hazard.
+    @TestOnly
+    public static boolean COVERING_FASTPATH_DISABLED = false;
     @TestOnly
     public static final java.util.concurrent.atomic.AtomicLong COVERING_FASTLAG_COMMIT_COUNT = new java.util.concurrent.atomic.AtomicLong();
     @TestOnly
