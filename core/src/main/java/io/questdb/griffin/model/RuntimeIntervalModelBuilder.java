@@ -39,6 +39,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+import java.time.temporal.ChronoUnit;
+
 /**
  * Collects intervals during query parsing and records them in two phases within the shared
  * staticIntervals list:
@@ -61,6 +63,10 @@ import io.questdb.std.str.StringSink;
  * functions need a position for error reporting.
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
+    // The widest day-of-month clamp: Jan 31, 30 and 29 all fold onto Feb 28, so a shifted upper
+    // bound can hide at most three days of timestamps that still satisfy the predicate. 'y' clamps
+    // only Feb 29 onto Feb 28 and needs a single day, so this covers both non-injective units.
+    private static final int MAX_DAY_CLAMP_STALL_DAYS = 3;
     // Parse positions of cursor functions, in cursor encounter order. Other dynamic intervals do
     // not need an error position, so keeping this list sparse avoids O(D) storage when C is zero.
     private final IntList cursorFunctionPositions = new IntList();
@@ -1039,19 +1045,30 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         final TimestampDriver otherDriver = other.timestampDriver;
         // A non-injective unit ('M' and 'y' clamp the day of month) stalls: several source timestamps
-        // collapse onto one shifted value. Shifting the LOWER boundary still lands on the first
-        // timestamp of its stall, because the shift picks the exact day rather than a clamped one, so
-        // that side needs nothing. The UPPER boundary lands on the FIRST timestamp of its stall too -
-        // and every later one satisfies the predicate as well, so they must stay inside the scan.
-        // One extra unit clears the longest stall by a wide margin: a clamp moves a date by at most
-        // three days while a month adds at least twenty-eight. The interval is then a superset, which
-        // the caller must keep re-checking with a residual filter instead of consuming the predicate.
-        final int hiOffset = isInjective || offset == Integer.MAX_VALUE ? offset : offset + 1;
+        // collapse onto one shifted value. Shifting the LOWER boundary lands on the first timestamp of
+        // its stall, so that side is already a superset. The UPPER boundary lands on the FIRST
+        // timestamp of its stall - and every later one satisfies the predicate as well, so they must
+        // stay inside the scan and the bound has to widen past the stall. The interval is then a
+        // superset, which the caller keeps re-checking with a residual filter instead of consuming
+        // the predicate.
+        //
+        // The stall is a day-of-month clamp, so it spans at most three days - Jan 31 and the two days
+        // after it all fold onto Feb 28. Widening by a whole extra unit also clears it, but at a
+        // wildly disproportionate cost: it doubled a one-year scan to two years. Widen by the stall
+        // itself instead. Note that the shift is NOT monotone across a clamp - addMonths('03-28
+        // 00:00:00.000001', -1) exceeds addMonths('03-29 00:00:00', -1) - so the stall cannot be
+        // detected by probing the neighbouring tick, and this bound is applied unconditionally.
+        final long stallTicks = isInjective ? 0 : timestampDriver.from(MAX_DAY_CLAMP_STALL_DAYS, ChronoUnit.DAYS);
         try {
             parsedIntervals.clear();
             for (int i = 0, n = otherIntervals.size(); i < n; i += 2) {
                 final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver, true);
-                final long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, hiOffset, otherDriver, false);
+                long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver, false);
+                if (stallTicks > 0 && hi != Long.MAX_VALUE && hi != Numbers.LONG_NULL) {
+                    // An open or absent bound has no stall to clear; anything else saturates rather
+                    // than wrapping past the end of the range.
+                    hi = addSaturating(hi, stallTicks);
+                }
                 if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                     // A shifted interval spans the entire range, so the union does too: the offset
                     // predicate constrains nothing. Keep this builder's own intervals and consume it.
@@ -1060,8 +1077,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 if (lo > hi) {
                     continue; // empty interval, contributes nothing to the union
                 }
-                // Source intervals are sorted ascending and non-overlapping, and the same offset
-                // preserves that order, so a single forward pass merges any overlaps it introduces.
+                // Source intervals are sorted ascending and non-overlapping. A calendar shift is not
+                // strictly order-preserving - a clamp can invert two timestamps less than a day apart
+                // - but it cannot reorder whole intervals: any span this drops sits below the
+                // interval's own minimum preimage. So a single forward pass still merges any overlaps
+                // the shift introduces.
                 if (parsedIntervals.size() > 0 && lo <= parsedIntervals.getLast()) {
                     if (hi > parsedIntervals.getLast()) {
                         parsedIntervals.setQuick(parsedIntervals.size() - 1, hi);

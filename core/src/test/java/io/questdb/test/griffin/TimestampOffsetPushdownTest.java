@@ -543,12 +543,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Should only return row 2.
             // The plan still prunes with the +1 month calendar shift, but 'M' is not injective, so
-            // the upper bound is widened by one more month and the predicate stays as a filter:
-            //   lower: 2022-02-01 + 1 month           = 2022-03-01
-            //   upper: 2022-02-28 23:59:59 + 2 months = 2022-04-28 23:59:59
-            // The extra month covers the timestamps the day-of-month clamp folds onto the shifted
-            // bound; the filter then drops the ones that do not satisfy the predicate. Pinning the
-            // narrow 2022-03-28 bound with no filter node is what dropped rows - see
+            // the upper bound is widened past the day-of-month clamp stall and the predicate stays
+            // as a filter:
+            //   lower: 2022-02-01 + 1 month                    = 2022-03-01
+            //   upper: 2022-02-28 23:59:59 + 1 month + 3 days  = 2022-03-31 23:59:59
+            // Three days covers the timestamps the clamp folds onto the shifted bound; the filter
+            // then drops the ones that do not satisfy the predicate. Pinning the narrow 2022-03-28
+            // bound with no filter node is what dropped rows - see
             // testMonthOffsetPushdownKeepsDayClampedRows.
             assertQuery(query)
                     .noLeakCheck()
@@ -561,11 +562,121 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: trades
-                                          intervals: [("2022-03-01T00:00:00.000000Z","2022-04-28T23:59:59.999999Z")]
+                                          intervals: [("2022-03-01T00:00:00.000000Z","2022-03-31T23:59:59.999999Z")]
                             """)
                     .returns("""
                             ts\tprice
                             2022-02-15T12:00:00.000000Z\t150.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testMonthOffsetPushdownInexactLowerBoundKeepsFilter() throws Exception {
+        // The LOWER bound is not automatically exact for a non-injective unit, so narrowing the upper
+        // bound must not be read as licence to consume the predicate.
+        // addMonths(2022-03-31, +1) clamps to 2022-04-30, and shifting that back gives 2022-03-30 -
+        // one DAY below the bound. So the scan's first row (2022-04-30) does not satisfy the
+        // predicate and the residual filter is what removes it. Consuming the predicate here would
+        // return it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH;");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2022-04-29T00:00:00.000000Z'),
+                        ('2022-04-30T00:00:00.000000Z'),
+                        ('2022-05-01T00:00:00.000000Z');
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('M', -1, ts) AS tt FROM m
+                    ) WHERE tt >= '2022-03-31T00:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('M',-1,ts)]
+                                Async Filter workers: 1
+                                  filter: dateadd('M',-1,ts)>=2022-03-31T00:00:00.000000Z
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: m
+                                          intervals: [("2022-04-30T00:00:00.000000Z","MAX")]
+                            """)
+                    .returns("""
+                            tt
+                            2022-04-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMonthOffsetPushdownKeepsDayClampedRowsNanos() throws Exception {
+        // The nanosecond twin of testMonthOffsetPushdownKeepsDayClampedRows. The stall widening is
+        // computed in the builder's own resolution, so a widening sized in microseconds would be a
+        // thousand times too small here - 259 seconds instead of three days - and would scan away
+        // exactly the clamped rows the widening exists to keep. Every other test in this file runs
+        // on microseconds and would not notice.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY MONTH;");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2022-03-28T00:00:00.000000000Z'),
+                        ('2022-03-29T00:00:00.000000000Z'),
+                        ('2022-03-30T00:00:00.000000000Z'),
+                        ('2022-03-31T00:00:00.000000000Z'),
+                        ('2022-04-01T00:00:00.000000000Z');
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('M', -1, ts) AS tt FROM m
+                    ) WHERE tt <= '2022-02-28T00:00:00.000000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt
+                            2022-02-28T00:00:00.000000000Z
+                            2022-02-28T00:00:00.000000000Z
+                            2022-02-28T00:00:00.000000000Z
+                            2022-02-28T00:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMonthOffsetPushdownPositiveStrideKeepsDayClampedRows() throws Exception {
+        // A POSITIVE dateadd stride makes the pushdown offset -1, and the old widening of
+        // "offset + 1" collapsed that to 0 - which applyOffset short-circuits, leaving the upper
+        // bound entirely unshifted. Sizing the widening in ticks instead removes that degenerate
+        // case. addMonths clamps here too: 2022-01-29, -30 and -31 all land on 2022-02-28.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH;");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2022-01-28T00:00:00.000000Z'),
+                        ('2022-01-29T00:00:00.000000Z'),
+                        ('2022-01-30T00:00:00.000000Z'),
+                        ('2022-01-31T00:00:00.000000Z'),
+                        ('2022-02-01T00:00:00.000000Z');
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('M', 1, ts) AS tt FROM m
+                    ) WHERE tt <= '2022-02-28T00:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .returns("""
+                            tt
+                            2022-02-28T00:00:00.000000Z
+                            2022-02-28T00:00:00.000000Z
+                            2022-02-28T00:00:00.000000Z
+                            2022-02-28T00:00:00.000000Z
                             """);
         });
     }
@@ -1907,12 +2018,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Should only return row 1.
-            // The plan still prunes with the +1 year calendar shift, but 'y' clamps 02-29 onto 02-28
-            // just as 'M' clamps the day of month, so the upper bound is widened by one more year and
-            // the predicate stays as a filter:
-            //   lower: 2022-01-01 + 1 year            = 2023-01-01
-            //   upper: 2022-12-31 23:59:59 + 2 years  = 2024-12-31 23:59:59
-            // See testMonthOffsetPushdownKeepsDayClampedRows for the rows the narrow bound dropped.
+            // 'y' is not injective - it clamps 02-29 onto 02-28 - so the upper bound has to widen past
+            // the clamp stall and the predicate stays behind as a residual filter:
+            //   lower: 2022-01-01 + 1 year                    = 2023-01-01
+            //   upper: 2022-12-31 23:59:59 + 1 year + 3 days  = 2024-01-03 23:59:59
+            // Three days is the widest any day-of-month clamp can reach ('y' alone never needs more
+            // than one, since it clamps only Feb 29 onto Feb 28). Widening by a whole extra YEAR
+            // instead - which is what an earlier round did - stretched the scan to 2024-12-31,
+            // doubling it for no gain. See testMonthOffsetPushdownKeepsDayClampedRows
+            // for the rows the un-widened bound dropped.
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
@@ -1924,11 +2038,50 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: trades
-                                          intervals: [("2023-01-01T00:00:00.000000Z","2024-12-31T23:59:59.999999Z")]
+                                          intervals: [("2023-01-01T00:00:00.000000Z","2024-01-03T23:59:59.999999Z")]
                             """)
                     .returns("""
                             ts\tprice
                             2022-06-15T12:00:00.000000Z\t100.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testYearOffsetPushdownLeapDayBoundKeepsFilter() throws Exception {
+        // The twin of testYearOffsetPushdown, on the LOWER bound. addYears clamps only Feb 29 onto
+        // Feb 28, so its stall is one day rather than the three 'M' can reach.
+        // addYears(2024-02-29, +1) clamps to 2025-02-28, which shifts back to 2024-02-28 - a day
+        // below the bound - so the scan starts one row too early and the filter has to drop it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR;");
+            execute("""
+                    INSERT INTO y VALUES
+                        ('2025-02-27T00:00:00.000000Z'),
+                        ('2025-02-28T00:00:00.000000Z'),
+                        ('2025-03-01T00:00:00.000000Z');
+                    """);
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('y', -1, ts) AS tt FROM y
+                    ) WHERE tt >= '2024-02-29T00:00:00.000000Z'
+                    """)
+                    .noLeakCheck()
+                    .timestamp("tt")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [dateadd('y',-1,ts)]
+                                Async Filter workers: 1
+                                  filter: dateadd('y',-1,ts)>=2024-02-29T00:00:00.000000Z
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: y
+                                          intervals: [("2025-02-28T00:00:00.000000Z","MAX")]
+                            """)
+                    .returns("""
+                            tt
+                            2024-03-01T00:00:00.000000Z
                             """);
         });
     }

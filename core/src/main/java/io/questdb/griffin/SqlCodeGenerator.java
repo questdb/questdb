@@ -6054,204 +6054,247 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     Function masterFilter = null;
                                     ExpressionNode masterFilterExpr = null;
                                     IntHashSet masterFilterUsedColumnIndexes = null;
-                                    if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
-                                        RecordCursorFactory filterFactory = master;
-                                        master = master.getBaseFactory();
-                                        compiledFilter = filterFactory.getCompiledFilter();
-                                        bindVarMemory = filterFactory.getBindVarMemory();
-                                        bindVarFunctions = filterFactory.getBindVarFunctions();
-                                        masterFilter = filterFactory.getFilter();
-                                        masterFilterExpr = filterFactory.getStealFilterExpr();
-                                        masterFilterUsedColumnIndexes = new IntHashSet();
-                                        collectColumnIndexes(sqlNodeStack, master.getMetadata(), masterFilterExpr, masterFilterUsedColumnIndexes);
-                                        filterFactory.halfClose();
-                                    }
+                                    // Ownership of the four stolen handles between halfClose() and the
+                                    // factory constructor. halfClose() deliberately frees none of them -
+                                    // it hands them to the window-join factory - so until the constructor
+                                    // takes them they belong to nobody but this frame, and the enclosing
+                                    // catch frees only master.
+                                    boolean isFilterStolen = false;
+                                    boolean isStolenFilterAdopted = false;
+                                    try {
+                                        if (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor()) {
+                                            RecordCursorFactory filterFactory = master;
+                                            compiledFilter = filterFactory.getCompiledFilter();
+                                            bindVarMemory = filterFactory.getBindVarMemory();
+                                            bindVarFunctions = filterFactory.getBindVarFunctions();
+                                            masterFilter = filterFactory.getFilter();
+                                            masterFilterExpr = filterFactory.getStealFilterExpr();
+                                            masterFilterUsedColumnIndexes = new IntHashSet();
+                                            // Read the base metadata through filterFactory rather than
+                                            // reassigning master first: allocating the set or walking the
+                                            // filter expression can throw, and while master still points at
+                                            // filterFactory the enclosing catch frees the whole factory -
+                                            // handles included. Closing it here instead would double-free
+                                            // the base, which master would point at.
+                                            collectColumnIndexes(sqlNodeStack, filterFactory.getBaseFactory().getMetadata(), masterFilterExpr, masterFilterUsedColumnIndexes);
+                                            // Commit the steal. Nothing between these two lines can throw.
+                                            filterFactory.halfClose();
+                                            master = filterFactory.getBaseFactory();
+                                            isFilterStolen = true;
+                                        }
 
-                                    // WINDOW JOIN tasks are "heavy", hence smaller frame sizes
-                                    master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-                                    if (leftSymbolIndex != -1 && !isDynamicWindow) {
-                                        assert rightSymbolIndex != -1;
-                                        // Build the per-worker clones into locals first, freeing earlier
-                                        // ones if a later build throws (the factory ctor never runs to
-                                        // adopt them). Then null-transfer joinFilter / groupByFunctions,
-                                        // which the factory now frees on its own failure, so the enclosing
-                                        // catch does not double-free them. Nothing between the null-out and
-                                        // the ctor call can throw.
-                                        ObjList<Function> fastWorkerJoinFilters = null;
-                                        ObjList<ObjList<GroupByFunction>> fastWorkerGroupByFuncs = null;
-                                        final ObjList<Function> fastWorkerMasterFilters;
-                                        try {
-                                            fastWorkerJoinFilters = compileWorkerFiltersConditionally(
-                                                    executionContext,
-                                                    joinFilter,
-                                                    executionContext.getSharedQueryWorkerCount(),
-                                                    parent,
-                                                    joinMetadata
-                                            );
-                                            fastWorkerGroupByFuncs = compileWorkerGroupByFunctionsConditionally(
-                                                    executionContext,
-                                                    isLastWindowJoin ? columns : aggregateCols,
-                                                    innerProjectionFunctions,
-                                                    executionContext.getSharedQueryWorkerCount(),
-                                                    joinMetadata,
-                                                    projectionFunctionFlags
-                                            );
-                                            fastWorkerMasterFilters = compileWorkerFiltersConditionally(
-                                                    executionContext,
-                                                    masterFilter,
-                                                    executionContext.getSharedQueryWorkerCount(),
-                                                    masterFilterExpr,
-                                                    master.getMetadata()
-                                            );
-                                        } catch (Throwable th) {
-                                            Misc.freeObjList(fastWorkerJoinFilters, th);
-                                            if (fastWorkerGroupByFuncs != null) {
-                                                for (int wi = 0, wn = fastWorkerGroupByFuncs.size(); wi < wn; wi++) {
-                                                    PerWorkerFunctionList.close(fastWorkerGroupByFuncs.getQuick(wi), th);
+                                        // WINDOW JOIN tasks are "heavy", hence smaller frame sizes
+                                        master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
+                                        if (leftSymbolIndex != -1 && !isDynamicWindow) {
+                                            assert rightSymbolIndex != -1;
+                                            // Build the per-worker clones into locals first, freeing earlier
+                                            // ones if a later build throws (the factory ctor never runs to
+                                            // adopt them). Then null-transfer joinFilter / groupByFunctions,
+                                            // which the factory now frees on its own failure, so the enclosing
+                                            // catch does not double-free them. Nothing between the null-out and
+                                            // the ctor call can throw.
+                                            ObjList<Function> fastWorkerJoinFilters = null;
+                                            ObjList<ObjList<GroupByFunction>> fastWorkerGroupByFuncs = null;
+                                            final ObjList<Function> fastWorkerMasterFilters;
+                                            try {
+                                                fastWorkerJoinFilters = compileWorkerFiltersConditionally(
+                                                        executionContext,
+                                                        joinFilter,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        parent,
+                                                        joinMetadata
+                                                );
+                                                fastWorkerGroupByFuncs = compileWorkerGroupByFunctionsConditionally(
+                                                        executionContext,
+                                                        isLastWindowJoin ? columns : aggregateCols,
+                                                        innerProjectionFunctions,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        joinMetadata,
+                                                        projectionFunctionFlags
+                                                );
+                                                fastWorkerMasterFilters = compileWorkerFiltersConditionally(
+                                                        executionContext,
+                                                        masterFilter,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        masterFilterExpr,
+                                                        master.getMetadata()
+                                                );
+                                            } catch (Throwable th) {
+                                                Misc.freeObjList(fastWorkerJoinFilters, th);
+                                                if (fastWorkerGroupByFuncs != null) {
+                                                    for (int wi = 0, wn = fastWorkerGroupByFuncs.size(); wi < wn; wi++) {
+                                                        PerWorkerFunctionList.close(fastWorkerGroupByFuncs.getQuick(wi), th);
+                                                    }
                                                 }
+                                                throw th;
                                             }
-                                            throw th;
-                                        }
-                                        final Function fastJoinFilter = joinFilter;
-                                        final ObjList<GroupByFunction> fastGroupByFunctions = groupByFunctions;
-                                        joinFilter = null;
-                                        groupByFunctions = null;
-                                        master = new AsyncWindowJoinFastRecordCursorFactory(
-                                                executionContext.getCairoEngine(),
-                                                configuration,
-                                                asm,
-                                                executionContext.getMessageBus(),
-                                                joinMetadata,
-                                                outerProjectionMetadata,
-                                                columnIndex,
-                                                master,
-                                                slaveToFree,
-                                                fastJoinFilter,
-                                                fastWorkerJoinFilters,
-                                                context.isIncludePrevailing(),
-                                                leftSymbolIndex,
-                                                rightSymbolIndex,
-                                                lo,
-                                                hi,
-                                                valueTypes,
-                                                fastGroupByFunctions,
-                                                fastWorkerGroupByFuncs,
-                                                compiledFilter,
-                                                bindVarMemory,
-                                                bindVarFunctions,
-                                                masterFilter,
-                                                fastWorkerMasterFilters,
-                                                masterFilterUsedColumnIndexes,
-                                                allVectorized,
-                                                reduceTaskFactory,
-                                                executionContext.getSharedQueryWorkerCount()
-                                        );
-                                    } else {
-                                        perWorkerWindowLoFuncs = compileWorkerFunctionsConditionally(
-                                                executionContext,
-                                                windowLoFunc,
-                                                executionContext.getSharedQueryWorkerCount(),
-                                                context.getLoExpr(),
-                                                masterMetadata
-                                        );
-                                        perWorkerWindowHiFuncs = compileWorkerFunctionsConditionally(
-                                                executionContext,
-                                                windowHiFunc,
-                                                executionContext.getSharedQueryWorkerCount(),
-                                                context.getHiExpr(),
-                                                masterMetadata
-                                        );
-                                        // Build the per-worker clones into locals (freeing earlier ones on
-                                        // a later build's throw), then null-transfer every owner resource
-                                        // the factory now frees on its own failure so the enclosing catch
-                                        // does not double-free them. The window-func builds above precede
-                                        // this: their throw is still covered by the enclosing catch, which
-                                        // owns them until the null-out below. Nothing between the null-out
-                                        // and the ctor call can throw.
-                                        ObjList<Function> stdWorkerJoinFilters = null;
-                                        ObjList<ObjList<GroupByFunction>> stdWorkerGroupByFuncs = null;
-                                        final ObjList<Function> stdWorkerMasterFilters;
-                                        try {
-                                            stdWorkerJoinFilters = compileWorkerFiltersConditionally(
-                                                    executionContext,
-                                                    joinFilter,
-                                                    executionContext.getSharedQueryWorkerCount(),
-                                                    node,
-                                                    joinMetadata
-                                            );
-                                            stdWorkerGroupByFuncs = compileWorkerGroupByFunctionsConditionally(
-                                                    executionContext,
-                                                    isLastWindowJoin ? columns : aggregateCols,
-                                                    innerProjectionFunctions,
-                                                    executionContext.getSharedQueryWorkerCount(),
+                                            final Function fastJoinFilter = joinFilter;
+                                            final ObjList<GroupByFunction> fastGroupByFunctions = groupByFunctions;
+                                            joinFilter = null;
+                                            groupByFunctions = null;
+                                            // Both constructors free the four stolen handles on their
+                                            // own failure (the atom adopts them first and closes itself),
+                                            // so hand ownership over BEFORE the call. Setting the flag
+                                            // afterwards would make the catch above free them a second
+                                            // time - a double free of native JIT memory, not a leak.
+                                            isStolenFilterAdopted = true;
+                                            master = new AsyncWindowJoinFastRecordCursorFactory(
+                                                    executionContext.getCairoEngine(),
+                                                    configuration,
+                                                    asm,
+                                                    executionContext.getMessageBus(),
                                                     joinMetadata,
-                                                    projectionFunctionFlags
-                                            );
-                                            stdWorkerMasterFilters = compileWorkerFiltersConditionally(
-                                                    executionContext,
+                                                    outerProjectionMetadata,
+                                                    columnIndex,
+                                                    master,
+                                                    slaveToFree,
+                                                    fastJoinFilter,
+                                                    fastWorkerJoinFilters,
+                                                    context.isIncludePrevailing(),
+                                                    leftSymbolIndex,
+                                                    rightSymbolIndex,
+                                                    lo,
+                                                    hi,
+                                                    valueTypes,
+                                                    fastGroupByFunctions,
+                                                    fastWorkerGroupByFuncs,
+                                                    compiledFilter,
+                                                    bindVarMemory,
+                                                    bindVarFunctions,
                                                     masterFilter,
-                                                    executionContext.getSharedQueryWorkerCount(),
-                                                    masterFilterExpr,
-                                                    master.getMetadata()
+                                                    fastWorkerMasterFilters,
+                                                    masterFilterUsedColumnIndexes,
+                                                    allVectorized,
+                                                    reduceTaskFactory,
+                                                    executionContext.getSharedQueryWorkerCount()
                                             );
-                                        } catch (Throwable th) {
-                                            Misc.freeObjList(stdWorkerJoinFilters, th);
-                                            if (stdWorkerGroupByFuncs != null) {
-                                                for (int wi = 0, wn = stdWorkerGroupByFuncs.size(); wi < wn; wi++) {
-                                                    PerWorkerFunctionList.close(stdWorkerGroupByFuncs.getQuick(wi), th);
+                                        } else {
+                                            perWorkerWindowLoFuncs = compileWorkerFunctionsConditionally(
+                                                    executionContext,
+                                                    windowLoFunc,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    context.getLoExpr(),
+                                                    masterMetadata
+                                            );
+                                            perWorkerWindowHiFuncs = compileWorkerFunctionsConditionally(
+                                                    executionContext,
+                                                    windowHiFunc,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    context.getHiExpr(),
+                                                    masterMetadata
+                                            );
+                                            // Build the per-worker clones into locals (freeing earlier ones on
+                                            // a later build's throw), then null-transfer every owner resource
+                                            // the factory now frees on its own failure so the enclosing catch
+                                            // does not double-free them. The window-func builds above precede
+                                            // this: their throw is still covered by the enclosing catch, which
+                                            // owns them until the null-out below. Nothing between the null-out
+                                            // and the ctor call can throw.
+                                            ObjList<Function> stdWorkerJoinFilters = null;
+                                            ObjList<ObjList<GroupByFunction>> stdWorkerGroupByFuncs = null;
+                                            final ObjList<Function> stdWorkerMasterFilters;
+                                            try {
+                                                stdWorkerJoinFilters = compileWorkerFiltersConditionally(
+                                                        executionContext,
+                                                        joinFilter,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        node,
+                                                        joinMetadata
+                                                );
+                                                stdWorkerGroupByFuncs = compileWorkerGroupByFunctionsConditionally(
+                                                        executionContext,
+                                                        isLastWindowJoin ? columns : aggregateCols,
+                                                        innerProjectionFunctions,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        joinMetadata,
+                                                        projectionFunctionFlags
+                                                );
+                                                stdWorkerMasterFilters = compileWorkerFiltersConditionally(
+                                                        executionContext,
+                                                        masterFilter,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        masterFilterExpr,
+                                                        master.getMetadata()
+                                                );
+                                            } catch (Throwable th) {
+                                                Misc.freeObjList(stdWorkerJoinFilters, th);
+                                                if (stdWorkerGroupByFuncs != null) {
+                                                    for (int wi = 0, wn = stdWorkerGroupByFuncs.size(); wi < wn; wi++) {
+                                                        PerWorkerFunctionList.close(stdWorkerGroupByFuncs.getQuick(wi), th);
+                                                    }
                                                 }
+                                                throw th;
                                             }
-                                            throw th;
+                                            final Function stdJoinFilter = joinFilter;
+                                            final ObjList<GroupByFunction> stdGroupByFunctions = groupByFunctions;
+                                            final Function stdWindowLoFunc = windowLoFunc;
+                                            final Function stdWindowHiFunc = windowHiFunc;
+                                            final ObjList<Function> stdPerWorkerWindowLoFuncs = perWorkerWindowLoFuncs;
+                                            final ObjList<Function> stdPerWorkerWindowHiFuncs = perWorkerWindowHiFuncs;
+                                            joinFilter = null;
+                                            groupByFunctions = null;
+                                            windowLoFunc = null;
+                                            windowHiFunc = null;
+                                            perWorkerWindowLoFuncs = null;
+                                            perWorkerWindowHiFuncs = null;
+                                            // See the note on the fast sibling above: ownership moves
+                                            // to the constructor, so flag it before the call.
+                                            isStolenFilterAdopted = true;
+                                            master = new AsyncWindowJoinRecordCursorFactory(
+                                                    executionContext.getCairoEngine(),
+                                                    configuration,
+                                                    asm,
+                                                    executionContext.getMessageBus(),
+                                                    joinMetadata,
+                                                    outerProjectionMetadata,
+                                                    columnIndex,
+                                                    master,
+                                                    slaveToFree,
+                                                    context.isIncludePrevailing(),
+                                                    stdJoinFilter,
+                                                    stdWorkerJoinFilters,
+                                                    lo,
+                                                    hi,
+                                                    stdWindowLoFunc,
+                                                    stdWindowHiFunc,
+                                                    stdPerWorkerWindowLoFuncs,
+                                                    stdPerWorkerWindowHiFuncs,
+                                                    loSign,
+                                                    hiSign,
+                                                    loTimeUnit,
+                                                    hiTimeUnit,
+                                                    isDynamicWindow ? timestampDriver : null,
+                                                    valueTypes,
+                                                    stdGroupByFunctions,
+                                                    stdWorkerGroupByFuncs,
+                                                    compiledFilter,
+                                                    bindVarMemory,
+                                                    bindVarFunctions,
+                                                    masterFilter,
+                                                    stdWorkerMasterFilters,
+                                                    masterFilterUsedColumnIndexes,
+                                                    allVectorized,
+                                                    reduceTaskFactory,
+                                                    executionContext.getSharedQueryWorkerCount()
+                                            );
                                         }
-                                        final Function stdJoinFilter = joinFilter;
-                                        final ObjList<GroupByFunction> stdGroupByFunctions = groupByFunctions;
-                                        final Function stdWindowLoFunc = windowLoFunc;
-                                        final Function stdWindowHiFunc = windowHiFunc;
-                                        final ObjList<Function> stdPerWorkerWindowLoFuncs = perWorkerWindowLoFuncs;
-                                        final ObjList<Function> stdPerWorkerWindowHiFuncs = perWorkerWindowHiFuncs;
-                                        joinFilter = null;
-                                        groupByFunctions = null;
-                                        windowLoFunc = null;
-                                        windowHiFunc = null;
-                                        perWorkerWindowLoFuncs = null;
-                                        perWorkerWindowHiFuncs = null;
-                                        master = new AsyncWindowJoinRecordCursorFactory(
-                                                executionContext.getCairoEngine(),
-                                                configuration,
-                                                asm,
-                                                executionContext.getMessageBus(),
-                                                joinMetadata,
-                                                outerProjectionMetadata,
-                                                columnIndex,
-                                                master,
-                                                slaveToFree,
-                                                context.isIncludePrevailing(),
-                                                stdJoinFilter,
-                                                stdWorkerJoinFilters,
-                                                lo,
-                                                hi,
-                                                stdWindowLoFunc,
-                                                stdWindowHiFunc,
-                                                stdPerWorkerWindowLoFuncs,
-                                                stdPerWorkerWindowHiFuncs,
-                                                loSign,
-                                                hiSign,
-                                                loTimeUnit,
-                                                hiTimeUnit,
-                                                isDynamicWindow ? timestampDriver : null,
-                                                valueTypes,
-                                                stdGroupByFunctions,
-                                                stdWorkerGroupByFuncs,
-                                                compiledFilter,
-                                                bindVarMemory,
-                                                bindVarFunctions,
-                                                masterFilter,
-                                                stdWorkerMasterFilters,
-                                                masterFilterUsedColumnIndexes,
-                                                allVectorized,
-                                                reduceTaskFactory,
-                                                executionContext.getSharedQueryWorkerCount()
-                                        );
+                                    } catch (Throwable th) {
+                                        if (isFilterStolen && !isStolenFilterAdopted) {
+                                            // halfClose() released the filter factory's own cursors and
+                                            // frame sequence but deliberately kept these four alive for
+                                            // the window-join factory, which never took them. Closing the
+                                            // filter factory instead would double-free both those and the
+                                            // base factory that master now points at, so free exactly the
+                                            // four. The base factory stays with master for the catch below.
+                                            // Suppress cleanup failures into th rather than reassigning
+                                            // it: a reassigned catch parameter loses precise rethrow and
+                                            // would force Throwable onto every caller's signature.
+                                            Misc.free(masterFilter, th);
+                                            Misc.free(compiledFilter, th);
+                                            Misc.free(bindVarMemory, th);
+                                            Misc.freeObjList(bindVarFunctions, th);
+                                        }
+                                        throw th;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slaveToFree.supportsTimeFrameCursor()) {

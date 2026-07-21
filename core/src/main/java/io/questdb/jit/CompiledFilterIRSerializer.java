@@ -2198,7 +2198,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Widens a bare out-of-INT-range integer constant that a comparison reads at
      * long width against a narrow-int arithmetic operand (e.g. {@code (a*b) =
-     * 4999999999}). {@link #markI64Widen} already sign-extends the product's narrow
+     * 4999999999}). {@link #maybeEmitI64Widening} already sign-extends the product's narrow
      * leaves, matching the Java filter's long-width read (MulInt#getLong vs the LONG
      * literal); but the type observer sees only INT and FLOAT columns (both 4 bytes,
      * so {@link TypesObserver#hasMixedSizes()} is false) and types the constant down

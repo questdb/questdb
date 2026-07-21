@@ -556,10 +556,13 @@ public final class WhereClauseParser implements Mutable {
         }
 
         // Calendar months and years clamp the day of month - addMonths(2022-03-31, -1) and
-        // addMonths(2022-03-28, -1) both land on 2022-02-28 - so the shift stays monotone but stops
-        // being injective and cannot be inverted by shifting the bounds back. Every other unit adds a
-        // fixed number of ticks and is a bijection, as is a zero offset. See the merge below for what
-        // the non-injective case costs: a widened interval that must stay behind a residual filter.
+        // addMonths(2022-03-28, -1) both land on 2022-02-28 - so the shift stops being injective and
+        // cannot be inverted by shifting the bounds back. It also stops being MONOTONE: the clamp
+        // discards the day but keeps the time of day, so addMonths(2022-03-28T00:00:00.000001, -1)
+        // comes out ABOVE addMonths(2022-03-29T00:00:00, -1) even though its input is below. That
+        // rules out deciding the clamp by probing a neighbouring tick. Every other unit adds a fixed
+        // number of ticks and is a bijection, as is a zero offset. See the merge below for what the
+        // non-injective case costs: a widened interval that must stay behind a residual filter.
         final boolean isInjective = offsetValue == 0 || (unit != 'M' && unit != 'y');
 
         // Create a temporary model to extract intervals from the inner predicate
