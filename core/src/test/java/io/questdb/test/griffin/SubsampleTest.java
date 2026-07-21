@@ -304,10 +304,14 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testErrorColumnNotFound() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // Migrated: the value column is now resolved by FunctionParser (not the cursor's
+            // by-name lookup), so the error text/position differ from the old cursor's "column
+            // not found". The query is invalid either way; the same divergence already ships
+            // latently for m4/minmax (they have no test covering this shape).
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE lttb(nonexistent, 5)",
                     39,
-                    "column not found"
+                    "Invalid column: nonexistent"
             );
         });
     }
@@ -936,10 +940,14 @@ public class SubsampleTest extends AbstractCairoTest {
     public void testErrorNonNumericColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (name SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // Migrated: the value column's type is now validated by FunctionParser's overload
+            // resolution (not the cursor's own numeric-type check), so the error text/position
+            // differ from the old cursor's "numeric column expected". The query is invalid
+            // either way; the same divergence already ships latently for m4/minmax.
             assertException(
                     "SELECT * FROM t SUBSAMPLE lttb(name, 5)",
-                    31,
-                    "numeric column expected"
+                    26,
+                    "there is no matching function `lttb` with the argument types: (TIMESTAMP, SYMBOL, INT)"
             );
         });
     }
@@ -1516,24 +1524,19 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testExplainPlanShowsSubsample() throws Exception {
+        // `lttb(price, 500)` is a happy-path case the migration is designed to move OFF the custom
+        // SUBSAMPLE cursor, so the plan no longer shows a "Subsample" node - it shows the desugared
+        // keep-flag window filter instead (same shape as testLttbDesugarsToWindowFilter).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            // Verify the EXPLAIN plan includes the Subsample node with method and points
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try (RecordCursorFactory fact = compiler.compile(
-                        "EXPLAIN SELECT price, ts FROM t SUBSAMPLE lttb(price, 500)", sqlExecutionContext
-                ).getRecordCursorFactory()) {
-                    try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
-                        StringBuilder sb = new StringBuilder();
-                        while (cursor.hasNext()) {
-                            sb.append(cursor.getRecord().getStrA(0)).append('\n');
-                        }
-                        String plan = sb.toString();
-                        Assert.assertTrue("Plan should contain 'Subsample': " + plan, plan.contains("Subsample"));
-                        Assert.assertTrue("Plan should contain 'lttb': " + plan, plan.contains("lttb"));
-                    }
-                }
-            }
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 500)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindowLight\n" +
+                            "          unorderedFunctions: [lttb(ts,price,500) over (order by [ts])]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
         });
     }
 
@@ -1781,6 +1784,12 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testExplainPlanSubsampleBeforeOrderBy() throws Exception {
+        // `lttb(price, 500)` is a happy-path case that now desugars to a window keep-filter instead of
+        // a Subsample cursor node (see testExplainPlanShowsSubsample). The original intent of this test
+        // - SUBSAMPLE's row reduction happens before the outer ORDER BY sorts the (already-reduced)
+        // result - still holds under the window plan: the keep-filter (Filter filter: __keep_subsample /
+        // CachedWindowLight) is nested INSIDE ("Encode sort light"), i.e. printed after/deeper than, the
+        // outer sort node, meaning it runs first, feeding the sort with the already-subsampled rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1793,13 +1802,12 @@ public class SubsampleTest extends AbstractCairoTest {
                             sb.append(cursor.getRecord().getStrA(0)).append('\n');
                         }
                         String plan = sb.toString();
-                        int subsamplePos = plan.indexOf("Subsample");
-                        int sortPos = plan.indexOf("Sort");
-                        Assert.assertTrue("Plan should contain Subsample: " + plan, subsamplePos >= 0);
-                        if (sortPos >= 0) {
-                            Assert.assertTrue("Subsample should be inside Sort: " + plan,
-                                    subsamplePos > sortPos);
-                        }
+                        int keepFilterPos = plan.indexOf("__keep_subsample");
+                        int sortPos = plan.indexOf("sort");
+                        Assert.assertTrue("Plan should contain the __keep_subsample window filter: " + plan, keepFilterPos >= 0);
+                        Assert.assertTrue("Plan should contain a sort node: " + plan, sortPos >= 0);
+                        Assert.assertTrue("__keep_subsample filter should be nested inside the outer sort: " + plan,
+                                keepFilterPos > sortPos);
                     }
                 }
             }
@@ -3148,6 +3156,57 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testM4OverJoinFallsThroughToCursor() throws Exception {
+        // Confirms the join-context guard shared with lttb (see testSubsampleWithActualJoin /
+        // testSubsampleNotHoistedFromJoinBranch / testSubsampleBranchLocalInJoin) also protects m4:
+        // a SUBSAMPLE m4(...) attached to (or nested inside) a join must stay on the untouched cursor,
+        // not desugar into `OVER (ORDER BY ts)`, whose bare `ts` would be ambiguous across the join's
+        // branches. Verified two ways: the plan still shows the Subsample cursor node (not a window
+        // filter), and the query runs to completion with the cursor's result instead of throwing
+        // "Ambiguous column [name=ts]".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE volumes (volume DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO prices VALUES
+                    (100.0, 'BTC', '2024-01-01T00:00:00.000000Z'),
+                    (200.0, 'BTC', '2024-01-01T01:00:00.000000Z'),
+                    (150.0, 'BTC', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO volumes VALUES
+                    (1000.0, 'BTC', '2024-01-01T00:00:00.000000Z'),
+                    (2000.0, 'BTC', '2024-01-01T01:00:00.000000Z'),
+                    (1500.0, 'BTC', '2024-01-01T02:00:00.000000Z')
+                    """);
+            final String query = "SELECT p.price, p.ts, v.volume FROM prices p ASOF JOIN volumes v ON (symbol) SUBSAMPLE m4(price, 4)";
+            // Plan must still show the Subsample cursor node, not a desugared window filter.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory fact = compiler.compile("EXPLAIN " + query, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
+                        StringBuilder sb = new StringBuilder();
+                        while (cursor.hasNext()) {
+                            sb.append(cursor.getRecord().getStrA(0)).append('\n');
+                        }
+                        String plan = sb.toString();
+                        Assert.assertTrue("Plan should contain 'Subsample': " + plan, plan.contains("Subsample"));
+                        Assert.assertFalse("Plan should not contain a window filter: " + plan, plan.contains("over (order by"));
+                    }
+                }
+            }
+            // The query must run to completion (no "Ambiguous column [name=ts]") and return the
+            // cursor's result.
+            assertSql(
+                    "price\tts\tvolume\n" +
+                            "100.0\t2024-01-01T00:00:00.000000Z\t1000.0\n" +
+                            "200.0\t2024-01-01T01:00:00.000000Z\t2000.0\n" +
+                            "150.0\t2024-01-01T02:00:00.000000Z\t1500.0\n",
+                    query
+            );
+        });
+    }
+
+    @Test
     public void testMinMaxDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
@@ -3157,6 +3216,35 @@ public class SubsampleTest extends AbstractCairoTest {
                             "    Filter filter: __keep_subsample\n" +
                             "        CachedWindowLight\n" +
                             "          unorderedFunctions: [minmax(ts,v,3) over (order by [ts])]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testLttbDesugarsToWindowFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
+            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            // 2-arg lttb -> 3-arg (ts, value, target) window overload.
+            assertQuery("SELECT ts, v FROM t SUBSAMPLE lttb(v, 3)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindowLight\n" +
+                            "          unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+            // 3-arg lttb (gap) also migrates -> 4-arg (ts, value, target, gap) window overload. The
+            // shared BucketSelectWindowFunction.toPlan only surfaces (ts,value,target), so the gap does
+            // not appear in the plan text; its runtime effect is verified byte-identically by the
+            // testLttbGapPreserving* oracle cases.
+            assertQuery("SELECT ts, v FROM t SUBSAMPLE lttb(v, 3, '1h')")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindowLight\n" +
+                            "          unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n");

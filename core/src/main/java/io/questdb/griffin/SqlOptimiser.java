@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -94,6 +95,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -9302,6 +9304,21 @@ public class SqlOptimiser implements Mutable {
      * handles it with its exact validation and error messages.
      */
     private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return rewriteSubsample(model, sqlExecutionContext, false);
+    }
+
+    /**
+     * @param insideJoin true when this {@code model} is already known to sit inside a join - either
+     *                    because an ancestor call found {@code nested} to be a multi-branch join
+     *                    (this level or an outer one), or because this call was reached through the
+     *                    per-branch recursion below. Propagated downward through every recursive call
+     *                    (nested model, join branches, union model) so a SUBSAMPLE arbitrarily deep
+     *                    inside any join branch - not just one directly attached to the join node
+     *                    itself - is still flagged. See {@link #isConstantUniformTarget} callers below
+     *                    for why the value-inspecting gate (m4/minmax/lttb) refuses to migrate under
+     *                    this flag.
+     */
+    private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext, boolean insideJoin) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return model;
         }
@@ -9309,11 +9326,19 @@ public class SqlOptimiser implements Mutable {
 
         final IQueryModel nested = model.getNestedModel();
         if (nested != null) {
+            // A directly-attached SUBSAMPLE is in a join context either because an ancestor already
+            // flagged it, or because `nested` (the FROM target at this level) is itself a multi-branch
+            // join - e.g. `... FROM a ASOF JOIN b SUBSAMPLE lttb(...)`, where the subsample sits on the
+            // join node itself.
+            final boolean subsampleInJoinContext = insideJoin || nested.getJoinModels().size() > 1;
             // Desugar inner SUBSAMPLE first so nested subqueries are rewritten before this level.
-            nested.setNestedModel(rewriteSubsample(nested.getNestedModel(), sqlExecutionContext));
+            nested.setNestedModel(rewriteSubsample(nested.getNestedModel(), sqlExecutionContext, subsampleInJoinContext));
             for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
                 final IQueryModel joinModel = nested.getJoinModels().getQuick(i);
-                joinModel.setNestedModel(rewriteSubsample(joinModel.getNestedModel(), sqlExecutionContext));
+                // Every non-primary join branch is, by construction, inside a join - regardless of
+                // whether this branch is a plain table or a parenthesized subquery carrying its own
+                // SUBSAMPLE (e.g. `a ASOF JOIN (SELECT ... FROM b SUBSAMPLE lttb(...)) b`).
+                joinModel.setNestedModel(rewriteSubsample(joinModel.getNestedModel(), sqlExecutionContext, true));
             }
 
             final ExpressionNode subsample = nested.getSubsample();
@@ -9366,13 +9391,51 @@ public class SqlOptimiser implements Mutable {
                     //    window path, by contrast, deep-clones the value arg and evaluates it as a full
                     //    DOUBLE expression, which would silently return a result instead of reproducing
                     //    that error. So non-literal value args fall through to the untouched cursor.
+                    //  - the SUBSAMPLE is not inside any join branch (subsampleInJoinContext). The
+                    //    desugared `OVER (ORDER BY ts)` / keep-filter reference the designated timestamp
+                    //    by its bare name, which is ambiguous once there are two branches sharing that
+                    //    name (e.g. an ASOF JOIN), and even a single-table branch loses its designated
+                    //    timestamp once wrapped in the extra window/filter models when it is consumed as
+                    //    a join operand. The cursor has neither problem, so any join context - whether
+                    //    the SUBSAMPLE sits directly on the join node or arbitrarily deep inside one of
+                    //    its branches - falls through untouched.
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     final ExpressionNode targetNode = subsample.args.getQuick(1);
                     if (timestamp != null
                             && !isAggregationContext(model, nested)
+                            && !subsampleInJoinContext
                             && valueNode != null
                             && valueNode.type == ExpressionNode.LITERAL
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
+                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
+                    }
+                } else if ((subsample.paramCount == 2 || subsample.paramCount == 3)
+                        && Chars.equalsIgnoreCase(subsample.token, "lttb")) {
+                    // Migrate lttb(value, target[, gap]) to the lttb keep-flag window function only when
+                    // the window path is byte-identical to the old cursor. Mirrors the m4/minmax gate:
+                    //  - the value (arg 0) is a bare column literal (the cursor resolves it BY NAME only,
+                    //    so an expression like v*2 makes it fail with "column not found"; the window path
+                    //    would silently evaluate it - so non-literal value args fall through).
+                    //  - target (arg 1) is a compile-time constant in [2, MAX_INT]; a bind-variable /
+                    //    runtime-constant / out-of-range / non-integer target falls through to the cursor.
+                    //  - a designated timestamp is present and we are not in an aggregation context.
+                    //  - IF a 3rd arg (gap) is present, it is a compile-time constant string parsing to a
+                    //    valid, non-overflowing positive interval with a supported unit (s/m/h/d). A
+                    //    non-constant / non-string / invalid / overflowing gap falls through so the cursor
+                    //    re-reports the identical error at its own position. A 4th+ arg makes paramCount
+                    //    miss this gate and fall through to the cursor's "at most 3 arguments" error.
+                    //  - the SUBSAMPLE is not inside any join branch (subsampleInJoinContext) - same
+                    //    ambiguous-timestamp / lost-designated-timestamp reasoning as m4/minmax above.
+                    final ExpressionNode valueNode = subsample.args.getQuick(0);
+                    final ExpressionNode targetNode = subsample.args.getQuick(1);
+                    if (timestamp != null
+                            && !isAggregationContext(model, nested)
+                            && !subsampleInJoinContext
+                            && valueNode != null
+                            && valueNode.type == ExpressionNode.LITERAL
+                            && isConstantUniformTarget(targetNode, sqlExecutionContext)
+                            && (subsample.paramCount == 2
+                            || isConstantLttbGap(subsample.args.getQuick(2), sqlExecutionContext))) {
                         model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
                     }
                 }
@@ -9380,7 +9443,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         // unions
-        model.setUnionModel(rewriteSubsample(model.getUnionModel(), sqlExecutionContext));
+        model.setUnionModel(rewriteSubsample(model.getUnionModel(), sqlExecutionContext, insideJoin));
         return replaceAndTransferDependents(originalModel, model);
     }
 
@@ -9435,6 +9498,52 @@ public class SqlOptimiser implements Mutable {
                 return false;
             }
             return func.getLong(null) != Numbers.LONG_NULL;
+        } catch (Throwable th) {
+            return false;
+        } finally {
+            Misc.free(func);
+        }
+    }
+
+    /**
+     * True only when {@code gapNode} is a compile-time constant string that parses to a valid,
+     * non-overflowing positive interval with a supported unit (s/m/h/d) - the sole lttb gap shape the
+     * {@code lttb(NDls)} gap window function reproduces byte-for-byte. Reproduces the old cursor's /
+     * gap window factory's TimestampSamplerFactory parse. A non-constant, non-string, malformed,
+     * unsupported-unit, or overflowing gap returns false, leaving the SUBSAMPLE node in place so the
+     * custom cursor path re-reports the identical error at its own position.
+     */
+    private boolean isConstantLttbGap(ExpressionNode gapNode, SqlExecutionContext sqlExecutionContext) {
+        if (gapNode == null) {
+            return false;
+        }
+        Function func = null;
+        try {
+            func = functionParser.parseFunction(gapNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                return false;
+            }
+            final int tag = ColumnType.tagOf(func.getType());
+            if (tag != ColumnType.STRING && tag != ColumnType.VARCHAR && tag != ColumnType.CHAR) {
+                return false;
+            }
+            final CharSequence interval = func.getStrA(null);
+            if (interval == null) {
+                return false;
+            }
+            final int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapNode.position, "gap threshold");
+            final long n = TimestampSamplerFactory.parsePositiveInterval(
+                    interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
+            );
+            final long unitMicros = switch (interval.charAt(k)) {
+                case 's' -> Micros.SECOND_MICROS;
+                case 'm' -> Micros.MINUTE_MICROS;
+                case 'h' -> Micros.HOUR_MICROS;
+                case 'd' -> Micros.DAY_MICROS;
+                default -> 0; // unsupported unit -> fall through to the cursor's exact error
+            };
+            // unsupported unit (unitMicros == 0) or n * unitMicros overflow -> fall through.
+            return unitMicros != 0 && n <= Long.MAX_VALUE / unitMicros;
         } catch (Throwable th) {
             return false;
         } finally {
@@ -9501,10 +9610,12 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Builds a 3-arg value-inspecting keep-flag window call {@code fnName(ts, value, target)} and routes
-     * it through the shared {@link #desugarSubsample} tail. Shared by m4 (and, later, minmax): only the
-     * {@code fnName} differs, both read {@code subsample.args.get(0)} = value column, {@code get(1)} =
-     * target and produce the identical 3-arg {@code (ts, value, target)} window overload.
+     * Builds a value-inspecting keep-flag window call {@code fnName(ts, value, target[, gap])} and routes
+     * it through the shared {@link #desugarSubsample} tail. Shared by m4/minmax (always 2-arg SUBSAMPLE ->
+     * 3-arg {@code (ts, value, target)} overload) and lttb (also accepts a 3-arg SUBSAMPLE with a gap ->
+     * 4-arg {@code (ts, value, target, gap)} overload): only the {@code fnName} and the optional gap
+     * differ. All read {@code subsample.args.get(0)} = value column, {@code get(1)} = target, and (lttb
+     * only) {@code get(2)} = gap.
      */
     private IQueryModel desugarValueInspectingSubsample(
             IQueryModel model,
@@ -9513,11 +9624,16 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode timestamp,
             CharSequence fnName
     ) throws SqlException {
-        // fnName(ts, value, target) window call. FunctionParser reverses argument order for
+        // fnName(ts, value, target[, gap]) window call. FunctionParser reverses argument order for
         // paramCount > 2 (confirmed via rewriteSampleBy's tsFloorFunc), so the args list is built
-        // back-to-front: the window factory then reads args.getQuick(0)=ts, (1)=value, (2)=target.
+        // back-to-front: the window factory then reads args.getQuick(0)=ts, (1)=value, (2)=target,
+        // (3)=gap.
+        final boolean hasGap = subsample.paramCount == 3;
         final ExpressionNode call = expressionNodePool.next().of(FUNCTION, fnName, 0, subsample.position);
-        call.paramCount = 3;
+        call.paramCount = hasGap ? 4 : 3;
+        if (hasGap) {
+            call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(2))); // gap
+        }
         call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1))); // target
         call.args.add(ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0))); // value column
         call.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, 0, subsample.position)); // ts
