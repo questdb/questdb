@@ -81,7 +81,7 @@ public class LifecycleTransitionTableTest {
                 {State.STOPPED, State.STARTING, State.STOPPED},     // STOPPED is terminal
                 {State.STOPPED, State.READY, State.STOPPED},
                 {State.STOPPED, State.FAILED, State.STOPPED},     // even FAILED rejected from STOPPED
-                {State.FAILED, State.READY, State.FAILED},      // FAILED is terminal (D-11)
+                {State.FAILED, State.READY, State.FAILED},      // FAILED is terminal
                 {State.FAILED, State.STARTING, State.FAILED},
                 {State.FAILED, State.STOPPING, State.FAILED},
                 {State.FAILED, State.STOPPED, State.FAILED},

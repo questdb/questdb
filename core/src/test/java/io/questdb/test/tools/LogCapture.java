@@ -67,13 +67,17 @@ public class LogCapture {
     }
 
     public void waitFor(String value) {
+        waitFor(value, 120_000);
+    }
+
+    public void waitFor(CharSequence value, long timeoutMs) {
+        final String needle = value.toString();
         long start = System.currentTimeMillis();
-        int maxWait = 120_000;
-        while (sink.indexOf(value) == -1 && (System.currentTimeMillis() - start) < maxWait) {
+        while (sink.indexOf(needle) == -1) {
+            if ((System.currentTimeMillis() - start) >= timeoutMs) {
+                throw new AssertionError("timed out waiting for log to contain '" + value + "', captured log: " + sink);
+            }
             Os.sleep(1);
-        }
-        if ((System.currentTimeMillis() - start) > maxWait) {
-            throw new AssertionError("timed out waiting for log to populate");
         }
     }
 
