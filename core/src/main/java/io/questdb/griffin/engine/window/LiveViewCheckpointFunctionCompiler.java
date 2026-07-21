@@ -89,6 +89,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 frameLo,
                 window.getRowsHi(),
                 timestampType,
+                function.hasFrameLocalCheckpointState(),
                 keyed,
                 keyed && anchored,
                 StructuralConvergence.EXACT,
@@ -117,6 +118,12 @@ public final class LiveViewCheckpointFunctionCompiler {
      * ROWS/anchor factory stays valid but has no RANGE repair plan. Two RANGE functions
      * must nevertheless agree on the key/order domain even in a mixed factory, so a later
      * planner can never combine incompatible descriptors into one repair interval.
+     * <p>
+     * The frame shape is necessary but not sufficient: every function must also hold
+     * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}, since a
+     * repair warms up over the frame's extent and nothing below it. The domain check still
+     * runs for a factory a non-frame-local function declines, so an incompatible pair is
+     * named at CREATE either way.
      */
     @Nullable
     public static LiveViewCheckpointRangePlan rangePlan(
@@ -125,6 +132,7 @@ public final class LiveViewCheckpointFunctionCompiler {
     ) throws SqlException {
         LiveViewCheckpointDependency firstRange = null;
         LiveViewCheckpointFunctionIdentity firstIdentity = null;
+        boolean allFrameLocal = true;
         boolean allRange = true;
         int rangeFunctionCount = 0;
         long maxFrameWidth = 0;
@@ -153,11 +161,12 @@ public final class LiveViewCheckpointFunctionCompiler {
                         .put(" [first=").put(functionLabel(firstIdentity))
                         .put(", incompatible=").put(functionLabel(identity)).put(']');
             }
+            allFrameLocal &= dependency.hasFrameLocalState();
             maxFrameWidth = Math.max(maxFrameWidth, dependency.getRangeFrameWidth());
             rangeFunctionCount++;
         }
 
-        if (!allRange || firstRange == null) {
+        if (!allRange || !allFrameLocal || firstRange == null) {
             return null;
         }
         return new LiveViewCheckpointRangePlan(
@@ -182,10 +191,12 @@ public final class LiveViewCheckpointFunctionCompiler {
      * repair path, which is what it has now.
      * <p>
      * The plan is declined when any window function is not a finite ROWS frame (a mixed
-     * ROWS/RANGE factory has no single contract), when two functions disagree on the
-     * key/order domain, when a window is not ordered by the designated timestamp
-     * ascending (the row positions {@code Nmax} counts would then be positions in an
-     * order the replay's cursor does not produce), when the frame is keyless or
+     * ROWS/RANGE factory has no single contract), when a function does not hold
+     * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state} and so
+     * reads rows the warm-up over {@code [L, R)} never feeds it, when two functions
+     * disagree on the key/order domain, when a window is not ordered by the designated
+     * timestamp ascending (the row positions {@code Nmax} counts would then be positions
+     * in an order the replay's cursor does not produce), when the frame is keyless or
      * zero-wide, or when a PARTITION BY expression is not a plain base column. The last
      * is a projector limitation rather than a contract one:
      * {@link LiveViewCheckpointRowsBounds} reads keys straight out of a page-frame
@@ -220,7 +231,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 continue;
             }
             final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
-            if (dependency == null || !dependency.isFiniteRows()) {
+            if (dependency == null || !dependency.isFiniteRows() || !dependency.hasFrameLocalState()) {
                 return null;
             }
             if (!(columns.getQuick(i) instanceof WindowExpression window)

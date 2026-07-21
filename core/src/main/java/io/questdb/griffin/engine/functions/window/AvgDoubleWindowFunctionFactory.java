@@ -709,6 +709,16 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The per-partition state is the frame itself: a ring of the (timestamp, value)
+            // pairs inside [t - W, t], plus the running sum and count over exactly those
+            // pairs. Replaying from the frame's lower edge rebuilds all three, so the values
+            // this emits from the output floor onward carry only the documented floating
+            // drift of a re-accumulated sum.
+            return true;
+        }
+
+        @Override
         public void markPartitionAlive(Record record) {
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
@@ -1065,6 +1075,16 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : AVG_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the sum/count accumulate over
+            // exactly those, so a warm-up of N predecessors reconstructs the state. The ring
+            // starts at a different rotation than a whole-history recompute leaves it at,
+            // which the contract allows: the values it emits are the same, up to the
+            // documented floating drift.
+            return true;
         }
 
         @Override

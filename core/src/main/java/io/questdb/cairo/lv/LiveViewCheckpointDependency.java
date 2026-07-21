@@ -36,6 +36,7 @@ import org.jetbrains.annotations.NotNull;
 public final class LiveViewCheckpointDependency {
     private final long frameHi;
     private final long frameLo;
+    private final boolean hasFrameLocalState;
     private final String highBoundStrategy;
     private final DependencyKind kind;
     private final String lowBoundStrategy;
@@ -54,6 +55,7 @@ public final class LiveViewCheckpointDependency {
             long frameLo,
             long frameHi,
             int timestampType,
+            boolean hasFrameLocalState,
             boolean supportsKeyRestore,
             boolean supportsKeyReset,
             @NotNull StructuralConvergence structuralConvergence,
@@ -65,6 +67,7 @@ public final class LiveViewCheckpointDependency {
         this.frameLo = frameLo;
         this.frameHi = frameHi;
         this.timestampType = timestampType;
+        this.hasFrameLocalState = hasFrameLocalState;
         this.lowBoundStrategy = kind.getLowBoundStrategy();
         this.highBoundStrategy = kind.getHighBoundStrategy();
         this.supportsKeyRestore = supportsKeyRestore;
@@ -140,6 +143,21 @@ public final class LiveViewCheckpointDependency {
     /** Returns the base table's designated timestamp type the frame bounds are expressed in. */
     public int getTimestampType() {
         return timestampType;
+    }
+
+    /**
+     * Returns whether the function's state is fully determined by the rows its frame
+     * admits, so a replay warmed up over the frame's own extent reproduces every value it
+     * emits from the output floor onward. This is what licenses a localized repair to read
+     * nothing below the dependency floor {@code L}; a function that reaches outside its
+     * declared frame - {@code lag()} counts rows by its own offset, not by the frame's -
+     * declines the repair plan instead of being replayed against a warm-up that never fed
+     * the rows it needs.
+     *
+     * @see io.questdb.griffin.engine.window.WindowFunction#hasFrameLocalCheckpointState()
+     */
+    public boolean hasFrameLocalState() {
+        return hasFrameLocalState;
     }
 
     /**

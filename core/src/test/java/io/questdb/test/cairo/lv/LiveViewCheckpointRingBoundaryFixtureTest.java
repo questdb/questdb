@@ -176,8 +176,29 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         // holding exactly what the insert above leaves it and the output is identical -
         // only the commit's authority to delete differs, and it costs the localization.
         final ReplayCost cost = runOldO3BoundaryRebuild(
+                "sum(x)",
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 true
+        );
+        final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
+        Assert.assertEquals("no bound is discovered, so the whole history is read", historyRows, cost.scannedRows);
+        Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
+    }
+
+    @Test
+    public void testRowsDependencyDeclinesAFunctionReachingOutsideItsFrame() throws Exception {
+        // The other safety boundary of the ROWS bound, and the one the frame shape alone
+        // cannot see. The bound is the frame's own extent, so it only describes a function
+        // whose state that extent determines. lag() counts predecessors by its own offset -
+        // five here, through a frame that promises three - so a repair localized on the
+        // frame would warm it up over three rows and emit NULL where the sixth row back
+        // belongs. The whole factory therefore declines the plan and pays the unbounded
+        // rebuild, which reconstructs every function from the START FROM boundary and needs
+        // no dependency floor at all.
+        final ReplayCost cost = runOldO3BoundaryRebuild(
+                "lag(x, 5)",
+                "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
+                false
         );
         final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
         Assert.assertEquals("no bound is discovered, so the whole history is read", historyRows, cost.scannedRows);
@@ -336,7 +357,7 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     // wrong is worse than an unbounded one - and then again after three further in-order
     // commits, which is what proves the runtime state and not merely the durable output.
     private ReplayCost runOldO3BoundaryRebuild(String windowFrame) throws Exception {
-        return runOldO3BoundaryRebuild(windowFrame, false);
+        return runOldO3BoundaryRebuild("sum(x)", windowFrame, false);
     }
 
     /**
@@ -345,14 +366,21 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
      * replace-range band instead of a plain insert: the data the base ends up holding is
      * identical, and so is the output, but the commit now carries a deletion the repair
      * cannot see the effect of.
+     *
+     * @param windowExpression the view's single window function, applied over
+     *                         {@code windowFrame}
      */
-    private ReplayCost runOldO3BoundaryRebuild(String windowFrame, boolean o3AsReplaceRange) throws Exception {
+    private ReplayCost runOldO3BoundaryRebuild(
+            String windowExpression,
+            String windowFrame,
+            boolean o3AsReplaceRange
+    ) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, RETENTION_COUNT);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 0L);
 
-        final String viewSql = "SELECT ts, sym, sum(x) OVER (" + windowFrame + ") AS s FROM base";
+        final String viewSql = "SELECT ts, sym, " + windowExpression + " OVER (" + windowFrame + ") AS s FROM base";
         final ReplayCost cost = new ReplayCost();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");

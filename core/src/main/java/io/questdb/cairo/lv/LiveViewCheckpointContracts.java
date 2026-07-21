@@ -184,6 +184,13 @@ public final class LiveViewCheckpointContracts {
      * forward-influence contract, not of snapshot capability alone: a function
      * may support a snapshot codec and still be rejected here for lacking a
      * finite {@code H}.
+     * <p>
+     * An eligible kind is necessary but not sufficient for a localized repair.
+     * The kind describes the frame; the repair reconstructs state by replaying
+     * that frame's own extent, so the function must additionally hold
+     * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local
+     * state}. One that reaches outside the frame it declares keeps its eligible
+     * kind and declines the repair plan.
      */
     public enum DependencyKind {
         /**

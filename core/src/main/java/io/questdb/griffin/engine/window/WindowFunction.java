@@ -368,6 +368,33 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Reports whether this function's checkpoint state is <b>frame-local</b>: every value
+     * it produces from a given row onward is determined by the rows its declared frame
+     * admits, so a replay warmed up over the frame's own extent reproduces them.
+     * <p>
+     * The live-view localized out-of-order repair rebuilds state from the dependency floor
+     * {@code L} - the frame's lower edge at the output floor - and reads nothing below it.
+     * A function whose value depends on rows outside the frame it declares would be
+     * replayed against a warm-up that never fed those rows and would emit wrong output:
+     * {@code lag(x, 5) OVER (... ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)} reaches five
+     * rows back through a frame that promises three. Declaring {@code false} costs the
+     * view only the localized path - the repair falls back to the rebuild from the
+     * {@code START FROM} boundary, which needs no such guarantee.
+     * <p>
+     * Frame-local does not require the replayed state bytes to equal a whole-history
+     * recompute's. A ring buffer replayed from {@code L} starts at a different rotation,
+     * and a counter that saturates at the frame size stops short of the true total; both
+     * produce the same values from the output floor onward, which is what the contract
+     * asks for.
+     * <p>
+     * Default {@code false} fails closed: a function is enabled here only once its state
+     * is proven to converge, one function and type at a time.
+     */
+    default boolean hasFrameLocalCheckpointState() {
+        return false;
+    }
+
+    /**
      * Rebinds every inner expression that depends on the base cursor's per-cursor state -
      * the partition-by expressions, the function's {@code arg}, and any extra argument a
      * subclass carries (lag/lead's {@code defaultValue}, a bivariate function's second

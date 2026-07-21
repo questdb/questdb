@@ -393,6 +393,19 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The stored counter is the partition's whole row count, but the value emitted
+            // from it saturates at the frame size, and a warm-up over the frame's N
+            // predecessors already reaches that ceiling. So the counter a localized replay
+            // rebuilds is smaller than a whole-history recompute's while every value it
+            // emits from the output floor onward is the same - and it stays that way, since
+            // a saturated counter only ever grows. A key with fewer than N predecessors
+            // drops the dependency floor to the START FROM boundary, which replays its
+            // history in full.
+            return true;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);

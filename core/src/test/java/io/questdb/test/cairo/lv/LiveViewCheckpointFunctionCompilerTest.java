@@ -122,6 +122,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertFalse(range.dependency.supportsKeyReset());
             Assert.assertEquals(StructuralConvergence.EXACT, range.dependency.getStructuralConvergence());
             Assert.assertEquals(NumericConvergence.FLOATING_TOLERANCE, range.dependency.getNumericConvergence());
+            Assert.assertTrue(range.dependency.hasFrameLocalState());
             Assert.assertEquals(range.dependency.getKind().getLowBoundStrategy(), range.dependency.getLowBoundStrategy());
             Assert.assertEquals(range.dependency.getKind().getHighBoundStrategy(), range.dependency.getHighBoundStrategy());
 
@@ -134,6 +135,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(-3, rows.dependency.getFrameLo());
             Assert.assertEquals(0, rows.dependency.getFrameHi());
             Assert.assertEquals(NumericConvergence.EXACT, rows.dependency.getNumericConvergence());
+            Assert.assertTrue(rows.dependency.hasFrameLocalState());
             Assert.assertEquals(3, rows.dependency.getRowsPrecedingCount());
             Assert.assertTrue(rows.dependency.isFiniteRows());
             Assert.assertFalse(rows.dependency.isFiniteRange());
@@ -173,6 +175,73 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertNotNull(rows.rowsPlan.getKeySink());
             Assert.assertEquals(1, rows.rowsPlan.getKeyColumnTypes().getColumnCount());
             Assert.assertEquals(ColumnType.SYMBOL, rows.rowsPlan.getKeyColumnTypes().getColumnType(0));
+        });
+    }
+
+    /**
+     * A frame shape alone does not license a localized repair. The repair reconstructs
+     * state by replaying {@code [L, R)} - the frame's own extent below the output floor -
+     * so a function that reads rows the frame does not admit would be replayed against a
+     * warm-up that never feeds them. Such a function declines the plan for the whole
+     * factory: the replacement is timestamp-global, so every function's output inside
+     * {@code [R, H)} is re-emitted from the same replay.
+     */
+    @Test
+    public void testFunctionsWithoutFrameLocalStateDeclineThePlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            // lag() counts predecessors by its own offset and ignores the frame entirely:
+            // the frame promises three rows of look-behind and the function reads five.
+            final Metadata rows = compileMetadata(
+                    "select ts, sym, lag(x, 5) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row) l from base",
+                    0
+            );
+            Assert.assertTrue(rows.dependency.isFiniteRows());
+            Assert.assertFalse(rows.dependency.hasFrameLocalState());
+            Assert.assertNull(rows.rowsPlan);
+
+            // The same hole on the RANGE side, where the width bounds the frame and not
+            // the offset either.
+            final Metadata range = compileMetadata(
+                    "select ts, sym, lag(x, 5) over (partition by sym order by ts "
+                            + "range between 2 seconds preceding and current row) l from base",
+                    0
+            );
+            Assert.assertTrue(range.dependency.isFiniteRange());
+            Assert.assertFalse(range.dependency.hasFrameLocalState());
+            Assert.assertNull(range.rangePlan);
+
+            // max() holds the frame and nothing else, so it is a candidate - but its state
+            // is not proven to converge yet, and the default fails closed until it is.
+            final Metadata notEnabledYet = compileMetadata(
+                    "select ts, sym, max(x) over (partition by sym order by ts "
+                            + "rows between 3 preceding and current row) m from base",
+                    0
+            );
+            Assert.assertTrue(notEnabledYet.dependency.isFiniteRows());
+            Assert.assertFalse(notEnabledYet.dependency.hasFrameLocalState());
+            Assert.assertNull(notEnabledYet.rowsPlan);
+
+            // One function short of the whole factory is enough to decline it.
+            assertNoRowsPlan("select ts, sym, "
+                    + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s, "
+                    + "lag(x, 5) over (partition by sym order by ts rows between 3 preceding and current row) l "
+                    + "from base");
+
+            // The RANGE domain check runs ahead of the gate, so an incompatible pair is
+            // still named at CREATE rather than disappearing into a declined plan.
+            execute("create table two_keys (ts timestamp, sym symbol, sym2 symbol, x double) "
+                    + "timestamp(ts) partition by day wal");
+            try {
+                compileMetadata("select ts, sym, "
+                        + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                        + "lag(x, 5) over (partition by sym2 order by ts range between 2 seconds preceding and current row) l "
+                        + "from two_keys", 0);
+                Assert.fail("expected incompatible RANGE domain rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "must use the same PARTITION BY and ORDER BY domain");
+            }
         });
     }
 

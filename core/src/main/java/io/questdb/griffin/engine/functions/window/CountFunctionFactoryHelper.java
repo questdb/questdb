@@ -630,6 +630,13 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The per-partition state is a ring of the timestamps inside [t - W, t] and the
+            // count of them, both rebuilt exactly by replaying the frame's own rows.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -928,6 +935,15 @@ public class CountFunctionFactoryHelper {
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds one null/not-null flag per row of the frame and the count runs
+            // over exactly those flags, so a warm-up of N predecessors rebuilds both. Only
+            // the ring's rotation differs from a whole-history recompute's, which changes no
+            // value this emits.
+            return true;
         }
 
         @Override
