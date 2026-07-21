@@ -518,6 +518,38 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static boolean equalsIgnoreCaseUnquoted(CharSequence a, int aStart, int aEnd, CharSequence b, int bStart, int bEnd) {
+        if (a == null || b == null) {
+            return false;
+        }
+
+        int aLen = aEnd - aStart;
+        if (aLen > 1 && a.charAt(aStart) == '"' && a.charAt(aEnd - 1) == '"') {
+            aStart++;
+            aEnd--;
+        }
+
+        int bLen = bEnd - bStart;
+        if (bLen > 1 && b.charAt(bStart) == '"' && b.charAt(bEnd - 1) == '"') {
+            bStart++;
+            bEnd--;
+        }
+
+        if (aEnd - aStart != bEnd - bStart) {
+            return false;
+        }
+
+        for (int i = aStart, j = bStart; i < aEnd; i++, j++) {
+            char ca = a.charAt(i);
+            char cb = b.charAt(j);
+            if (ca != cb && Character.toLowerCase(ca) != Character.toLowerCase(cb)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static void extractAndTerms(ExpressionNode node, ObjList<ExpressionNode> terms) {
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
             extractAndTerms(node.lhs, terms);
@@ -5873,38 +5905,6 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
         return model.getJoinModels().size() == 1 || modelIndex == 0;
-    }
-
-    private static boolean equalsIgnoreCaseUnquoted(CharSequence a, int aStart, int aEnd, CharSequence b, int bStart, int bEnd) {
-        if (a == null || b == null) {
-            return false;
-        }
-        
-        int aLen = aEnd - aStart;
-        if (aLen > 1 && a.charAt(aStart) == '"' && a.charAt(aEnd - 1) == '"') {
-            aStart++;
-            aEnd--;
-        }
-        
-        int bLen = bEnd - bStart;
-        if (bLen > 1 && b.charAt(bStart) == '"' && b.charAt(bEnd - 1) == '"') {
-            bStart++;
-            bEnd--;
-        }
-        
-        if (aEnd - aStart != bEnd - bStart) {
-            return false;
-        }
-        
-        for (int i = aStart, j = bStart; i < aEnd; i++, j++) {
-            char ca = a.charAt(i);
-            char cb = b.charAt(j);
-            if (ca != cb && Character.toLowerCase(ca) != Character.toLowerCase(cb)) {
-                return false;
-            }
-        }
-        
-        return true;
     }
 
     private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence timestamp, IQueryModel model) {
