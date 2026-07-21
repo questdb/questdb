@@ -184,6 +184,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Test seam: pauses a metadata rewrite after _meta and _txn publish the new metadata version but before
+    // MetadataCache hydration. Null in production; the fire site is a single volatile read and null check.
+    @TestOnly
+    private static volatile Runnable metadataVersionPublishedBarrier;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -640,6 +644,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
         return Unsafe.getLong(timestampIndexAddr + indexRow * 16);
+    }
+
+    /**
+     * Installs a one-shot test barrier that fires after a metadata version becomes reader-visible and before
+     * the corresponding MetadataCache hydration. Pass null to uninstall.
+     */
+    @TestOnly
+    public static void setMetadataVersionPublishedBarrier(@Nullable Runnable barrier) {
+        metadataVersionPublishedBarrier = barrier;
     }
 
     @Override
@@ -3796,6 +3809,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 default:
                     nullers.add(NOOP);
             }
+        }
+    }
+
+    private static void fireMetadataVersionPublishedBarrier() {
+        final Runnable barrier = metadataVersionPublishedBarrier;
+        if (barrier != null) {
+            metadataVersionPublishedBarrier = null;
+            barrier.run();
         }
     }
 
@@ -14416,6 +14437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void writeMetadataToDisk() {
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMeta();
+        fireMetadataVersionPublishedBarrier();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }

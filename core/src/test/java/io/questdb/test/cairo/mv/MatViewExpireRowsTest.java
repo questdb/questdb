@@ -34,9 +34,14 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.mp.Job;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -65,6 +70,61 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         super.setUp();
         // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testCachedPlanCompiledDuringDropExpireUsesCurrentPolicy() throws Exception {
+        assertCachedPlanCompiledDuringPolicyChange(
+                " EXPIRE ROWS WHEN v < 2.0",
+                """
+                        k\tv
+                        B\t2.0
+                        C\t3.0
+                        """,
+                "ALTER MATERIALIZED VIEW mv DROP EXPIRE",
+                """
+                        k\tv
+                        A\t1.0
+                        B\t2.0
+                        C\t3.0
+                        """
+        );
+    }
+
+    @Test
+    public void testCachedPlanCompiledDuringFirstSetExpireUsesCurrentPolicy() throws Exception {
+        assertCachedPlanCompiledDuringPolicyChange(
+                "",
+                """
+                        k\tv
+                        A\t1.0
+                        B\t2.0
+                        C\t3.0
+                        """,
+                "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 2.0",
+                """
+                        k\tv
+                        B\t2.0
+                        C\t3.0
+                        """
+        );
+    }
+
+    @Test
+    public void testCachedPlanCompiledDuringReplacementSetExpireUsesCurrentPolicy() throws Exception {
+        assertCachedPlanCompiledDuringPolicyChange(
+                " EXPIRE ROWS WHEN v < 2.0",
+                """
+                        k\tv
+                        B\t2.0
+                        C\t3.0
+                        """,
+                "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < 3.0",
+                """
+                        k\tv
+                        C\t3.0
+                        """
+        );
     }
 
     @Test
@@ -960,6 +1020,83 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "EXPIRE ROWS WHEN predicate is empty"
             );
             org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    private void assertCachedPlanCompiledDuringPolicyChange(
+            String initialExpiryClause,
+            String initialExpected,
+            String policyChangeSql,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)" + initialExpiryClause);
+            drainWalAndMatViewQueues();
+
+            // Warm the cache and prove the policy state from which the ALTER starts.
+            if (initialExpiryClause.isEmpty()) {
+                assertQuery("SELECT k, v FROM mv ORDER BY k").expectSize().noLeakCheck().returns(initialExpected);
+            } else {
+                assertQuery("SELECT k, v FROM mv ORDER BY k").noLeakCheck().returns(initialExpected);
+            }
+
+            final AtomicReference<Throwable> applyError = new AtomicReference<>();
+            final CountDownLatch metadataVersionPublished = new CountDownLatch(1);
+            final CountDownLatch resumeCacheHydration = new CountDownLatch(1);
+            execute(policyChangeSql);
+            TableWriter.setMetadataVersionPublishedBarrier(() -> {
+                metadataVersionPublished.countDown();
+                try {
+                    if (!resumeCacheHydration.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting to resume metadata-cache hydration");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            });
+
+            final Thread applyThread = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applyError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "expire-policy-apply");
+
+            try {
+                applyThread.start();
+                assertTrue(
+                        "ALTER did not publish its metadata version",
+                        metadataVersionPublished.await(30, TimeUnit.SECONDS)
+                );
+                // _meta/_txn now expose V+1 while MetadataCache still contains policy P0. The factory must not
+                // combine P0 with V+1 and remain valid after hydration publishes the current policy.
+                try (RecordCursorFactory factory = select("SELECT k, v FROM mv ORDER BY k")) {
+                    resumeCacheHydration.countDown();
+                    applyThread.join(30_000);
+                    assertFalse("WAL apply did not finish", applyThread.isAlive());
+                    if (applyError.get() != null) {
+                        throw new AssertionError("WAL apply failed", applyError.get());
+                    }
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor(expected, cursor, factory.getMetadata(), true);
+                    }
+                }
+            } finally {
+                resumeCacheHydration.countDown();
+                TableWriter.setMetadataVersionPublishedBarrier(null);
+                applyThread.join(30_000);
+            }
         });
     }
 }
