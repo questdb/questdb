@@ -2364,6 +2364,9 @@ public class SqlOptimiser implements Mutable {
     // the indexed generateLatestByTableQuery fast path instead of LatestBy light + full scan.
     //
     // Fires only when it is provably equivalent to the same-level query AND wins big:
+    //   - the LATEST ON model itself carries no JOINs: with joins present, latest-by applies to the
+    //     join output, while the hoisted form would apply it to the table BEFORE the join - a
+    //     different result whenever the join multiplies rows per key;
     //   - the LATEST ON model directly nests a bare `SELECT * FROM t [WHERE ...]` table read
     //     (no projection/rename, joins, aggregation, distinct, window, sampleBy, union, order by,
     //     limit, or its own latest by);
@@ -2378,7 +2381,8 @@ public class SqlOptimiser implements Mutable {
         }
         if (model.getLatestByType() == IQueryModel.LATEST_BY_NEW
                 && model.getLatestBy().size() > 0
-                && model.getTableNameExpr() == null) {
+                && model.getTableNameExpr() == null
+                && model.getJoinModels().size() < 2) {
             final IQueryModel table = findHoistableTableModel(model.getNestedModel());
             final ExpressionNode onTs = model.getTimestamp();
             if (table != null

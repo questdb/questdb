@@ -34,8 +34,10 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -210,6 +212,27 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         sqlExecutionContext, metadata, "ts < now() - 1_000_000L", 0).isMonotonic());
             }
 
+            // A subquery predicate is never treated as safe for physical cleanup: the expression parse
+            // rejects it up front (it runs without a query model), and isExpiryCleanupMonotonic maps
+            // the rejection to non-monotonic, so the cleanup job skips such a policy. The classifier
+            // also checks for QUERY nodes itself, covering a subquery that ever got past the parse.
+            execute("CREATE TABLE blk (s SYMBOL)");
+            execute("CREATE TABLE y (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("y"));
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                try {
+                    compiler.validateExpiryPredicateOnMetadata(
+                            sqlExecutionContext, metadata, "s IN (SELECT s FROM blk)", 0);
+                    Assert.fail("subquery predicate must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                Assert.assertFalse("subquery predicate must never classify monotonic", compiler.isExpiryCleanupMonotonic(
+                        sqlExecutionContext, metadata, "y", "s IN (SELECT s FROM blk)", "ts"));
+            }
+
             execute("CREATE TABLE xns (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
             try (
                     TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("xns"));
@@ -355,6 +378,35 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             // This only holds because cleanup did not delete the future rows while they were expired.
             setCurrentMicros(JAN_25);
             assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nA\nB\nC\n");
+        });
+    }
+
+    @Test
+    public void testSubqueryPredicateRejectedAtCreateAndAlter() throws Exception {
+        // A subquery predicate (sym IN (SELECT ...)) reads another table whose contents can change, so
+        // a row expired now could un-expire later; were such a policy ever stored, physical cleanup
+        // could permanently delete rows the read filter must show again. The grammar rejects it at both
+        // DDL entry points (the predicate parse runs without a query model).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table blk (s symbol)");
+            drainWalAndMatViewQueues();
+
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when sym in (select s from blk)",
+                    25,
+                    "query is not allowed here"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when sym in (select s from blk)",
+                    48,
+                    "query is not allowed here"
+            );
+            Assert.assertEquals("the existing policy must stay intact", "v < 2.0", expiryPredicate("mv"));
         });
     }
 

@@ -421,37 +421,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             throw SqlException.$(baseTableNamePosition, "base table has to be WAL enabled");
         }
 
-        // Inherit the base table's SYMBOL index for each directly-projected pass-through column, unless
-        // the CREATE statement already declared an index for it. A passthrough materialized view (e.g.
-        // SELECT * FROM base, as used by EXPIRE ROWS retention views) otherwise silently drops the base
-        // index, forcing full scans for indexed/LATEST ON reads that could use an index seek.
-        try (TableMetadata baseMetadata = sqlExecutionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn qc = columns.getQuick(i);
-                final ExpressionNode ast = qc.getAst();
-                // only a bare column reference is a straight pass-through; skip expressions/casts
-                if (ast == null || ast.type != LITERAL) {
-                    continue;
-                }
-                final int baseIdx = baseMetadata.getColumnIndexQuiet(ast.token);
-                if (baseIdx < 0
-                        || !ColumnType.isSymbol(baseMetadata.getColumnType(baseIdx))
-                        || !baseMetadata.isColumnIndexed(baseIdx)) {
-                    continue;
-                }
-                final CreateTableColumnModel columnModel = createColumnModelMap.get(SqlUtil.toColumnName(qc.getName()));
-                if (columnModel == null || columnModel.isIndexed()) {
-                    // keep an index the user declared explicitly in the CREATE statement
-                    continue;
-                }
-                columnModel.setIndexType(
-                        baseMetadata.getColumnMetadata(baseIdx).getIndexType(),
-                        ast.position,
-                        baseMetadata.getIndexValueBlockCapacity(baseIdx)
-                );
-            }
-        }
-
         // Find sampling interval.
         CharSequence intervalExpr = null;
         int intervalPos = 0;
@@ -532,6 +501,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         throw SqlException.$(0, "missing column [name=").put(columnName).put(']');
                     }
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                    if (passthrough) {
+                        // A passthrough view (e.g. SELECT * FROM base, as used by EXPIRE ROWS retention
+                        // views) copies base rows 1:1, so a pass-through symbol column inherits the base
+                        // table's index - otherwise the view silently drops it, forcing full scans for
+                        // indexed/LATEST ON reads that could use an index seek. Passthrough-only: an
+                        // aggregating view's rows are not base rows, so it never inherits.
+                        inheritBaseSymbolColumnIndex(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                    }
                 }
             }
         }
@@ -673,6 +650,55 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             model = model.getNestedModel();
         }
         return null;
+    }
+
+    /**
+     * Inherits the base table's SYMBOL index (type and value block capacity) into {@code columnModel}
+     * when {@code columnNode} is a bare column reference that resolves - through the nested-model chain,
+     * exactly like {@link #copyBaseTableSymbolColumnCapacity} - to an indexed SYMBOL column of the base
+     * table. A reference that lands on an expression at any level (e.g. {@code upper(k) sym} in an inner
+     * projection shadowing an indexed base column of the same name) resolves to no base column and
+     * inherits nothing. An index the CREATE statement declared explicitly is kept as-is. The caller
+     * invokes this for passthrough views only, which have no join/union models, so only the nested chain
+     * is walked.
+     */
+    private static void inheritBaseSymbolColumnIndex(
+            @Nullable ExpressionNode columnNode,
+            @Nullable IQueryModel queryModel,
+            @NotNull CreateTableColumnModel columnModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL || columnModel.isIndexed()) {
+            return;
+        }
+        if (queryModel.getTableName() != null) {
+            if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
+                final CharSequence columnName = resolveColumnName(columnNode, queryModel);
+                if (columnName != null) {
+                    final int columnIndex = baseTableMetadata.getColumnIndexQuiet(columnName);
+                    if (columnIndex > -1
+                            && ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
+                            && baseTableMetadata.isColumnIndexed(columnIndex)) {
+                        columnModel.setIndexType(
+                                baseTableMetadata.getColumnMetadata(columnIndex).getIndexType(),
+                                columnNode.position,
+                                baseTableMetadata.getIndexValueBlockCapacity(columnIndex)
+                        );
+                    }
+                }
+            }
+        } else {
+            // Resolve through the nested model: follow the alias to the inner column's expression.
+            final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
+            inheritBaseSymbolColumnIndex(
+                    column != null ? column.getAst() : columnNode,
+                    queryModel.getNestedModel(),
+                    columnModel,
+                    baseTableName,
+                    baseTableMetadata
+            );
+        }
     }
 
     private boolean isPassthrough(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) {

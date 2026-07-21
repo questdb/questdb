@@ -4920,6 +4920,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
+    // Negative: when the LATEST ON model itself carries a JOIN, latest-by applies to the join output;
+    // the hoist must not fire (it would apply latest-by to the table before the join, changing results
+    // whenever the join multiplies rows per key).
+    @Test
+    public void testLatestOnSubqueryWithJoinStaysUnhoisted() throws Exception {
+        assertQuery("select * from (select * from a) join b on s2 = s latest on ts partition by s")
+                .ddl(
+                        "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
+                        "create table b ( s2 symbol, v double );"
+                )
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy
+                                Hash Join Light
+                                  condition: s2=s
+                                  symbolKeyJoin: true
+                                    LatestBy light order_by_timestamp: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                        """);
+    }
+
     @Test
     public void testLatestOn3() throws Exception {
         assertQuery("select * from a latest on ts partition by s")

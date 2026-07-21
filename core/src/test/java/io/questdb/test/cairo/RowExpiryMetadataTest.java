@@ -72,6 +72,39 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggregatingMatViewDoesNotInheritBaseSymbolIndex() throws Exception {
+        // Index inheritance is passthrough-only: an aggregating view's rows are not base rows, so its
+        // key column must not silently gain the base index (and its maintenance cost/storage).
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select ts, k, avg(v) a from base sample by 1h)");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k");
+                assertTrue(ki >= 0);
+                assertTrue("aggregating MV must not inherit the base symbol index", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testAggregatingMatViewShadowingColumnNameCreates() throws Exception {
+        // A non-symbol view column whose name shadows an indexed base SYMBOL column must not be
+        // flagged indexed: the CREATE would then fail table validation ("indexes are supported only
+        // for SYMBOL columns") for a statement that is valid without inheritance.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol index, k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select ts, sym, avg(v) a from (select ts, upper(k) sym, v from base) sample by 1h)");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int si = metadata.getColumnIndexQuiet("sym");
+                assertTrue(si >= 0);
+                assertTrue("shadowing column must not inherit an index", !metadata.isColumnIndexed(si));
+            }
+        });
+    }
+
+    @Test
     public void testPassthroughMatViewInheritsBaseSymbolIndex() throws Exception {
         // R2: a passthrough materialized view (SELECT * FROM base) inherits the base table's SYMBOL
         // index for each directly-projected symbol column, so indexed reads over the view (e.g.
@@ -116,6 +149,40 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                 final int ki = metadata.getColumnIndexQuiet("k");
                 assertTrue(ki >= 0);
                 assertTrue("non-indexed base symbol must stay unindexed", !metadata.isColumnIndexed(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewRenamedSymbolColumnInheritsBaseIndex() throws Exception {
+        // A renamed straight pass-through (SELECT k AS k2) copies the base column's data 1:1, so the
+        // rename keeps the inherited index.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol index capacity 512, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select k k2, v, ts from base)");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int ki = metadata.getColumnIndexQuiet("k2");
+                assertTrue(ki >= 0);
+                assertTrue("renamed pass-through symbol keeps the inherited base index", metadata.isColumnIndexed(ki));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(ki));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughMatViewSubqueryShadowingColumnNotIndexed() throws Exception {
+        // Chain resolution: a top-level pass-through of an INNER expression alias that shadows an
+        // indexed base SYMBOL name resolves to the expression, not to the base column, so nothing is
+        // inherited (the view's column is a STRING; flagging it indexed would fail the CREATE).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol index, k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view v as (select * from (select ts, upper(k) sym, v from base))");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("v"))) {
+                final int si = metadata.getColumnIndexQuiet("sym");
+                assertTrue(si >= 0);
+                assertTrue("expression-derived column must not inherit an index", !metadata.isColumnIndexed(si));
             }
         });
     }

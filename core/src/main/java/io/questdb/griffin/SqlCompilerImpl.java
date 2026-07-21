@@ -5738,7 +5738,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final IntList referencedColumnIndexes = new IntList();
             collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
             final boolean hasClock = expiryExpressionHasClock(node);
-            final boolean isDeterministic = !f.isNonDeterministic() && !hasClock;
+            // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
+            // change between evaluations, so a row expired now can un-expire later - physical cleanup
+            // under such a predicate could delete rows the read filter must show again. The expression
+            // parse above already rejects subqueries ("query is not allowed here": parser.expr runs with
+            // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
+            // protection: if a subquery ever does reach classification, the predicate is classified
+            // non-monotonic and the cleanup job skips physical deletion for it.
+            final boolean isDeterministic = !f.isNonDeterministic() && !hasClock && !expiryExpressionHasQuery(node);
             final int timestampIndex = metadata.getTimestampIndex();
             final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
             final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
@@ -5855,6 +5862,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         for (int i = 0, n = node.args.size(); i < n; i++) {
             if (expiryExpressionHasClock(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if the sub-tree contains a subquery (QUERY node). A subquery's result depends on another
+    // table's current contents, so a predicate containing one is not stable across evaluations.
+    private static boolean expiryExpressionHasQuery(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            return true;
+        }
+        if (expiryExpressionHasQuery(node.lhs) || expiryExpressionHasQuery(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasQuery(node.args.getQuick(i))) {
                 return true;
             }
         }
