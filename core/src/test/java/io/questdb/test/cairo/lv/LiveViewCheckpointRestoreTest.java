@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -41,10 +42,8 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -254,134 +253,57 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testRestoreIgnoresLegacyRingAndRecoversDerivedState() throws Exception {
-        // The database keeps ingesting after CHECKPOINT CREATE, so restore rolls
-        // the materialization coordinates back over a live-ahead checkpoint dir.
-        // ACTIVE startup must ignore the restored legacy .cp/_ring artifacts and
-        // recover correctly from a bounded-valid timeline or applied-base rebuild.
+    public void testSnapshotExcludesTimelineAndRestoreRebuildsDerivedState() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
-                "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS running FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
+            final TableToken lvToken = engine.verifyTableName("lv");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
                         "('2026-01-01T00:00:02.000000Z', 'a', 2.0)");
                 driveRefreshToQuiescence(job);
+                assertTimelineExists(lvToken);
 
                 execute("CHECKPOINT CREATE");
+                assertSnapshotDoesNotContainCheckpoints(lvToken);
 
-                // The database keeps running while the operator copies the volume.
+                // Advance both authoritative data and the local timeline beyond the
+                // snapshot. Restore must not let these newer derived roots survive.
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
                         "('2026-01-01T00:00:03.000000Z', 'a', 3.0), " +
                         "('2026-01-01T00:00:04.000000Z', 'a', 4.0)");
                 driveRefreshToQuiescence(job);
+                assertTimelineExists(lvToken);
             }
 
-            restoreFromCheckpoint();
+            // Inspect the restore boundary before graph reload can reconcile or a
+            // refresh can publish a replacement timeline. Its publication point and
+            // nested metadata/data directories must be gone; only an empty container remains.
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            assertCheckpointStateCleared(lvToken);
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+            assertCheckpointStateCleared(lvToken);
 
+            // The first post-restore turn performs the forced applied-base rebuild.
+            // Forced replay does not seal a timeline generation, so a following
+            // ordinary in-order commit exercises normal local timeline publication.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:05.000000Z', 'a', 10.0)");
                 driveRefreshToQuiescence(job);
-            }
-            final LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(restored);
-            Assert.assertTrue(restored.isCheckpointRestoreSucceeded());
-            Assert.assertEquals(
-                    "timeline recovery must not rehydrate the obsolete ring manifest",
-                    Numbers.LONG_NULL,
-                    restored.getCheckpointRingRecoveredEntries()
-            );
-
-            // Derived runtime state matches the authoritative restored tables;
-            // the new row continues from 3.0 rather than a cold 0.0.
-            assertQuery("SELECT ts, sym, x, running FROM lv ORDER BY ts")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("ts\tsym\tx\trunning\n" +
-                            "2026-01-01T00:00:01.000000Z\ta\t1.0\t1.0\n" +
-                            "2026-01-01T00:00:02.000000Z\ta\t2.0\t3.0\n" +
-                            "2026-01-01T00:00:05.000000Z\ta\t10.0\t13.0\n");
-            assertViewMatchesRecompute(viewSql);
-
-            execute("CHECKPOINT RELEASE");
-        });
-    }
-
-    @Test
-    public void testRestoreBringsBackCheckpointHeadOverLiveAheadHead() throws Exception {
-        // The database keeps ingesting after CHECKPOINT CREATE, so the refresh worker writes a
-        // newer head .cp and unlinks the one the checkpoint captured (steady state keeps exactly
-        // one). Recovery runs in place over that same db root and rolls _txn / partitions / _lv.s
-        // back to the checkpoint - so by restore time the live _checkpoints/ dir holds only a head
-        // sitting ABOVE the state the view was rolled back to.
-        //
-        // The startup sweep unlinks a head above the applied watermark, so the view came up with
-        // no head at all. It then drained forward from the restored watermark with COLD window
-        // accumulators and durably committed wrong cumulative results - the running sum restarting
-        // from zero mid-stream, silently, with no error and no invalidation. (The checkpoint side
-        // has always copied the dir into the snapshot; the restore side simply never copied it
-        // back, so the copy was dead weight and this path was never exercised.)
-        //
-        // The restore must lay the snapshot's own head back down, so the first refresh cycle
-        // rehydrates the accumulators from it and replays only the (head, applied] gap.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush
-        // A cumulative frame: every row's value depends on the accumulator carried in from all the
-        // rows before it, so a cold accumulator shows up directly in the output. A bounded frame
-        // would self-heal once enough rows passed.
-        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
-                "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
-
-            final String checkpointHead;
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                execute("INSERT INTO base (ts, sym, x) VALUES " +
-                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
-                        "('2026-01-01T00:00:02.000000Z', 'a', 2.0)");
-                driveRefreshToQuiescence(job);
-                assertViewMatchesRecompute(viewSql);
-
-                execute("CHECKPOINT CREATE");
-                checkpointHead = headCheckpointFile("lv");
-                Assert.assertNotNull("the checkpoint must capture a head .cp", checkpointHead);
-
-                // The database keeps running while the operator copies the volume. Every flush
-                // writes a new head and unlinks its predecessor, so the checkpoint's head is gone
-                // from the live dir well before the restore.
-                execute("INSERT INTO base (ts, sym, x) VALUES " +
-                        "('2026-01-01T00:00:03.000000Z', 'a', 3.0), " +
-                        "('2026-01-01T00:00:04.000000Z', 'a', 4.0)");
-                driveRefreshToQuiescence(job);
-                Assert.assertNotEquals(
-                        "the live head must have advanced past the checkpoint's",
-                        checkpointHead,
-                        headCheckpointFile("lv")
-                );
-            }
-
-            restoreFromCheckpoint();
-
-            Assert.assertEquals(
-                    "restore must lay the checkpoint's head back down over the live-ahead one",
-                    checkpointHead,
-                    headCheckpointFile("lv")
-            );
-
-            // Restore rolls base and view back to the checkpoint, so the x=3 / x=4 rows are gone
-            // from both. Ingesting past the restore is what reads the accumulator back: the next
-            // row must continue the running sum from the restored head (3.0), giving 13.0. With
-            // the live-ahead head swept and none put back, the view resumes from a cold
-            // accumulator and durably commits 10.0 here - no error, no invalidation.
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:05.000000Z', 'a', 10.0)");
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-01T00:00:06.000000Z', 'a', 6.0)");
                 driveRefreshToQuiescence(job);
             }
+            assertTimelineExists(engine.verifyTableName("lv"));
 
             assertQuery("SELECT ts, sym, x, running FROM lv ORDER BY ts")
                     .noLeakCheck()
@@ -390,7 +312,8 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     .returns("ts\tsym\tx\trunning\n" +
                             "2026-01-01T00:00:01.000000Z\ta\t1.0\t1.0\n" +
                             "2026-01-01T00:00:02.000000Z\ta\t2.0\t3.0\n" +
-                            "2026-01-01T00:00:05.000000Z\ta\t10.0\t13.0\n");
+                            "2026-01-01T00:00:05.000000Z\ta\t10.0\t13.0\n" +
+                            "2026-01-01T00:00:06.000000Z\ta\t6.0\t19.0\n");
             assertViewMatchesRecompute(viewSql);
 
             execute("CHECKPOINT RELEASE");
@@ -1218,38 +1141,41 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         row.append();
     }
 
-    // The live view's steady head .cp - the newest by lvSeqTxn - or null when it has none. Retention
-    // keeps a bounded ring of recent heads on disk, so several .cp files can coexist; the head is the
-    // highest lvSeqTxn (the 16-digit zero-padded filename prefix makes lexical max == numeric max).
-    // Comparing it across a checkpoint/restore says whether the restored head is the checkpoint's or
-    // the live-ahead one. Ignores .scp (rolling seed) and .tmp (interrupted write) entries.
-    private String headCheckpointFile(String viewName) {
-        final TableToken token = engine.verifyTableName(viewName);
-        final ObjList<String> heads = new ObjList<>();
+    private void assertCheckpointStateCleared(TableToken token) {
+        final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).$();
-            final FilesFacade ff = configuration.getFilesFacade();
-            if (!ff.exists(path.$())) {
-                return null;
-            }
-            final DirectUtf8StringZ nameZ = new DirectUtf8StringZ();
-            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                if (type == Files.DT_FILE) {
-                    final String name = nameZ.of(pUtf8NameZ).toString();
-                    if (name.endsWith(".cp")) {
-                        heads.add(name);
-                    }
-                }
-            });
+            Assert.assertTrue("restore must leave an empty checkpoint container at " + path, ff.exists(path.$()));
+            final int checkpointsDirLen = path.size();
+            path.concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME).$();
+            Assert.assertFalse("stale timeline publication must be removed at " + path, ff.exists(path.$()));
+            path.trimTo(checkpointsDirLen).concat(LiveViewCheckpointLayout.META_DIR_NAME).$();
+            Assert.assertFalse("stale timeline metadata must be removed at " + path, ff.exists(path.$()));
+            path.trimTo(checkpointsDirLen).concat(LiveViewCheckpointLayout.DATA_DIR_NAME).$();
+            Assert.assertFalse("stale timeline data must be removed at " + path, ff.exists(path.$()));
         }
-        String head = null;
-        for (int i = 0, n = heads.size(); i < n; i++) {
-            final String name = heads.getQuick(i);
-            if (head == null || name.compareTo(head) > 0) {
-                head = name;
-            }
+    }
+
+    private void assertSnapshotDoesNotContainCheckpoints(TableToken token) {
+        try (Path path = new Path()) {
+            path.of(configuration.getCheckpointRoot())
+                    .concat(configuration.getDbDirectory())
+                    .concat(token)
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .$();
+            Assert.assertFalse("checkpoint snapshot must exclude derived live-view state at " + path, configuration.getFilesFacade().exists(path.$()));
         }
-        return head;
+    }
+
+    private void assertTimelineExists(TableToken token) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot())
+                    .concat(token)
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                    .$();
+            Assert.assertTrue("expected durable live-view timeline at " + path, configuration.getFilesFacade().exists(path.$()));
+        }
     }
 
     private void assertCheckpointsDirExists(String viewName) {

@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewState;
@@ -135,53 +134,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     @Override
     public long startedAtTimestamp() {
         return startedAtTimestamp.get();
-    }
-
-    /*
-     * Copies <root>/<lv_dir>/_checkpoints/ entries into the snapshot. Skips
-     * .cp.tmp orphan files from interrupted writes. The recovery sweep at
-     * startup later retires anything > applied_watermark, so all valid .cp
-     * files survive a round-trip. Individual file copy errors log-and-
-     * continue: a single corrupt .cp does not abort the checkpoint - the
-     * recovery sweep recovers from missing or stale head files.
-     */
-    private static void copyLiveViewCheckpointDir(
-            FilesFacade ff,
-            CairoConfiguration configuration,
-            CharSequence checkpointRoot,
-            TableToken tableToken,
-            Path auxPath,
-            Path path
-    ) {
-        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
-        if (!ff.exists(auxPath.$())) {
-            return;
-        }
-        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
-        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-            LOG.error().$("could not create _checkpoints/ dir in snapshot, skipping live view checkpoint copy [view=").$(tableToken).$(", path=").$(path).I$();
-            return;
-        }
-
-        final int srcDirLen = auxPath.size();
-        final int dstDirLen = path.size();
-        ff.iterateDir(auxPath.$(), (pUtf8NameZ, type) -> {
-            if (type != Files.DT_FILE) {
-                return;
-            }
-            auxPath.trimTo(srcDirLen).concat(pUtf8NameZ).$();
-            // Skip any in-flight temp orphans from prior crashes (.cp.tmp and
-            // .scp.tmp) - the recovery sweep would unlink them anyway, and copying
-            // them only pollutes the backup.
-            if (Utf8s.endsWithAscii(auxPath, ".tmp")) {
-                return;
-            }
-            path.trimTo(dstDirLen).concat(pUtf8NameZ).$();
-            if (ff.copy(auxPath.$(), path.$()) < 0) {
-                LOG.error().$("could not copy live view checkpoint file [view=").$(tableToken)
-                        .$(", file=").$(auxPath).$(", errno=").$(ff.errno()).I$();
-            }
-        });
     }
 
     /*
@@ -467,9 +419,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     if (tableToken.isLiveView()) {
-                                        // Live views are WAL-backed tables with two extra files: _lv
-                                        // (immutable definition) and _lv.s (mutable state), plus
-                                        // _checkpoints/<head>.cp written by the flush cycle.
+                                        // Live views are WAL-backed tables with two authoritative
+                                        // sidecars: _lv (immutable definition) and _lv.s (mutable
+                                        // state). The derived _checkpoints timeline is deliberately
+                                        // excluded and rebuilt locally after restore.
                                         //
                                         // Freeze the view's refresh worker first so _lv.s + the
                                         // standard path's _txn / partition data all capture a
@@ -557,14 +510,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         } else {
                                             LOG.info().$("live view state file not found, skipping [view=").$(tableToken).I$();
                                         }
-
-                                        // Copy _checkpoints/<head>.cp if present. The directory was
-                                        // created at CREATE LIVE VIEW; the head file is written by the
-                                        // flush cycle.
-                                        // Steady-state has at most one .cp file; any .cp.tmp orphans
-                                        // are skipped. mat-view-style log-and-continue on individual
-                                        // file copy errors keeps the checkpoint progressing.
-                                        copyLiveViewCheckpointDir(ff, configuration, checkpointRoot, tableToken, auxPath, path);
 
                                         LOG.info().$("live view definition + state included in the checkpoint [view=").$(tableToken).I$();
                                         // Fall through (no break) to the standard WAL-backed-table
