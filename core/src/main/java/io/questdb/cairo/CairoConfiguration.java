@@ -352,6 +352,34 @@ public interface CairoConfiguration {
     long getLiveViewCheckpointMaxDurationMicros();
 
     /**
+     * Budget on the partition keys one localized out-of-order repair may plan
+     * to re-emit. A timestamp-global replacement re-emits every key with a
+     * qualifying row in the replacement interval, and the repair holds a
+     * counter per such key while it discovers its bounds, so the key domain
+     * sizes both the planning memory and, for an indexed predecessor search,
+     * the number of index seeks. A discovery that crosses this budget reports
+     * an explicit budget status and hands the repair back to the unlocalized
+     * rebuild instead of planning a replacement of that width. A value
+     * {@code <= 0} disables the budget.
+     */
+    long getLiveViewCheckpointRepairScanMaxKeys();
+
+    /**
+     * Budget on the base rows one localized out-of-order repair may read while
+     * discovering its bounds. Counts rows pulled from the base table across
+     * every scan of one discovery - forward convergence search, backward
+     * predecessor walk, and per-key indexed seeks alike - including rows the
+     * view's {@code WHERE} filter then discards, since those cost the same read.
+     * A {@code ROWS N PRECEDING} dependency is discovered rather than derived,
+     * and a sparse partition key can spread its {@code N} rows over an
+     * arbitrary span, so this is the bound that keeps discovery from costing
+     * the view's whole history. Crossing it reports an explicit budget status
+     * and leaves the conservative bound in place rather than continuing the
+     * scan. A value {@code <= 0} disables the budget.
+     */
+    long getLiveViewCheckpointRepairScanMaxRows();
+
+    /**
      * Hard cap on the number of checkpoints a live view retains in its
      * resume ring. The refresh worker resumes an out-of-order replay from
      * the newest retained checkpoint below the late row instead of rebuilding

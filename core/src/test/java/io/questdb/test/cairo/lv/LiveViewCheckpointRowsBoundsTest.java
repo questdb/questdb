@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
+import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds.ScanBudgetStatus;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -50,6 +52,11 @@ import org.junit.Test;
  * dependency floor {@code L} - and, just as importantly, the rows the search read to
  * produce them. A bound whose discovery costs the view's whole history buys nothing,
  * so every case asserts the scan counters next to the bounds.
+ * <p>
+ * The budget cases assert the other half of that: what a discovery reports when the search
+ * turns out to cost more than a repair turn may spend. Each of them pins which bound
+ * survives the stop, which falls back, and that the fallback is the value an unlocalized
+ * repair would have used anyway - a budget may cost localization, never correctness.
  * <p>
  * The main fixture is one row per key every 10 seconds over 40 groups, which makes
  * both bounds countable by hand: with {@code Nmax = 3} a change confined to one group
@@ -88,6 +95,30 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
             Assert.assertEquals(6, bounds.forwardScanRows);
             Assert.assertEquals(groupTs(GROUPS - 5), bounds.dependencyLowTs);
             Assert.assertEquals(6, bounds.backwardScanRows);
+        });
+    }
+
+    @Test
+    public void testBackwardWalkBudgetKeepsTheHighBoundAndDropsTheFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedBase();
+            // A budget that covers the forward pass and runs out inside the walk. The two
+            // bounds are independent searches, so the one already proven survives: H is
+            // what the forward pass found, and only the floor falls back.
+            //
+            // S is a safe floor however the walk ended - warming up from it feeds rows
+            // that leave a bounded ROWS frame again before R - so the budget costs this
+            // repair its localization below, not its correctness. Only the status
+            // separates this ending from a walk that reached S because the history did.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 12);
+            final Bounds bounds = discover(partitionedView(3), groupTs(20), groupTs(20), groupTs(20));
+            Assert.assertEquals(HighBoundTag.FINITE, bounds.highBoundTag);
+            Assert.assertEquals(groupTs(24), bounds.highTsExclusive);
+            Assert.assertEquals(ScanBudgetStatus.ROWS_EXCEEDED, bounds.scanBudgetStatus);
+            Assert.assertEquals(Numbers.LONG_NULL, bounds.dependencyLowTs);
+            // Nine rows forward, then four of the six the walk needed.
+            Assert.assertEquals(4, bounds.backwardScanRows);
+            Assert.assertEquals(13, bounds.scanRows);
         });
     }
 
@@ -255,6 +286,29 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardScanBudgetLeavesNoBoundAndNoKeyDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedBase();
+            // A budget that runs out inside the forward pass. What it leaves behind is the
+            // key set of a fragment of the replacement interval, so neither bound may be
+            // read off it: Q would under-state which keys the replacement re-emits, and a
+            // dependency floor discovered for an under-stated Q would under-read the
+            // warm-up. Both bounds collapse to what an unlocalized repair uses, and the
+            // walk below the floor is never opened.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 4);
+            final Bounds bounds = discover(partitionedView(3), groupTs(20), groupTs(20), groupTs(20));
+            Assert.assertEquals(ScanBudgetStatus.ROWS_EXCEEDED, bounds.scanBudgetStatus);
+            Assert.assertEquals(HighBoundTag.EOF, bounds.highBoundTag);
+            Assert.assertEquals(Numbers.LONG_NULL, bounds.highTsExclusive);
+            Assert.assertEquals(Numbers.LONG_NULL, bounds.dependencyLowTs);
+            // Groups 20 and 21 in full, and the row of group 22 that crossed the budget.
+            Assert.assertEquals(4, bounds.forwardScanRows);
+            Assert.assertEquals(5, bounds.scanRows);
+            Assert.assertEquals(0, bounds.backwardScanRows);
+        });
+    }
+
+    @Test
     public void testIndexedKeySeekFindsTheSameFloorReadingFewerRows() throws Exception {
         assertMemoryLeak(() -> {
             // Key 'a' has a row in every group; key 'b' only every fifth. The unrestricted
@@ -314,6 +368,29 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedSeekBudgetPublishesNoPartialFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedIndexedBase();
+            // The seek answers one key at a time and takes the deepest answer, so a budget
+            // that stops it mid-domain leaves a minimum over the keys it did reach - which
+            // is not a floor: an unsought key may need more history than every key already
+            // answered, and starting the warm-up above that key's Nmax-th predecessor
+            // would under-feed it. The floor therefore falls back to S even though key 'a'
+            // had already produced one.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 13);
+            final Bounds bounds = discover(partitionedView(3), groupTs(20), groupTs(20), groupTs(20));
+            Assert.assertEquals(HighBoundTag.FINITE, bounds.highBoundTag);
+            Assert.assertEquals(groupTs(24), bounds.highTsExclusive);
+            Assert.assertEquals(ScanBudgetStatus.ROWS_EXCEEDED, bounds.scanBudgetStatus);
+            Assert.assertEquals(Numbers.LONG_NULL, bounds.dependencyLowTs);
+            // Nine rows forward, then all three of key 'a' and two of key 'b'.
+            Assert.assertEquals(2, bounds.indexedKeyLookups);
+            Assert.assertEquals(5, bounds.backwardScanRows);
+            Assert.assertEquals(14, bounds.scanRows);
+        });
+    }
+
+    @Test
     public void testKeyFirstSeenInTheReplacementIntervalFallsBackToTheViewBoundary() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedBase();
@@ -337,6 +414,27 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOutputKeyBudgetLeavesNoBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedBase();
+            // The row budget bounds how long a discovery reads; the key budget bounds how
+            // wide the replacement it plans would be. A domain past that width is refused
+            // whole rather than truncated: a Q missing keys re-emits fewer keys than the
+            // timestamp-global replacement deletes.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+            final Bounds bounds = discover(partitionedView(3), groupTs(20), groupTs(20), groupTs(20));
+            Assert.assertEquals(ScanBudgetStatus.KEYS_EXCEEDED, bounds.scanBudgetStatus);
+            Assert.assertEquals(HighBoundTag.EOF, bounds.highBoundTag);
+            Assert.assertEquals(Numbers.LONG_NULL, bounds.dependencyLowTs);
+            // Group 20's second row carries the second key, which is the one over the
+            // budget - and the row has to be read for the key to be seen at all.
+            Assert.assertEquals(2, bounds.outputKeyCount);
+            Assert.assertEquals(2, bounds.scanRows);
+            Assert.assertEquals(0, bounds.backwardScanRows);
+        });
+    }
+
+    @Test
     public void testPartitionedChangeConvergesAboveAndDependsBelow() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedBase();
@@ -355,6 +453,35 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
             Assert.assertEquals(8, bounds.forwardScanRows);
             Assert.assertEquals(groupTs(17), bounds.dependencyLowTs);
             Assert.assertEquals(6, bounds.backwardScanRows);
+        });
+    }
+
+    @Test
+    public void testScanRowsCountsEveryRowTheSearchesRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedBase();
+            // Both budgets disabled, so what the searches read is what the data asked for.
+            //
+            // The bound counters count qualifying rows, which is what a bound is made of,
+            // and the budget cannot be spent in that currency: the filtered view here
+            // discards every second row and reads exactly as many as the unfiltered one,
+            // so a budget over qualifying rows would let a filter that admits nothing scan
+            // the whole table for free. scanRows counts the reads instead - the discarded
+            // rows, and the row the forward pass stops on to learn H.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 0);
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 0);
+            final Bounds unfiltered = discover(partitionedView(3), groupTs(20), groupTs(20), groupTs(20));
+            final Bounds filtered = discover(filteredView(3), groupTs(20), groupTs(20), groupTs(20));
+
+            Assert.assertEquals(ScanBudgetStatus.WITHIN, unfiltered.scanBudgetStatus);
+            Assert.assertEquals(8, unfiltered.forwardScanRows);
+            Assert.assertEquals(6, unfiltered.backwardScanRows);
+            Assert.assertEquals(15, unfiltered.scanRows);
+
+            Assert.assertEquals(ScanBudgetStatus.WITHIN, filtered.scanBudgetStatus);
+            Assert.assertEquals(4, filtered.forwardScanRows);
+            Assert.assertEquals(3, filtered.backwardScanRows);
+            Assert.assertEquals(15, filtered.scanRows);
         });
     }
 
@@ -564,6 +691,8 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
         private final long highTsExclusive;
         private final long indexedKeyLookups;
         private final long outputKeyCount;
+        private final ScanBudgetStatus scanBudgetStatus;
+        private final long scanRows;
 
         private Bounds(LiveViewCheckpointRowsBounds bounds) {
             this.affectedKeyCount = bounds.getAffectedKeyCount();
@@ -574,6 +703,9 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
             this.highTsExclusive = bounds.getHighTsExclusive();
             this.indexedKeyLookups = bounds.getIndexedKeyLookups();
             this.outputKeyCount = bounds.getOutputKeyCount();
+            this.scanBudgetStatus = bounds.getScanBudgetStatus();
+            this.scanRows = bounds.getScanRows();
+            Assert.assertEquals(scanBudgetStatus != ScanBudgetStatus.WITHIN, bounds.isScanBudgetExceeded());
         }
     }
 

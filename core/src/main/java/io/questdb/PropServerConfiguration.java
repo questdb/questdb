@@ -311,6 +311,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
     private final long liveViewCheckpointMaxDurationMicros;
+    private final long liveViewCheckpointRepairScanMaxKeys;
+    private final long liveViewCheckpointRepairScanMaxRows;
     private final int liveViewCheckpointRetentionCount;
     private final long liveViewCheckpointRetentionMaxBytes;
     private final long liveViewCheckpointRetentionMicros;
@@ -1522,6 +1524,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // live-view config
             this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
+            this.liveViewCheckpointRepairScanMaxKeys = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 100_000L);
+            this.liveViewCheckpointRepairScanMaxRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS, 1_000_000L);
             this.liveViewCheckpointRetentionCount = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 8);
             this.liveViewCheckpointRetentionMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
             this.liveViewCheckpointRetentionMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MICROS, 0L);
@@ -4165,6 +4169,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewCheckpointMaxDurationMicros() {
             return liveViewCheckpointMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairScanMaxKeys() {
+            return liveViewCheckpointRepairScanMaxKeys;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRepairScanMaxRows() {
+            return liveViewCheckpointRepairScanMaxRows;
         }
 
         @Override

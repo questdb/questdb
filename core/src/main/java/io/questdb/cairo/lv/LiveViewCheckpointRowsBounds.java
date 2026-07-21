@@ -112,11 +112,20 @@ import org.jetbrains.annotations.Nullable;
  * head; and a factory whose rows come from an index, which cannot be walked backwards
  * in timestamp order at all.
  * <p>
- * The scans carry no budget in this form. Where the indexed seek does not apply, a key
- * that first appears at {@code R} has no predecessors to find and the backward walk
- * cannot know that until it reaches {@code S}, so one such key still costs a walk over
- * the view's whole history - bounded, but no cheaper than the rebuild it was meant to
- * replace. Capping that case is what remains.
+ * <b>Scan budgets.</b> Every bound above is finite, but nothing in the data says it is
+ * cheap: where the indexed seek does not apply, a key that first appears at {@code R} has
+ * no predecessors to find and the backward walk cannot know that until it reaches
+ * {@code S}, so one such key costs a walk over the view's whole history - bounded, but no
+ * cheaper than the rebuild it was meant to replace. Two configured budgets cap that. One
+ * counts base rows across every scan of one discovery, the other counts the keys of
+ * {@code Q}, and each is checked as the scan runs rather than after it. Crossing either
+ * stops the search and records the verdict on {@link #getScanBudgetStatus()}, and the
+ * bound the search had not finished proving falls back to its conservative value - so a
+ * caller that only reads the bounds still plans a correct repair, and one that reads the
+ * status knows it declined on cost rather than on data. The row budget counts rows the
+ * view's {@code WHERE} then discards, because a filter that admits nothing still reads
+ * every row it rejects; the key budget is what keeps the per-key seek from turning into
+ * an index lookup per key of an unbounded domain.
  * <p>
  * One instance per refresh worker, reused across repairs. {@link #discover} overwrites
  * every result, so no reset is needed between calls.
@@ -145,7 +154,11 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     private int indexedKeyColumnIndex = -1;
     private long indexedKeyLookups;
     private Map keyMap;
+    private long outputKeyBudget;
     private long outputKeyCount;
+    private ScanBudgetStatus scanBudgetStatus = ScanBudgetStatus.WITHIN;
+    private long scanRowBudget;
+    private long scanRows;
 
     public LiveViewCheckpointRowsBounds(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -164,6 +177,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      * view's own {@code WHERE}, so "qualifying" means here exactly what it means to the
      * replay. Both scans go through the bounded page-frame cursors, so the history
      * below {@code L} and the tail above {@code H} cost no partition open.
+     * <p>
+     * The scan budgets are read from the configuration per discovery, so a repair turn
+     * spends at most one budget no matter how many searches it takes to answer.
      *
      * @param plan             the view's finite ROWS dependency union
      * @param pageFrameFactory the base factory the repair reads through
@@ -188,6 +204,8 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             long changeMaxTs
     ) throws SqlException {
         clear();
+        scanRowBudget = budgetOf(configuration.getLiveViewCheckpointRepairScanMaxRows());
+        outputKeyBudget = budgetOf(configuration.getLiveViewCheckpointRepairScanMaxKeys());
         // No bound is discoverable below S: the view holds no row down there, so a floor
         // below it would only widen the scan without changing what the replay computes.
         dependencyLowTs = viewLowerBoundTs;
@@ -274,10 +292,59 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         return outputKeyCount;
     }
 
+    /**
+     * @return which budget, if any, stopped this discovery. {@link ScanBudgetStatus#WITHIN}
+     * means both bounds are what the data proved; anything else means a search was cut
+     * short and the bound it was proving fell back to its conservative value.
+     */
+    public ScanBudgetStatus getScanBudgetStatus() {
+        return scanBudgetStatus;
+    }
+
+    /**
+     * @return base rows this discovery pulled across every cursor it opened - the forward
+     * convergence scan, the backward walk, and each per-key indexed seek. This is the count
+     * the row budget binds on, so it counts reads rather than results: rows the view's
+     * {@code WHERE} discarded are in it, because reading them cost what reading a
+     * qualifying row costs, and so is the row the forward pass stops on to learn {@code H}.
+     * It is therefore at or above
+     * {@link #getForwardScanRows()} + {@link #getBackwardScanRows()}.
+     */
+    public long getScanRows() {
+        return scanRows;
+    }
+
+    /**
+     * @return whether a budget stopped this discovery, leaving at least one bound at its
+     * conservative fallback rather than at what the data proves.
+     */
+    public boolean isScanBudgetExceeded() {
+        return scanBudgetStatus != ScanBudgetStatus.WITHIN;
+    }
+
+    /** Normalizes a configured budget, mapping the disabling {@code <= 0} to no bound. */
+    private static long budgetOf(long configured) {
+        return configured > 0 ? configured : Long.MAX_VALUE;
+    }
+
+    /**
+     * Base rows the open scan has pulled, given the {@code qualifyingRows} it has
+     * returned. The two coincide without a filter; with one, only the base count
+     * describes the work done, and it is the work the budget has to bind on - a filter
+     * that admits nothing reads every row it rejects while the qualifying count sits
+     * at zero.
+     */
+    private long baseRowsConsumed(Function filter, long qualifyingRows) {
+        return filter != null ? filteringCursor.getBaseRowsConsumed() : qualifyingRows;
+    }
+
     private void clear() {
         affectedKeyCount = 0;
         backwardScanRows = 0;
         dependencyLowTs = Numbers.LONG_NULL;
+        // Drops the previous discovery's base-row count, which every scan below folds into
+        // scanRows even when opening its cursor throws before of() could reset it.
+        filteringCursor.close();
         forwardScanRows = 0;
         highBoundTag = HighBoundTag.EOF;
         highTsExclusive = Numbers.LONG_NULL;
@@ -285,6 +352,8 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         indexedKeyLookups = 0;
         outputKeys.clear();
         outputKeyCount = 0;
+        scanBudgetStatus = ScanBudgetStatus.WITHIN;
+        scanRows = 0;
     }
 
     /** Resolves the record's key, joining it to {@code Q} on first sight. */
@@ -344,8 +413,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      * subset {@code A} on the way through the change interval.
      *
      * @return true when {@code Q} is complete and the caller may go on to discover
-     * {@code L}. False means the change set is invisible in this snapshot, so no forward
-     * bound exists and the partial key set must not be read as {@code Q}.
+     * {@code L}. False means no forward bound exists and the partial key set must not be
+     * read as {@code Q}: either the change set is invisible in this snapshot, or a budget
+     * cut the scan short before it had collected the whole key domain.
      */
     private boolean discoverHighBoundAndKeys(
             LiveViewCheckpointRowsPlan plan,
@@ -365,6 +435,10 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         // Timestamp of the row that satisfied the last key in A. H is the next distinct
         // timestamp above it, so the scan runs one row past this to read that value.
         long lastRequiredTs = Numbers.LONG_NULL;
+        // Rows this cursor has returned, the terminating one included. The forward metric
+        // deliberately excludes that row - it belongs to neither the interval nor Q - but
+        // the budget counts every row read.
+        long pulled = 0;
         try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
                 executionContext,
                 outputLowTs,
@@ -373,6 +447,12 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             final RecordCursor source = withFilter(pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
+                if (isOverScanRowBudget(filter, ++pulled)) {
+                    // Q is a fragment of the interval at this point, so neither bound may
+                    // be read off it: the caller keeps H at end-of-frame and L at S.
+                    scanBudgetStatus = ScanBudgetStatus.ROWS_EXCEEDED;
+                    return false;
+                }
                 final long ts = record.getTimestamp(timestampIndex);
                 if (lastRequiredTs != Numbers.LONG_NULL && ts > lastRequiredTs) {
                     // First row of the next distinct timestamp group: every affected key
@@ -390,6 +470,12 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                 }
                 forwardScanRows++;
                 final MapValue value = createKey(plan, record);
+                if (outputKeyCount > outputKeyBudget) {
+                    // Too many keys to plan a replacement for, and the domain is still
+                    // growing. Refuse it whole rather than re-emit a truncated Q.
+                    scanBudgetStatus = ScanBudgetStatus.KEYS_EXCEEDED;
+                    return false;
+                }
                 if (ts >= changeLowTs && ts <= changeMaxTs) {
                     if (value.getLong(IDX_FOLLOWING) == NOT_AFFECTED) {
                         value.putLong(IDX_FOLLOWING, 0);
@@ -410,6 +496,8 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                     }
                 }
             }
+        } finally {
+            scanRows += baseRowsConsumed(filter, pulled);
         }
         // The scan reached the end of the base table. H stays at end-of-frame: either an
         // affected key never got its Nmax following rows, or the last one got them in the
@@ -429,6 +517,16 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     }
 
     /**
+     * Whether the open scan has taken this discovery past its row budget, counting the
+     * {@code qualifyingRows} it has returned so far against the rows every earlier scan
+     * already spent. The budget is per discovery rather than per scan, so a repair turn
+     * costs one budget however many searches answering it takes.
+     */
+    private boolean isOverScanRowBudget(Function filter, long qualifyingRows) {
+        return scanRows + baseRowsConsumed(filter, qualifyingRows) > scanRowBudget;
+    }
+
+    /**
      * Builds the per-key counter map this plan's key shape needs. One refresh worker
      * serves many views and a map's key layout is fixed at construction, so the map is
      * rebuilt per discovery rather than reused across key shapes it was not built for.
@@ -444,6 +542,13 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      * one as {@code L}. Because {@code L} is an inclusive bound, the complete tie at that
      * timestamp comes with it; over-feeding a bounded ROWS frame costs nothing, since the
      * extra rows fall out of the frame before it reaches {@code R}.
+     * <p>
+     * The row budget stops the walk where the history runs out would have: at {@code S}.
+     * That floor is safe whichever way the walk ended - it is the lowest floor there is,
+     * and warming up from it only feeds rows that leave the frame again before {@code R} -
+     * so the budget costs the repair its localization below, not its correctness. What
+     * separates the two endings is the recorded status: exhaustion proves the keys have no
+     * more history, the budget proves nothing at all.
      */
     private void scanDependencyLowTs(
             LiveViewCheckpointRowsPlan plan,
@@ -464,6 +569,11 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             final Record record = source.getRecord();
             while (source.hasNext()) {
                 backwardScanRows++;
+                if (isOverScanRowBudget(filter, backwardScanRows)) {
+                    // L stays at S, the floor a walk that ran out of history also lands on.
+                    scanBudgetStatus = ScanBudgetStatus.ROWS_EXCEEDED;
+                    return;
+                }
                 final MapValue value = findKey(plan, record);
                 if (value == null) {
                     // Outside Q: this key's rows warm nothing the replacement re-emits.
@@ -478,6 +588,8 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                     }
                 }
             }
+        } finally {
+            scanRows += baseRowsConsumed(filter, backwardScanRows);
         }
     }
 
@@ -491,6 +603,13 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      * A key with fewer than {@code Nmax} predecessors ends the search rather than
      * lowering the floor further: {@code S} is already the lowest floor there is, so the
      * remaining keys cannot change the answer and their seeks are skipped.
+     * <p>
+     * The row budget ends it the same way, and for the same reason it cannot publish the
+     * minimum it has collected so far: a key not yet sought may need a deeper floor than
+     * every key already answered, so a partial minimum is not a floor at all. What the
+     * budget bounds here is the {@code Nmax} rows one seek reads under a filter that
+     * rejects most of them; the number of seeks is bounded already, by the key budget the
+     * forward pass enforced on {@code Q}.
      */
     private void seekDependencyLowTs(
             LiveViewCheckpointRowsPlan plan,
@@ -519,8 +638,14 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                 while (preceding < precedingRows && source.hasNext()) {
                     backwardScanRows++;
                     preceding++;
+                    if (isOverScanRowBudget(filter, preceding)) {
+                        scanBudgetStatus = ScanBudgetStatus.ROWS_EXCEEDED;
+                        return;
+                    }
                     keyLowTs = record.getTimestamp(timestampIndex);
                 }
+            } finally {
+                scanRows += baseRowsConsumed(filter, preceding);
             }
             if (preceding < precedingRows) {
                 return;
@@ -540,5 +665,31 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         }
         filteringCursor.of(pageCursor, filter, executionContext);
         return filteringCursor;
+    }
+
+    /**
+     * Which budget, if any, stopped one discovery. Every value leaves a usable result -
+     * the bound the stopped search was proving falls back to what an unlocalized repair
+     * would use - so this reports the cost of the answer rather than its validity.
+     */
+    public enum ScanBudgetStatus {
+        /**
+         * No budget bound. Both bounds are what the data proved, whether or not the data
+         * proved a finite one.
+         */
+        WITHIN,
+        /**
+         * The base-row budget stopped a scan. A forward stop leaves {@code Q} incomplete,
+         * so neither bound survives it: {@code H} stays at end-of-frame and {@code L} at
+         * {@code S}. A backward stop keeps whatever {@code H} the forward pass proved and
+         * drops {@code L} to {@code S}.
+         */
+        ROWS_EXCEEDED,
+        /**
+         * The output-key budget stopped the forward scan: the replacement interval holds
+         * more partition keys than one repair may plan to re-emit. {@code Q} is a fragment
+         * of the interval, so {@code H} stays at end-of-frame and {@code L} at {@code S}.
+         */
+        KEYS_EXCEEDED
     }
 }
