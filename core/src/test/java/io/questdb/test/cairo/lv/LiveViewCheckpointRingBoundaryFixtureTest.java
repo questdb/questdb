@@ -25,8 +25,12 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -59,14 +63,16 @@ import org.junit.Test;
  * values is bit-exact, so the from-base recompute oracle can compare with exact
  * equality rather than a float tolerance.
  * <p>
- * The class also carries the fixture's counterpart: with the RANGE dependency
- * bounds in place, the same sub-ring out-of-order row no longer costs the
- * view's age in either direction - the rebuild reads from {@code R - W} and
- * stops at {@code changeMaxTs + W}. The localization pair drives a longer
- * history, measures what the rebuild actually read and re-emitted, and then
- * keeps ingesting in order so the runtime state a converging repair restored is
- * exercised rather than only the output it wrote. The ROWS view is the
- * still-unbounded control until per-key predecessor discovery bounds it too.
+ * The class also carries the fixture's counterpart: with the dependency bounds
+ * in place, the same sub-ring out-of-order row no longer costs the view's age in
+ * either direction. RANGE derives its two ends by arithmetic ({@code R - W} and
+ * {@code changeMaxTs + W}); ROWS discovers them by counting each key's rows
+ * either side of the change, and pays a scan of its own to do so. The
+ * localization group drives a longer history, measures what each rebuild
+ * actually read and re-emitted, and then keeps ingesting in order so the runtime
+ * state a converging repair restored is exercised rather than only the output it
+ * wrote. Its last case is the deleting change set the ROWS bound refuses, which
+ * is what the unbounded rebuild still exists for.
  */
 public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewTest {
 
@@ -133,19 +139,49 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
-    public void testRowsDependencyLeavesTheOldO3BoundaryRebuildUnbounded() throws Exception {
-        // The control. A ROWS frame carries no finite RANGE descriptor, so the
-        // plan derives no floor and the same change costs the whole view
-        // history: every base row is read and every output row re-emitted.
-        // Per-key predecessor discovery will bound this shape; until then the
-        // difference against the RANGE case above is exactly what the
-        // dependency floor buys.
+    public void testRowsDependencyBoundsTheOldO3BoundaryRebuild() throws Exception {
+        // The same two-sided bound over the same fixture, reached by counting rows
+        // rather than by timestamp arithmetic. Nmax is 3 and each key has one row per
+        // 10-second group, so the change at 315s reaches its key's 340s row and no
+        // further: H is 350s, the first distinct timestamp above it. Below the floor
+        // the count runs the other way - 310s, 300s and 290s give each key its three
+        // predecessors - so L is 290s. The replay reads 290s..340s (six groups of two)
+        // and re-emits 315s..340s (four groups).
+        //
+        // Unlike the RANGE case, the bounds cost reads of their own: the forward pass
+        // pulls nine rows to learn H and the backward walk six to learn L, and those
+        // fifteen join the same base-rows-scanned counter the replay reports through.
+        // 29 against the 82 an unbounded rebuild reads is what the discovery buys here,
+        // and a shape whose keys are sparser buys proportionally less.
         final ReplayCost cost = runOldO3BoundaryRebuild(
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW"
         );
+        Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
+        // The whole-history rebuild this replaces, for scale.
+        Assert.assertEquals(82, 2L * LOCALIZATION_HISTORY_COMMITS + 2);
+    }
+
+    @Test
+    public void testRowsDependencyDeclinesADeletingChangeSet() throws Exception {
+        // The safety boundary of the ROWS bound. The affected key domain is read back
+        // out of the post-change snapshot, which only describes the keys a change
+        // ADDED: a deletion that emptied a key's rows out of the change interval leaves
+        // it invisible there while its later rows still pull older history into their
+        // frames, so H would land below where that key actually converges. The repair
+        // therefore refuses the bound outright unless it can prove the whole
+        // incorporated change set insert-only.
+        //
+        // Here the same two rows arrive inside a replace-range band, so the base ends up
+        // holding exactly what the insert above leaves it and the output is identical -
+        // only the commit's authority to delete differs, and it costs the localization.
+        final ReplayCost cost = runOldO3BoundaryRebuild(
+                "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
+                true
+        );
         final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
-        Assert.assertEquals(historyRows, cost.scannedRows);
-        Assert.assertEquals(historyRows, cost.emittedRows);
+        Assert.assertEquals("no bound is discovered, so the whole history is read", historyRows, cost.scannedRows);
+        Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
     }
 
     @Test
@@ -300,6 +336,17 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     // wrong is worse than an unbounded one - and then again after three further in-order
     // commits, which is what proves the runtime state and not merely the durable output.
     private ReplayCost runOldO3BoundaryRebuild(String windowFrame) throws Exception {
+        return runOldO3BoundaryRebuild(windowFrame, false);
+    }
+
+    /**
+     * Drives one repair whose change sits below every surviving anchor and reports what
+     * it cost. With {@code o3AsReplaceRange} the same two rows arrive inside a
+     * replace-range band instead of a plain insert: the data the base ends up holding is
+     * identical, and so is the output, but the commit now carries a deletion the repair
+     * cannot see the effect of.
+     */
+    private ReplayCost runOldO3BoundaryRebuild(String windowFrame, boolean o3AsReplaceRange) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, RETENTION_COUNT);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_MAX_BYTES, 64L * 1024 * 1024);
@@ -339,9 +386,24 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 assertViewMatchesRecompute(viewSql);
 
                 setCurrentMicros((LOCALIZATION_HISTORY_COMMITS + 1) * 200_000L);
-                execute("INSERT INTO base (ts, sym, x) VALUES " +
-                        "('" + secondsTs(LOCALIZATION_O3_SECOND) + "', 'a', 9000), " +
-                        "('" + secondsTs(LOCALIZATION_O3_SECOND) + "', 'b', 9100)");
+                if (o3AsReplaceRange) {
+                    final TableToken baseToken = engine.verifyTableName("base");
+                    try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                        appendFixtureRow(walWriter, ts(secondsTs(LOCALIZATION_O3_SECOND)), "a", 9000);
+                        appendFixtureRow(walWriter, ts(secondsTs(LOCALIZATION_O3_SECOND)), "b", 9100);
+                        // A band holding nothing but the two rows it inserts, so the
+                        // base ends up exactly where the plain insert leaves it.
+                        walWriter.commitWithParams(
+                                ts(secondsTs(LOCALIZATION_O3_SECOND)),
+                                ts(secondsTs(LOCALIZATION_O3_SECOND)) + 1,
+                                WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                        );
+                    }
+                } else {
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('" + secondsTs(LOCALIZATION_O3_SECOND) + "', 'a', 9000), " +
+                            "('" + secondsTs(LOCALIZATION_O3_SECOND) + "', 'b', 9100)");
+                }
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
@@ -383,6 +445,15 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
             execute("DROP LIVE VIEW lv");
         });
         return cost;
+    }
+
+    // Appends one fixture row - (ts, sym, x) - without committing, so the caller chooses the
+    // commit mode. AbstractLiveViewTest's appendRow assumes a two-column (ts, x) base.
+    private static void appendFixtureRow(WalWriter walWriter, long ts, CharSequence sym, long x) {
+        TableWriter.Row row = walWriter.newRow(ts);
+        row.putSym(1, sym);
+        row.putLong(2, x);
+        row.append();
     }
 
     // Builds a 2026-11-01 microsecond timestamp literal at the given second-of-day offset. All

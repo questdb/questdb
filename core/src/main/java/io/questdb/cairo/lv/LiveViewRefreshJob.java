@@ -34,6 +34,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
@@ -42,6 +43,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -170,6 +172,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
     // rewritten in full on every call, read out immediately by planO3Repair.
     private final long[] applyAheadBounds = new long[2];
+    // Second out-value of the same computeApplyAheadBounds call: whether every commit in
+    // the apply-ahead range only ADDED rows. Separate from the pair above because the two
+    // are independent - a classifiable range whose timestamps bound the repair may still
+    // hold a REPLACE_RANGE delete band that denies the ROWS discovery its key domain.
+    private boolean applyAheadInsertOnly;
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
     // Flyweight record over an in-mem tier buffer row, used by the flush path to
@@ -262,6 +269,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // as LiveViewCheckpointRingManifest entry records. Worker-owned; cleared
     // before each use.
     private final LongList ringSnapshot = new LongList();
+    // Per-key ROWS repair-bound discovery, and the adapter the repair plan calls it
+    // through. One of each per worker: the discovery owns a native counter map it
+    // rebuilds per call, and the adapter carries the one repair's cursor factory and
+    // pinned reader. Both are idle outside a repair, which never nests.
+    private final LiveViewCheckpointRowsBounds rowsBounds;
+    private final RowsBoundDiscovery rowsBoundDiscovery = new RowsBoundDiscovery();
     // Reusable counter for the seed sweep's skipRows() resume positioning.
     private final RecordCursor.Counter seedSkipCounter = new RecordCursor.Counter();
     // Test-only: when armed, an out-of-order repair skips the inline apply of its
@@ -354,6 +367,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.applyJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
         this.walFrameCursor = new WalSegmentPageFrameCursor(engine.getConfiguration());
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
+        this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
     }
 
     @Override
@@ -375,6 +389,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         ringManifestWriter = Misc.free(ringManifestWriter);
         stagingBuffer = Misc.free(stagingBuffer);
         Misc.free(repairOverlay);
+        Misc.free(rowsBounds);
     }
 
     /**
@@ -1375,7 +1390,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The drain rolled back exactly the commits it walked, so its change
             // ceiling is this repair's: advanceTo is the offending seqTxn, the top of
             // the range the walk covered.
-            o3Replay(instance, windowFactory, o3LateRowTs, drainResult.o3ChangeMaxTs, baseToken, o3SeqTxn);
+            o3Replay(instance, windowFactory, o3LateRowTs, drainResult.o3ChangeMaxTs, drainResult.o3ChangeInsertOnly, baseToken, o3SeqTxn);
             return;
         }
 
@@ -1644,7 +1659,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the maximum it could report would not be an upper bound on what the
                 // range changed. The rebuild reads to the end of the base table, as it
                 // did before the bound existed.
-                o3Replay(instance, windowFactory, batchMinTs, Numbers.LONG_NULL, baseToken, effectiveSeqTxn);
+                o3Replay(instance, windowFactory, batchMinTs, Numbers.LONG_NULL, false, baseToken, effectiveSeqTxn);
                 // Coupled invariant: keep refreshedUpTo == lastProcessed so a later
                 // ALTER DEDUP DISABLE flip back to the lead path resumes cleanly with
                 // no stale un-flushed lead.
@@ -1885,6 +1900,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // must read to the end of the base table.
         long changeMaxTs = Numbers.LONG_NULL;
         boolean changeMaxTsKnown = true;
+        // Whether every entry the walk visits only ADDED rows. Cleared by the same three
+        // entries that deny a change ceiling - a compacted / structural entry, a non-DATA
+        // commit, a REPLACE_RANGE whose delete band reaches into the view - because each
+        // of them can retire a base row, and a ROWS repair discovers its affected key
+        // domain by looking for those rows. See DrainResult.o3ChangeInsertOnly.
+        boolean changeInsertOnly = true;
         boolean o3Detected = false;
         long o3LateRowTs = Numbers.LONG_NULL;
         long o3SeqTxn = Numbers.LONG_NULL;
@@ -1944,8 +1965,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (walId <= 0) {
                     // Compacted seq entry / non-WAL: skip past, no data to consume.
                     // Nothing here says what it touched, so a repair over this pass
-                    // cannot claim a convergence boundary.
+                    // cannot claim a convergence boundary, nor that nothing was removed.
                     changeMaxTsKnown = false;
+                    changeInsertOnly = false;
                     continue;
                 }
 
@@ -1978,8 +2000,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // changes that touch referenced columns invalidate via
                     // ApplyWal2TableJob. A removal can retire base rows anywhere in the
                     // table, so nothing in the inserted-row timestamps bounds what a
-                    // repair over this pass has to re-evaluate.
+                    // repair over this pass has to re-evaluate, and the pass is not
+                    // insert-only either.
                     changeMaxTsKnown = false;
+                    changeInsertOnly = false;
                     continue;
                 }
 
@@ -2024,6 +2048,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (deleteLo != Numbers.LONG_NULL) {
                     o3TriggerTs = deleteLo;
                     crossCommitO3 |= latestSeen != Numbers.LONG_NULL && deleteLo <= latestSeen;
+                    // The delete band reaches into the view, so this commit can have
+                    // retired a base row the view holds.
+                    changeInsertOnly = false;
                 }
                 // Raise the pass's change ceiling before the O3 branch: the offending
                 // commit is part of the change set the hand-off re-materialises, so it
@@ -2235,6 +2262,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         drainResult.advanceTo = advanceTo;
         drainResult.appendedRows = appendedRows;
         drainResult.batchMaxTs = batchMaxTs;
+        drainResult.o3ChangeInsertOnly = changeInsertOnly;
         drainResult.o3ChangeMaxTs = changeMaxTsKnown ? changeMaxTs : Numbers.LONG_NULL;
         drainResult.o3Detected = o3Detected;
         drainResult.o3LateRowTs = o3LateRowTs;
@@ -2392,7 +2420,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the tier from the rewritten disk as a pure subset. After it the
             // applied point covers the offending seqTxn, so resume the lead there.
             instance.setLeadRowCount(0);
-            o3Replay(instance, windowFactory, drainResult.o3LateRowTs, drainResult.o3ChangeMaxTs, baseToken, drainResult.o3SeqTxn);
+            o3Replay(instance, windowFactory, drainResult.o3LateRowTs, drainResult.o3ChangeMaxTs, drainResult.o3ChangeInsertOnly, baseToken, drainResult.o3SeqTxn);
             instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
             return;
         }
@@ -3008,12 +3036,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the structural / non-DATA commits that walk merely skips - the drain is
      * still going to scan everything, whereas a resume must not. The max comes from
      * {@link #effectiveCommitMaxTs} over the same commits.
+     * <p>
+     * The same walk fills {@link #applyAheadInsertOnly}, the ahead half of the
+     * insert-only proof a localized ROWS repair needs. It is a separate verdict because
+     * a range can be perfectly classifiable - every commit DATA, every timestamp
+     * readable - and still have deleted rows through a REPLACE_RANGE band.
      */
     private long[] computeApplyAheadBounds(TableToken baseToken, long fromSeqTxn, long toSeqTxn, long viewLowerBoundTimestamp) {
         applyAheadBounds[0] = Numbers.LONG_NULL;
         applyAheadBounds[1] = Numbers.LONG_NULL;
+        applyAheadInsertOnly = false;
         long minTs = Numbers.LONG_NULL;
         long maxTs = Numbers.LONG_NULL;
+        boolean insertOnly = true;
         try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
             while (txnCursor.hasNext()) {
                 final long txn = txnCursor.getTxn();
@@ -3042,6 +3077,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final long deleteLo = effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp);
                 if (deleteLo != Numbers.LONG_NULL) {
                     txnMinTs = deleteLo;
+                    insertOnly = false;
                 }
                 if (minTs == Numbers.LONG_NULL || txnMinTs < minTs) {
                     minTs = txnMinTs;
@@ -3054,6 +3090,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // caller reads as unresumable; pin the maximum to the same verdict rather
         // than publishing half a span.
         applyAheadBounds[1] = minTs == Numbers.LONG_NULL ? Numbers.LONG_NULL : maxTs;
+        applyAheadInsertOnly = insertOnly;
         return applyAheadBounds;
     }
 
@@ -3092,6 +3129,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *                      the change lets the repair converge below the end of the
      *                      base table; without one it reads the whole tail, which is
      *                      what every caller did before the bound existed
+     * @param insertOnly    whether every commit the caller walked only ADDED base rows.
+     *                      A ROWS repair discovers which partition keys the change
+     *                      touched by reading them back out of the post-change snapshot,
+     *                      so a deletion anywhere in the change set denies it that bound;
+     *                      a caller that does not track the question passes false
      * @param baseToken     base table token (passed in so the replay path
      *                      doesn't re-look-it-up from the definition)
      * @param advanceTo     base seqTxn the replay must cover; also the value
@@ -3103,6 +3145,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             long lateRowTs,
             long changeMaxTs,
+            boolean insertOnly,
             TableToken baseToken,
             long advanceTo
     ) throws SqlException {
@@ -3223,7 +3266,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // rather than reopening at whatever apply has reached by then.
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, changeMaxTs, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, changeMaxTs, insertOnly, baseToken, advanceTo, reader);
             LOG.info().$("live view O3 replay [view=").$(viewName)
                     .$(", lateRowTs=").$(lateRowTs)
                     .$(", advanceTo=").$(advanceTo)
@@ -3290,16 +3333,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * The second thing it reads from disk is the live-view table's own frontier, the
      * lower bound on {@code D} the output floor {@code R} is clamped to. Only a
-     * DATA-triggered repair over a view with a finite RANGE dependency can localize,
-     * so the reader opens only for that case: a non-DATA trigger rebuilds the whole
-     * view and a view without the dependency has no floor to raise.
+     * DATA-triggered repair over a view with a finite RANGE or ROWS dependency can
+     * localize, so the reader opens only for that case: a non-DATA trigger rebuilds the
+     * whole view and a view without a dependency has no floor to raise.
+     * <p>
+     * A finite ROWS dependency costs one more read than a RANGE one. Its bounds are
+     * per-key row counts rather than timestamp arithmetic, so the plan calls back into
+     * {@link RowsBoundDiscovery} to find them in the base data - which is why the
+     * discovery is prepared here, against the same pinned reader, and why this method
+     * can now throw the way a scan can. The insert-only proof the ROWS path needs is
+     * assembled from three independent observations: the caller's walk over the commits
+     * it drained, this method's walk over the apply-ahead range, and the base table's
+     * dedup configuration, which is the one deletion source neither walk can see (both
+     * read the raw WAL, and dedup happens at apply time).
      * <p>
      * The runtime frontier it passes is the view's own {@code latestSeenTs}, but only
      * when the repair could actually put the runtime window state back: the state
      * travels through the checkpoint freeze/restore contract, so a view without
      * checkpoint-state support has no way to save it, and an anchored view's anchor
      * map is not carried by that contract at all. A view with neither cannot have a
-     * finite RANGE plan today - the compiler classifies an anchored window as
+     * finite RANGE or ROWS plan today - the compiler classifies an anchored window as
      * {@code FIXED_ANCHOR_SEGMENT} and a non-capable one seals no checkpoint - so
      * this is the invariant stated where it is relied on rather than a second gate.
      */
@@ -3308,14 +3361,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             long lateRowTs,
             long changeMaxTs,
+            boolean insertOnly,
             TableToken baseToken,
             long advanceTo,
             TableReader reader
-    ) {
+    ) throws SqlException {
         final long pinnedSeqTxn = reader.getSeqTxn();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         long applyAheadMinTs = Numbers.LONG_NULL;
         long effectiveChangeMaxTs = changeMaxTs;
+        boolean effectiveInsertOnly = insertOnly;
         if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, advanceTo, pinnedSeqTxn)) {
             final long[] aheadBounds = computeApplyAheadBounds(baseToken, advanceTo, pinnedSeqTxn, viewLowerBoundTimestamp);
             applyAheadMinTs = aheadBounds[0];
@@ -3325,13 +3380,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             effectiveChangeMaxTs = applyAheadMinTs == Numbers.LONG_NULL
                     ? Numbers.LONG_NULL
                     : Math.max(effectiveChangeMaxTs, aheadBounds[1]);
+            effectiveInsertOnly &= applyAheadInsertOnly;
         }
         long rangeFrameWidth = Numbers.LONG_NULL;
         long durableOutputMaxTs = Numbers.LONG_NULL;
+        LiveViewCheckpointRepairPlan.RowsBoundSource rowsBoundSource = null;
         final LiveViewCheckpointRangePlan rangePlan = windowFactory.getCheckpointRangePlan();
-        if (lateRowTs != Numbers.LONG_NULL && rangePlan != null) {
-            rangeFrameWidth = rangePlan.getMaxFrameWidth();
-            durableOutputMaxTs = readDurableOutputMaxTs(instance);
+        // The compiler produces at most one of the two plans - a factory whose window
+        // functions are all finite RANGE has no ROWS union and vice versa - so this
+        // reads whichever one the view carries rather than choosing between them.
+        final LiveViewCheckpointRowsPlan rowsPlan = rangePlan == null ? windowFactory.getCheckpointRowsPlan() : null;
+        if (lateRowTs != Numbers.LONG_NULL) {
+            if (rangePlan != null) {
+                rangeFrameWidth = rangePlan.getMaxFrameWidth();
+                durableOutputMaxTs = readDurableOutputMaxTs(instance);
+            } else if (rowsPlan != null && effectiveInsertOnly && !hasDedupKeys(reader.getMetadata())) {
+                // Dedup replaces a row with the incoming one, so it can drop a partition
+                // key out of the change interval - either by rewriting the key column of
+                // a row that is not itself a dedup key, or by replacing a row the view's
+                // WHERE accepted with one it rejects. Neither raw-WAL walk sees that, and
+                // a table without dedup keys cannot do it at all.
+                rowsBoundDiscovery.of(rowsPlan, windowFactory, reader);
+                rowsBoundSource = rowsBoundDiscovery;
+                durableOutputMaxTs = readDurableOutputMaxTs(instance);
+            }
         }
         final long runtimeFrontierTs = instance.isSnapshotCapability() && instance.getAnchorWindow() == null
                 ? instance.getLatestSeenTs()
@@ -3347,10 +3419,51 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 headPair[1],
                 applyAheadMinTs,
                 rangeFrameWidth,
+                rowsBoundSource,
+                effectiveInsertOnly,
                 durableOutputMaxTs,
                 effectiveChangeMaxTs,
                 runtimeFrontierTs
         );
+        if (rowsBoundSource != null && rowsBoundDiscovery.hasDiscovered()) {
+            // The discovery's reads are this repair's reads, so they join the same
+            // base-rows-scanned counter the replay reports through - planning and replay
+            // cost are then readable in one unit.
+            instance.bumpO3ReplayScanRows(rowsBounds.getScanRows());
+            LOG.info().$("live view O3 repair ROWS bounds [view=").$(instance.getDefinition().getViewName())
+                    .$(", localized=").$(repairPlan.isLocalized())
+                    .$(", replayLowTs=").$(repairPlan.getReplayLowTs())
+                    .$(", outputLowTs=").$(repairPlan.getOutputLowTs())
+                    .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
+                    .$(", affectedKeys=").$(rowsBounds.getAffectedKeyCount())
+                    .$(", outputKeys=").$(rowsBounds.getOutputKeyCount())
+                    .$(", indexedKeyLookups=").$(rowsBounds.getIndexedKeyLookups())
+                    .$(", scanRows=").$(rowsBounds.getScanRows())
+                    .$(", scanBudget=").$(rowsBounds.getScanBudgetStatus().name()).I$();
+        }
+    }
+
+    /**
+     * Whether the base table deduplicates on commit, the one way a change set the raw
+     * WAL walks read as insert-only can still have removed a base row: dedup drops the
+     * existing row and keeps the incoming one, at apply time and therefore out of sight
+     * of both walks. A table with no dedup key column cannot do it at all.
+     * <p>
+     * {@link #isDedupBase} answers the same question off the metadata cache, and answers
+     * it earlier: a dedup base is routed to {@link #drainAppliedBase}, which hands the
+     * repair no change ceiling and no insert-only claim, so a repair that reaches here
+     * with dedup enabled is one whose routing already changed under it (an
+     * {@code ALTER ... DEDUP ENABLE} between cycles). This reads the pinned reader's own
+     * metadata rather than the cache for the same reason the bounds read the pinned
+     * reader's rows - it is the snapshot the discovery is about to search.
+     */
+    private static boolean hasDedupKeys(TableReaderMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.isDedupKey(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -3664,7 +3777,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, false, baseToken, advanceTo, reader);
             o3HeadMissReplay(instance, windowFactory, repairPlan, reader, fullRebuild);
         } finally {
             reader.close();
@@ -5473,7 +5586,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // to the offending seqTxn, so it re-materialises commits above the
                 // ones this drain pass walked and the pass's ceiling would not bound
                 // them.
-                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, Numbers.LONG_NULL, baseToken, toSeqTxn);
+                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, Numbers.LONG_NULL, false, baseToken, toSeqTxn);
                 return REPLAY_TO_APPLIED_O3;
             }
             replayedRows += drainResult.appendedRows;
@@ -8689,6 +8802,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // change-set upper bound and the input its convergence boundary H is derived
         // from.
         public long o3ChangeMaxTs;
+        // Whether every commit this pass walked only ADDED base rows: no REPLACE_RANGE
+        // delete band reaching into the view, no non-DATA commit (DROP PARTITION / TTL /
+        // TRUNCATE) and no compacted / structural sequencer entry. Meaningful when
+        // o3Detected: the ROWS repair bounds are discovered by reading the post-change
+        // snapshot, so a deletion that emptied a partition key out of the change interval
+        // would leave it invisible to that search. Says nothing about apply-time dedup,
+        // which this raw-WAL walk cannot see - the repair proves that separately.
+        public boolean o3ChangeInsertOnly;
         // The offending late-row timestamp when o3Detected.
         public long o3LateRowTs;
         // True when a base commit arrived out of order; the caller hands off to o3Replay.
@@ -8704,12 +8825,100 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             advanceTo = -1;
             appendedRows = 0;
             batchMaxTs = Numbers.LONG_NULL;
+            o3ChangeInsertOnly = false;
             o3ChangeMaxTs = Numbers.LONG_NULL;
             o3Detected = false;
             o3LateRowTs = Numbers.LONG_NULL;
             o3SeqTxn = Numbers.LONG_NULL;
             stagingMaxTs = Numbers.LONG_NULL;
             stagingMinTs = Numbers.LONG_NULL;
+        }
+    }
+
+    /**
+     * Runs the bounded ROWS repair-bound discovery on behalf of
+     * {@link LiveViewCheckpointRepairPlan}, which calls back into it once it has computed
+     * the output floor {@code R} both searches start from.
+     * <p>
+     * The scans read through the same source-plus-filter stack the replay does - the base
+     * factory's page-frame cursors under the view's own {@code WHERE} - so "qualifying"
+     * means at planning time exactly what it means at replay time. They read it through
+     * the same pinned reader for the same reason: a second reader opened later could sit
+     * at a different {@code seqTxn}, and bounds derived against it would not describe the
+     * data the replay is about to see. Binding that reader to the execution context is
+     * therefore borrowed for one discovery and handed straight back, because the
+     * executors bind it again for the replay itself.
+     * <p>
+     * An anchored view never gets here: its windows carry a fixed-anchor dependency
+     * rather than a finite ROWS one, so no ROWS plan exists to discover bounds for, and
+     * the anchor cursor the executors splice in has no counterpart here.
+     */
+    private final class RowsBoundDiscovery implements LiveViewCheckpointRepairPlan.RowsBoundSource {
+        private boolean discovered;
+        private Function filter;
+        private PageFrameRecordCursorFactory pageFrameFactory;
+        private LiveViewCheckpointRowsPlan plan;
+        private TableReader reader;
+
+        @Override
+        public void discoverRowsBounds(
+                long viewLowerBoundTs,
+                long outputLowTs,
+                long changeLowTs,
+                long changeMaxTs
+        ) throws SqlException {
+            engine.detachReader(reader);
+            try {
+                executionContext.of(reader);
+                rowsBounds.discover(
+                        plan,
+                        pageFrameFactory,
+                        executionContext,
+                        filter,
+                        viewLowerBoundTs,
+                        outputLowTs,
+                        changeLowTs,
+                        changeMaxTs
+                );
+                discovered = true;
+            } finally {
+                executionContext.clearReader();
+                engine.attachReader(reader);
+            }
+        }
+
+        @Override
+        public long getRowsDependencyLowTs() {
+            return rowsBounds.getDependencyLowTs();
+        }
+
+        @Override
+        public HighBoundTag getRowsHighBoundTag() {
+            return rowsBounds.getHighBoundTag();
+        }
+
+        @Override
+        public long getRowsHighTsExclusive() {
+            return rowsBounds.getHighTsExclusive();
+        }
+
+        /**
+         * @return whether the plan went on to call {@link #discoverRowsBounds}, and so
+         * whether the counters the discovery carries describe this repair. It declines
+         * the call for a repair that could not have used the answer, and the counters
+         * would otherwise still hold the previous repair's reads.
+         */
+        boolean hasDiscovered() {
+            return discovered;
+        }
+
+        void of(LiveViewCheckpointRowsPlan plan, WindowRecordCursorFactory windowFactory, TableReader reader) {
+            this.discovered = false;
+            this.plan = plan;
+            this.reader = reader;
+            final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+            this.filter = filterFactory.getFilter();
+            this.pageFrameFactory = (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
         }
     }
 

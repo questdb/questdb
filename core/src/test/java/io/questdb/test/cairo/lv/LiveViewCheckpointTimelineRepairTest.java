@@ -825,14 +825,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testUnlocalizedO3ReplayStillRetiresTheTimeline() throws Exception {
-        // The scope boundary of the splice, stated as a test. A ROWS frame
-        // carries no finite RANGE dependency, so the plan localizes nothing and
-        // the rebuild replaces through positive infinity - there is no
-        // converged suffix to keep and the runtime it promotes is the replay's
-        // own. The timeline is retired whole and the post-replay seal opens a
-        // fresh history with one root, exactly as it did before the splice
-        // existed. Per-key predecessor discovery will bound this shape.
+    public void testRowsSpliceLocalizesFromTheDiscoveredBounds() throws Exception {
+        // The ROWS shape reaches the same splice as RANGE, by discovery rather than by
+        // arithmetic. A ROWS 3 PRECEDING frame at the i-th row above the change holds
+        // the changed row exactly while i <= 3, so the row at 60s - the fourth above
+        // 25s - has converged and H is its timestamp. Everything in [25s, 60s) is
+        // re-emitted, the row at 60s is not, and neither are the two below the floor.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -844,18 +842,56 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             );
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance instance = buildHistory(job);
-                Assert.assertTrue(generation(instance) > 1);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+                Assert.assertTrue(generationBefore > 1);
 
                 appendAndRefresh(job, 25, 100);
 
-                Assert.assertEquals("the whole history is re-emitted", 7, instance.getO3BoundaryReplayRows());
                 Assert.assertEquals(
-                        "a retired timeline starts over from the post-replay seal",
-                        1,
+                        "only the rows in [R, H) are re-emitted: 25s, 30s, 40s, 50s",
+                        4,
+                        instance.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(
+                        "a spliced timeline keeps every logical entry it had",
+                        HISTORY_COMMITS,
                         entryCount(instance)
                 );
-                Assert.assertEquals(1, generation(instance));
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+
+                final LongList after = snapshotTimeline(instance);
+                // Prefix (10s, 20s): below the correction floor, so nothing about them
+                // changed - not their payload roots and not their positions.
+                assertSameRoot(before, after, 0);
+                assertSameRoot(before, after, 1);
+                Assert.assertEquals(1, after.getQuick(ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(2, after.getQuick(ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                // Repaired interval (30s, 40s, 50s): new root versions off the replay,
+                // and positions that count the row the replay inserted at 25s.
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertNewRoot(before, after, 4);
+                Assert.assertEquals(4, after.getQuick(2 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(5, after.getQuick(3 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                Assert.assertEquals(6, after.getQuick(4 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
+                // Converged suffix (60s): its frame no longer reaches the change, so its
+                // payload root is reused and only its cumulative position moves.
+                assertSameRoot(before, after, 5);
+                Assert.assertEquals(6 + 1, after.getQuick(5 * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION));
             }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t109.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t112.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t18.0\n");
         });
     }
 
