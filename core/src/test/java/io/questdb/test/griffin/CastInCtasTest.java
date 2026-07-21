@@ -21,7 +21,10 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastCharToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_char() x FROM long_sequence(5)), CAST(x AS string)");
-            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nSTRING\n");
         });
     }
 
@@ -32,7 +35,10 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastCharToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_char() x FROM long_sequence(5)), CAST(x AS varchar)");
-            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nVARCHAR\n");
         });
     }
 
@@ -45,23 +51,15 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastIntToLongInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT 1 x FROM long_sequence(5)), CAST(x AS long)");
-            assertQueryNoLeakCheck("x\n1\n1\n1\n1\n1\n", "SELECT x FROM t");
+            assertQuery("SELECT x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n1\n1\n1\n1\n1\n");
+
         });
     }
 
     // --- LONG → VARCHAR (existing cross-group cast test) ---
-
-    /**
-     * Verifies CTAS cast-list support for LONG to VARCHAR.
-     */
-    @Test
-    public void testCastLongToVarcharInCtas() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), CAST(x AS varchar)");
-            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
-            assertQueryNoLeakCheck("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
-        });
-    }
 
     /**
      * Verifies CTAS cast-list support for LONG to STRING.
@@ -70,8 +68,14 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastLongToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), CAST(x AS string)");
-            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
-            assertQueryNoLeakCheck("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nSTRING\n");
+            assertQuery("SELECT x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n1\n2\n3\n4\n5\n");
         });
     }
 
@@ -89,7 +93,39 @@ public class CastInCtasTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Verifies CTAS cast-list support for LONG to VARCHAR.
+     */
+    @Test
+    public void testCastLongToVarcharInCtas() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nVARCHAR\n");
+            assertQuery("SELECT x FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n1\n2\n3\n4\n5\n");
+        });
+    }
+
     // --- SYMBOL → STRING / VARCHAR ---
+
+    /**
+     * Verifies CTAS cast-list support for STRING to VARCHAR.
+     */
+    @Test
+    public void testCastStringToVarcharInCtas() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a' x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nVARCHAR\n");
+        });
+    }
 
     /**
      * Verifies CTAS cast-list support for SYMBOL to STRING.
@@ -98,7 +134,10 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastSymbolToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_symbol('a', 'b', 'c') x FROM long_sequence(5)), CAST(x AS string)");
-            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nSTRING\n");
         });
     }
 
@@ -109,18 +148,10 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastSymbolToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_symbol('a', 'b', 'c') x FROM long_sequence(5)), CAST(x AS varchar)");
-            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
-        });
-    }
-
-    /**
-     * Verifies CTAS cast-list support for STRING to VARCHAR.
-     */
-    @Test
-    public void testCastStringToVarcharInCtas() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT 'a' x FROM long_sequence(5)), CAST(x AS varchar)");
-            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nVARCHAR\n");
         });
     }
 
@@ -133,18 +164,10 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastUuidToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), CAST(x AS string)");
-            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
-        });
-    }
-
-    /**
-     * Verifies CTAS cast-list support for UUID to VARCHAR.
-     */
-    @Test
-    public void testCastUuidToVarcharInCtas() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), CAST(x AS varchar)");
-            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nSTRING\n");
         });
     }
 
@@ -163,13 +186,30 @@ public class CastInCtasTest extends AbstractCairoTest {
     }
 
     /**
+     * Verifies CTAS cast-list support for UUID to VARCHAR.
+     */
+    @Test
+    public void testCastUuidToVarcharInCtas() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nVARCHAR\n");
+        });
+    }
+
+    /**
      * Verifies CTAS cast-list support for VARCHAR to STRING.
      */
     @Test
     public void testCastVarcharToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT CAST('a' AS varchar) x FROM long_sequence(5)), CAST(x AS string)");
-            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQuery("SELECT typeOf(x) FROM t LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("typeOf\nSTRING\n");
         });
     }
 }
