@@ -8,6 +8,10 @@ schedules:
     branches:
       include:
         - master
+        # Soak-fuzz the adaptive-commit branch while its PR is in flight. The
+        # entry is harmless after the squash-merge: the scheduler skips
+        # deleted branches.
+        - nw_adaptive_commit
     always: true
 
 variables:
@@ -48,7 +52,13 @@ stages:
               javadoc_step: ""
               javadoc_profile: ""
         pool:
-          name: hetzner-incus
+          # The soak branch fuzzes on its own pool so the 15-minute cadence
+          # does not take agents away from PR builds. FUZZ_POOL is a pipeline
+          # variable on the Fuzz Tests definition (id 25).
+          ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/nw_adaptive_commit') }}:
+            name: $(FUZZ_POOL)
+          ${{ else }}:
+            name: hetzner-incus
         timeoutInMinutes: 60
         variables:
           SOURCE_CODE_CHANGED: true
@@ -66,3 +76,21 @@ stages:
             parameters:
               isCheckoutEnabled: false
               isHetznerAptMirrorEnabled: false
+
+      - job: NotifyOnFailure
+        displayName: "Notify Slack on failure"
+        pool: hetzner-incus
+        dependsOn: RunOn
+        condition: failed()
+        steps:
+          - checkout: none
+
+          - task: CmdLine@2
+            displayName: Notify Slack on Failure
+            inputs:
+              script: |
+                curl -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"🚨 *Fuzz Tests Failed (OSS)*\n\nBranch: `$(Build.SourceBranchName)`\nBuild: <$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)|#$(Build.BuildId)>\nCommit: `$(Build.SourceVersion)`"}' \
+                  "$(FUZZ_SLACK_HOOK_URL)"
+            env:
+              FUZZ_SLACK_HOOK_URL: $(FUZZ_SLACK_HOOK_URL)
