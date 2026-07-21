@@ -1014,9 +1014,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // intercepted a level up, in IntrinsicModel.mergeIntervalModelWithAddMethod, which can see
             // the FALSE intrinsicValue this builder cannot.
             //
-            // Nothing merges into this builder, and the caller only clears other on the residual path.
-            // Free any dynamic bound compiled into other here so it is not orphaned until the pool slot
-            // is reused (mirrors the residual clearIntervalFilters() call in analyzeAndOffset).
+            // Nothing merges into this builder, and the caller only clears other on the residual path,
+            // so free whatever other still owns rather than leaving it until the pool slot is reused.
+            // A hand-written and_offset bypasses SqlOptimiser's isStaticTimestampPredicate() gate
+            // entirely - intrinsicOps dispatches on the token alone - so a dynamic bound does reach
+            // here. See testHandWrittenAndOffsetEmptyModelFreesBound, which leaks 1 KiB without this.
             if (other != null) {
                 other.freeAndClear();
             }
@@ -1040,6 +1042,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // not a safe substitute either: a later runtime UNION may expand beyond it. Leave the
             // predicate as a residual filter instead of consuming it and returning unconstrained
             // results.
+            //
+            // SqlOptimiser's isStaticTimestampPredicate() gate keeps every OPTIMISER-built wrapper
+            // purely static, but it is not the only door: and_offset is registered in intrinsicOps by
+            // token, so a hand-written one reaches analyzeAndOffset ungated and can carry a bind
+            // variable, a runtime-constant function or a '$'-prefixed date-variable string (which
+            // compiles through intersectCompiledTickExpr into dynamicRangeList). Dropping this guard
+            // returns every row instead of the matching ones - see
+            // testHandWrittenAndOffsetDynamicBoundStaysResidual.
             return false;
         }
 

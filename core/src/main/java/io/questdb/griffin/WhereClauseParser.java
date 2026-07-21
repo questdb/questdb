@@ -511,12 +511,16 @@ public final class WhereClauseParser implements Mutable {
         // and_offset args are stored in reverse order: [offset, unit, predicate]
         // This matches how ExpressionNode.toSink renders function args
         //
-        // SqlOptimiser#wrapInAndOffset is the only producer of these wrappers and always builds
-        // [CONSTANT int, CONSTANT quoted-char, predicate], so the malformed-shape returns below are
-        // unreachable. That matters because they leave the wrapper in place: the filter paths that
-        // compile intrinsicModel.filter directly never rebuild a stranded wrapper, so a shape that
-        // did reach them would surface the internal and_offset name to the user. Only the
-        // unknown-unit arm takes a value the optimiser does not validate, and it rebuilds.
+        // SqlOptimiser#wrapInAndOffset always builds [CONSTANT int, CONSTANT quoted-char, predicate],
+        // so no OPTIMISER-inserted wrapper can take the malformed-shape returns below. They are still
+        // reachable, because intrinsicOps dispatches and_offset on its token alone and a user can
+        // write one by hand. Those arms deliberately leave the node for the function compiler, which
+        // reports "unknown function name: and_offset(...)" - the correct answer for a hand-written
+        // call, since and_offset is an internal pseudo-function with no FunctionFactory and no public
+        // arity. The leaked-internal-name problem this guards against is the opposite case: a wrapper
+        // the optimiser inserted into a query that never mentioned and_offset. Those are well-formed
+        // by construction and are rebuilt below, including the unknown-unit arm, whose unit is the one
+        // value the optimiser does not validate.
         ObjList<ExpressionNode> args = node.args;
         if (args.size() != 3) {
             return false;
@@ -644,19 +648,25 @@ public final class WhereClauseParser implements Mutable {
             }
         }
 
-        // The offset predicate could not be fully represented as an interval scan (e.g. a dynamic
-        // bind-variable bound, or a multi-interval union over an already-dynamic model). The and_offset
-        // wrapper is an internal pseudo-function with no FunctionFactory, so leaving it in the residual
-        // filter would fail to compile with "unknown function name: and_offset". Rewrite the node in
-        // place into an equivalent, compilable residual dateadd(unit, stride, source_ts) <op> bound.
-        // The stored offset is the inverse of the original dateadd stride (see SqlOptimiser), so the
-        // reconstructed dateadd uses the negated offset to restore the original virtual-column semantics.
+        // The offset predicate could not be fully represented as an interval scan (e.g. a multi-interval
+        // union over an already-dynamic model). The and_offset wrapper is an internal pseudo-function
+        // with no FunctionFactory, so leaving it in the residual filter would fail to compile with
+        // "unknown function name: and_offset". Rewrite the node in place into an equivalent, compilable
+        // residual dateadd(unit, stride, source_ts) <op> bound. The stored offset is the inverse of the
+        // original dateadd stride (see SqlOptimiser), so the reconstructed dateadd uses the negated
+        // offset to restore the original virtual-column semantics.
         //
         // mergeIntervalModelWithAddMethod reported failure without consuming tempModel, so any dynamic
         // bound Function that removeAndIntrinsics compiled into tempModel's dynamicRangeList is still
         // owned here. The residual is rebuilt from the predicate AST (re-compiled later), so that temp
-        // Function is dead - free it now instead of leaving it orphaned until the pool slot is reused,
-        // mirroring the OR-tree rollback path that also clears a partially-extracted interval model.
+        // Function is dead - free it now instead of leaving it orphaned until the pool slot is reused.
+        //
+        // Reachable despite SqlOptimiser's isStaticTimestampPredicate() gate, which admits no bound
+        // that resolves at execution time: and_offset is registered in intrinsicOps by TOKEN and
+        // dispatched with no check of where the node came from, so a hand-written and_offset in a
+        // WHERE clause arrives here having never passed that gate, carrying whatever bound the user
+        // wrote. See testHandWrittenAndOffsetDynamicBoundFreesTempModel, which leaks 1 KiB without
+        // this call.
         tempModel.clearIntervalFilters();
         rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
         return false;

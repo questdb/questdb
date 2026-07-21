@@ -2920,6 +2920,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonFiniteBoundPruningMatchesNative() throws Exception {
+        // Numbers.isNull(double) is an exponent-bits test, so it is true for +/-Infinity as well as
+        // NaN, and Numbers.equals(NaN, +Infinity) is therefore true. The Java row filter's negated
+        // form for >= is (eq || l > r), so d >= +Infinity KEEPS every NULL row. NULLs are absent from
+        // parquet min/max stats, so pruning must decline any bound for which the filter can keep a
+        // NULL row - otherwise it drops rows the filter keeps.
+        //
+        // This is a forward guard, not a regression test: the certification loop already declines
+        // this bound (measured: 0 row groups skipped, against 1 for the finite control c6 >= 8.0),
+        // so it passes today. It exists because the pushdown simulation this arm was verified with
+        // covered finite bounds only.
+        assertMemoryLeak(() -> {
+            createNullMixedPartialParquet("DOUBLE", "6.0", "7.0", "2.0", "9.0");
+            assertNativeMatchesPartialParquet("c6 >= 1e308 * 10.0", "c6\nnull\nnull\n");
+        });
+    }
+
+    @Test
     public void testNullPruningInclusiveDouble() throws Exception {
         // Inclusive DOUBLE bounds (<= and >=) push down over a parquet row group that mixes NULL and
         // non-NULL values. NULLs are excluded from the row-group min/max stats and never match an

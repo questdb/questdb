@@ -2193,11 +2193,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testBindVariableOffsetPredicateResidual() throws Exception {
-        // A bind-variable (dynamic) bound on an offset-derived timestamp used to leave the internal
-        // and_offset pseudo-function in the residual filter, crashing with
-        // "unknown function name: and_offset". The offset merge cannot bake a dynamic bound into an
-        // interval, so the predicate now degrades to a compilable residual dateadd(...) <op> bound and
-        // returns the same rows as the equivalent literal form.
+        // A bind-variable bound on an offset-derived timestamp must return the same rows as the
+        // equivalent literal form. It gets there without any offset machinery: :b0 parses to
+        // BIND_VARIABLE, which isStaticTimestampPredicate() rejects, so SqlOptimiser never wraps the
+        // predicate in and_offset and it stays an ordinary filter over the virtual column.
+        //
+        // The earlier comment here claimed this covered the "unknown function name: and_offset" crash.
+        // It never did - that gate has always rejected a bind variable, so no wrapper is built for
+        // this query and none of the rebuild code runs. testStrandedAndOffsetCompilesAsResidualFilter
+        // and testNestedOffsetsCalendarUnitOnIndexedSymbolPath are the tests that actually reach it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES " +
@@ -2355,15 +2359,87 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDynamicBoundOffsetResidualFreesTempModel() throws Exception {
-        // analyzeAndOffset compiles a dynamic (runtime-constant) bound into the temp interval model,
-        // then leaves it a residual filter when the offset merge cannot bake the bound into an
-        // interval. It must free that temp model's Function on the residual exit; otherwise the
-        // compiled bound is orphaned until the pool slot is reused. A bind-variable bound holds no
-        // native memory so its leak is invisible, so this uses alloc_ts() - a runtime-constant
-        // timestamp bound that allocates a tracked native buffer at construction - to make the leak
-        // observable under assertMemoryLeak. Without the free the buffer leaks; with it the query
-        // compiles clean.
+    public void testHandWrittenAndOffsetDynamicBoundFreesTempModel() throws Exception {
+        // and_offset is registered in intrinsicOps by TOKEN, with no check that the node came from
+        // SqlOptimiser#wrapInAndOffset, so a hand-written and_offset in a WHERE clause reaches
+        // analyzeAndOffset having never passed isStaticTimestampPredicate(). That is the door through
+        // which a dynamic bound - which the optimiser's gate would have rejected - does reach the
+        // temp interval model. analyzeAndOffset must free it on the residual exit; alloc_ts() holds a
+        // tracked native buffer, so assertMemoryLeak sees the orphan if it does not.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(100, '2020-01-01T00:30:00.000000Z')," +
+                    "(150, '2020-06-01T00:30:00.000000Z')," +
+                    "(200, '2020-12-01T00:30:00.000000Z');");
+
+            assertQuery("SELECT * FROM trades " +
+                    "WHERE and_offset(timestamp > alloc_ts('2020-06-01T00:00:00.000000Z'::timestamp), 'h', 1)")
+                    .timestamp("timestamp")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2020-12-01T00:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testHandWrittenAndOffsetDynamicBoundStaysResidual() throws Exception {
+        // Companion to testHandWrittenAndOffsetDynamicBoundFreesTempModel, pinning the RESULT rather
+        // than the free. mergeWithAddMethod must refuse to consume a predicate whose source carries
+        // runtime bounds: their values are unknown at parse time, so the calendar offset cannot be
+        // baked into them. Consuming it returns every row instead of the matching one. A bind
+        // variable is enough to reach this - no test-only function needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(100, '2020-01-01T00:30:00.000000Z')," +
+                    "(150, '2020-06-01T00:30:00.000000Z')," +
+                    "(200, '2020-12-01T00:30:00.000000Z');");
+
+            bindVariableService.clear();
+            bindVariableService.setTimestamp("b0", parseFloorPartialTimestamp("2020-06-01T00:00:00.000000Z"));
+            assertQuery("SELECT * FROM trades WHERE and_offset(timestamp > :b0, 'h', 1)")
+                    .timestamp("timestamp")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2020-12-01T00:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testHandWrittenAndOffsetEmptyModelFreesBound() throws Exception {
+        // The third free: two contradicting static conjuncts empty the model before the and_offset
+        // predicate merges into it, so mergeWithAddMethod takes its isEmptySet() early return and owns
+        // freeing whatever the temp model compiled. alloc_ts() makes that orphan observable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(100, '2020-01-01T00:30:00.000000Z')," +
+                    "(150, '2020-06-01T00:30:00.000000Z')," +
+                    "(200, '2020-12-01T00:30:00.000000Z');");
+
+            assertQuery("SELECT * FROM trades " +
+                    "WHERE timestamp > '2021-01-01' AND timestamp < '2019-01-01' " +
+                    "AND and_offset(timestamp > alloc_ts('2020-06-01T00:00:00.000000Z'::timestamp), 'h', 1)")
+                    .timestamp("timestamp")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testRuntimeConstBoundOffsetDeclinesPushdown() throws Exception {
+        // A runtime-constant bound must NOT be baked into an interval scan: its value is only known at
+        // execution time, so isStaticTimestampPredicate() rejects the predicate and SqlOptimiser never
+        // wraps it in and_offset. The predicate stays a plain residual filter over the virtual column
+        // and the scan keeps its full frame.
+        //
+        // This test previously claimed to cover analyzeAndOffset's residual free of a compiled bound.
+        // It never did: alloc_ts() is a general FUNCTION node, which is exactly what the gate above
+        // rejects, so no wrapper - and no temp interval model - is ever built for it. Deleting that
+        // free left the whole class green. The plan assertion below pins what the query actually
+        // exercises, so the test fails if the bound ever starts being pushed into an interval scan.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES " +
@@ -2374,6 +2450,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) " +
                     "WHERE tt > alloc_ts('2020-05-31T23:00:00.000000Z'::timestamp)")
                     .timestamp("tt")
+                    .withPlanContaining("Frame forward scan on: trades")
                     .returns("""
                             tt\tprice
                             2020-05-31T23:30:00.000000Z\t150.0
@@ -2383,12 +2460,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDynamicBoundOffsetEmptyModelFreesTempModel() throws Exception {
-        // Companion to testDynamicBoundOffsetResidualFreesTempModel, covering mergeWithAddMethod's
-        // isEmptySet() early return. The NULL-bound predicate empties this model first; the alloc_ts
-        // offset predicate is then merged into an already-empty model and consumed without applying a
-        // constraint. mergeWithAddMethod must free the alloc_ts bound compiled into the temp model on
-        // that early return; otherwise its tracked native buffer leaks until the pool slot is reused.
+    public void testRuntimeConstBoundOffsetWithNullBoundReturnsEmpty() throws Exception {
+        // Companion to testRuntimeConstBoundOffsetDeclinesPushdown. The NULL bound is static, so its
+        // half IS analysed and empties the model; the runtime-constant half stays a residual filter.
+        // The result must be empty rather than every row - the mirror of the multi-interval bug in
+        // testMultiIntervalOffsetPushdown.
+        //
+        // Like its companion, this used to claim it covered mergeWithAddMethod's free on the
+        // isEmptySet() early return. It does not, and cannot: no runtime-constant bound survives
+        // isStaticTimestampPredicate(), so nothing owning native memory ever reaches that builder.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES " +
@@ -2396,7 +2476,6 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     "(150, '2020-06-01T00:30:00.000000Z')," +
                     "(200, '2020-12-01T00:30:00.000000Z');");
 
-            // tt > null::timestamp is unsatisfiable, so the model is empty before the alloc_ts predicate.
             assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) " +
                     "WHERE tt > alloc_ts('2020-05-31T23:00:00.000000Z'::timestamp) AND tt > null::timestamp")
                     .timestamp("tt")
