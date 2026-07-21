@@ -183,6 +183,7 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     // list of group-by-model-level expressions with prefixes
     // we've to use it because group by is likely to contain rewritten/aliased expressions that make matching input expressions by pure AST unreliable
     private final ObjList<CharSequence> groupByAliases = new ObjList<>();
@@ -283,6 +284,7 @@ public class SqlOptimiser implements Mutable {
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
         this.functionParser = functionParser;
+        this.windowExpressionPool = windowExpressionPool;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
@@ -9284,6 +9286,165 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Desugars {@code SUBSAMPLE uniform(N)} into a windowed keep-flag subquery so it executes via the
+     * {@code uniform(N)} boolean window function instead of the custom SUBSAMPLE cursor:
+     * <pre>
+     *   SELECT &lt;cols&gt; FROM t SUBSAMPLE uniform(N)
+     *   =&gt;
+     *   SELECT &lt;cols&gt;
+     *   FROM (SELECT &lt;cols&gt;, uniform(N) OVER (ORDER BY ts) __keep_subsample FROM t)
+     *   WHERE __keep_subsample
+     * </pre>
+     * Partial migration: only {@code uniform} with a compile-time-constant target &gt;= 2 and a directly
+     * available designated timestamp is desugared. Every other case - other methods
+     * (lttb/m4/minmax/cadence), non-constant/bind-variable targets, targets &lt; 2, wrong arity, or a
+     * missing timestamp - is left with the SUBSAMPLE node in place so the existing custom cursor path
+     * handles it with its exact validation and error messages.
+     */
+    private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (model == null || !model.isOptimisable()) {
+            return model;
+        }
+        final IQueryModel originalModel = model;
+
+        final IQueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            // Desugar inner SUBSAMPLE first so nested subqueries are rewritten before this level.
+            nested.setNestedModel(rewriteSubsample(nested.getNestedModel(), sqlExecutionContext));
+            for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
+                final IQueryModel joinModel = nested.getJoinModels().getQuick(i);
+                joinModel.setNestedModel(rewriteSubsample(joinModel.getNestedModel(), sqlExecutionContext));
+            }
+
+            final ExpressionNode subsample = nested.getSubsample();
+            if (subsample != null
+                    && subsample.paramCount == 1
+                    && Chars.equalsIgnoreCase(subsample.token, "uniform")) {
+                final ExpressionNode timestamp = nested.getTimestamp();
+                final ExpressionNode targetNode = subsample.args.getQuick(0);
+                // Skip the aggregation context (e.g. SAMPLE BY / GROUP BY, once rewriteSampleBy has
+                // turned it into a group-by projection): a window function cannot be injected into an
+                // aggregating model. Those uniform() cases stay on the untouched custom cursor path.
+                if (timestamp != null
+                        && !isAggregationContext(model, nested)
+                        && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
+                    model = desugarUniformSubsample(model, nested, subsample, timestamp);
+                }
+            }
+        }
+
+        // unions
+        model.setUnionModel(rewriteSubsample(model.getUnionModel(), sqlExecutionContext));
+        return replaceAndTransferDependents(originalModel, model);
+    }
+
+    /**
+     * True only when {@code targetNode} is a compile-time constant in {@code [2, Integer.MAX_VALUE]}.
+     * On anything else - bind variable, runtime constant, out-of-range, non-integer, or a parse
+     * failure - returns false, leaving the SUBSAMPLE node in place for the custom cursor path, which
+     * re-validates and reports the identical error, so no oracle behavior is lost.
+     */
+    private boolean isConstantUniformTarget(ExpressionNode targetNode, SqlExecutionContext sqlExecutionContext) {
+        if (targetNode == null) {
+            return false;
+        }
+        Function func = null;
+        try {
+            func = functionParser.parseFunction(targetNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                return false;
+            }
+            final int tag = ColumnType.tagOf(func.getType());
+            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                return false;
+            }
+            final long value = func.getLong(null);
+            return value >= 2 && value <= Integer.MAX_VALUE;
+        } catch (Throwable th) {
+            return false;
+        } finally {
+            Misc.free(func);
+        }
+    }
+
+    /**
+     * True when {@code model} projects an aggregation (GROUP BY / SAMPLE BY result, DISTINCT, or a
+     * group-by function column). A window keep-flag cannot be injected into such a model, so those
+     * uniform() cases are left on the custom SUBSAMPLE cursor path.
+     */
+    private boolean isAggregationContext(IQueryModel model, IQueryModel nested) {
+        if (model.getGroupBy().size() > 0 || model.isDistinct() || nested.getGroupBy().size() > 0) {
+            return true;
+        }
+        final ObjList<QueryColumn> cols = model.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            final QueryColumn col = cols.getQuick(i);
+            if (col instanceof WindowExpression) {
+                continue;
+            }
+            final ExpressionNode ast = col.getAst();
+            if (ast != null && hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), ast)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private IQueryModel desugarUniformSubsample(
+            IQueryModel model,
+            IQueryModel nested,
+            ExpressionNode subsample,
+            ExpressionNode timestamp
+    ) throws SqlException {
+        // model:  SELECT <cols> FROM <nested>   (nested holds the SUBSAMPLE clause + designated timestamp)
+
+        // uniform(N) window call. paramCount == 1 => the argument lives in rhs (ExpressionNode invariant).
+        final ExpressionNode uni = expressionNodePool.next().of(FUNCTION, "uniform", 0, subsample.position);
+        uni.paramCount = 1;
+        uni.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
+
+        final CharSequence keepAlias = createColumnAlias("__keep_subsample", model);
+        final WindowExpression keepCol = windowExpressionPool.next();
+        keepCol.of(keepAlias, uni);
+        uni.windowExpression = keepCol;
+        // OVER (ORDER BY ts): the designated timestamp gives deterministic input order.
+        final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, timestamp.token, 0, timestamp.position);
+        keepCol.addOrderBy(orderByTs, IQueryModel.ORDER_DIRECTION_ASCENDING);
+
+        // Inner projection = the original select model, now also projecting the keep flag.
+        model.addBottomUpColumn(keepCol);
+        // The SUBSAMPLE clause is now expressed by the window + filter; drop it so the cursor path is skipped.
+        nested.setSubsample(null, 0);
+
+        // Filter model: FROM <inner> WHERE __keep_subsample
+        final IQueryModel filterModel = queryModelPool.next();
+        filterModel.setNestedModel(model);
+        filterModel.setNestedModelIsSubQuery(true);
+        filterModel.setModelPosition(model.getModelPosition());
+        filterModel.setWhereClause(expressionNodePool.next().of(LITERAL, keepAlias, 0, 0));
+
+        // Outer select: project the original columns only (drop __keep_subsample).
+        final IQueryModel outerModel = queryModelPool.next();
+        outerModel.setNestedModel(filterModel);
+        outerModel.setNestedModelIsSubQuery(true);
+        outerModel.setModelPosition(model.getModelPosition());
+        final ObjList<QueryColumn> innerCols = model.getBottomUpColumns();
+        for (int i = 0, n = innerCols.size(); i < n; i++) {
+            final QueryColumn qc = innerCols.getQuick(i);
+            if (!Chars.equalsIgnoreCase(qc.getAlias(), keepAlias)) {
+                outerModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            }
+        }
+
+        // Bubble up the union model so set operations apply to the rewritten (outer) model.
+        final IQueryModel unionModel = model.getUnionModel();
+        model.setUnionModel(null);
+        outerModel.setUnionModel(unionModel);
+
+        return outerModel;
+    }
+
+    /**
      * Copies the SAMPLE BY FROM-TO interval into a WHERE clause if no WHERE clause over designated
      * timestamps has been provided.
      * <p>
@@ -12412,6 +12573,7 @@ public class SqlOptimiser implements Mutable {
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
+            rewrittenModel = rewriteSubsample(rewrittenModel, sqlExecutionContext);
 
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
