@@ -1713,6 +1713,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void commitSeqTxn() {
+        // Composite WAL-lag data-loss guard. The composite accumulate path (processWalCommit) bumps
+        // txWriter.lagTxnCount for rows that live ONLY in the RAM compositeWalLagBuffer -- unlike the
+        // plain lag, whose rows are durable in the last-partition lag column files, the composite
+        // buffer has NO on-disk representation. If we let commitTxWriter persist that lagTxnCount to
+        // _txn while the buffer still holds un-flushed rows, a cold restart / next apply would open the
+        // cursor at getAppliedSeqTxn() == seqTxn + lagTxnCount and SKIP those k transactions -- silent
+        // data loss, because their rows exist nowhere durable (the writer is rolled back on return to
+        // the pool, which unconditionally clears the buffer). This method is the drain-interrupt
+        // boundary: ApplyWal2TableJob calls it (and only it, the no-arg overload) when the apply loop
+        // stops mid-batch with the buffer possibly non-empty -- either the per-table time quota expired
+        // (!finishedAll) or a graceful shutdown was requested (isTerminating). So before finalizing the
+        // applied position, flush the buffer to disk exactly as the clean-drain FORCE_FULL_COMMIT path
+        // does, then fold the now-durable transactions into the persisted seqTxn and reset lagTxnCount
+        // to 0 -- so the lagTxnCount we persist always corresponds to durably-flushed rows. Every other
+        // caller reaches this / commitSeqTxn(long) with an empty buffer (structural/UPDATE/replace txns
+        // are stamped FORCE_FULL_COMMIT upstream so the lag is already flushed; trySkipWalTransactions
+        // is gated on lagTxnCount == 0; apply()'s catch rolls back first; resume opens a fresh writer).
+        if (compositeWalLagHasRows()) {
+            metrics.tableWriterMetrics().incrementCommits();
+            // Mirror the pre-O3 snapshot that commitWalInsertTransactions takes before processWalCommit.
+            txWriter.beginPartitionSizeUpdate();
+            flushCompositeLag(partitionTimestampHi, TableWriterPressureControl.EMPTY);
+            compositeWalLagMaxTimestamp = Long.MIN_VALUE;
+            compositeWalLagBuffer.clear();
+            // The flushed rows are durable now: advance the persisted seqTxn past the k accumulated
+            // transactions (getAppliedSeqTxn() is unchanged -- it was seqTxn + lagTxnCount already) and
+            // clear the lag counter, mirroring commitWalInsertTransactions' committed == true tail.
+            txWriter.setSeqTxn(txWriter.getSeqTxn() + txWriter.getLagTxnCount());
+            txWriter.setLagTxnCount(0);
+            txWriter.setLagOrdered(true);
+            commit00();
+            return;
+        }
         if (txWriter.inTransaction()) {
             metrics.tableWriterMetrics().incrementCommits();
             syncColumns();
