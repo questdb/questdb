@@ -77,6 +77,20 @@ public final class LiveViewStatePageReader {
         return source.getLong(pageStart + offset);
     }
 
+    public CharSequence getStrA(long offset) {
+        boundsCheck(offset, Integer.BYTES);
+        final int length = source.getInt(pageStart + offset);
+        if (length == -1) {
+            return null;
+        }
+        if (length < 0) {
+            throw invalid("state page string length invalid, length=").put(length);
+        }
+        final long byteLength = (long) length * Character.BYTES;
+        boundsCheck(offset + Integer.BYTES, byteLength);
+        return source.getStrA(pageStart + offset);
+    }
+
     public short getShort(long offset) {
         boundsCheck(offset, Short.BYTES);
         return source.getShort(pageStart + offset);

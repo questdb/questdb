@@ -184,6 +184,122 @@ public final class LiveViewSnapshotKeyCodec {
         return offset;
     }
 
+    /** Page-bounded counterpart used by the versioned checkpoint store. */
+    public static long readKey(MapKey dst, LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
+            switch (type) {
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    dst.putByte(source.getByte(offset));
+                    offset += Byte.BYTES;
+                    break;
+                case ColumnType.BOOLEAN:
+                    dst.putBool(source.getByte(offset) != 0);
+                    offset += Byte.BYTES;
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                    dst.putShort(source.getShort(offset));
+                    offset += Short.BYTES;
+                    break;
+                case ColumnType.CHAR:
+                    dst.putChar((char) source.getShort(offset));
+                    offset += Character.BYTES;
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.IPv4:
+                case ColumnType.GEOINT:
+                    dst.putInt(source.getInt(offset));
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.FLOAT:
+                    dst.putFloat(Float.intBitsToFloat(source.getInt(offset)));
+                    offset += Float.BYTES;
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.GEOLONG:
+                    dst.putLong(source.getLong(offset));
+                    offset += Long.BYTES;
+                    break;
+                case ColumnType.DATE:
+                    dst.putDate(source.getLong(offset));
+                    offset += Long.BYTES;
+                    break;
+                case ColumnType.DOUBLE:
+                    dst.putDouble(Double.longBitsToDouble(source.getLong(offset)));
+                    offset += Double.BYTES;
+                    break;
+                case ColumnType.STRING:
+                    final int strLen = source.getInt(offset);
+                    final CharSequence value = source.getStrA(offset);
+                    dst.putStr(value);
+                    offset += Integer.BYTES + (strLen < 0 ? 0L : (long) strLen * Character.BYTES);
+                    break;
+                default:
+                    throw unsupportedType(type);
+            }
+        }
+        return offset;
+    }
+
+    /**
+     * Structurally decodes one bounded key without inserting it into a map.
+     * Returns the first byte after the key.
+     */
+    public static long validateKey(LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
+            switch (type) {
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    source.getByte(offset);
+                    offset += Byte.BYTES;
+                    break;
+                case ColumnType.BOOLEAN:
+                    final byte bool = source.getByte(offset);
+                    if (bool != 0 && bool != 1) {
+                        throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                                .put("live view checkpoint boolean key value invalid, value=").put(bool);
+                    }
+                    offset += Byte.BYTES;
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                case ColumnType.CHAR:
+                    source.getShort(offset);
+                    offset += Short.BYTES;
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.IPv4:
+                case ColumnType.GEOINT:
+                case ColumnType.FLOAT:
+                    source.getInt(offset);
+                    offset += Integer.BYTES;
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                case ColumnType.DOUBLE:
+                    source.getLong(offset);
+                    offset += Long.BYTES;
+                    break;
+                case ColumnType.STRING:
+                    final int strLen = source.getInt(offset);
+                    source.getStrA(offset);
+                    offset += Integer.BYTES + (strLen < 0 ? 0L : (long) strLen * Character.BYTES);
+                    break;
+                default:
+                    throw unsupportedType(type);
+            }
+        }
+        return offset;
+    }
+
     /**
      * Reads one slot row (all {@code slotTypes.getColumnCount()} columns) from
      * {@code source} starting at {@code offset} and pushes the typed values into

@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointDataSegmentReader;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
@@ -36,17 +38,32 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
@@ -252,6 +269,123 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testRestoreNewestAndRingPrunedOldestLogicalRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final RuntimeSnapshot oldestState = snapshotRuntime(functions, instance.getAnchorWindow());
+
+                appendAndRefresh(job, 20, 2);
+                appendAndRefresh(job, 30, 3);
+                appendAndRefresh(job, 40, 4);
+                Assert.assertEquals("the legacy ring must have pruned the requested root", 2,
+                        instance.getRetainedCheckpointCount());
+                final RuntimeSnapshot newestState = snapshotRuntime(functions, instance.getAnchorWindow());
+
+                try (
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(checkpointsDir);
+                    final LiveViewCheckpointTimelineStoreReader.Result oldest = reader.restore(
+                            ts(timestamp(10)),
+                            0,
+                            instance.getLiveViewToken().getTableId(),
+                            functions,
+                            instance.getAnchorWindow()
+                    );
+                    Assert.assertEquals(4, oldest.generation);
+                    Assert.assertEquals(1, oldest.effectiveLvRowPosition);
+                    assertRuntimeSnapshot(oldestState, functions, instance.getAnchorWindow());
+
+                    final LiveViewCheckpointTimelineStoreReader.Result newest = reader.restore(
+                            ts(timestamp(40)),
+                            3,
+                            instance.getLiveViewToken().getTableId(),
+                            functions,
+                            instance.getAnchorWindow()
+                    );
+                    Assert.assertEquals(4, newest.generation);
+                    Assert.assertEquals(4, newest.effectiveLvRowPosition);
+                    assertRuntimeSnapshot(newestState, functions, instance.getAnchorWindow());
+                }
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testRestoreRejectsTruncatedOldRootBeforeMutatingRuntime() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final RuntimeSnapshot before = snapshotRuntime(functions, null);
+
+                long segmentId;
+                long fileLength;
+                try (
+                        LiveViewCheckpointMetaStore store = openStore(instance);
+                        LiveViewCheckpointGenerationPin pin = store.pin();
+                        LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
+                        LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                        LiveViewCheckpointSegmentDirectory directory =
+                                new LiveViewCheckpointSegmentDirectory(configuration);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    final LiveViewCheckpointTimelineEntry oldest = new LiveViewCheckpointTimelineEntry();
+                    Assert.assertTrue(timeline.findExact(pin.getTimelineRootRef(), ts(timestamp(10)), 0, oldest));
+                    root.of(checkpointsDir, oldest.rootRef);
+                    segmentId = root.getSegmentId(0);
+                    directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+                    fileLength = directory.getFileLength(segmentId);
+                }
+                try (Path checkpointsDir = checkpointsDir(instance); Path dataPath = new Path()) {
+                    LiveViewCheckpointLayout.dataSegmentPath(
+                            dataPath,
+                            checkpointsDir,
+                            segmentId
+                    );
+                    final FilesFacade ff = configuration.getFilesFacade();
+                    final long fd = ff.openRW(dataPath.$(), 0);
+                    try {
+                        Assert.assertTrue(ff.truncate(fd, fileLength - 1));
+                    } finally {
+                        ff.close(fd);
+                    }
+                    try (LiveViewCheckpointTimelineStoreReader reader =
+                                 new LiveViewCheckpointTimelineStoreReader(configuration)) {
+                        reader.of(checkpointsDir);
+                        try {
+                            reader.restore(
+                                    ts(timestamp(10)),
+                                    0,
+                                    instance.getLiveViewToken().getTableId(),
+                                    functions,
+                                    null
+                            );
+                            Assert.fail("expected truncated logical-root data rejection");
+                        } catch (CairoException e) {
+                            Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "data segment file length mismatch");
+                        }
+                    }
+                }
+                assertRuntimeSnapshot(before, functions, null);
+            }
+        });
+    }
+
     private void appendAndRefresh(LiveViewRefreshJob job, int second, long value) throws Exception {
         setCurrentMicros(currentMicros + 200_000);
         execute("INSERT INTO base VALUES ('" + timestamp(second) + "', 'a', " + value + ")");
@@ -300,6 +434,70 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         return reader;
     }
 
+    private static void assertRuntimeSnapshot(
+            RuntimeSnapshot expected,
+            ObjList<WindowFunction> functions,
+            LiveViewWindow anchorWindow
+    ) {
+        final RuntimeSnapshot actual = snapshotRuntime(functions, anchorWindow);
+        Assert.assertArrayEquals(expected.anchor, actual.anchor);
+        Assert.assertEquals(expected.functions.length, actual.functions.length);
+        for (int i = 0; i < expected.functions.length; i++) {
+            Assert.assertArrayEquals("function snapshot mismatch at index " + i,
+                    expected.functions[i], actual.functions[i]);
+        }
+    }
+
+    private static byte[] copyBytes(MemoryCARW memory) {
+        final int length = (int) memory.getAppendOffset();
+        final byte[] bytes = new byte[length];
+        for (int i = 0; i < length; i++) {
+            bytes[i] = memory.getByte(i);
+        }
+        return bytes;
+    }
+
+    private static RuntimeSnapshot snapshotRuntime(
+            ObjList<WindowFunction> functions,
+            LiveViewWindow anchorWindow
+    ) {
+        byte[] anchor = null;
+        if (anchorWindow != null) {
+            try (MemoryCARW sink = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                anchorWindow.snapshot(sink);
+                anchor = copyBytes(sink);
+            }
+        }
+        final byte[][] states = new byte[functions.size()][];
+        int count = 0;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.supportsCheckpointState()) {
+                continue;
+            }
+            try (MemoryCARW sink = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                LiveViewFunctionSnapshot.write(sink, function);
+                states[count++] = copyBytes(sink);
+            }
+        }
+        return new RuntimeSnapshot(anchor, Arrays.copyOf(states, count));
+    }
+
+    private static ObjList<WindowFunction> unwrapWindowFunctions(LiveViewInstance instance) {
+        RecordCursorFactory factory = instance.getCompiledFactory();
+        while (factory != null) {
+            if (factory instanceof WindowRecordCursorFactory windowFactory) {
+                return windowFactory.getWindowFunctions();
+            }
+            if (factory instanceof QueryProgress) {
+                factory = factory.getBaseFactory();
+                continue;
+            }
+            break;
+        }
+        throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+    }
+
     private static String timestamp(int second) {
         return "2026-01-01T00:00:" + (second < 10 ? "0" : "") + second + ".000000Z";
     }
@@ -330,5 +528,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     after.getHeadCheckpointRestoreMicros()
             );
         });
+    }
+
+    private static final class RuntimeSnapshot {
+        private final byte[] anchor;
+        private final byte[][] functions;
+
+        private RuntimeSnapshot(byte[] anchor, byte[][] functions) {
+            this.anchor = anchor;
+            this.functions = functions;
+        }
     }
 }

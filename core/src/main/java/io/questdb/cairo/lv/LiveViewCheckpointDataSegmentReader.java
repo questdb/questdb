@@ -114,6 +114,11 @@ public class LiveViewCheckpointDataSegmentReader implements Closeable {
         return pageStoredLength;
     }
 
+    public void openStatePageReader(@NotNull LiveViewStatePageReader out) {
+        ensurePageOpen();
+        out.of(mem, pageOffset, pageStoredLength);
+    }
+
     /**
      * Maps a published segment only when its exact physical length agrees with
      * the checksummed directory entry.
