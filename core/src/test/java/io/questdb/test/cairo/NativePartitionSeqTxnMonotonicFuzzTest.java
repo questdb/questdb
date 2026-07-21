@@ -32,8 +32,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Fuzz characterization of the per-partition native seqTxn contract.
@@ -47,8 +51,9 @@ import java.util.Map;
  * partition with <i>different</i> values -- but both stay {@code >= canonical}. This test runs the same
  * generated stream through both groupings and asserts the monotonic-safe envelope on each, so a regression
  * that lets any stamp slip <i>below</i> canonical (the only direction that would corrupt the dedup gate by
- * skipping a needed upload) fails loudly. It also proves the two groupings hold identical data, so any
- * stamp divergence is purely a grouping artifact.
+ * skipping a needed upload) fails loudly. The serial path is sampled after every applied commit so a
+ * transient decrease cannot hide behind a later recovery. The test also proves the two groupings hold
+ * identical data, so any stamp divergence is purely a grouping artifact.
  */
 public class NativePartitionSeqTxnMonotonicFuzzTest extends AbstractCairoTest {
 
@@ -70,10 +75,12 @@ public class NativePartitionSeqTxnMonotonicFuzzTest extends AbstractCairoTest {
             // table) that wrote a row into that day.
             final Map<Long, Long> canonical = new HashMap<>();
             final String[] inserts = new String[txnCount];
+            final List<Set<Long>> touchedPartitions = new ArrayList<>(txnCount);
             for (int t = 0; t < txnCount; t++) {
                 final long ord = t + 1;
                 final int rows = 1 + rnd.nextInt(6);
                 final StringBuilder sb = new StringBuilder("INSERT INTO %s VALUES ");
+                final Set<Long> touched = new HashSet<>();
                 for (int r = 0; r < rows; r++) {
                     // O3 bias: each row lands in a random day, so later transactions routinely backfill
                     // older partitions -- the shape that lets a block straddle and over-stamp.
@@ -86,8 +93,10 @@ public class NativePartitionSeqTxnMonotonicFuzzTest extends AbstractCairoTest {
                     sb.append('(').append(ts).append("::timestamp, ").append(ord).append(')');
                     final long floor = ts - ts % DAY;
                     canonical.merge(floor, ord, Math::max);
+                    touched.add(floor);
                 }
                 inserts[t] = sb.toString();
+                touchedPartitions.add(touched);
             }
 
             // blk: every commit is visible to one drain, so ApplyWal2TableJob forms multi-transaction blocks.
@@ -97,9 +106,17 @@ public class NativePartitionSeqTxnMonotonicFuzzTest extends AbstractCairoTest {
             drainWalQueue();
 
             // ser: drain after every commit, so exactly one seqTxn is ever visible -> block size 1.
+            final Map<Long, Long> canonicalSoFar = new HashMap<>();
+            final Map<Long, Long> previousStamps = new HashMap<>();
             for (int t = 0; t < txnCount; t++) {
                 execute(String.format(inserts[t], "ser"));
                 drainWalQueue();
+                final long ord = t + 1;
+                final Set<Long> touched = touchedPartitions.get(t);
+                for (long floor : touched) {
+                    canonicalSoFar.put(floor, ord);
+                }
+                assertMonotonicStep("ser", ord, canonicalSoFar, previousStamps, touched);
             }
 
             final int blkOverApprox = assertMonotonicSafe("blk", canonical);
@@ -149,5 +166,67 @@ public class NativePartitionSeqTxnMonotonicFuzzTest extends AbstractCairoTest {
             }
         }
         return overApprox;
+    }
+
+    // Samples all native partitions, including the active partition, immediately after one serial WAL
+    // commit. A touched existing partition must advance strictly; every other existing partition must not
+    // decrease. The canonical lower bound is checked at the same point so a transient under-stamp cannot
+    // be repaired by a later transaction before the fuzz test observes it.
+    private void assertMonotonicStep(
+            String table,
+            long expectedSeqTxn,
+            Map<Long, Long> canonical,
+            Map<Long, Long> previousStamps,
+            Set<Long> touched
+    ) {
+        final Map<Long, Long> currentStamps = new HashMap<>();
+        final Set<Long> seenTouched = new HashSet<>();
+        try (TableReader reader = getReader(table)) {
+            final TxReader tx = reader.getTxFile();
+            final long highWater = tx.getSeqTxn();
+            Assert.assertEquals(table + " must apply exactly one WAL transaction per drain", expectedSeqTxn, highWater);
+            for (int i = 0, n = tx.getPartitionCount(); i < n; i++) {
+                final long floor = tx.getPartitionFloor(tx.getPartitionTimestampByIndex(i));
+                final long stamp = tx.getNativePartitionSeqTxn(i);
+                final long canon = canonical.getOrDefault(floor, 0L);
+                final Long previous = previousStamps.get(floor);
+
+                Assert.assertTrue(
+                        table + " seqTxn=" + highWater + " floor=" + floor + " stamp=" + stamp
+                                + " < canonical=" + canon + " at intermediate sample",
+                        stamp >= canon
+                );
+                Assert.assertTrue(
+                        table + " seqTxn=" + highWater + " floor=" + floor + " stamp=" + stamp
+                                + " > highWater=" + highWater,
+                        stamp <= highWater
+                );
+                Assert.assertTrue(table + " seqTxn=" + highWater + " floor=" + floor + " was not stamped", stamp >= 1);
+                if (touched.contains(floor)) {
+                    seenTouched.add(floor);
+                    if (previous != null) {
+                        Assert.assertTrue(
+                                table + " seqTxn=" + highWater + " touched floor=" + floor + " did not advance"
+                                        + " [previous=" + previous + ", current=" + stamp + ']',
+                                stamp > previous
+                        );
+                    }
+                } else if (previous != null) {
+                    Assert.assertTrue(
+                            table + " seqTxn=" + highWater + " untouched floor=" + floor + " decreased"
+                                    + " [previous=" + previous + ", current=" + stamp + ']',
+                            stamp >= previous
+                    );
+                }
+                currentStamps.put(floor, stamp);
+            }
+        }
+        Assert.assertEquals(table + " touched partitions must all be present after apply", touched, seenTouched);
+        Assert.assertTrue(
+                table + " must not lose partitions while replaying insert-only WAL",
+                currentStamps.keySet().containsAll(previousStamps.keySet())
+        );
+        previousStamps.clear();
+        previousStamps.putAll(currentStamps);
     }
 }

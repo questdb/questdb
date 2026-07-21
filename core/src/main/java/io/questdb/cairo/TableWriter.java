@@ -929,6 +929,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ex.isWALTolerable() && operation.getCmdType() != CMD_UPDATE_TABLE) {
                 // Mark the transaction as applied and ignore it.
                 commitSeqTxn(seqTxn);
+                LOG.info().$("tolerated WAL command failure [table=").$(tableToken)
+                        .$(", seqTxn=").$(seqTxn)
+                        .$(", command=").$(TableWriterTask.getCommandName(operation.getCmdType()))
+                        .$(", error=").$safe(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
                 return 0;
             } else {
                 // Mark the transaction as not applied.

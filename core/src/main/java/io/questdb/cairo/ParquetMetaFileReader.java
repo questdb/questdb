@@ -28,6 +28,7 @@ import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -165,8 +166,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // subsequent resolves skip re-verification. Reset by clear().
     private boolean checksumVerified;
     private int columnCount;
+    // Lazily built because most readers never resolve stable ids. Reused across
+    // bindings so repeated sidecar scans do not allocate a map per partition.
+    private IntIntHashMap columnIdToIndex;
     private long fileSize;
     private long footerAddr;
+    private boolean isColumnIdToIndexBuilt;
     // Committed _pm snapshot size the native handle was parsed at.
     // Meaningful only while nativeReaderPtr != 0.
     private long nativeReaderFileSize;
@@ -328,6 +333,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.resolvedFileSize = 0;
         this.footerAddr = 0;
         this.columnCount = 0;
+        this.isColumnIdToIndexBuilt = false;
         this.rowGroupCount = 0;
         this.checksumVerified = false;
     }
@@ -383,20 +389,37 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
-     * Finds a column by its stable id (the table writer index). Mirrors
+     * Finds a column by its stable id (the table writer index). The first lookup
+     * for a reader binding builds an id-to-dense-index map; subsequent lookups are
+     * constant time. Mirrors
      * {@code PageFrameMemoryPool.buildColumnIdMap}: external Parquet files without
      * QuestDB field ids (all -1) fall back to positional indexing. Returns -1 if
      * no column matches. Unlike {@link #getColumnIndex(CharSequence)}, this stays
      * correct across column renames because the id never changes.
      */
     public int getColumnIndexById(int columnId) {
-        for (int i = 0; i < columnCount; i++) {
-            final int id = getColumnId(i);
-            if ((id < 0 ? i : id) == columnId) {
-                return i;
-            }
+        if (columnId < 0) {
+            return -1;
         }
-        return -1;
+        if (!isColumnIdToIndexBuilt) {
+            if (columnIdToIndex == null) {
+                columnIdToIndex = new IntIntHashMap(columnCount);
+            } else {
+                columnIdToIndex.clear();
+            }
+            for (int i = 0; i < columnCount; i++) {
+                final int id = getColumnId(i);
+                final int effectiveId = id < 0 ? i : id;
+                final int keyIndex = columnIdToIndex.keyIndex(effectiveId);
+                if (keyIndex >= 0) {
+                    // Preserve the old linear scan's first-match behavior for a
+                    // malformed footer containing duplicate field ids.
+                    columnIdToIndex.putAt(keyIndex, effectiveId, i);
+                }
+            }
+            isColumnIdToIndexBuilt = true;
+        }
+        return columnIdToIndex.get(columnId);
     }
 
     /**

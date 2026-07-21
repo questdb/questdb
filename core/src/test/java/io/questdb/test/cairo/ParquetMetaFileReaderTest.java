@@ -144,6 +144,71 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnIdLookupBuildsIndexOncePerBinding() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    ParquetMetaTestFile wide = buildFile(64, 1);
+                    ParquetMetaTestFile narrow = buildFile(3, 1)
+            ) {
+                final CountingColumnIdReader reader = new CountingColumnIdReader();
+                reader.of(wide.dataPtr, wide.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+
+                Assert.assertEquals(63, reader.getColumnIndexById(63));
+                Assert.assertEquals(0, reader.getColumnIndexById(0));
+                Assert.assertEquals(-1, reader.getColumnIndexById(1_000));
+                Assert.assertEquals(
+                        "repeated lookups must scan the bound column descriptors only once",
+                        64,
+                        reader.getColumnIdReadCount()
+                );
+
+                reader.of(narrow.dataPtr, narrow.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+                Assert.assertEquals(2, reader.getColumnIndexById(2));
+                Assert.assertEquals(
+                        "rebinding must invalidate and rebuild the id index for the new footer",
+                        67,
+                        reader.getColumnIdReadCount()
+                );
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testColumnIdLookupPreservesLegacyAndFirstMatchSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    ParquetMetaTestFile positional = buildFile(new int[]{-1, -1, -1}, 1);
+                    ParquetMetaTestFile collisions = buildFile(new int[]{-1, 0, 5, 5}, 1)
+            ) {
+                final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(positional.dataPtr, positional.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+
+                Assert.assertEquals(0, reader.getColumnIndexById(0));
+                Assert.assertEquals(2, reader.getColumnIndexById(2));
+                Assert.assertEquals(-1, reader.getColumnIndexById(3));
+
+                reader.of(collisions.dataPtr, collisions.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveLastFooter());
+                Assert.assertEquals(
+                        "the first descriptor must win an effective-id collision",
+                        0,
+                        reader.getColumnIndexById(0)
+                );
+                Assert.assertEquals(
+                        "the first duplicate id must win",
+                        2,
+                        reader.getColumnIndexById(5)
+                );
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
     public void testColumnMetadataAccessors() throws Exception {
         assertMemoryLeak(() -> {
             // Build a multi-column file with varied types and explicit IDs.
@@ -1811,6 +1876,38 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    private static ParquetMetaTestFile buildFile(int[] columnIds, long... rowGroupSizes) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
+            for (int i = 0; i < columnIds.length; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(
+                            writerPtr,
+                            name.ptr(),
+                            (int) name.size(),
+                            columnIds[i],
+                            5,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                    );
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+            }
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new ParquetMetaTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
     private static ParquetMetaTestFile buildFileWithDts(int dtsIndex, int columnCount, long... rowGroupSizes) {
         long writerPtr = ParquetMetaFileWriter.create();
         try {
@@ -1860,6 +1957,20 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             return new ParquetMetaTestFile(resultPtr);
         } finally {
             ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
+    private static final class CountingColumnIdReader extends ParquetMetaFileReader {
+        private int columnIdReadCount;
+
+        @Override
+        public int getColumnId(int columnIndex) {
+            columnIdReadCount++;
+            return super.getColumnId(columnIndex);
+        }
+
+        private int getColumnIdReadCount() {
+            return columnIdReadCount;
         }
     }
 
