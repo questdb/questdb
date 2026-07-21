@@ -29,6 +29,10 @@ coherent there, so a passthrough view is strongly recommended.
 A passthrough view + `KEEP LATEST` is an incrementally-maintained **current-state-per-key** table; `KEEP
 HIGHEST/LOWEST` keeps the extreme rows per group; `KEEP <N> …` keeps a leaderboard.
 
+`CLEANUP EVERY` takes a `<number><unit>` stride with unit `s`/`m`/`h`/`d`/`w` (the same strict grammar as
+`SAMPLE BY` intervals) and defaults to `1h` when the clause is omitted. Line comments (`--`) are not
+supported inside an `EXPIRE ROWS` clause; terminated block comments (`/* … */`) are.
+
 ## How it works
 
 1. **Read-time filter (authoritative).** Every reference to a policied view is rewritten so only the kept
@@ -42,8 +46,10 @@ HIGHEST/LOWEST` keeps the extreme rows per group; `KEEP <N> …` keeps a leaderb
    - **`KEEP HIGHEST/LOWEST/<N>` and window `WHEN`** → the keep-filter references a window function, illegal in
      a plain `WHERE`, so it is computed as a boolean column in an inner projection over the whole view and
      filtered in the outer query: `SELECT <cols> FROM (SELECT *, CASE WHEN (<window pred>) THEN false ELSE
-     true END __keep FROM "v") WHERE __keep`. `KEEP HIGHEST c` desugars to `c < max(c) OVER (PARTITION BY …)`,
-     `KEEP <N> HIGHEST c` to `row_number() OVER (PARTITION BY … ORDER BY c DESC, <ts> DESC) > N`.
+     true END __qdb_re_keep FROM "v") WHERE __qdb_re_keep`. The synthetic column name `__qdb_re_keep` is
+     reserved: CREATE/ALTER reject a policy on a view that exposes a column with that name. `KEEP HIGHEST c`
+     desugars to `c < max(c) OVER (PARTITION BY …)`, `KEEP <N> HIGHEST c` to `row_number() OVER (PARTITION BY
+     … ORDER BY c DESC, <ts> DESC) > N`.
 2. **Physical cleanup (best-effort, primary-only).** A background job (`RowExpiryCleanupJob`) reclaims disk
    for non-active partitions via `REPLACE_RANGE` on the view's WAL writer: a fully-expired partition is wiped
    (an empty `REPLACE_RANGE` is a pure delete that removes the partition) and a partially-expired one is
@@ -71,14 +77,15 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_clause`, 
   the N-th boundary is deterministic (assuming `(col, ts)` is effectively unique; pair with `DEDUP UPSERT
   KEYS` if needed).
 - **Monotonicity = cleanup safety.** Physical deletion is only safe when expiry is **monotonic**: a row that
-  is expired now must stay expired forever. The relative/window modes are monotonic by construction (the
-  "best" row per group is kept, so removing the others cannot change it), as is a designated-timestamp
-  predicate like `ts < now()` (a row only gets older). A scalar `WHEN <predicate>`, however, is arbitrary
-  SQL and **monotonicity is the author's responsibility**. A non-monotonic predicate such as `WHEN ts >
-  now()` expires *future* rows that **un-expire** as `now()` advances past them: the read filter recomputes
-  `now()` on every read and is always correct, but the cleanup job could physically delete a row that a later
-  read would show. Use only monotonic `WHEN` predicates (time-in-the-past or fixed value thresholds); see the
-  limitation below.
+  is expired now must stay expired forever. The relative modes are monotonic by construction (the "best" row
+  per group is kept, so removing the others cannot change it), as is a look-back designated-timestamp
+  threshold like `ts < now()` or `ts < dateadd('d', -1, now())` (the threshold only moves forward). A scalar
+  `WHEN <predicate>`, however, is arbitrary SQL and **monotonicity is the author's responsibility**. A
+  non-monotonic predicate such as `WHEN ts > now()` expires *future* rows that **un-expire** as `now()`
+  advances past them: the read filter recomputes `now()` on every read and is always correct, but the cleanup
+  job could physically delete a row that a later read would show. Use only monotonic `WHEN` predicates
+  (time-in-the-past or fixed value thresholds); see the limitation below for exactly which clock shapes the
+  cleanup job accepts.
 
 ## Known limitations & operational notes
 
@@ -96,17 +103,28 @@ the clause, and `tables()` / `materialized_views()` expose it (`expire_clause`, 
   defers reclamation to a quiescent sweep; the read filter stays authoritative meanwhile.
 - **`KEEP LATEST [ON <ts>]`.** The optional `ON <ts>` is accepted for familiarity but the view's designated
   timestamp is always used (a table-input `LATEST ON` requires it).
-- **Non-monotonic policies skip cleanup automatically (reads stay correct).** Physical cleanup (disk
-  reclamation) only runs for policies that are provably **monotonic**: the relative modes (`KEEP LATEST` /
-  `KEEP HIGHEST/LOWEST` / `KEEP <N>`), and scalar/window `WHEN` predicates that are either clock-free or
-  reduce to a designated-timestamp threshold like `ts < now()`. A non-monotonic predicate — e.g. `WHEN ts >
-  now()`, or a clock-referencing predicate that does not reduce to a `ts`-threshold — stays **correct at read
-  time** (the read filter recomputes on every read and is authoritative), but its disk is **not** reclaimed by
-  the background job: cleanup is automatically skipped for that policy rather than risk physically deleting a
-  row a later read would show. So a non-monotonic predicate like `WHEN ts > now()` (which expires *future*
-  rows that un-expire as `now()` advances past them) is not rejected and remains query-correct, but accrues
-  physical residue indefinitely. Treat `now()` as "expire things in the past" (`ts < now()`) when you also
-  want disk reclaimed; do not write predicates that expire rows the passage of time will later keep.
+- **No policied chains.** A materialized view must not read another view's policied rows raw: `CREATE
+  MATERIALIZED VIEW` rejects a policied view referenced anywhere in the defining query (base or joined), and
+  `ALTER … SET EXPIRE` is rejected on a view that other views derive from. When a view gains a policy after
+  another view was already created joining it (the dependency graph tracks base edges only), the referencing
+  view's refresh reads it **filtered**, exactly as ordinary queries do — consistent data for a deterministic
+  policy; a `now()`-based policy fails that refresh visibly instead of silently materializing expired rows.
+- **Kill switch.** `cairo.row.expiry.enabled` (default `true`) controls whether the cleanup job is assigned
+  to the worker pool. It is consulted at startup only — disabling it requires a restart. The read filter is
+  unaffected either way.
+- **Failure backoff.** A failing cleanup sweep retries after one global tick (1s); each further failure
+  doubles the per-view retry gap up to a 10-minute cap, and a successful or deferred sweep resets it.
+- **Only provably-monotonic policies reclaim disk (reads stay correct regardless).** Physical cleanup runs
+  for: the relative modes (`KEEP LATEST` / `KEEP HIGHEST/LOWEST` / `KEEP <N>`); clock-free scalar `WHEN`
+  predicates; and scalar predicates whose designated-timestamp threshold is one of the proven advancing-clock
+  shapes — a bare clock (`ts < now()`), a bare clock minus a non-negative constant (`ts < now() -
+  7_200_000_000`), or a fixed-unit look-back `dateadd` on a bare clock (`ts < dateadd('d', -1, now())`,
+  units n/u/T/s/m/h/d/w). Anything outside these shapes skips cleanup: **calendar units** (`dateadd('M', -1,
+  now())` — a month is a variable amount), **look-forward offsets** (`dateadd('h', 1, now())`, `ts > now()` —
+  they expire rows the passage of time un-expires), further clock arithmetic, non-constant offsets, and
+  arbitrary window `WHEN` predicates. A skipped policy stays **correct at read time** (the read filter
+  recomputes on every read and is authoritative), but its disk is **not** reclaimed by the background job —
+  it accrues physical residue until the policy is changed to a proven shape.
 - **Compacting a Parquet partition rewrites it as native storage.** When the cleanup job compacts a
   *partially*-expired partition (via `REPLACE_RANGE` to its survivors), a partition currently held in
   Parquet-encoded storage is rewritten as native QuestDB storage. This is a known storage-format side effect:

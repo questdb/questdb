@@ -6000,16 +6000,128 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return null;
     }
 
-    private static boolean isProvenAdvancingClockExpression(ExpressionNode node) {
-        // Admit only bare wall-time clocks. Every cast, offset, arithmetic operation, clock-clock expression,
-        // and nested function remains conservative false until its exact overflow and order semantics have a
-        // dedicated structural proof. Skipping reclamation is safe; accepting one decreasing transform is not.
+    // True for a bare zero-arg wall-time clock: now(), sysdate(), systimestamp().
+    private static boolean isBareClockFunction(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
                 && node.paramCount == 0
                 && (SqlKeywords.isNowKeyword(node.token)
                 || SqlKeywords.isSysdateKeyword(node.token)
                 || SqlKeywords.isSystimestampKeyword(node.token));
+    }
+
+    /**
+     * True when {@code node} is structurally proven to be a non-decreasing function of wall-clock
+     * time, so a {@code ts < node} threshold only ever moves forward and physical cleanup under it is
+     * safe. Three shapes carry a proof:
+     * <ul>
+     *     <li>a bare clock ({@code now()} / {@code sysdate()} / {@code systimestamp()});</li>
+     *     <li>{@code <clock> - c} for a constant {@code c >= 0}: with {@code t >= 0} and
+     *         {@code c in [0, Long.MAX_VALUE]}, {@code t - c} can neither overflow nor underflow and
+     *         advances exactly as {@code t} does;</li>
+     *     <li>{@code dateadd('<fixed unit>', k, <clock>)} for a constant {@code k <= 0} and a
+     *         fixed-duration unit (n/u/T/s/m/h/d/w), which is {@code <clock> - c} with
+     *         {@code c = -k * unit}; the amount is bounded so the scaled offset cannot overflow even
+     *         on a nanosecond timeline.</li>
+     * </ul>
+     * Everything else stays a conservative false — calendar units (M/y) shift by a variable amount,
+     * a look-forward offset expires rows the passage of time un-expires, and arbitrary clock
+     * arithmetic (e.g. {@code now() - now()::long * 2}) can decrease. Skipping reclamation is safe;
+     * accepting one decreasing transform is not.
+     */
+    private static boolean isProvenAdvancingClockExpression(ExpressionNode node) {
+        if (isBareClockFunction(node)) {
+            return true;
+        }
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && Chars.equals(node.token, "-")
+                && isBareClockFunction(node.lhs)) {
+            try {
+                return parseExpiryConstantLong(node.rhs) >= 0;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 3
+                && SqlKeywords.isDateaddKeyword(node.token)) {
+            // function args are stored reversed: [timestamp, amount, unit]
+            final ExpressionNode clockArg = node.args.getQuick(0);
+            final ExpressionNode amountArg = node.args.getQuick(1);
+            final ExpressionNode unitArg = node.args.getQuick(2);
+            if (!isBareClockFunction(clockArg)) {
+                return false;
+            }
+            final long unitNanos = fixedDateaddUnitNanos(unitArg.token);
+            if (unitNanos <= 0) {
+                return false;
+            }
+            try {
+                final long amount = parseExpiryConstantLong(amountArg);
+                // look-back only, with the offset provably in range on a nanosecond timeline
+                return amount <= 0 && amount != Long.MIN_VALUE && -amount <= Long.MAX_VALUE / unitNanos;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The duration of a {@code dateadd} unit in nanoseconds (the finest timestamp resolution, so the
+     * overflow bound derived from it holds for micro timelines too), or 0 for a calendar unit (M/y)
+     * or an unrecognized token. Accepts the quoted ({@code 'd'}) and bare ({@code d}) forms.
+     */
+    private static long fixedDateaddUnitNanos(CharSequence unitToken) {
+        if (unitToken == null) {
+            return 0;
+        }
+        final int len = unitToken.length();
+        final char unit;
+        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
+            unit = unitToken.charAt(1);
+        } else if (len == 1) {
+            unit = unitToken.charAt(0);
+        } else {
+            return 0;
+        }
+        return switch (unit) {
+            case 'n' -> 1L;
+            case 'u' -> 1_000L;
+            case 'T' -> 1_000_000L;
+            case 's' -> 1_000_000_000L;
+            case 'm' -> 60_000_000_000L;
+            case 'h' -> 3_600_000_000_000L;
+            case 'd' -> 86_400_000_000_000L;
+            case 'w' -> 604_800_000_000_000L;
+            default -> 0;
+        };
+    }
+
+    // Long value of a constant expression node: a plain CONSTANT (with an optional L suffix) or a
+    // unary-minus over one. Throws NumericException for any other shape.
+    private static long parseExpiryConstantLong(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            final CharSequence token = node.token;
+            final int len = token.length();
+            final int hi = len > 1 && (token.charAt(len - 1) == 'L' || token.charAt(len - 1) == 'l') ? len - 1 : len;
+            return Numbers.parseLong(token, 0, hi);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
+            final long value = parseExpiryConstantLong(node.rhs);
+            if (value == Long.MIN_VALUE) {
+                throw NumericException.INSTANCE;
+            }
+            return -value;
+        }
+        throw NumericException.INSTANCE;
     }
 
     @Override

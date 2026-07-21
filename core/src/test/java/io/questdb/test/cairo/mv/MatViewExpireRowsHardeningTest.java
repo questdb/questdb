@@ -206,10 +206,22 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         sqlExecutionContext, metadata, "ts < now() - (now()::long * 2)", 0).isMonotonic());
                 Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
                         sqlExecutionContext, metadata, "ts < (now() - (now()::long * 2)) - 1_000_000L", 0).isMonotonic());
+
+                // Look-back offsets on a bare clock are proven advancing: the canonical retention
+                // predicates reclaim disk. Look-forward offsets, calendar units (a variable shift),
+                // and non-constant offsets stay unproven.
+                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < now() - 1_000_000L", 0).isMonotonic());
+                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < dateadd('d', -1, now())", 0).isMonotonic());
+                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < dateadd('h', -36, now())", 0).isMonotonic());
                 Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
                         sqlExecutionContext, metadata, "ts < dateadd('u', 1, now())", 0).isMonotonic());
                 Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < now() - 1_000_000L", 0).isMonotonic());
+                        sqlExecutionContext, metadata, "ts < dateadd('M', -1, now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < now() + 1_000_000L", 0).isMonotonic());
             }
 
             // A subquery predicate is never treated as safe for physical cleanup: the expression parse
@@ -684,6 +696,38 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 Assert.assertFalse(job.runNow());
                 Assert.assertEquals(2, attempts[0]);
             }
+        });
+    }
+
+    @Test
+    public void testLookBackClockPredicateReclaimsPhysically() throws Exception {
+        // The canonical retention predicate "ts < dateadd('d', -1, now())" is proven monotonic (a
+        // look-back offset on a bare clock advances with the clock), so the cleanup job physically
+        // reclaims under it: the fully-expired old partition is wiped, the partly-recent one and the
+        // active one stay, and the visible set is unchanged.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('OLD', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('MID', 2.0, '2024-01-09T12:00:00.000000Z'),
+                    ('NEW', 3.0, '2024-01-10T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts < dateadd('d', -1, now())");
+            drainWalAndMatViewQueues();
+
+            // now()=Jan10, threshold=Jan09 00:00 -> OLD expired; MID and NEW visible.
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nMID\nNEW\n");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+
+            final boolean worked = runCleanup("mv");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue("look-back clock policy must physically reclaim", worked);
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')")
+                    .noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nMID\nNEW\n");
         });
     }
 
