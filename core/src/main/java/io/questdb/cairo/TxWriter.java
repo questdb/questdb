@@ -233,6 +233,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         ff.fsync(txMemBase.getFd());
     }
 
+    /**
+     * The fd of the backing {@code _txn} file, or {@code -1} if not currently mapped. The {@code _txn} file
+     * lives in the table directory and is mapped for the whole writer lifetime, so this is a STABLE
+     * filesystem fd for the table — valid even when no partition column is open. Used by the adaptive
+     * durable-epoch cut ({@code TableWriter.fsyncMaterializedState()}) to source the epoch's fs-wide
+     * {@code syncfs}, which must never no-op just because every column fd is closed (CRIT-1).
+     */
+    public long getFd() {
+        return txMemBase != null ? txMemBase.getFd() : -1;
+    }
+
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;

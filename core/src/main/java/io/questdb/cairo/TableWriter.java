@@ -14345,20 +14345,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void syncColumnsBatchedSync() {
         // Pass 1: KICK all columns (data before aux) then all symbol writers.
-        long syncfsFd = -1;
         for (int i = 0; i < columnCount; i++) {
             final MemoryMA m1 = columns.getQuick(i * 2);
             m1.syncFlushKick();
-            // A deleted (or not-yet-open) column slot is NullMemory, whose getFd() throws
-            // UnsupportedOperationException; skip it when probing for a filesystem fd (any real column fd
-            // identifies the fs). Without this guard the epoch's batched flush throws for tables with a
-            // deleted column or a parquet partition, and the durable epoch silently never advances.
-            if (syncfsFd == -1 && !(m1 instanceof NullMemory)) {
-                final long fd = m1.getFd();
-                if (fd != -1) {
-                    syncfsFd = fd;
-                }
-            }
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.syncFlushKick();
@@ -14381,10 +14370,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Pass 2.5: SYNCFS once over the table's filesystem AFTER all columns+symbols are drained. This is the
         // single device flush that makes every drained column durable AND journals all their ext4 extent
         // conversions + i_size in one journal commit (replacing the broken reliance on _cv's flush, which did
-        // not journal the column files' extent conversions). Any open column fd identifies the filesystem.
-        if (syncfsFd != -1) {
-            ff.syncfs(syncfsFd);
-        }
+        // not journal the column files' extent conversions). CRIT-1: the fd is sourced from a STABLE
+        // table-level file (the _txn fd), NOT an open column, so this NEVER no-ops when every column is closed
+        // (convert-last-partition / graceful-close) — see fsyncMaterializedStateSyncFs().
+        fsyncMaterializedStateSyncFs();
         // Pass 3: FINISH-IF-EXTENDED (watermark bookkeeping ONLY; the per-file fdatasync is now redundant —
         // the syncfs above already journaled i_size + extents for every column). Data before aux preserved.
         for (int i = 0; i < columnCount; i++) {
@@ -14602,29 +14591,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * I1 helper: issue ONE filesystem-wide {@code syncfs()} for the EPOCH flush over an open column fd of
-     * this table. This is what makes the non-batched {@link #fsyncMaterializedState()} path equally
-     * fs-wide: it writes back+journals every CLOSED partition's lazily-written column data (left dirty in
-     * the page cache after the partition was unmapped), which {@code syncColumns0()} — open-partition only
-     * — does not reach. Any column fd of the table identifies the filesystem; we pick the first open one.
-     * If no column is open (no fd), there is no materialized column data to flush, so this is a no-op.
+     * Issue ONE filesystem-wide {@code syncfs()} for the EPOCH flush, sourcing the fd from a STABLE
+     * table-level file rather than an open column. {@code syncfs(anyFdOnThatFs)} flushes the WHOLE
+     * filesystem, so this writes back + journals every CLOSED partition's lazily-written column data (left
+     * dirty in the page cache after the partition was unmapped), which {@code syncColumns0()} —
+     * open-partition only — does not reach. That is what makes the non-batched
+     * {@link #fsyncMaterializedState()} path equally fs-wide.
+     * <p>
+     * CRIT-1 (must-fix): the fd MUST be valid whenever the epoch runs, INDEPENDENT of any column being
+     * open. At convert-last-partition ({@link #convertPartitionNativeToParquet} /
+     * {@link #convertPartitionParquetToNative} call {@code closeActivePartition(false)} — which nulls EVERY
+     * column fd — right before {@code advanceDurableEpoch}) and at graceful-close with the active partition
+     * already closed, ALL
+     * column fds are {@code -1}. The old "first open column fd" sourcing then left the syncfs a NO-OP while
+     * the epoch still stamped {@code _txn.epoch}/{@code _cv.epoch} + the marker past those never-device-
+     * flushed rows -> silent row loss on power cut. The {@code _txn} file lives in the table dir (same
+     * filesystem as every column) and is mapped for the whole writer lifetime, so its fd is the stable
+     * source. Sourced UNCONDITIONALLY: a table-dir {@code openRO} is the defensive fallback (an open writer
+     * always has a mapped {@code _txn}, so it is not expected to be hit; closed immediately so no fd leaks).
      */
     private void fsyncMaterializedStateSyncFs() {
-        long syncfsFd = -1;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final MemoryMA m = columns.getQuick(i);
-            // NullMemory (a deleted / not-yet-open column slot) is non-null but its getFd() throws
-            // UnsupportedOperationException; skip it (mirrors the batched syncColumnsBatchedSync guard).
-            if (m != null && !(m instanceof NullMemory)) {
-                final long fd = m.getFd();
-                if (fd != -1) {
-                    syncfsFd = fd;
-                    break;
-                }
-            }
+        final long txnFd = txWriter.getFd();
+        if (txnFd != -1) {
+            ff.syncfs(txnFd);
+            return;
         }
-        if (syncfsFd != -1) {
-            ff.syncfs(syncfsFd);
+        // Defensive fallback: identify the table's filesystem via a table-dir fd. Any fd on that fs suffices
+        // for syncfs; close it so the memory-leak assertion cannot catch a leak.
+        final long dirFd = TableUtils.openRO(ff, path.trimTo(pathSize).$(), LOG);
+        path.trimTo(pathSize);
+        if (dirFd != -1) {
+            try {
+                ff.syncfs(dirFd);
+            } finally {
+                ff.close(dirFd);
+            }
         }
     }
 

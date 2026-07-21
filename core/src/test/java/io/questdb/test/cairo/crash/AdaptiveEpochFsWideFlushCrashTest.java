@@ -160,6 +160,193 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
         }
     }
 
+    /**
+     * CRIT-1 (convert-last-partition, BATCHED epoch path): converting the last (and only) partition to
+     * parquet runs {@code closeActivePartition(false)} — which nulls EVERY column fd — immediately before
+     * {@code advanceDurableEpoch}. The batched {@code syncColumnsBatchedSync} sourced its {@code syncfs} fd
+     * from an open column and, finding none, no-op'd the fs-wide flush while still stamping
+     * {@code _txn.epoch}/{@code _cv.epoch} + the marker past the just-converted rows -> silent loss.
+     */
+    @Test
+    public void testConvertLastPartitionEpochFsWideBatched() throws Exception {
+        runConvertLastPartitionEpochFsWideCase(true);
+    }
+
+    /**
+     * CRIT-1 (convert-last-partition, NON-BATCHED epoch path): same defect on the
+     * {@code fsyncMaterializedStateSyncFs} branch (ext4 fast_commit / non-Linux).
+     */
+    @Test
+    public void testConvertLastPartitionEpochFsWideNonBatched() throws Exception {
+        runConvertLastPartitionEpochFsWideCase(false);
+    }
+
+    /**
+     * CRIT-1 (graceful-close epoch, BATCHED path, all columns closed) — the full outcome proof on NATIVE
+     * data: a clean writer close folds the un-epoched tail into a final durable epoch ({@code doClose} ->
+     * {@code advanceDurableEpoch}) with the active partition already closed, so {@code fsyncMaterializedState}
+     * runs with NO open column. Without the fix the syncfs no-op'd and the tail was silently lost on crash.
+     */
+    @Test
+    public void testGracefulCloseAllColumnsClosedEpochFsWideBatched() throws Exception {
+        runGracefulCloseAllColumnsClosedCase(true);
+    }
+
+    /**
+     * CRIT-1 (graceful-close epoch, NON-BATCHED path, all columns closed) — same outcome proof on the
+     * {@code fsyncMaterializedStateSyncFs} branch (ext4 fast_commit / non-Linux).
+     */
+    @Test
+    public void testGracefulCloseAllColumnsClosedEpochFsWideNonBatched() throws Exception {
+        runGracefulCloseAllColumnsClosedCase(false);
+    }
+
+    private void runGracefulCloseAllColumnsClosedCase(boolean batched) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Large interval: the first-batch epoch fires once (active partition OPEN -> syncfs sources a valid
+        // column fd, no bug), then NO cadence epoch re-fires, so the SECOND insert is an un-epoched tail that
+        // only the graceful-close epoch can make durable. >= 0 so flush-on-close is allowed (it is gated on
+        // interval >= 0). Backlog cap stays at the 5M default -> a handful of rows never trips it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, batched ? "true" : "false");
+        try {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            Assert.assertTrue("flush-on-close must be enabled for this test",
+                    engine.getConfiguration().isAdaptiveEpochFlushOnClose());
+            Assert.assertEquals("the requested epoch column-sync path must be active",
+                    batched, engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
+
+            runWithCrashFacade(() -> {
+                crashFf.modelSharedJournal = false;
+
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+
+                // First insert + drain: the first-batch epoch (lastEpochTs==0) fires HERE with the active
+                // partition OPEN, so it makes these rows durable and advances durableEpochSeqTxn.
+                for (int i = 0; i < DAY1_ROWS; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                // Second insert + drain: interval is huge -> no cadence epoch -> these rows are an UN-epoched
+                // tail (durableEpochSeqTxn stays behind getSeqTxn), non-durable until the graceful-close epoch.
+                for (int i = 0; i < DAY2_ROWS; i++) {
+                    execute("insert into t values ('2024-10-01T1" + i + ":00:00.000000Z', " + (DAY1_ROWS + i) + ")");
+                }
+                drainWalQueue();
+
+                final TableToken tt = engine.verifyTableName("t");
+                Assert.assertEquals("pre-crash must see all rows", TOTAL, readVs().size());
+
+                // Explicitly close the active partition (nulls EVERY column fd), then return the writer to the
+                // pool. The close on a pooled writer does NOT run doClose; releaseInactive() below does.
+                try (TableWriter w = getWriter(tt)) {
+                    w.closeActivePartition(false);
+                }
+
+                // Force the pooled writer to actually close -> doClose folds the un-epoched tail into a final
+                // durable epoch with ALL columns closed -> advanceDurableEpoch -> fsyncMaterializedState with
+                // NO open column. Without the fix its syncfs no-ops (all column fds -1). The fix sources the
+                // syncfs fd from the stable _txn fd, so the fs-wide flush fires and the tail becomes durable.
+                final int syncfsBefore = crashFf.syncfsCount();
+                engine.releaseInactive();
+                final int syncfsAfter = crashFf.syncfsCount();
+                Assert.assertTrue(
+                        "CRIT-1: the graceful-close EPOCH (all columns closed, batched=" + batched + ") must "
+                                + "still issue a filesystem-wide syncfs (before=" + syncfsBefore + ", after="
+                                + syncfsAfter + ")",
+                        syncfsAfter > syncfsBefore
+                );
+
+                // CRASH: only what the epoch's fs-wide syncfs flushed is durable. Without the fix the
+                // second-insert tail was never device-flushed -> dropped -> silent loss / read fault.
+                crashAndReopen();
+
+                new io.questdb.cairo.RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+
+                Assert.assertFalse("table must NOT be suspended", engine.getTableSequencerAPI().isSuspended(tt));
+                final List<Long> post = readVs();
+                Assert.assertEquals("ALL rows must survive the graceful-close crash", TOTAL, post.size());
+                for (int i = 0; i < TOTAL; i++) {
+                    Assert.assertEquals("row " + i + " value", Long.valueOf(i), post.get(i));
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
+        }
+    }
+
+    private void runConvertLastPartitionEpochFsWideCase(boolean batched) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // interval=-1: no cadence epoch fires, so the ONLY epoch (and the ONLY syncfs) in the convert window
+        // is the convert's own advanceDurableEpoch -> the syncfs delta isolates the convert epoch exactly.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, batched ? "true" : "false");
+        try {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            Assert.assertEquals("the requested epoch column-sync path must be active",
+                    batched, engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
+
+            runWithCrashFacade(() -> {
+                // Per-inode journaling: nothing journals the converted partition's data for free — only the
+                // epoch's own fs-wide syncfs can make it durable.
+                crashFf.modelSharedJournal = false;
+
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+
+                // All rows in a SINGLE partition (2024-10-01) = the LAST partition. Converting it drives, on
+                // the apply worker, closeActivePartition(false) -> EVERY column fd == -1, then advanceDurable-
+                // Epoch -> fsyncMaterializedState -> the fs-wide syncfs.
+                for (int i = 0; i < TOTAL; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                final TableToken tt = engine.verifyTableName("t");
+                Assert.assertEquals("pre-convert must see all rows", TOTAL, readVs().size());
+
+                // Convert the last (and only) partition to parquet. On the apply worker this runs
+                // closeActivePartition(false) -> EVERY column fd == -1, then advanceDurableEpoch ->
+                // fsyncMaterializedState. With the bug the epoch's syncfs sources its fd from an open column,
+                // finds none, and NO-OPs -> syncfsCount does NOT move, yet the epoch still stamps
+                // _txn.epoch/_cv.epoch + the marker past the just-converted rows (the silent-loss window). The
+                // fix sources the syncfs fd from the stable _txn fd, so the fs-wide flush fires regardless.
+                //
+                // NB: this is the MECHANISM proof (the fs-wide flush fires with all columns closed). The
+                // outcome (row survival) is proven on NATIVE data in testGracefulCloseAllColumnsClosed...,
+                // because the parquet writer is native (JNI) and its mmap page writes are opaque to the Java
+                // crash facade (writtenDataEnd stays 0), so the facade cannot model parquet durability either
+                // way — before OR after the fix — making a parquet crash-survival assertion meaningless here.
+                final int syncfsBefore = crashFf.syncfsCount();
+                execute("alter table t convert partition to parquet list '2024-10-01'");
+                drainWalQueue();
+                final int syncfsAfter = crashFf.syncfsCount();
+                Assert.assertTrue(
+                        "CRIT-1: the convert-last-partition EPOCH (all columns closed, batched=" + batched
+                                + ") must still issue a filesystem-wide syncfs (before=" + syncfsBefore
+                                + ", after=" + syncfsAfter + ")",
+                        syncfsAfter > syncfsBefore
+                );
+
+                // The convert itself is intact and readable (all rows still present post-convert).
+                Assert.assertFalse("table must NOT be suspended", engine.getTableSequencerAPI().isSuspended(tt));
+                final List<Long> post = readVs();
+                Assert.assertEquals("post-convert must see all rows", TOTAL, post.size());
+                for (int i = 0; i < TOTAL; i++) {
+                    Assert.assertEquals("row " + i + " value", Long.valueOf(i), post.get(i));
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
+        }
+    }
+
     private List<Long> readVs() {
         final List<Long> out = new ArrayList<>();
         try (io.questdb.cairo.sql.RecordCursorFactory f = select("select v from t order by ts")) {
