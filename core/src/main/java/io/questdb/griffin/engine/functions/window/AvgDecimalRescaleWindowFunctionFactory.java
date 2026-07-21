@@ -1401,6 +1401,16 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own
+            // (timestamp, value) pairs plus an accumulator and count over exactly those - and a
+            // warm-up from the frame's lower edge rebuilds all three. Fixed-point addition is
+            // exact, so the accumulator converges exactly, and the rescaled quotient is a
+            // function of it and the count alone.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -1757,6 +1767,17 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getType() {
             return targetType;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own N values
+            // plus an accumulator and count over exactly those - which a warm-up of N
+            // predecessors rebuilds. Only the ring's rotation differs from a whole-history
+            // recompute's, which the contract allows. Fixed-point addition is exact, so the
+            // accumulator converges exactly, and the rescaled quotient is a function of it and
+            // the count alone.
+            return true;
         }
 
         @Override
@@ -3264,6 +3285,16 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own
+            // (timestamp, value) pairs plus an accumulator and count over exactly those - and a
+            // warm-up from the frame's lower edge rebuilds all three. Fixed-point addition is
+            // exact, so the accumulator converges exactly, and the rescaled quotient is a
+            // function of it and the count alone.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -3633,6 +3664,17 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getType() {
             return targetType;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own N values
+            // plus an accumulator and count over exactly those - which a warm-up of N
+            // predecessors rebuilds. Only the ring's rotation differs from a whole-history
+            // recompute's, which the contract allows. Fixed-point addition is exact, so the
+            // accumulator converges exactly, and the rescaled quotient is a function of it and
+            // the count alone.
+            return true;
         }
 
         @Override
@@ -5167,6 +5209,16 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own
+            // (timestamp, value) pairs plus an accumulator and count over exactly those - and a
+            // warm-up from the frame's lower edge rebuilds all three. Fixed-point addition is
+            // exact, so the accumulator converges exactly, and the rescaled quotient is a
+            // function of it and the count alone.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -5528,6 +5580,17 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getType() {
             return targetType;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own N values
+            // plus an accumulator and count over exactly those - which a warm-up of N
+            // predecessors rebuilds. Only the ring's rotation differs from a whole-history
+            // recompute's, which the contract allows. Fixed-point addition is exact, so the
+            // accumulator converges exactly, and the rescaled quotient is a function of it and
+            // the count alone.
+            return true;
         }
 
         @Override
@@ -6984,6 +7047,16 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own
+            // (timestamp, value) pairs plus an accumulator and count over exactly those - and a
+            // warm-up from the frame's lower edge rebuilds all three. Fixed-point addition is
+            // exact, so the accumulator converges exactly, and the rescaled quotient is a
+            // function of it and the count alone.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -7342,6 +7415,17 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getType() {
             return targetType;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own N values
+            // plus an accumulator and count over exactly those - which a warm-up of N
+            // predecessors rebuilds. Only the ring's rotation differs from a whole-history
+            // recompute's, which the contract allows. Fixed-point addition is exact, so the
+            // accumulator converges exactly, and the rescaled quotient is a function of it and
+            // the count alone.
+            return true;
         }
 
         @Override
@@ -8864,6 +8948,16 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own
+            // (timestamp, value) pairs plus an accumulator and count over exactly those - and a
+            // warm-up from the frame's lower edge rebuilds all three. Fixed-point addition is
+            // exact, so the accumulator converges exactly, and the rescaled quotient is a
+            // function of it and the count alone.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -9214,6 +9308,17 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getType() {
             return targetType;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own N values
+            // plus an accumulator and count over exactly those - which a warm-up of N
+            // predecessors rebuilds. Only the ring's rotation differs from a whole-history
+            // recompute's, which the contract allows. Fixed-point addition is exact, so the
+            // accumulator converges exactly, and the rescaled quotient is a function of it and
+            // the count alone.
+            return true;
         }
 
         @Override
@@ -10769,6 +10874,16 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own
+            // (timestamp, value) pairs plus an accumulator and count over exactly those - and a
+            // warm-up from the frame's lower edge rebuilds all three. Fixed-point addition is
+            // exact, so the accumulator converges exactly, and the rescaled quotient is a
+            // function of it and the count alone.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -11149,6 +11264,17 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getType() {
             return targetType;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The state is the plain decimal average's - a ring of the frame's own N values
+            // plus an accumulator and count over exactly those - which a warm-up of N
+            // predecessors rebuilds. Only the ring's rotation differs from a whole-history
+            // recompute's, which the contract allows. Fixed-point addition is exact, so the
+            // accumulator converges exactly, and the rescaled quotient is a function of it and
+            // the count alone.
+            return true;
         }
 
         @Override

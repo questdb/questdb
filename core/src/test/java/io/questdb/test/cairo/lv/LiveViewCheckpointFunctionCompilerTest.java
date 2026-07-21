@@ -273,6 +273,48 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     }
 
     /**
+     * The sum/count/avg families over every value type that reaches a partitioned bounded
+     * frame. All three hold a ring of the frame's own rows and an accumulator over exactly
+     * that ring, so the claim is one claim - but the accumulator's arithmetic is not, and
+     * that is what this pins per type. A DECIMAL accumulator adds and subtracts fixed-point
+     * values, which is exact, so a frame re-accumulated from the dependency floor holds the
+     * same bits and the value read off it converges exactly. The DOUBLE arm re-accumulates
+     * a floating sum instead and keeps the documented tolerance.
+     * <p>
+     * The rescaled two-argument {@code avg} is a fourth implementation rather than a
+     * projection of the plain one: it carries its own accumulator per argument width and
+     * divides at the target scale, so it declares the contract for itself.
+     */
+    @Test
+    public void testSumCountAndAvgDeclareFrameLocalStateForEveryTypeAndFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table typed (ts timestamp, sym symbol, l long, d double, v varchar, "
+                    + "d8 decimal(2, 0), d16 decimal(4, 1), d32 decimal(9, 2), d64 decimal(18, 3), "
+                    + "d128 decimal(38, 6), d256 decimal(76, 10)) timestamp(ts) partition by day wal");
+            final String[] decimals = {"d8", "d16", "d32", "d64", "d128", "d256"};
+            for (int i = 0; i < decimals.length; i++) {
+                assertFrameLocalOverBothFrames("sum(" + decimals[i] + ")");
+                assertFrameLocalOverBothFrames("avg(" + decimals[i] + ")");
+                // The rescale form. A target scale of 4 keeps every argument width inside the
+                // precision limit, so all six reach their own rescaling implementation.
+                assertFrameLocalOverBothFrames("avg(" + decimals[i] + ", 4)");
+            }
+            // A count is a counter over the frame's rows whatever it counts, so it is exact
+            // for every argument type - including the ones no sum accepts.
+            final String[] counted = {"*", "l", "d", "v", "sym", "d64"};
+            for (int i = 0; i < counted.length; i++) {
+                assertFrameLocalOverBothFrames("count(" + counted[i] + ")");
+            }
+            // The floating arm of the same buffer. LONG has no sum of its own and widens into
+            // it, so it carries the tolerance too.
+            assertFrameLocalOverBothFrames("sum(d)", NumericConvergence.FLOATING_TOLERANCE);
+            assertFrameLocalOverBothFrames("avg(d)", NumericConvergence.FLOATING_TOLERANCE);
+            assertFrameLocalOverBothFrames("sum(l)", NumericConvergence.FLOATING_TOLERANCE);
+            assertFrameLocalOverBothFrames("avg(l)", NumericConvergence.FLOATING_TOLERANCE);
+        });
+    }
+
+    /**
      * Every ROWS shape below compiles and stays a valid live view. Declining the repair
      * plan costs such a view only the localized path it does not have today - which is
      * why these are silent refusals rather than the CREATE-time rejections the RANGE
@@ -447,30 +489,35 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertFrameLocalOverBothFrames(String projection) throws Exception {
+        assertFrameLocalOverBothFrames(projection, NumericConvergence.EXACT);
+    }
+
     /**
      * Asserts that {@code projection} carries frame-local state, and therefore a repair
-     * plan, over both bounded frame shapes on the {@code typed} fixture. The two shapes
-     * are separate implementations of the same buffer, so neither implies the other.
+     * plan, over both bounded frame shapes on the {@code typed} fixture, and that it
+     * converges the way {@code convergence} claims. The two shapes are separate
+     * implementations of the same buffer, so neither implies the other.
      */
-    private static void assertFrameLocalOverBothFrames(String projection) throws Exception {
+    private static void assertFrameLocalOverBothFrames(String projection, NumericConvergence convergence) throws Exception {
         final Metadata rows = compileMetadata(
                 "select ts, sym, " + projection + " over (partition by sym order by ts "
-                        + "rows between 3 preceding and current row) v from typed",
+                        + "rows between 3 preceding and current row) w from typed",
                 0
         );
         Assert.assertTrue(projection, rows.dependency.isFiniteRows());
         Assert.assertTrue(projection, rows.dependency.hasFrameLocalState());
-        Assert.assertEquals(projection, NumericConvergence.EXACT, rows.dependency.getNumericConvergence());
+        Assert.assertEquals(projection, convergence, rows.dependency.getNumericConvergence());
         Assert.assertNotNull(projection, rows.rowsPlan);
 
         final Metadata range = compileMetadata(
                 "select ts, sym, " + projection + " over (partition by sym order by ts "
-                        + "range between 2 seconds preceding and current row) v from typed",
+                        + "range between 2 seconds preceding and current row) w from typed",
                 0
         );
         Assert.assertTrue(projection, range.dependency.isFiniteRange());
         Assert.assertTrue(projection, range.dependency.hasFrameLocalState());
-        Assert.assertEquals(projection, NumericConvergence.EXACT, range.dependency.getNumericConvergence());
+        Assert.assertEquals(projection, convergence, range.dependency.getNumericConvergence());
         Assert.assertNotNull(projection, range.rangePlan);
     }
 

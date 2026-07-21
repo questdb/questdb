@@ -1384,6 +1384,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -1738,6 +1748,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
         }
 
         @Override
@@ -3098,6 +3119,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -3417,6 +3448,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
         }
 
         @Override
@@ -4730,6 +4772,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -5108,6 +5160,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
         }
 
         @Override
@@ -6514,6 +6577,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -6833,6 +6906,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
         }
 
         @Override
@@ -8098,6 +8182,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -8430,6 +8524,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
         }
 
         @Override
@@ -9725,6 +9830,16 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator and
+            // count run over exactly those, so a warm-up from the frame's lower edge rebuilds
+            // all three. Adding and subtracting fixed-point values is exact, so unlike the
+            // DOUBLE arm the accumulator carries no rounding difference into the rebuilt state
+            // and the quotient read off it converges exactly.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -10044,6 +10159,17 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator and count run over
+            // exactly those, so a warm-up of N predecessors rebuilds all three. The ring starts
+            // at a different rotation than a whole-history recompute leaves it at, which the
+            // contract allows. Adding and subtracting fixed-point values is exact, so unlike
+            // the DOUBLE arm the values converge exactly rather than within the documented
+            // drift.
+            return true;
         }
 
         @Override

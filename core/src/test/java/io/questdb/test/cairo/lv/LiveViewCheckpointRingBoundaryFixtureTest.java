@@ -164,6 +164,24 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testRangeDependencyBoundsADecimalSumRebuild() throws Exception {
+        // The sum/avg family's fixed-point arm. It buffers and accumulates what the DOUBLE arm
+        // does, so the bounds are again the fixture's 14 and 8 - what changes is the claim the
+        // accumulator can make. A re-accumulated floating sum keeps a rounding difference the
+        // contract tolerates; adding and subtracting fixed-point values is exact, so the
+        // repaired output has to equal the from-base recompute to the last digit, which is what
+        // the oracle's exact cursor comparison holds it to here.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "sum(x::decimal(18, 3))",
+                "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + LOCALIZATION_RANGE_WIDTH_SECONDS
+                        + "' SECOND PRECEDING AND CURRENT ROW",
+                false
+        );
+        Assert.assertEquals("the rebuild must read exactly [R - W, changeMaxTs + W]", 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
+    }
+
+    @Test
     public void testRangeDependencyBoundsAMaxRebuild() throws Exception {
         // The max/min family on the RANGE arm. Its state is a ring of the frame's own rows
         // plus a monotonic deque over exactly those, so the frame bounds it as it bounds the
@@ -213,6 +231,21 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         assertRingCollapsesThenOldO3ForcesBoundaryReplay(
                 "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW"
         );
+    }
+
+    @Test
+    public void testRowsDependencyBoundsADecimalAvgRebuild() throws Exception {
+        // The same arm on the ROWS side, through avg() rather than sum(), which divides the
+        // accumulator by the frame's own count. Both converge exactly, so the quotient does
+        // too - a rounded HALF_EVEN quotient is a function of the pair and nothing else. The
+        // discovery and the rebuild cost what the LONG sum's do.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "avg(x::decimal(18, 3))",
+                "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
+                false
+        );
+        Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
 
     @Test

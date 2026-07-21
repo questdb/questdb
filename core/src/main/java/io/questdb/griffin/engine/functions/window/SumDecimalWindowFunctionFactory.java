@@ -1383,6 +1383,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator runs
+            // over exactly those, so a warm-up from the frame's lower edge rebuilds both.
+            // Adding and subtracting fixed-point values is exact, so the accumulator this emits
+            // directly converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -1736,6 +1745,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator runs over exactly
+            // those, so a warm-up of N predecessors rebuilds both. Only the ring's rotation
+            // differs from a whole-history recompute's, which the contract allows. Adding and
+            // subtracting fixed-point values is exact, so the accumulator this emits directly
+            // converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
         }
 
         @Override
@@ -3056,6 +3075,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator runs
+            // over exactly those, so a warm-up from the frame's lower edge rebuilds both.
+            // Adding and subtracting fixed-point values is exact, so the accumulator this emits
+            // directly converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -3365,6 +3393,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator runs over exactly
+            // those, so a warm-up of N predecessors rebuilds both. Only the ring's rotation
+            // differs from a whole-history recompute's, which the contract allows. Adding and
+            // subtracting fixed-point values is exact, so the accumulator this emits directly
+            // converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
         }
 
         @Override
@@ -4602,6 +4640,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator runs
+            // over exactly those, so a warm-up from the frame's lower edge rebuilds both.
+            // Adding and subtracting fixed-point values is exact, so the accumulator this emits
+            // directly converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -4967,6 +5014,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator runs over exactly
+            // those, so a warm-up of N predecessors rebuilds both. Only the ring's rotation
+            // differs from a whole-history recompute's, which the contract allows. Adding and
+            // subtracting fixed-point values is exact, so the accumulator this emits directly
+            // converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
         }
 
         @Override
@@ -6335,6 +6392,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator runs
+            // over exactly those, so a warm-up from the frame's lower edge rebuilds both.
+            // Adding and subtracting fixed-point values is exact, so the accumulator this emits
+            // directly converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -6655,6 +6721,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator runs over exactly
+            // those, so a warm-up of N predecessors rebuilds both. Only the ring's rotation
+            // differs from a whole-history recompute's, which the contract allows. Adding and
+            // subtracting fixed-point values is exact, so the accumulator this emits directly
+            // converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
         }
 
         @Override
@@ -7922,6 +7998,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator runs
+            // over exactly those, so a warm-up from the frame's lower edge rebuilds both.
+            // Adding and subtracting fixed-point values is exact, so the accumulator this emits
+            // directly converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -8244,6 +8329,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator runs over exactly
+            // those, so a warm-up of N predecessors rebuilds both. Only the ring's rotation
+            // differs from a whole-history recompute's, which the contract allows. Adding and
+            // subtracting fixed-point values is exact, so the accumulator this emits directly
+            // converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
         }
 
         @Override
@@ -9493,6 +9588,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own (timestamp, value) pairs and the accumulator runs
+            // over exactly those, so a warm-up from the frame's lower edge rebuilds both.
+            // Adding and subtracting fixed-point values is exact, so the accumulator this emits
+            // directly converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
+        }
+
+        @Override
         public void onCheckpointRestoreBegin() {
             super.onCheckpointRestoreBegin();
             memory.truncate();
@@ -9804,6 +9908,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public boolean hasFrameLocalCheckpointState() {
+            // The ring holds the frame's own N values and the accumulator runs over exactly
+            // those, so a warm-up of N predecessors rebuilds both. Only the ring's rotation
+            // differs from a whole-history recompute's, which the contract allows. Adding and
+            // subtracting fixed-point values is exact, so the accumulator this emits directly
+            // converges exactly rather than within the DOUBLE arm's documented drift.
+            return true;
         }
 
         @Override

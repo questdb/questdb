@@ -523,7 +523,10 @@ public final class LiveViewCheckpointFunctionCompiler {
 
     private static NumericConvergence numericConvergence(WindowFunction function) {
         // These functions maintain floating accumulators whose add/remove order can
-        // leave an allowed sub-ULP suffix difference after localized replay.
+        // leave an allowed sub-ULP suffix difference after localized replay. The type
+        // check is what confines the tolerance to that case: the same functions over a
+        // DECIMAL add and subtract scaled integers, which is exact, so their state and
+        // output converge bit-for-bit and they stay EXACT here.
         final CharSequence name = function.getName();
         return ColumnType.tagOf(function.getType()) == ColumnType.DOUBLE
                 && (Chars.equalsIgnoreCase(name, "avg")
