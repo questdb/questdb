@@ -8799,6 +8799,7 @@ public class SqlOptimiser implements Mutable {
 
             emptyModel2.moveLimitFrom(model);
             emptyModel2.moveOrderByFrom(model);
+            emptyModel2.moveSubsampleFrom(model);
             model = emptyModel2;
         } else {
             IQueryModel oldPivotNested = model.getNestedModel();

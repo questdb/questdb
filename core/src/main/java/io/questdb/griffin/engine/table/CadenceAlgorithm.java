@@ -69,7 +69,10 @@ class CadenceAlgorithm {
         }
         int lastIdx = bufferSize - 1;
         // Emit stride-selected rows: stride + offset, 2*stride + offset, ...
-        for (int pos = stride + offset; pos < bufferSize; pos += stride) {
+        // Use long for the running index: stride + offset can exceed Integer.MAX_VALUE
+        // (stride up to Integer.MAX_VALUE, offset in [0, stride)), which would wrap to a
+        // negative int and produce an out-of-bounds native buffer read downstream.
+        for (long pos = (long) stride + offset; pos < bufferSize; pos += stride) {
             if ((pos & 0xFFF) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }

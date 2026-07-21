@@ -3306,11 +3306,26 @@ public class SubsampleTest extends AbstractCairoTest {
 
     // Mirrors the splitmix64 hash used in SubsampleRecordCursorFactory
     // for deterministic cadence offset computation.
+    @Test
+    public void testSubsampleOnNonFinalUnionArmRejected() throws Exception {
+        // SUBSAMPLE on a non-final UNION arm must be rejected, like ORDER BY / LIMIT,
+        // rather than silently downsampling only the first arm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5) UNION SELECT price, ts FROM t",
+                    24,
+                    "unexpected token 'subsample'"
+            );
+        });
+    }
+
     private static int deterministicCadenceOffset(long seed, int stride) {
         long h = seed;
         h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
         h = (h ^ (h >>> 27)) * 0x94d049bb133111ebL;
         h = h ^ (h >>> 31);
-        return (int) (Math.abs(h) % stride);
+        // mirror production: floorMod, not Math.abs(h) % stride (Math.abs(Long.MIN_VALUE) is negative)
+        return (int) Math.floorMod(h, (long) stride);
     }
 }

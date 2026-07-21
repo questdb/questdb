@@ -502,7 +502,9 @@ public class SubsampleRecordCursorFactory extends AbstractRecordCursorFactory {
             h = (h ^ (h >>> 30)) * 0xbf58476d1ce4e5b9L;
             h = (h ^ (h >>> 27)) * 0x94d049bb133111ebL;
             h = h ^ (h >>> 31);
-            return (int) (Math.abs(h) % stride);
+            // floorMod (not Math.abs(h) % stride): Math.abs(Long.MIN_VALUE) stays negative,
+            // which would return a negative offset for the one seed that hashes to it.
+            return (int) Math.floorMod(h, (long) stride);
         }
 
         private void bufferInput() {

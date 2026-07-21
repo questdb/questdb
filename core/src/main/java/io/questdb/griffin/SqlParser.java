@@ -2424,6 +2424,9 @@ public class SqlParser {
                 if (prevModel.getNestedModel().getLimitPosition() > 0) {
                     throw SqlException.$(prevModel.getNestedModel().getLimitPosition(), "unexpected token 'limit'");
                 }
+                if (prevModel.getNestedModel().getSubsamplePosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getSubsamplePosition(), "unexpected token 'subsample'");
+                }
             }
 
             if (isUnionKeyword(tok)) {
