@@ -138,6 +138,13 @@ public class CompositeWalLagBuffer implements QuietCloseable {
      * {@link ColumnType#pow2SizeOf(int)}); this is valid for every fixed-width type this buffer
      * accepts, including SYMBOL, which is a plain 4-byte int key at this layer, identical to how
      * {@code TableWriter} itself treats it in {@code o3Columns}.
+     * <p>
+     * If this method throws mid-loop (e.g. an allocation failure while growing a later column), earlier
+     * columns in the same call may already be grown/written past the still-unadvanced
+     * {@link #getRowCount()}. No memory is leaked (every region stays tracked for {@link #close()}) and no
+     * already-valid data is corrupted (the row count is not advanced until the whole loop completes, so the
+     * extra bytes are inert until overwritten by the next successful append), but the buffer should be
+     * discarded via {@link #close()} after any exception from {@code append}, not reused.
      *
      * @param srcColumns dense, per-column source memory, size == {@link #getColumnCount()}
      * @param srcRowLo   first row to copy, inclusive

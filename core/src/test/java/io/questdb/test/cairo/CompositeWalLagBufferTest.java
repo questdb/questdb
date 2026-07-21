@@ -252,7 +252,7 @@ public class CompositeWalLagBufferTest extends AbstractTest {
     @Test
     public void testVarSizeColumnRejectedInConstructor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int[] varSizeTypes = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.BINARY};
+            int[] varSizeTypes = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.BINARY, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)};
             for (int varType : varSizeTypes) {
                 IntList types = new IntList();
                 types.add(ColumnType.TIMESTAMP);
