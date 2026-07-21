@@ -286,6 +286,17 @@ public final class PostingIndexUtils {
     //               every entry in this .pk file. The footer is empty when
     //               COVER_COUNT == 0. The whole entry is then 8-byte aligned
     //               via PostingIndexChainEntry.entrySize.
+    // COVERING_FORMAT discriminator values stored at V2_ENTRY_OFFSET_COVERING_FORMAT.
+    //   0 (LEGACY) = the cover end-offset footer trails the gen-dir at
+    //       entry+56 + GEN_COUNT*GEN_DIR_ENTRY_SIZE, which ALIASES gen-dir slot
+    //       GEN_COUNT. Shipped in 9.4.0; read-only compat.
+    //   1 (DEALIASED) = the footer sits at a FIXED offset entry+56 and the
+    //       gen-dir is shifted to entry+56 + COVER_COUNT*8. Appending a gen never
+    //       touches the footer, so a concurrent covered reader cannot read a
+    //       clobbered footer. Non-covering entries (COVER_COUNT==0) are identical
+    //       in both formats.
+    public static final int COVERING_FORMAT_DEALIASED = 1;
+    public static final int COVERING_FORMAT_LEGACY = 0;
     public static final int V2_ENTRY_HEADER_SIZE = 56;
     public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 40;
     public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 44;

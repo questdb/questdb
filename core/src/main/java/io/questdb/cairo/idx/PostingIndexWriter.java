@@ -877,6 +877,35 @@ public class PostingIndexWriter implements IndexWriter {
         return encodeCtx.adaptiveDeltaAtOrAbove;
     }
 
+    // Covering-format a NEW entry this writer publishes should carry: covering
+    // (coverCount>0) => de-aliased (format 1); non-covering => format-0-equivalent.
+    private int newEntryCoveringFormat() {
+        return coverCount > 0 ? PostingIndexUtils.COVERING_FORMAT_DEALIASED : PostingIndexUtils.COVERING_FORMAT_LEGACY;
+    }
+
+    // The head entry's OWN stored covering format. The head may pre-date the
+    // writer's current coverCount (e.g. a coverCount=0 seal that predates
+    // configureCovering, which rebuildSidecars then reads before appending a new
+    // format-1 entry), so its layout must be read from the entry, not derived
+    // from the writer's live coverCount.
+    private int headStoredCoveringFormat() {
+        return PostingIndexChainEntry.unpackCoveringFormat(keyMem.getInt(chain.getHeadEntryOffset() + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
+    }
+
+    // The head entry's OWN cover count, recovered from its total size
+    // (layout-order-independent; safe single-threaded on the writer's own head).
+    private int headStoredCoverCount() {
+        long head = chain.getHeadEntryOffset();
+        int gc = keyMem.getInt(head + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        long len = keyMem.getLong(head + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
+        long cover = len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE - (long) gc * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        return cover > 0 ? (int) (cover / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE) : 0;
+    }
+
+    private long resolveHeadGenDirOffset(int gen) {
+        return PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen, headStoredCoveringFormat(), headStoredCoverCount());
+    }
+
     @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();
@@ -888,7 +917,7 @@ public class PostingIndexWriter implements IndexWriter {
         LongList values = new LongList();
         long headEntryOffset = chain.getHeadEntryOffset();
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(headEntryOffset, gen);
+            long dirOffset = resolveHeadGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
@@ -1389,7 +1418,7 @@ public class PostingIndexWriter implements IndexWriter {
             COVERING_FULL_RESEAL_COUNT.incrementAndGet();
         }
         closeSidecarMems();
-        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long gen0DirOffset = resolveHeadGenDirOffset(0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
         if (gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0) {
@@ -1522,7 +1551,7 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long gen0DirOffset = resolveHeadGenDirOffset(0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
         // Single dense gen: already sealed, sidecars from prior seal still valid.
@@ -1549,7 +1578,7 @@ public class PostingIndexWriter implements IndexWriter {
                 && partitionPath.size() > 0;
         if (isIncrementalCandidate) {
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long dirOffset = resolveHeadGenDirOffset(g);
                 int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 if (gkc >= 0) {
                     isIncrementalCandidate = false;
@@ -2192,7 +2221,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private int accumulateDenseGen0Counts(long totalCountsAddr) {
-        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long dirOffset = resolveHeadGenDirOffset(0);
         long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         long keyIdsBase = valueMem.addressOf(genFileOffset);
@@ -3984,7 +4013,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Decode from sparse gens 1..N
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+            long dirOffset = resolveHeadGenDirOffset(g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
@@ -4298,7 +4327,11 @@ public class PostingIndexWriter implements IndexWriter {
             coverEndOffsetsCache.clear();
         }
 
-        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
+        // A new entry carries the writer's current covering format/coverCount; a
+        // same-sealTxn extend must match the existing head's on-disk layout.
+        int writeFormat = newEntry ? newEntryCoveringFormat() : headStoredCoveringFormat();
+        int writeCoverCount = newEntry ? coverCount : headStoredCoverCount();
+        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex, writeFormat, writeCoverCount);
         long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
@@ -4366,11 +4399,11 @@ public class PostingIndexWriter implements IndexWriter {
                     /* keyCount */ keyCount,
                     /* genCount */ newGenCount,
                     /* blockCapacity */ blockCapacity,
-                    /* coveringFormat */ 0,
+                    /* coveringFormat */ newEntryCoveringFormat(),
                     coverEndOffsetsScratch
             );
         } else {
-            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch);
+            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch, headStoredCoveringFormat());
         }
     }
 
@@ -4599,7 +4632,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                long dirOffset = resolveHeadGenDirOffset(gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long keyIdsBase = valueMem.addressOf(genFileOffset);
@@ -5248,7 +5281,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Decode this stride's keys from all generations into strideValsAddr.
                 // keyOffsets serves as write cursor during decode (advanced per key).
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                    long dirOffset = resolveHeadGenDirOffset(gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                     int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genBase = valueMem.addressOf(genFileOffset);
@@ -5385,7 +5418,7 @@ public class PostingIndexWriter implements IndexWriter {
             genMetaStrideCounts = new int[genCount];
         }
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+            long dirOffset = resolveHeadGenDirOffset(gen);
             genMetaBases[gen] = valueMem.addressOf(keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET));
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             genMetaKeyCounts[gen] = genKeyCount;
@@ -5537,7 +5570,7 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.setMemory(dirtyStridesAddr, sc, (byte) 0);
             dirtyCount = 0;
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long dirOffset = resolveHeadGenDirOffset(g);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
@@ -5575,7 +5608,7 @@ public class PostingIndexWriter implements IndexWriter {
         // may be remapped (mremap) when the seal loop extends it to write
         // new stride data. Use gen0FileOffset and recompute the address each
         // time it's needed.
-        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long gen0DirOffset = resolveHeadGenDirOffset(0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         // Incremental-candidate invariant (gated in seal()): gen 0 is dense and
@@ -5635,7 +5668,7 @@ public class PostingIndexWriter implements IndexWriter {
             // Sparse gens 1..N: add each key's count. Sparse gens only touch
             // dirty strides, so clean strides keep a 0 here and are skipped.
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
+                long dirOffset = resolveHeadGenDirOffset(g);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);

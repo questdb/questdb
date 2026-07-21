@@ -1301,7 +1301,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // Fill staging gen-dir snapshot from the picked entry's payload.
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
-                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset);
+                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset, entryScratch.coveringFormat, entryScratch.coverCount);
                 // Re-validate the chain header seqlock. extendHead mutates the
                 // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
                 // aligned stores and republishes the header. Without this
@@ -1360,7 +1360,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 sidecarFileEndOffsets.setQuick(c, 0L);
             }
             // Reset gen lookup to an empty staging snapshot and promote it.
-            genLookup.snapshotMetadata(keyMem, 0, 0L);
+            genLookup.snapshotMetadata(keyMem, 0, 0L, PostingIndexUtils.COVERING_FORMAT_LEGACY, 0);
             genLookup.commitSnapshot();
             genLookup.invalidateCache();
             this.lastPickedPinnedTxn = this.pinnedTableTxn;

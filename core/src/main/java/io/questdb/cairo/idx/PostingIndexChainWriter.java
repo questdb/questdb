@@ -206,7 +206,7 @@ public final class PostingIndexChainWriter {
             long newValueMemSize,
             long newMaxValue
     ) {
-        extendHead(keyMem, newGenCount, newKeyCount, newValueMemSize, newMaxValue, null);
+        extendHead(keyMem, newGenCount, newKeyCount, newValueMemSize, newMaxValue, null, PostingIndexUtils.COVERING_FORMAT_LEGACY);
     }
 
     /**
@@ -233,7 +233,8 @@ public final class PostingIndexChainWriter {
             int newKeyCount,
             long newValueMemSize,
             long newMaxValue,
-            LongList newCoverEndOffsets
+            LongList newCoverEndOffsets,
+            int coveringFormat
     ) {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
             throw new IllegalStateException("posting index chain is empty; no head entry to extend");
@@ -255,10 +256,14 @@ public final class PostingIndexChainWriter {
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE, newValueMemSize);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, newMaxValue);
-        // Cover end-offset footer slots are at offset
-        // (header + newGenCount * GEN_DIR_ENTRY_SIZE). The footer's location
-        // depends on newGenCount, so we must write the cover sizes at the
-        // location matching the GEN_COUNT we are about to publish.
+        // Cover end-offset footer. In format 1 (de-aliased) the footer is at the
+        // FIXED offset entry+56, independent of newGenCount, so appending gen
+        // (newGenCount-1)'s gen-dir slot never overwrites it — this is the fix
+        // for the concurrent covered-read OOB. In format 0 (legacy) the footer
+        // trails the gen-dir at header+newGenCount*GEN_DIR_ENTRY_SIZE (the
+        // aliasing layout; only reached when extending a not-yet-migrated head).
+        // The writes stay BEFORE the storeFence/GEN_COUNT store so the new
+        // sidecar extents publish atomically with the new GEN_COUNT.
         if (coverCount > 0) {
             for (int c = 0; c < coverCount; c++) {
                 PostingIndexChainEntry.writeCoverEndOffset(
@@ -266,7 +271,9 @@ public final class PostingIndexChainWriter {
                         headEntryOffset,
                         newGenCount,
                         c,
-                        newCoverEndOffsets.getQuick(c)
+                        newCoverEndOffsets.getQuick(c),
+                        coveringFormat,
+                        coverCount
                 );
             }
         }
@@ -340,16 +347,34 @@ public final class PostingIndexChainWriter {
      * cache predecessors because the cost is one entry-size read and the
      * call rate is one-per-publish.
      */
+    // Recover an entry's own cover-column count from its total size. LEN =
+    // round8(56 + genCount*44 + coverCount*8); 56 and coverCount*8 are 8-aligned,
+    // so the alignment pad (0 or 4) is < 8 and floor-division recovers coverCount
+    // exactly, independent of format (the total size is the same in both). Safe
+    // ONLY in single-threaded writer contexts (a concurrent extendHead races LEN
+    // vs GEN_COUNT); concurrent readers must use the .pci-published coverCount.
+    private static int deriveEntryCoverCount(MemoryR keyMem, long entryOffset) {
+        int genCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        long len = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
+        long cover = len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE - (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        return cover > 0 ? (int) (cover / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE) : 0;
+    }
+
     public long getSecondEntryTxnAtSeal(MemoryR keyMem) {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD || entryCount < 2) {
             return -1L;
         }
+        // Head read: only prevEntryOffset (a header field) is used, so coverCount
+        // is irrelevant here. The predecessor read consumes slot[0]'s txnAtSeal,
+        // so it must resolve the gen-dir at the format-aware offset — derive the
+        // predecessor's own cover count from its size (single-threaded publish
+        // context, no concurrent extendHead).
         PostingIndexChainEntry.read(keyMem, headEntryOffset, 0, entryScratch);
         long prevOffset = entryScratch.prevEntryOffset;
         if (prevOffset == PostingIndexUtils.V2_NO_HEAD) {
             return -1L;
         }
-        PostingIndexChainEntry.read(keyMem, prevOffset, 0, entryScratch);
+        PostingIndexChainEntry.read(keyMem, prevOffset, deriveEntryCoverCount(keyMem, prevOffset), entryScratch);
         return entryScratch.txnAtSeal;
     }
 
@@ -517,10 +542,21 @@ public final class PostingIndexChainWriter {
         }
         long headOffset = headEntryOffset;
         int genCount = keyMem.getInt(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        int coveringFormat = PostingIndexChainEntry.unpackCoveringFormat(keyMem.getInt(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT));
         long len = keyMem.getLong(headOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
-        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount);
-        long footerBytesAvailable = Math.max(0L, headOffset + len - footerOffset);
-        int coverCount = (int) (footerBytesAvailable / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
+        // coverCount is layout-order-independent: LEN = round8(56 + genCount*44 +
+        // coverCount*8); 56 and coverCount*8 are 8-aligned, so the alignment pad
+        // (0 or 4) is < 8 and floor-division recovers coverCount exactly. This
+        // works for both formats (the total size is identical; only the arrangement
+        // differs), so we derive it here rather than relying on the trailing-footer
+        // byte span (which only works for format 0).
+        int coverCount = (int) ((len - PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                - (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE)
+                / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
+        if (coverCount <= 0) {
+            return;
+        }
+        long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(headOffset, genCount, coveringFormat, coverCount);
         for (int c = 0; c < coverCount; c++) {
             out.add(keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
         }
@@ -579,12 +615,17 @@ public final class PostingIndexChainWriter {
                         .put(offset).put(", regionBase=").put(regionBase)
                         .put(", regionLimit=").put(newRegionLimit).put(']');
             }
-            PostingIndexChainEntry.read(keyMem, offset, 0, entryScratch);
+            // Derive the entry's OWN cover count from its size so read() and the
+            // tail-trim resolve the gen-dir at the correct (format-aware) offset.
+            // Safe here because recovery is single-threaded (no concurrent
+            // extendHead racing LEN vs GEN_COUNT).
+            int recCoverCount = deriveEntryCoverCount(keyMem, offset);
+            PostingIndexChainEntry.read(keyMem, offset, recCoverCount, entryScratch);
             if (entryScratch.txnAtSeal <= currentTableTxn) {
                 // entry-level visible, but fast-path may have stuffed
                 // in-flight gens in this entry's tail via extendHead. Trim
                 // them off via per-slot TXN_AT_SEAL.
-                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn);
+                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn, entryScratch.coveringFormat, recCoverCount);
                 if (trimmedTo == 0) {
                     orphanSealTxns.add(entryScratch.sealTxn);
                     newHead = entryScratch.prevEntryOffset;
@@ -712,21 +753,8 @@ public final class PostingIndexChainWriter {
      */
     private long applyHeadTrim(MemoryARW keyMem, long sourceOffset, int keepGenCount, long sourceLen, long destOffset) {
         assert keepGenCount >= 1;
-        long lastSlot = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                + (long) (keepGenCount - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-        long lastFileOffset = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-        long lastSize = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
-        long lastMaxValue = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
-        int newKeyCount = 0;
-        for (int g = 0; g < keepGenCount; g++) {
-            long slot = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-            int slotMaxKey = keyMem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
-            if (slotMaxKey + 1 > newKeyCount) {
-                newKeyCount = slotMaxKey + 1;
-            }
-        }
         // coverPlusPadding's up-to-7-byte trailing pad rounds down on / 8.
+        // coverCount is layout-order-independent (LEN is the same in both formats).
         int oldGenCount = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
         long coverPlusPadding = sourceLen
                 - PostingIndexUtils.V2_ENTRY_HEADER_SIZE
@@ -734,11 +762,30 @@ public final class PostingIndexChainWriter {
         int coverCount = coverPlusPadding > 0
                 ? (int) (coverPlusPadding / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE)
                 : 0;
+        // The trimmed copy keeps the source's format, so source and dest gen-dir
+        // bases share the same fixed-footer reserve. Read format BEFORE any
+        // gen-dir access.
+        int rawCoveringFormat = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
+        int coveringFormat = PostingIndexChainEntry.unpackCoveringFormat(rawCoveringFormat);
+        long sourceGenDir = PostingIndexChainEntry.resolveGenDirOffset(sourceOffset, 0, coveringFormat, coverCount);
+        long destGenDir = PostingIndexChainEntry.resolveGenDirOffset(destOffset, 0, coveringFormat, coverCount);
+
+        long lastSlot = sourceGenDir + (long) (keepGenCount - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        long lastFileOffset = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+        long lastSize = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+        long lastMaxValue = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
+        int newKeyCount = 0;
+        for (int g = 0; g < keepGenCount; g++) {
+            long slot = sourceGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            int slotMaxKey = keyMem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            if (slotMaxKey + 1 > newKeyCount) {
+                newKeyCount = slotMaxKey + 1;
+            }
+        }
         long newLen = PostingIndexChainEntry.entrySize(keepGenCount, coverCount);
 
         long sourceSealTxn = keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
         int blockCapacity = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY);
-        int coveringFormat = keyMem.getInt(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
         long sourcePrevEntryOffset = keyMem.getLong(sourceOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);
 
         keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
@@ -748,12 +795,11 @@ public final class PostingIndexChainWriter {
         keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, newKeyCount);
         keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, keepGenCount);
         keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY, blockCapacity);
-        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, coveringFormat);
+        keyMem.putInt(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, rawCoveringFormat);
         keyMem.putLong(destOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET, sourcePrevEntryOffset);
 
         // Slot layout mixes long and int fields; copy field-by-field.
-        long sourceGenDir = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
-        long destGenDir = destOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        // sourceGenDir / destGenDir were resolved format-aware above.
         for (int g = 0; g < keepGenCount; g++) {
             long sSlot = sourceGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
             long dSlot = destGenDir + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
@@ -774,10 +820,8 @@ public final class PostingIndexChainWriter {
         }
 
         if (coverCount > 0) {
-            long sourceFooterOffset = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) oldGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-            long destFooterOffset = destOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) keepGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long sourceFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(sourceOffset, oldGenCount, coveringFormat, coverCount);
+            long destFooterOffset = PostingIndexChainEntry.resolveCoverFooterOffset(destOffset, keepGenCount, coveringFormat, coverCount);
             for (int c = 0; c < coverCount; c++) {
                 keyMem.putLong(destFooterOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE,
                         keyMem.getLong(sourceFooterOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
@@ -792,12 +836,11 @@ public final class PostingIndexChainWriter {
      * Returns the number of head-entry gen-dir slots to keep, trimming the
      * tail of slots whose TXN_AT_SEAL exceeds {@code currentTableTxn}.
      */
-    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn) {
+    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn, int coveringFormat, int coverCount) {
         Unsafe.loadFence();
         int keep = genCount;
         while (keep > 0) {
-            long slotOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
-                    + (long) (keep - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long slotOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, keep - 1, coveringFormat, coverCount);
             long slotTxnAtSeal = keyMem.getLong(slotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
             if (slotTxnAtSeal <= currentTableTxn) {
                 break;

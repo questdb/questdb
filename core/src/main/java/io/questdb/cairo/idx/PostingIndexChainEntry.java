@@ -125,27 +125,34 @@ public final class PostingIndexChainEntry {
         into.maxValue = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE);
         into.keyCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT);
         into.blockCapacity = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY);
-        into.coveringFormat = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
+        int rawCoveringFormat = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
+        into.coveringFormat = unpackCoveringFormat(rawCoveringFormat);
         into.prevEntryOffset = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);
-        into.genDirOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        // Format 1 (de-aliased) shifts the gen-dir past the fixed cover footer by
+        // the ENTRY's OWN coverCount (packed atomically in the format int), so the
+        // gen-dir/footer positions never depend on the reader's (possibly stale)
+        // .pci coverCount. Format 0 puts the gen-dir directly after the header
+        // (no reserve) and trails the footer, so its coverCount is irrelevant to
+        // the gen-dir and its footer span is bounded by LEN below.
+        int entryCoverCount = unpackCoverCount(rawCoveringFormat);
+        into.coverCount = into.coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED ? entryCoverCount : coverCount;
+        into.genDirOffset = resolveGenDirOffset(entryOffset, 0, into.coveringFormat, entryCoverCount);
         // Entry-level txnAtSeal sources from slot[0] (single source of truth).
         into.txnAtSeal = into.genCount > 0
                 ? keyMem.getLong(into.genDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
                 : 0L;
         into.coverFileEndOffsets.clear();
         if (coverCount > 0) {
-            long footerOffset = resolveCoverFooterOffset(entryOffset, into.genCount);
-            // Self-bound the footer reads against the entry's own LEN. If the
-            // entry was sealed with fewer cover slots than the reader expects
-            // (e.g., the writer's coverCount was 0 at seal time but the .pci
-            // sidecar later advertised covers), reading all of coverCount
-            // slots would step past entryOffset + len and, when the entry
-            // hugs the end of the mapping, past the mmap itself - producing
-            // a SIGSEGV in MemoryCR.getLong. Treat absent footer slots as
-            // "no published bytes" (0) so the reader leaves the corresponding
-            // sidecars unmapped instead of dereferencing past the entry.
-            long footerBytesAvailable = Math.max(0L, entryOffset + into.len - footerOffset);
-            int writtenCovers = (int) Math.min(coverCount, footerBytesAvailable / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
+            long footerOffset = resolveCoverFooterOffset(entryOffset, into.genCount, into.coveringFormat, entryCoverCount);
+            // How many footer slots the entry actually carries. Format 1: its own
+            // packed coverCount. Format 0: derived from the trailing byte span
+            // (self-bound against LEN — a legacy entry sealed with fewer covers
+            // than the reader expects reads only what is present). Bound the reader's
+            // expected coverCount by this so we never dereference past the entry.
+            int entryFooterSlots = into.coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                    ? entryCoverCount
+                    : (int) Math.max(0L, (entryOffset + into.len - footerOffset) / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
+            int writtenCovers = Math.max(0, Math.min(coverCount, entryFooterSlots));
             into.coverFileEndOffsets.setPos(coverCount);
             for (int c = 0; c < writtenCovers; c++) {
                 into.coverFileEndOffsets.setQuick(
@@ -161,21 +168,88 @@ public final class PostingIndexChainEntry {
     }
 
     /**
-     * Compute the byte offset of the cover end-offset footer (right after the
-     * gen-dir region of {@code genCount} entries).
+     * The stored COVERING_FORMAT int packs the format discriminator in its low
+     * byte and, for format 1, the entry's own coverCount in the upper bits. This
+     * makes a format-1 entry's gen-dir position self-contained (an atomic int
+     * read), so a reader whose live .pci coverCount is transiently stale (e.g.
+     * mid covering-config transition) still resolves the gen-dir correctly.
+     * Legacy format-0 entries stored a plain 0, which decodes to format 0 /
+     * coverCount 0 — unchanged.
+     */
+    public static int packCoveringFormat(int coveringFormat, int coverCount) {
+        return coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                ? (PostingIndexUtils.COVERING_FORMAT_DEALIASED | (coverCount << 8))
+                : coveringFormat;
+    }
+
+    public static int unpackCoveringFormat(int rawStored) {
+        return rawStored & 0xFF;
+    }
+
+    /**
+     * The entry's own coverCount, for format-1 entries only (from the packed
+     * COVERING_FORMAT int). Returns 0 for format 0 — legacy entries never carry a
+     * packed count and their gen-dir has no cover reserve anyway.
+     */
+    public static int unpackCoverCount(int rawStored) {
+        return (rawStored & 0xFF) == PostingIndexUtils.COVERING_FORMAT_DEALIASED ? (rawStored >>> 8) : 0;
+    }
+
+    /**
+     * Bytes reserved between the 56-byte header and the gen-dir for the FIXED
+     * cover-end footer. Format 1 (de-aliased) reserves {@code coverCount*8} here
+     * so the gen-dir starts after the footer; format 0 (legacy, trailing footer)
+     * reserves 0. Non-covering ({@code coverCount==0}) is 0 in both formats, so
+     * format 0 and format 1 entries are byte-identical there.
+     */
+    public static long coverFooterReserve(int coveringFormat, int coverCount) {
+        return coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED
+                ? (long) coverCount * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE
+                : 0L;
+    }
+
+    /**
+     * Legacy (format-0) cover footer offset: right after the gen-dir. Valid for
+     * {@code coverCount==0} regardless of format. Prefer the 4-arg overload for
+     * covering entries.
      */
     public static long resolveCoverFooterOffset(long entryOffset, int genCount) {
+        return resolveCoverFooterOffset(entryOffset, genCount, PostingIndexUtils.COVERING_FORMAT_LEGACY, 0);
+    }
+
+    /**
+     * Format-aware cover-end footer offset. Format 1: fixed at {@code entry+56}
+     * (independent of GEN_COUNT — the de-alias). Format 0: trailing, at
+     * {@code entry+56 + genCount*GEN_DIR_ENTRY_SIZE} (aliases gen-dir slot
+     * genCount).
+     */
+    public static long resolveCoverFooterOffset(long entryOffset, int genCount, int coveringFormat, int coverCount) {
+        if (coveringFormat == PostingIndexUtils.COVERING_FORMAT_DEALIASED) {
+            return entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        }
         return entryOffset
                 + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
                 + (long) genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
     }
 
     /**
-     * Compute the byte offset of a single gen-dir entry within an entry.
+     * Legacy (format-0 / no cover reserve) gen-dir offset. Correct for
+     * {@code coverCount==0} and for format-0 covering entries. Prefer the 4-arg
+     * overload for covering entries.
      */
     public static long resolveGenDirOffset(long entryOffset, int genIndex) {
+        return resolveGenDirOffset(entryOffset, genIndex, PostingIndexUtils.COVERING_FORMAT_LEGACY, 0);
+    }
+
+    /**
+     * Format-aware gen-dir offset. Format 1 shifts the gen-dir past the fixed
+     * footer reserve ({@code coverCount*8}); format 0 puts it directly after the
+     * header. Stride is {@code GEN_DIR_ENTRY_SIZE} in both.
+     */
+    public static long resolveGenDirOffset(long entryOffset, int genIndex, int coveringFormat, int coverCount) {
         return entryOffset
                 + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + coverFooterReserve(coveringFormat, coverCount)
                 + (long) genIndex * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
     }
 
@@ -183,9 +257,11 @@ public final class PostingIndexChainEntry {
      * Update the c-th cover end-offset footer slot in place. Used by
      * {@link PostingIndexChainWriter#extendHead} so a same-sealTxn gen flush
      * republishes the new sidecar extent atomically with VALUE_MEM_SIZE.
+     * Format-aware: for format 1 the footer is at the fixed {@code entry+56}
+     * offset, so appending a gen never overwrites it.
      */
-    public static void writeCoverEndOffset(MemoryARW keyMem, long entryOffset, int genCount, int coverIndex, long endOffset) {
-        long footerOffset = resolveCoverFooterOffset(entryOffset, genCount);
+    public static void writeCoverEndOffset(MemoryARW keyMem, long entryOffset, int genCount, int coverIndex, long endOffset, int coveringFormat, int coverCount) {
+        long footerOffset = resolveCoverFooterOffset(entryOffset, genCount, coveringFormat, coverCount);
         keyMem.putLong(footerOffset + (long) coverIndex * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE, endOffset);
     }
 
@@ -244,14 +320,14 @@ public final class PostingIndexChainEntry {
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, keyCount);
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, genCount);
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY, blockCapacity);
-        keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, coveringFormat);
+        keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, packCoveringFormat(coveringFormat, coverCount));
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET, prevEntryOffset);
         if (genCount > 0) {
-            long slot0Offset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+            long slot0Offset = resolveGenDirOffset(entryOffset, 0, coveringFormat, coverCount);
             keyMem.putLong(slot0Offset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, txnAtSeal);
         }
         if (coverCount > 0) {
-            long footerOffset = resolveCoverFooterOffset(entryOffset, genCount);
+            long footerOffset = resolveCoverFooterOffset(entryOffset, genCount, coveringFormat, coverCount);
             for (int c = 0; c < coverCount; c++) {
                 keyMem.putLong(
                         footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE,
@@ -267,6 +343,7 @@ public final class PostingIndexChainEntry {
     public static final class Snapshot {
         public final LongList coverFileEndOffsets = new LongList();
         public int blockCapacity;
+        public int coverCount;
         public int coveringFormat;
         public int genCount;
         public long genDirOffset;
@@ -289,6 +366,7 @@ public final class PostingIndexChainEntry {
             this.keyCount = 0;
             this.genCount = 0;
             this.blockCapacity = 0;
+            this.coverCount = 0;
             this.coveringFormat = 0;
             this.prevEntryOffset = PostingIndexUtils.V2_NO_HEAD;
             this.genDirOffset = 0;
