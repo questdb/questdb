@@ -255,6 +255,65 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedKeySeekFindsTheSameFloorReadingFewerRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // Key 'a' has a row in every group; key 'b' only every fifth. The unrestricted
+            // walk has to pull every 'a' row to count the three 'b' rows it is waiting for,
+            // so its cost follows how sparsely the neediest key is spread rather than how
+            // wide the frame is. The seek reads three rows of each key and nothing else.
+            //
+            // Both must land on the same floor, and it is 'b' that sets it: three 'a' rows
+            // reach group 17, three 'b' rows reach group 5, and the warm-up has to satisfy
+            // both.
+            createSparseBase("plain_base", false);
+            createSparseBase("indexed_base", true);
+            final Bounds walked = discover(sparseView("plain_base", 3), groupTs(20), groupTs(20), groupTs(20));
+            final Bounds sought = discover(sparseView("indexed_base", 3), groupTs(20), groupTs(20), groupTs(20));
+
+            Assert.assertEquals(HighBoundTag.FINITE, walked.highBoundTag);
+            Assert.assertEquals(groupTs(36), walked.highTsExclusive);
+            Assert.assertEquals(2, walked.affectedKeyCount);
+            Assert.assertEquals(2, walked.outputKeyCount);
+            Assert.assertEquals(20, walked.forwardScanRows);
+            Assert.assertEquals(groupTs(5), walked.dependencyLowTs);
+
+            Assert.assertEquals(walked.highBoundTag, sought.highBoundTag);
+            Assert.assertEquals(walked.highTsExclusive, sought.highTsExclusive);
+            Assert.assertEquals(walked.affectedKeyCount, sought.affectedKeyCount);
+            Assert.assertEquals(walked.outputKeyCount, sought.outputKeyCount);
+            Assert.assertEquals(walked.forwardScanRows, sought.forwardScanRows);
+            Assert.assertEquals(walked.dependencyLowTs, sought.dependencyLowTs);
+
+            // The forward halves are identical; only the descent differs.
+            Assert.assertEquals(0, walked.indexedKeyLookups);
+            Assert.assertEquals(17, walked.backwardScanRows);
+            Assert.assertEquals(2, sought.indexedKeyLookups);
+            Assert.assertEquals(6, sought.backwardScanRows);
+        });
+    }
+
+    @Test
+    public void testIndexedKeySeekStopsAtTheFirstKeyWithoutHistory() throws Exception {
+        assertMemoryLeak(() -> {
+            createSteppedIndexedBase();
+            execute("INSERT INTO base (ts, sym, x) VALUES ('" + secondLiteral(21 * GROUP_SECONDS) + "', 'c', 7)");
+            drainWalQueue();
+            // The key-with-no-history case the unrestricted walk pays 38 rows for. The seek
+            // takes three rows of 'a' and three of 'b', finds 'c' short of even one, and
+            // stops there: S is already the lowest floor there is, so no key after 'c'
+            // could change the answer and none is sought.
+            final Bounds bounds = discover(partitionedView(3), groupTs(20), groupTs(20), groupTs(20));
+            Assert.assertEquals(HighBoundTag.FINITE, bounds.highBoundTag);
+            Assert.assertEquals(groupTs(24), bounds.highTsExclusive);
+            Assert.assertEquals(3, bounds.outputKeyCount);
+            Assert.assertEquals(9, bounds.forwardScanRows);
+            Assert.assertEquals(Numbers.LONG_NULL, bounds.dependencyLowTs);
+            Assert.assertEquals(3, bounds.indexedKeyLookups);
+            Assert.assertEquals(6, bounds.backwardScanRows);
+        });
+    }
+
+    @Test
     public void testKeyFirstSeenInTheReplacementIntervalFallsBackToTheViewBoundary() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedBase();
@@ -316,6 +375,46 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnseekableKeyShapesFallBackToTheWalk() throws Exception {
+        assertMemoryLeak(() -> {
+            // The seek needs one key column with an index behind it. A composite key has
+            // no single index to seek through, and an unindexed column has none at all -
+            // both keep the unrestricted walk, which is why the walk cannot be deleted.
+            //
+            // Column `tag` mirrors `sym` row for row but carries no index, so all three
+            // views describe the same key domain and must agree on both bounds. Running
+            // them through one driver also proves the seek is decided per discovery: a
+            // sticky key column would carry the first view's index into the next.
+            createSparseBase("indexed_base", true);
+            try (View seekable = view(sparseView("indexed_base", 3));
+                 View composite = view(sparseCompositeView("indexed_base", 3));
+                 View unindexed = view(sparseTagView("indexed_base", 3));
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                final Bounds sought = seekable.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                final Bounds byComposite = composite.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                final Bounds byTag = unindexed.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                final Bounds again = seekable.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+
+                Assert.assertEquals(2, sought.indexedKeyLookups);
+                Assert.assertEquals(6, sought.backwardScanRows);
+
+                for (Bounds walked : new Bounds[]{byComposite, byTag}) {
+                    Assert.assertEquals(sought.highBoundTag, walked.highBoundTag);
+                    Assert.assertEquals(sought.highTsExclusive, walked.highTsExclusive);
+                    Assert.assertEquals(sought.outputKeyCount, walked.outputKeyCount);
+                    Assert.assertEquals(sought.dependencyLowTs, walked.dependencyLowTs);
+                    Assert.assertEquals(0, walked.indexedKeyLookups);
+                    Assert.assertEquals(17, walked.backwardScanRows);
+                }
+
+                Assert.assertEquals(sought.dependencyLowTs, again.dependencyLowTs);
+                Assert.assertEquals(sought.indexedKeyLookups, again.indexedKeyLookups);
+                Assert.assertEquals(sought.backwardScanRows, again.backwardScanRows);
+            }
+        });
+    }
+
+    @Test
     public void testViewBoundaryClampsTheDependencyFloor() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedBase();
@@ -335,8 +434,37 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * One row of key 'a' in every group and one of key 'b' in every fifth, plus a `tag`
+     * column that mirrors `sym` without an index. The two keys have the same frame width
+     * and wildly different densities, which is exactly what separates a per-key seek from
+     * a walk over every key's rows.
+     */
+    private static void createSparseBase(String tableName, boolean indexed) throws Exception {
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL" + (indexed ? " INDEX" : "")
+                + ", tag SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final StringBuilder rows = new StringBuilder();
+        for (int group = 1; group <= GROUPS; group++) {
+            if (group > 1) {
+                rows.append(", ");
+            }
+            final String ts = "'" + secondLiteral(group * GROUP_SECONDS) + "'";
+            rows.append("(").append(ts).append(", 'a', 'a', ").append(group).append(")");
+            if (group % 5 == 0) {
+                rows.append(", (").append(ts).append(", 'b', 'b', ").append(group + 100).append(")");
+            }
+        }
+        execute("INSERT INTO " + tableName + " (ts, sym, tag, x) VALUES " + rows);
+        drainWalQueue();
+    }
+
     private static void createSteppedBase() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        insertSteppedRows();
+    }
+
+    private static void createSteppedIndexedBase() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         insertSteppedRows();
     }
 
@@ -388,6 +516,21 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
         return MicrosTimestampDriver.floor(secondLiteral(secondOfDay));
     }
 
+    private static String sparseCompositeView(String tableName, int precedingRows) {
+        return "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, tag ORDER BY ts " + rowsFrame(precedingRows)
+                + ") AS s FROM " + tableName;
+    }
+
+    private static String sparseTagView(String tableName, int precedingRows) {
+        return "SELECT ts, tag, sum(x) OVER (PARTITION BY tag ORDER BY ts " + rowsFrame(precedingRows)
+                + ") AS s FROM " + tableName;
+    }
+
+    private static String sparseView(String tableName, int precedingRows) {
+        return "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts " + rowsFrame(precedingRows)
+                + ") AS s FROM " + tableName;
+    }
+
     private Bounds discover(String viewSql, long outputLowTs, long changeLowTs, long changeMaxTs) throws Exception {
         try (View view = view(viewSql);
              LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
@@ -419,6 +562,7 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
         private final long forwardScanRows;
         private final HighBoundTag highBoundTag;
         private final long highTsExclusive;
+        private final long indexedKeyLookups;
         private final long outputKeyCount;
 
         private Bounds(LiveViewCheckpointRowsBounds bounds) {
@@ -428,6 +572,7 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
             this.forwardScanRows = bounds.getForwardScanRows();
             this.highBoundTag = bounds.getHighBoundTag();
             this.highTsExclusive = bounds.getHighTsExclusive();
+            this.indexedKeyLookups = bounds.getIndexedKeyLookups();
             this.outputKeyCount = bounds.getOutputKeyCount();
         }
     }

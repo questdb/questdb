@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -76,6 +77,19 @@ import org.jetbrains.annotations.Nullable;
  *     leaves every partition below it unopened, which is what makes the cost follow
  *     {@code Nmax} rather than the view's age.</li>
  * </ol>
+ * <b>Indexed predecessor seek.</b> A view keyed on a single indexed SYMBOL column
+ * discovers {@code L} one key at a time instead, through
+ * {@link PageFrameRecordCursorFactory#getCursorInTimestampRangeBackwardIndexed}: the
+ * index names that key's row positions inside each partition, so the seek reads
+ * {@code Nmax} rows per key and none of any other key's. The unrestricted walk has to
+ * pull every key's rows to count one key's, which makes its cost follow how sparsely the
+ * neediest key is spread rather than how wide the frame is - a key that first appears at
+ * {@code R} has no predecessors at all, and proving that costs a walk over the view's
+ * whole history. Both forms return the same {@code L}: it is the lowest of the per-key
+ * satisfying timestamps, and a key that runs out of history pins it to {@code S} either
+ * way. The seek is preferred wherever it is available, and the walk remains the answer
+ * for a composite key, a non-SYMBOL key, or an unindexed one.
+ * <p>
  * The affected key set {@code A} comes off the same forward scan: every key with a
  * qualifying row in {@code [changeLowTs, changeMaxTs]}. That interval encloses the
  * whole incorporated change set by construction, so the keys inside it are a superset
@@ -98,11 +112,11 @@ import org.jetbrains.annotations.Nullable;
  * head; and a factory whose rows come from an index, which cannot be walked backwards
  * in timestamp order at all.
  * <p>
- * The scans carry no budget in this form. A key that first appears at {@code R} has no
- * predecessors to find, and the backward scan cannot know that until it reaches
- * {@code S}, so one such key costs a walk over the view's whole history - bounded, but
- * no cheaper than the rebuild it was meant to replace. Restricting the walk to one key
- * through an index, and capping it where no index exists, is what bounds that case.
+ * The scans carry no budget in this form. Where the indexed seek does not apply, a key
+ * that first appears at {@code R} has no predecessors to find and the backward walk
+ * cannot know that until it reaches {@code S}, so one such key still costs a walk over
+ * the view's whole history - bounded, but no cheaper than the rebuild it was meant to
+ * replace. Capping that case is what remains.
  * <p>
  * One instance per refresh worker, reused across repairs. {@link #discover} overwrites
  * every result, so no reset is needed between calls.
@@ -119,12 +133,17 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             .add(ColumnType.LONG);
     private final CairoConfiguration configuration;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    // Q in first-seen order, as table-local symbol keys. Populated only while the indexed
+    // seek is available, which is the only path that iterates the key domain.
+    private final IntList outputKeys = new IntList();
     private long affectedKeyCount;
     private long backwardScanRows;
     private long dependencyLowTs;
     private long forwardScanRows;
     private HighBoundTag highBoundTag = HighBoundTag.EOF;
     private long highTsExclusive;
+    private int indexedKeyColumnIndex = -1;
+    private long indexedKeyLookups;
     private Map keyMap;
     private long outputKeyCount;
 
@@ -178,6 +197,15 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         if (changeMaxTs == Numbers.LONG_NULL || !pageFrameFactory.isBackwardTimestampRangeSupported()) {
             return;
         }
+        // A single indexed SYMBOL key is what lets the dependency floor be sought per key
+        // rather than walked over every key's rows. Decided once, before Q is collected,
+        // because collecting the key domain is only worth its memory on that path.
+        final int keyColumnIndex = plan.getPartitionByColumnCount() == 1
+                ? plan.getPartitionByColumnIndex(0)
+                : -1;
+        if (pageFrameFactory.isIndexedBackwardTimestampRangeSupported(keyColumnIndex)) {
+            indexedKeyColumnIndex = keyColumnIndex;
+        }
         openKeyMap(plan);
         if (discoverHighBoundAndKeys(plan, pageFrameFactory, executionContext, filter, outputLowTs, changeLowTs, changeMaxTs)) {
             discoverDependencyLowTs(plan, pageFrameFactory, executionContext, filter, viewLowerBoundTs, outputLowTs);
@@ -229,6 +257,16 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     }
 
     /**
+     * @return per-key index seeks the dependency-floor discovery performed: the size of
+     * {@code Q} when the indexed seek ran to completion, fewer when a key short of
+     * history ended it early, and zero when the unrestricted backward walk answered
+     * instead.
+     */
+    public long getIndexedKeyLookups() {
+        return indexedKeyLookups;
+    }
+
+    /**
      * @return the size of {@code Q}: keys with a qualifying row in {@code [R, H)}, and
      * therefore the keys the timestamp-global replacement re-emits.
      */
@@ -243,6 +281,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         forwardScanRows = 0;
         highBoundTag = HighBoundTag.EOF;
         highTsExclusive = Numbers.LONG_NULL;
+        indexedKeyColumnIndex = -1;
+        indexedKeyLookups = 0;
+        outputKeys.clear();
         outputKeyCount = 0;
     }
 
@@ -255,21 +296,22 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             value.putLong(IDX_FOLLOWING, NOT_AFFECTED);
             value.putLong(IDX_PRECEDING, 0);
             outputKeyCount++;
+            if (indexedKeyColumnIndex > -1) {
+                outputKeys.add(record.getInt(indexedKeyColumnIndex));
+            }
         }
         return value;
     }
 
     /**
-     * Walks down from {@code R} until every key in {@code Q} has {@code Nmax} qualifying
-     * predecessors, and takes the timestamp of the row that satisfied the last one as
-     * {@code L}. Because {@code L} is an inclusive bound, the complete tie at that
-     * timestamp comes with it; over-feeding a bounded ROWS frame costs nothing, since
-     * the extra rows fall out of the frame before it reaches {@code R}.
+     * Discovers {@code L}, the timestamp from which warm-up reconstructs the state every
+     * key in {@code Q} holds at {@code R}, through whichever of the two searches this
+     * view's key shape allows.
      * <p>
-     * Exhausting the scan without satisfying every key leaves {@code L} at {@code S}.
-     * That is the answer rather than a give-up: reaching {@code S} means the view's
-     * whole history has been seen, so whatever a key is still short of does not exist
-     * and starting it from {@code S} is exactly what a full recompute does.
+     * Either search leaves {@code L} at {@code S} when a key has less history than its
+     * frame needs. That is the answer rather than a give-up: reaching {@code S} means the
+     * view's whole history has been seen, so whatever the key is still short of does not
+     * exist and starting it from {@code S} is exactly what a full recompute does.
      */
     private void discoverDependencyLowTs(
             LiveViewCheckpointRowsPlan plan,
@@ -279,7 +321,6 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             long viewLowerBoundTs,
             long outputLowTs
     ) throws SqlException {
-        final long precedingRows = plan.getMaxPrecedingRows();
         if (outputKeyCount == 0) {
             // The replacement interval holds no qualifying row, so it re-emits nothing
             // and there is no key whose state has to be warmed up to reach it.
@@ -291,30 +332,10 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             // history below it to walk and no floor above S to discover.
             return;
         }
-        long pendingKeys = outputKeyCount;
-        try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackward(
-                executionContext,
-                viewLowerBoundTs,
-                outputLowTs - 1
-        )) {
-            final RecordCursor source = withFilter(pageCursor, filter, executionContext);
-            final Record record = source.getRecord();
-            while (source.hasNext()) {
-                backwardScanRows++;
-                final MapValue value = findKey(plan, record);
-                if (value == null) {
-                    // Outside Q: this key's rows warm nothing the replacement re-emits.
-                    continue;
-                }
-                final long preceding = value.getLong(IDX_PRECEDING);
-                if (preceding < precedingRows) {
-                    value.putLong(IDX_PRECEDING, preceding + 1);
-                    if (preceding + 1 == precedingRows && --pendingKeys == 0) {
-                        dependencyLowTs = record.getTimestamp(plan.getTimestampIndex());
-                        return;
-                    }
-                }
-            }
+        if (indexedKeyColumnIndex > -1) {
+            seekDependencyLowTs(plan, pageFrameFactory, executionContext, filter, viewLowerBoundTs, outputLowTs);
+        } else {
+            scanDependencyLowTs(plan, pageFrameFactory, executionContext, filter, viewLowerBoundTs, outputLowTs);
         }
     }
 
@@ -415,6 +436,98 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     private void openKeyMap(LiveViewCheckpointRowsPlan plan) {
         keyMap = Misc.free(keyMap);
         keyMap = MapFactory.createUnorderedMap(configuration, plan.getKeyColumnTypes(), VALUE_TYPES);
+    }
+
+    /**
+     * Walks every row down from {@code R} until each key in {@code Q} has {@code Nmax}
+     * qualifying predecessors, and takes the timestamp of the row that satisfied the last
+     * one as {@code L}. Because {@code L} is an inclusive bound, the complete tie at that
+     * timestamp comes with it; over-feeding a bounded ROWS frame costs nothing, since the
+     * extra rows fall out of the frame before it reaches {@code R}.
+     */
+    private void scanDependencyLowTs(
+            LiveViewCheckpointRowsPlan plan,
+            PageFrameRecordCursorFactory pageFrameFactory,
+            SqlExecutionContext executionContext,
+            Function filter,
+            long viewLowerBoundTs,
+            long outputLowTs
+    ) throws SqlException {
+        final long precedingRows = plan.getMaxPrecedingRows();
+        long pendingKeys = outputKeyCount;
+        try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackward(
+                executionContext,
+                viewLowerBoundTs,
+                outputLowTs - 1
+        )) {
+            final RecordCursor source = withFilter(pageCursor, filter, executionContext);
+            final Record record = source.getRecord();
+            while (source.hasNext()) {
+                backwardScanRows++;
+                final MapValue value = findKey(plan, record);
+                if (value == null) {
+                    // Outside Q: this key's rows warm nothing the replacement re-emits.
+                    continue;
+                }
+                final long preceding = value.getLong(IDX_PRECEDING);
+                if (preceding < precedingRows) {
+                    value.putLong(IDX_PRECEDING, preceding + 1);
+                    if (preceding + 1 == precedingRows && --pendingKeys == 0) {
+                        dependencyLowTs = record.getTimestamp(plan.getTimestampIndex());
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Seeks each key in {@code Q} down from {@code R} through its own index cursor,
+     * taking its {@code Nmax}-th qualifying predecessor, and reports the lowest such
+     * timestamp as {@code L}. Every key must be able to reach {@code R} from below, so
+     * the floor is the deepest of the per-key answers - the same row the unrestricted
+     * walk stops on, arrived at without reading any other key's rows.
+     * <p>
+     * A key with fewer than {@code Nmax} predecessors ends the search rather than
+     * lowering the floor further: {@code S} is already the lowest floor there is, so the
+     * remaining keys cannot change the answer and their seeks are skipped.
+     */
+    private void seekDependencyLowTs(
+            LiveViewCheckpointRowsPlan plan,
+            PageFrameRecordCursorFactory pageFrameFactory,
+            SqlExecutionContext executionContext,
+            Function filter,
+            long viewLowerBoundTs,
+            long outputLowTs
+    ) throws SqlException {
+        final long precedingRows = plan.getMaxPrecedingRows();
+        final int timestampIndex = plan.getTimestampIndex();
+        long floor = Long.MAX_VALUE;
+        for (int i = 0, n = outputKeys.size(); i < n; i++) {
+            indexedKeyLookups++;
+            long preceding = 0;
+            long keyLowTs = Numbers.LONG_NULL;
+            try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackwardIndexed(
+                    executionContext,
+                    viewLowerBoundTs,
+                    outputLowTs - 1,
+                    indexedKeyColumnIndex,
+                    outputKeys.getQuick(i)
+            )) {
+                final RecordCursor source = withFilter(pageCursor, filter, executionContext);
+                final Record record = source.getRecord();
+                while (preceding < precedingRows && source.hasNext()) {
+                    backwardScanRows++;
+                    preceding++;
+                    keyLowTs = record.getTimestamp(timestampIndex);
+                }
+            }
+            if (preceding < precedingRows) {
+                return;
+            }
+            floor = Math.min(floor, keyLowTs);
+        }
+        dependencyLowTs = floor;
     }
 
     private RecordCursor withFilter(

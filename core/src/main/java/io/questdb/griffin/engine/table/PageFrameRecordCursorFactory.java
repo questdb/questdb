@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -53,6 +55,9 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
+    private int bwdIndexedColumnIndex = -1;
+    private PageFrameRecordCursor bwdIndexedRecordCursor;
+    private SymbolIndexRowCursorFactory bwdIndexedRowCursorFactory;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
     private PageFrameRecordCursor bwdRecordCursor;
     private PageFrameRecordCursor cursor;
@@ -216,6 +221,89 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         }
     }
 
+    /**
+     * Opens this full scan over the timestamp range {@code [timestampLo, timestampHi]},
+     * <b>inclusive of both edges</b>, in descending designated-timestamp order and
+     * restricted to the rows carrying one value of an indexed SYMBOL column. It yields
+     * exactly the subsequence of
+     * {@link #getCursorInTimestampRangeBackward(SqlExecutionContext, long, long)} whose
+     * {@code columnIndex} column equals {@code symbolKey}, and reads the other values'
+     * rows not at all.
+     * <p>
+     * This is what makes per-key predecessor discovery cost follow the frame width
+     * rather than the key's sparsity. The unrestricted descending walk has to pull every
+     * key's rows to count one key's, so a key whose rows sit far apart drags the whole
+     * history through the scan; here the index names that key's row positions inside each
+     * partition and the walk stops as soon as the count is met.
+     * <p>
+     * {@code symbolKey} is the table-local key the column stores, so
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL} selects the rows whose value
+     * is null - a partition key like any other.
+     * <p>
+     * The scan substitutes an index-backed row cursor of its own, so the factory must be
+     * a plain full scan over an indexed SYMBOL column;
+     * {@link #isIndexedBackwardTimestampRangeSupported(int)} reports that without opening
+     * anything.
+     */
+    public RecordCursor getCursorInTimestampRangeBackwardIndexed(
+            SqlExecutionContext executionContext,
+            long timestampLo,
+            long timestampHi,
+            int columnIndex,
+            int symbolKey
+    ) throws SqlException {
+        if (!(partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory fullFrameFactory)) {
+            throw CairoException.nonCritical().put("timestamp range cursor requires a full partition scan");
+        }
+        if (!isIndexedBackwardTimestampRangeSupported(columnIndex)) {
+            throw CairoException.nonCritical()
+                    .put("indexed backward timestamp range cursor requires an indexed symbol column [columnIndex=")
+                    .put(columnIndex)
+                    .put(']');
+        }
+        if (bwdIndexedColumnIndex != columnIndex) {
+            // One factory serves every repair of one view, and a view keys on one column,
+            // so this rebuild is a first-call cost rather than a per-key one.
+            bwdIndexedRecordCursor = Misc.free(bwdIndexedRecordCursor);
+            bwdIndexedRowCursorFactory = Misc.free(bwdIndexedRowCursorFactory);
+            bwdIndexedRowCursorFactory = new SymbolIndexRowCursorFactory(
+                    columnIndex,
+                    symbolKey,
+                    IndexReader.DIR_BACKWARD,
+                    null
+            );
+            bwdIndexedColumnIndex = columnIndex;
+        } else {
+            bwdIndexedRowCursorFactory.of(symbolKey);
+        }
+        if (bwdIndexedRecordCursor == null) {
+            bwdIndexedRecordCursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    getMetadata(),
+                    bwdIndexedRowCursorFactory,
+                    false,
+                    filter
+            );
+        }
+        final PartitionFrameCursor partitionFrameCursor = fullFrameFactory.getCursorBackward(
+                executionContext,
+                columnIndexes,
+                timestampLo,
+                timestampHi
+        );
+        final PageFrameCursor frameCursor = initBwdPageFrameCursor(partitionFrameCursor, executionContext);
+        try {
+            bwdIndexedRecordCursor.of(frameCursor, executionContext);
+            if (filter != null) {
+                filter.init(bwdIndexedRecordCursor, executionContext);
+            }
+            return bwdIndexedRecordCursor;
+        } catch (Throwable th) {
+            frameCursor.close();
+            throw th;
+        }
+    }
+
     @Override
     public int getScanDirection() {
         if (singleRowFactory) {
@@ -283,6 +371,22 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                 && !rowCursorFactory.isUsingIndex();
     }
 
+    /**
+     * Reports, without opening anything, whether
+     * {@link #getCursorInTimestampRangeBackwardIndexed(SqlExecutionContext, long, long, int, int)}
+     * would be accepted for this column. It adds to
+     * {@link #isBackwardTimestampRangeSupported()} the requirement that the column is an
+     * indexed SYMBOL: the index is what names one value's row positions per partition, and
+     * without it the caller has no cheaper option than walking every key's rows.
+     */
+    public boolean isIndexedBackwardTimestampRangeSupported(int columnIndex) {
+        return isBackwardTimestampRangeSupported()
+                && columnIndex > -1
+                && columnIndex < getMetadata().getColumnCount()
+                && ColumnType.isSymbol(getMetadata().getColumnType(columnIndex))
+                && getMetadata().isColumnIndexed(columnIndex);
+    }
+
     public boolean isIntervalScan() {
         return partitionFrameCursorFactory.isIntervalScan();
     }
@@ -327,6 +431,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     @Override
     protected void _close() {
+        final PageFrameRecordCursor bwdIndexedRecordCursor = this.bwdIndexedRecordCursor;
+        this.bwdIndexedRecordCursor = null;
+        final SymbolIndexRowCursorFactory bwdIndexedRowCursorFactory = this.bwdIndexedRowCursorFactory;
+        this.bwdIndexedRowCursorFactory = null;
+        this.bwdIndexedColumnIndex = -1;
         final TablePageFrameCursor bwdPageFrameCursor = this.bwdPageFrameCursor;
         this.bwdPageFrameCursor = null;
         final PageFrameRecordCursor bwdRecordCursor = this.bwdRecordCursor;
@@ -348,6 +457,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         } catch (Throwable th) {
             failure = th;
         }
+        failure = Misc.freeBestEffort(failure, bwdIndexedRecordCursor);
+        failure = Misc.freeBestEffort(failure, bwdIndexedRowCursorFactory);
         failure = Misc.freeBestEffort(failure, bwdRecordCursor);
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);

@@ -38,11 +38,14 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -82,13 +85,19 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
     private static final long HOUR = 3_600_000_000L;
+    // Table-local symbol keys of the keyed fixture, assigned in first-insert order.
+    private static final int KEY_A = 0;
+    private static final int KEY_B = 1;
+    private static final int KEY_NULL = SymbolTable.VALUE_IS_NULL;
     // The highest designated timestamp a MICROS table accepts: TableWriter rejects
     // anything at or beyond year 10000.
     private static final long MAX_TS = Micros.YEAR_10000 - 1;
     // 20 rows, one every 6 hours, so exactly 4 rows land in each of 5 DAY partitions.
     private static final int ROWS_PER_PARTITION = 4;
     private static final long STEP = 6 * HOUR;
+    private static final int SYM_COLUMN = 2;
     private static final int TOTAL_ROWS = 20;
+    private static final int UNINDEXED_SYM_COLUMN = 3;
 
     @Test
     public void testBackwardCursorIsReusedAcrossBounds() throws Exception {
@@ -255,6 +264,197 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 assertBackwardTimestamps(factory, 10, 30, 30, 30, 30, 20, 10, 10, 10);
                 assertBackwardTimestamps(factory, 10, 29, 20, 10, 10, 10);
                 assertBackwardTimestamps(factory, 11, 30, 30, 30, 30, 20);
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedEarlyCloseLeavesLowerPartitionsUnopened() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            // A predecessor seek takes Nmax rows of one key and closes. What it leaves
+            // behind is the point: the partitions below the row it stopped on were never
+            // opened, and neither were the other keys' rows inside the ones it did open.
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                final RecordCursor cursor = factory.getCursorInTimestampRangeBackwardIndexed(
+                        sqlExecutionContext,
+                        Long.MIN_VALUE,
+                        ts(19),
+                        SYM_COLUMN,
+                        KEY_A
+                );
+                try {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(18, record.getInt(0));
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(15, record.getInt(0));
+                    // Rows 18 and 15 sit in the top two of five DAY partitions.
+                    Assert.assertEquals(2, openPartitionCount(cursor));
+                } finally {
+                    cursor.close();
+                }
+                // Draining the same key to the bottom does open all five - the early close
+                // is what bounds the cost, not the key restriction on its own.
+                try (PageFrameRecordCursorFactory drained = newFullScanFactory("k")) {
+                    final RecordCursor cursor2 = drained.getCursorInTimestampRangeBackwardIndexed(
+                            sqlExecutionContext,
+                            Long.MIN_VALUE,
+                            ts(19),
+                            SYM_COLUMN,
+                            KEY_A
+                    );
+                    try {
+                        while (cursor2.hasNext()) {
+                            // drain
+                        }
+                        Assert.assertEquals(5, openPartitionCount(cursor2));
+                    } finally {
+                        cursor2.close();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedInclusiveOnBothEdges() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                // Key 'a' holds rows 0, 3, 6, ... The bounds are inclusive of both edges
+                // whether or not a row of the requested key sits on them.
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(6), ts(12), 12, 9, 6);
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(7), ts(11), 9);
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(6), ts(6), 6);
+                // A range that holds rows of other keys only.
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(7), ts(8));
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedIsReusedAcrossKeysAndBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            // One factory serves every per-key seek of one repair, and it caches a single
+            // index-backed cursor. Each call must re-point both the key and the range: a
+            // stale key would count another key's predecessors, and a stale ceiling would
+            // count rows the floor sits above.
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(0), ts(19), 18, 15, 12, 9, 6, 3, 0);
+                assertBackwardIndexedRowIds(factory, KEY_B, ts(0), ts(19), 19, 16, 13, 10, 7, 4, 1);
+                // An empty range does not poison the next call.
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(9), ts(8));
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(12), ts(15), 15, 12);
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedReadsParquetAndNativePartitionsAlike() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            // Converting a partition to parquet rebuilds its column indexes rather than
+            // dropping them, so the seek keeps working across the format boundary. A key
+            // restriction that silently skipped the parquet partitions would under-count
+            // predecessors and put the dependency floor too low.
+            execute("ALTER TABLE k CONVERT PARTITION TO PARQUET WHERE ts < " + ts(16));
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                assertBackwardIndexedRowIds(factory, KEY_A, Long.MIN_VALUE, Long.MAX_VALUE, 18, 15, 12, 9, 6, 3, 0);
+                assertBackwardIndexedRowIds(factory, KEY_B, Long.MIN_VALUE, Long.MAX_VALUE, 19, 16, 13, 10, 7, 4, 1);
+                assertBackwardIndexedRowIds(factory, KEY_NULL, Long.MIN_VALUE, Long.MAX_VALUE, 17, 14, 11, 8, 5, 2);
+                // Entirely inside the converted range, and straddling its top edge.
+                assertBackwardIndexedRowIds(factory, KEY_A, ts(3), ts(9), 9, 6, 3);
+                assertBackwardIndexedRowIds(factory, KEY_B, ts(13), ts(19), 19, 16, 13);
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedRequiresAnIndexedSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                // The seek reads one value's row positions out of the column's index, so
+                // there has to be one. A planner asks before opening anything: an
+                // unindexed key is a legitimate view, and the answer is to fall back to
+                // the unrestricted walk rather than to fail the repair.
+                Assert.assertTrue(factory.isIndexedBackwardTimestampRangeSupported(SYM_COLUMN));
+                Assert.assertFalse(factory.isIndexedBackwardTimestampRangeSupported(UNINDEXED_SYM_COLUMN));
+                // Not a symbol at all: no per-value index exists to seek through.
+                Assert.assertFalse(factory.isIndexedBackwardTimestampRangeSupported(0));
+                // A caller with no single key column at all passes -1.
+                Assert.assertFalse(factory.isIndexedBackwardTimestampRangeSupported(-1));
+                Assert.assertFalse(factory.isIndexedBackwardTimestampRangeSupported(Integer.MAX_VALUE));
+                try {
+                    factory.getCursorInTimestampRangeBackwardIndexed(
+                            sqlExecutionContext,
+                            ts(1),
+                            ts(2),
+                            UNINDEXED_SYM_COLUMN,
+                            KEY_A
+                    );
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "indexed backward timestamp range cursor requires an indexed symbol column"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedRequiresFullPartitionScanFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            try (PageFrameRecordCursorFactory factory = newIntervalScanFactory("k", ts(0), ts(4))) {
+                Assert.assertFalse(factory.isIndexedBackwardTimestampRangeSupported(SYM_COLUMN));
+                try {
+                    factory.getCursorInTimestampRangeBackwardIndexed(
+                            sqlExecutionContext,
+                            ts(1),
+                            ts(2),
+                            SYM_COLUMN,
+                            KEY_A
+                    );
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "timestamp range cursor requires a full partition scan");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBackwardIndexedYieldsOneKeyInDescendingOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                // Each key's rows in descending order, and none of any other key's. A
+                // predecessor count over the wrong rows would put the dependency floor in
+                // the wrong place, so the row set is asserted by unique row id rather than
+                // by count.
+                assertBackwardIndexedRowIds(factory, KEY_A, Long.MIN_VALUE, Long.MAX_VALUE, 18, 15, 12, 9, 6, 3, 0);
+                assertBackwardIndexedRowIds(factory, KEY_B, Long.MIN_VALUE, Long.MAX_VALUE, 19, 16, 13, 10, 7, 4, 1);
+                // Null is a partition key like any other, and the index holds it.
+                assertBackwardIndexedRowIds(factory, KEY_NULL, Long.MIN_VALUE, Long.MAX_VALUE, 17, 14, 11, 8, 5, 2);
+                // Together they are exactly the unrestricted descending scan, so the seek
+                // partitions the walk rather than sampling it.
+                final LongList union = new LongList();
+                union.add(drainRowIds(factory.getCursorInTimestampRangeBackwardIndexed(
+                        sqlExecutionContext, Long.MIN_VALUE, Long.MAX_VALUE, SYM_COLUMN, KEY_A)));
+                union.add(drainRowIds(factory.getCursorInTimestampRangeBackwardIndexed(
+                        sqlExecutionContext, Long.MIN_VALUE, Long.MAX_VALUE, SYM_COLUMN, KEY_B)));
+                union.add(drainRowIds(factory.getCursorInTimestampRangeBackwardIndexed(
+                        sqlExecutionContext, Long.MIN_VALUE, Long.MAX_VALUE, SYM_COLUMN, KEY_NULL)));
+                union.sort();
+                final LongList all = drainRowIds(factory.getCursorInTimestampRangeBackward(
+                        sqlExecutionContext, Long.MIN_VALUE, Long.MAX_VALUE));
+                all.sort();
+                Assert.assertEquals(all, union);
             }
         });
     }
@@ -434,6 +634,26 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         return timestamps;
     }
 
+    /**
+     * The stepped fixture plus two SYMBOL columns holding the same three values - one
+     * indexed, one not - so the seek and its refusal read the same rows. The keys cycle
+     * every third row, which spreads each of them across all five partitions.
+     */
+    private static void createKeyedTable(String tableName) throws SqlException {
+        execute("CREATE TABLE " + tableName + " (i INT, ts TIMESTAMP, sym SYMBOL INDEX, plain SYMBOL)"
+                + " TIMESTAMP(ts) PARTITION BY DAY");
+        final StringSink sink = new StringSink();
+        sink.put("INSERT INTO ").put(tableName).put(" VALUES ");
+        for (int i = 0; i < TOTAL_ROWS; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            final String key = i % 3 == 0 ? "'a'" : (i % 3 == 1 ? "'b'" : "NULL");
+            sink.put('(').put(i).put(", ").put(ts(i)).put("::timestamp, ").put(key).put(", ").put(key).put(')');
+        }
+        execute(sink.toString());
+    }
+
     private static GenericRecordMetadata copyMetadata(String tableName) {
         try (TableReader reader = engine.getReader(tableName)) {
             return GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -565,6 +785,12 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         }
     }
 
+    private static int openPartitionCount(RecordCursor cursor) {
+        return ((TablePageFrameCursor) ((PageFrameRecordCursor) cursor).getPageFrameCursor())
+                .getTableReader()
+                .getOpenPartitionCount();
+    }
+
     private static LongList timestamps(long... values) {
         final LongList timestamps = new LongList();
         for (long value : values) {
@@ -616,6 +842,29 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 Assert.assertEquals(expectedOpenPartitions, reader.getOpenPartitionCount());
             }
         }
+    }
+
+    private void assertBackwardIndexedRowIds(
+            PageFrameRecordCursorFactory factory,
+            int symbolKey,
+            long timestampLo,
+            long timestampHi,
+            int... expectedRowIds
+    ) throws SqlException {
+        final LongList expected = new LongList();
+        for (int rowId : expectedRowIds) {
+            expected.add(rowId);
+        }
+        Assert.assertEquals(
+                expected,
+                drainRowIds(factory.getCursorInTimestampRangeBackwardIndexed(
+                        sqlExecutionContext,
+                        timestampLo,
+                        timestampHi,
+                        SYM_COLUMN,
+                        symbolKey
+                ))
+        );
     }
 
     private void assertBackwardRange(String tableName, long timestampLo, long timestampHi, int... expectedRowIndexes) throws SqlException {
