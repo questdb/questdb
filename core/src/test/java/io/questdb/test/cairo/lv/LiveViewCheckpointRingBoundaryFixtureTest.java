@@ -300,6 +300,25 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testRowsDependencyBoundsAFilteredRebuild() throws Exception {
+        // The view's WHERE is what "qualifying" means, and both searches have to mean the
+        // same thing by it as the replay does. Here it admits one of the fixture's two
+        // keys, so every bound is made of half as many rows as the unfiltered case - and
+        // costs exactly as many reads, because a filter reads the rows it rejects.
+        //
+        // The bounds land where the unfiltered ones do: key 'a' still reaches its third
+        // following row at 340s and its third predecessor at 290s. What changes is the
+        // replacement, which now re-emits four rows rather than eight over the same
+        // interval.
+        final String sql = "SELECT ts, sym, sum(x) OVER ("
+                + "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s "
+                + "FROM base WHERE sym = 'a'";
+        final ReplayCost cost = runOldO3BoundaryRebuild(sql, sql, false);
+        Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild re-emits only what the WHERE admits", 4, cost.emittedRows);
+    }
+
+    @Test
     public void testRowsDependencyBoundsAMinRebuild() throws Exception {
         // The same family on the ROWS arm, and through min() rather than max(), which is the
         // same implementation under a reversed comparator. Nmax bounds the ring and the
@@ -307,6 +326,23 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
                 "min(x)",
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
+                false
+        );
+        Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
+    }
+
+    @Test
+    public void testRowsDependencyBoundsAnExpressionKeyedRebuild() throws Exception {
+        // A PARTITION BY the key projector has to compile rather than read off a column.
+        // upper(sym) partitions the fixture exactly as sym does, so the discovery answers
+        // the same H and L and the rebuild reads and re-emits the same rows - which is the
+        // claim worth pinning: an expression key costs a view its index seek, not its
+        // repair bound. This fixture's sym carries no index, so here it costs nothing at
+        // all.
+        final ReplayCost cost = runOldO3BoundaryRebuildOverFrame(
+                "sum(x)",
+                "PARTITION BY upper(sym) ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW",
                 false
         );
         Assert.assertEquals("bound discovery plus the [L, H) rebuild", 15 + 14, cost.scannedRows);

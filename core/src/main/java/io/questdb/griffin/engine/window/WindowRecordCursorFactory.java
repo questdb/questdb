@@ -61,8 +61,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // function with a finite RANGE frame. Bounds the localized O3 repair interval.
     private final LiveViewCheckpointRangePlan checkpointRangePlan;
     // The same for the finite ROWS dependencies, plus the key projector the repair counts
-    // per-key rows through. At most one of the two plans is ever non-null: a factory whose
-    // functions are all finite RANGE has no finite ROWS function and vice versa.
+    // per-key rows through. A factory mixing shapes carries both plans - each describes
+    // the functions of its own kind - and the repair takes their union. This factory owns
+    // the plan, because an expression-keyed projector holds compiled key functions.
     private final LiveViewCheckpointRowsPlan checkpointRowsPlan;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
@@ -267,6 +268,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeObjListBestEffort(failure, functions);
+        failure = Misc.freeBestEffort(failure, checkpointRowsPlan);
         CairoException.rethrowCleanupFailure(failure);
     }
 

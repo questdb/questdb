@@ -182,6 +182,62 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     }
 
     /**
+     * A PARTITION BY term the sink cannot read off a page-frame record is projected through
+     * a compiled key function instead of declining the plan. What such a view loses is the
+     * index seek and nothing else: the plan names no key column, so the dependency floor is
+     * found by the unrestricted backward walk.
+     * <p>
+     * One expression puts <b>every</b> term on a key function, mixed list or not. The two
+     * halves would otherwise write a SYMBOL key in two different spaces - a column as the
+     * reader's integer, a function as its resolved string - and a projector whose key
+     * identity depends on which half a term landed in is one bug away from counting two
+     * keys as one.
+     */
+    @Test
+    public void testRowsDependencyProjectsAnExpressionKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata expression = compileMetadata(
+                    "select ts, sym, "
+                            + "sum(x) over (partition by upper(sym) order by ts rows between 3 preceding and current row) s "
+                            + "from base",
+                    0
+            );
+            Assert.assertNotNull(expression.rowsPlan);
+            Assert.assertTrue(expression.isDependencyComplete);
+            Assert.assertEquals(3, expression.rowsPlan.getMaxPrecedingRows());
+            Assert.assertEquals(0, expression.rowsPlan.getPartitionByColumnCount());
+            Assert.assertNotNull(expression.rowsPlan.getKeySink());
+            Assert.assertEquals(1, expression.rowsPlan.getKeyColumnTypes().getColumnCount());
+            Assert.assertEquals(ColumnType.STRING, expression.rowsPlan.getKeyColumnTypes().getColumnType(0));
+
+            // A plain column beside an expression: both become key functions, and the
+            // column's SYMBOL is written through its resolved string like any other.
+            final Metadata mixedKeys = compileMetadata(
+                    "select ts, sym, "
+                            + "sum(x) over (partition by sym, x % 10 order by ts "
+                            + "rows between 3 preceding and current row) s from base",
+                    0
+            );
+            Assert.assertNotNull(mixedKeys.rowsPlan);
+            Assert.assertEquals(0, mixedKeys.rowsPlan.getPartitionByColumnCount());
+            Assert.assertEquals(2, mixedKeys.rowsPlan.getKeyColumnTypes().getColumnCount());
+            Assert.assertEquals(ColumnType.STRING, mixedKeys.rowsPlan.getKeyColumnTypes().getColumnType(0));
+            Assert.assertEquals(ColumnType.DOUBLE, mixedKeys.rowsPlan.getKeyColumnTypes().getColumnType(1));
+
+            // A non-deterministic key is the one expression that still declines. The forward
+            // pass and the backward search read the same base row from two cursors, and a
+            // key that answers differently each time would count one row's predecessors
+            // against another row's key.
+            assertNoRowsPlan(
+                    "select ts, sym, "
+                            + "sum(x) over (partition by now() order by ts rows between 3 preceding and current row) s "
+                            + "from base"
+            );
+        });
+    }
+
+    /**
      * A factory mixing a bounded RANGE window with a bounded ROWS one carries both plans.
      * Each describes the functions of its own kind and stays silent about the rest, and a
      * repair bounds them together by taking the earliest {@code L} and the latest {@code H}
@@ -395,10 +451,6 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             // A frame with no ORDER BY counts row positions in an order nothing pins, so
             // the replay's ts-ordered cursor need not reproduce them.
             assertNoRowsPlan("select ts, sym, sum(x) over (partition by sym "
-                    + "rows between 3 preceding and current row) s from base");
-            // A key the projector cannot read out of a page-frame record. The contract
-            // holds, the projector does not.
-            assertNoRowsPlan("select ts, sym, sum(x) over (partition by concat(sym, 'z') order by ts "
                     + "rows between 3 preceding and current row) s from base");
 
             // Two bounded ROWS functions on different key domains would have to be

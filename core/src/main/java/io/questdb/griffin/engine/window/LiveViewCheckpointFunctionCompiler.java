@@ -42,7 +42,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -52,6 +54,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -344,17 +347,24 @@ public final class LiveViewCheckpointFunctionCompiler {
      * and so reads rows the warm-up over {@code [L, R)} never feeds it, when two of them
      * disagree on the key/order domain, when a window is not ordered by the designated
      * timestamp ascending (the row positions {@code Nmax} counts would then be positions
-     * in an order the replay's cursor does not produce), when the frame is keyless or
-     * zero-wide, or when a PARTITION BY expression is not a plain base column. The last
-     * is a projector limitation rather than a contract one:
-     * {@link LiveViewCheckpointRowsBounds} reads keys straight out of a page-frame
-     * record, and an arbitrary expression would need the window's own partition-by
-     * functions rebound to the discovery cursor and back.
+     * in an order the replay's cursor does not produce), or when the frame is keyless or
+     * zero-wide.
+     * <p>
+     * A PARTITION BY term that is not a plain base column is projected through a compiled
+     * function instead, so an expression key costs the view its index seek rather than its
+     * repair bound (see {@link LiveViewCheckpointRowsPlan}). The one expression the plan
+     * still declines is a {@link Function#isNonDeterministic() non-deterministic} one: the
+     * two searches read the same row from two cursors and have to land on the same key
+     * both times, and a key that answers {@code now()} does not.
      *
-     * @param baseMetadata  the base factory's metadata, which the key projector's column
-     *                      indexes and the designated timestamp are resolved against
-     * @param configuration for the projector's codegen
-     * @param asm           the compiler's bytecode assembler
+     * @param baseMetadata     the base factory's metadata, which the key projector's
+     *                         columns, its key functions and the designated timestamp are
+     *                         resolved against
+     * @param configuration    for the projector's codegen
+     * @param asm              the compiler's bytecode assembler
+     * @param functionParser   compiles an expression key into the plan's own function,
+     *                         separate from the copy the window runtime partitions by
+     * @param executionContext the live-view compile context the key functions parse under
      */
     @Nullable
     public static LiveViewCheckpointRowsPlan rowsPlan(
@@ -362,8 +372,10 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<QueryColumn> columns,
             @NotNull RecordMetadata baseMetadata,
             @NotNull CairoConfiguration configuration,
-            @NotNull BytecodeAssembler asm
-    ) {
+            @NotNull BytecodeAssembler asm,
+            @NotNull FunctionParser functionParser,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
         final int timestampIndex = baseMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             return null;
@@ -415,12 +427,25 @@ public final class LiveViewCheckpointFunctionCompiler {
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             final ExpressionNode node = partitionBy.getQuick(i);
-            if (node.type != ExpressionNode.LITERAL) {
-                return null;
-            }
-            final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
+            final int columnIndex = node.type == ExpressionNode.LITERAL
+                    ? SqlUtil.getColumnIndexQuiet(baseMetadata, node.token)
+                    : -1;
             if (columnIndex == -1) {
-                return null;
+                // One term the sink cannot read off a page-frame record puts every term on
+                // a key function, so the projector stays one shape rather than two halves
+                // whose SYMBOL keys would live in different spaces.
+                return expressionKeyedPlan(
+                        partitionBy,
+                        firstRows,
+                        rowsFunctionCount,
+                        maxPrecedingRows,
+                        timestampIndex,
+                        baseMetadata,
+                        configuration,
+                        asm,
+                        functionParser,
+                        executionContext
+                );
             }
             partitionByColumnIndexes.add(columnIndex);
             keyColumnFilter.add(columnIndex + 1);
@@ -436,6 +461,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 firstRows.getPartitionSignature(),
                 firstRows.getOrderSignature(),
                 partitionByColumnIndexes,
+                null,
                 keyColumnTypes,
                 keySink,
                 timestampIndex,
@@ -494,6 +520,75 @@ public final class LiveViewCheckpointFunctionCompiler {
             return DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET;
         }
         return DependencyKind.FOLLOWING_OR_DATA_DEPENDENT;
+    }
+
+    /**
+     * Builds the projector of a view whose PARTITION BY holds at least one expression, by
+     * compiling every term into a key function of the plan's own. The window runtime keeps
+     * its separate copies, so the two never share evaluation state.
+     * <p>
+     * There is no index seek on this path and no column list to name one: the plan's
+     * column indexes stay empty, and the discovery falls back to the unrestricted backward
+     * walk. The key types follow what the generated sink writes rather than what the
+     * function returns - a SYMBOL-typed key function is written through its resolved
+     * string, because the integers it hands out index its own map rather than the
+     * reader's, and two cursors would not agree on them.
+     * <p>
+     * The functions are freed unless the plan takes ownership of them, so a parse failure,
+     * a declined key or a codegen failure leaves nothing behind.
+     */
+    private static @Nullable LiveViewCheckpointRowsPlan expressionKeyedPlan(
+            ObjList<ExpressionNode> partitionBy,
+            LiveViewCheckpointDependency firstRows,
+            int rowsFunctionCount,
+            long maxPrecedingRows,
+            int timestampIndex,
+            RecordMetadata baseMetadata,
+            CairoConfiguration configuration,
+            BytecodeAssembler asm,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        ObjList<Function> keyFunctions = new ObjList<>(partitionBy.size());
+        try {
+            final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                final Function function = functionParser.parseFunction(partitionBy.getQuick(i), baseMetadata, executionContext);
+                keyFunctions.add(function);
+                if (function.isNonDeterministic()) {
+                    // The forward pass and the backward search read the same base row from
+                    // two cursors, so a key that answers differently each time would count
+                    // one row's predecessors against another row's key.
+                    return null;
+                }
+                final int type = function.getType();
+                keyColumnTypes.add(ColumnType.isSymbol(type) ? ColumnType.STRING : type);
+            }
+            final RecordSink keySink = RecordSinkFactory.getInstance(
+                    configuration,
+                    asm,
+                    baseMetadata,
+                    new ListColumnFilter(),
+                    keyFunctions,
+                    null
+            );
+            final LiveViewCheckpointRowsPlan plan = new LiveViewCheckpointRowsPlan(
+                    rowsFunctionCount,
+                    maxPrecedingRows,
+                    firstRows.getPartitionSignature(),
+                    firstRows.getOrderSignature(),
+                    null,
+                    keyFunctions,
+                    keyColumnTypes,
+                    keySink,
+                    timestampIndex,
+                    firstRows.getTimestampType()
+            );
+            keyFunctions = null;
+            return plan;
+        } finally {
+            Misc.freeObjList(keyFunctions);
+        }
     }
 
     private static String expressionListSignature(ObjList<ExpressionNode> expressions, IntList directions) {

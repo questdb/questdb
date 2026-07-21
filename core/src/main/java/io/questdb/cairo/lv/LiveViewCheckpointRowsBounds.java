@@ -88,7 +88,8 @@ import org.jetbrains.annotations.Nullable;
  * whole history. Both forms return the same {@code L}: it is the lowest of the per-key
  * satisfying timestamps, and a key that runs out of history pins it to {@code S} either
  * way. The seek is preferred wherever it is available, and the walk remains the answer
- * for a composite key, a non-SYMBOL key, or an unindexed one.
+ * for a composite key, a non-SYMBOL key, an unindexed one, or a key the plan projects
+ * through an expression rather than off a column.
  * <p>
  * The affected key set {@code A} comes off the same forward scan: every key with a
  * qualifying row in {@code [changeLowTs, changeMaxTs]}. That interval encloses the
@@ -215,9 +216,10 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         if (changeMaxTs == Numbers.LONG_NULL || !pageFrameFactory.isBackwardTimestampRangeSupported()) {
             return;
         }
-        // A single indexed SYMBOL key is what lets the dependency floor be sought per key
-        // rather than walked over every key's rows. Decided once, before Q is collected,
-        // because collecting the key domain is only worth its memory on that path.
+        // A single indexed SYMBOL key column is what lets the dependency floor be sought
+        // per key rather than walked over every key's rows. Decided once, before Q is
+        // collected, because collecting the key domain is only worth its memory on that
+        // path. An expression-keyed plan names no column at all and so takes the walk.
         final int keyColumnIndex = plan.getPartitionByColumnCount() == 1
                 ? plan.getPartitionByColumnIndex(0)
                 : -1;
@@ -444,7 +446,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                 outputLowTs,
                 Long.MAX_VALUE
         )) {
-            final RecordCursor source = withFilter(pageCursor, filter, executionContext);
+            final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
                 if (isOverScanRowBudget(filter, ++pulled)) {
@@ -537,6 +539,26 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     }
 
     /**
+     * Binds one freshly opened page-frame cursor to the stack the scan reads through: the
+     * plan's key projector first, then the view's own {@code WHERE}. Both bindings are per
+     * cursor - a key function and a filter resolve symbols through the cursor's own symbol
+     * tables - so every search goes through here rather than binding once per discovery.
+     */
+    private RecordCursor openSource(
+            LiveViewCheckpointRowsPlan plan,
+            RecordCursor pageCursor,
+            Function filter,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        plan.initKeyFunctions(pageCursor, executionContext);
+        if (filter == null) {
+            return pageCursor;
+        }
+        filteringCursor.of(pageCursor, filter, executionContext);
+        return filteringCursor;
+    }
+
+    /**
      * Walks every row down from {@code R} until each key in {@code Q} has {@code Nmax}
      * qualifying predecessors, and takes the timestamp of the row that satisfied the last
      * one as {@code L}. Because {@code L} is an inclusive bound, the complete tie at that
@@ -565,7 +587,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                 viewLowerBoundTs,
                 outputLowTs - 1
         )) {
-            final RecordCursor source = withFilter(pageCursor, filter, executionContext);
+            final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
             while (source.hasNext()) {
                 backwardScanRows++;
@@ -633,7 +655,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
                     indexedKeyColumnIndex,
                     outputKeys.getQuick(i)
             )) {
-                final RecordCursor source = withFilter(pageCursor, filter, executionContext);
+                final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
                 final Record record = source.getRecord();
                 while (preceding < precedingRows && source.hasNext()) {
                     backwardScanRows++;
@@ -653,18 +675,6 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             floor = Math.min(floor, keyLowTs);
         }
         dependencyLowTs = floor;
-    }
-
-    private RecordCursor withFilter(
-            RecordCursor pageCursor,
-            Function filter,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (filter == null) {
-            return pageCursor;
-        }
-        filteringCursor.of(pageCursor, filter, executionContext);
-        return filteringCursor;
     }
 
     /**

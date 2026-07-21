@@ -51,6 +51,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -9806,6 +9807,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<String> checkpointFactorySignatures = executionContext.isLiveViewCompile() ? new ObjList<>() : null;
         ObjList<WindowFunction> naturalOrderFunctions = null;
         ObjList<Function> partitionByFunctions = null;
+        LiveViewCheckpointRowsPlan checkpointRowsPlan = null;
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
@@ -10023,16 +10025,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
-                return new WindowRecordCursorFactory(
+                // An expression-keyed ROWS plan owns compiled key functions, so it is built
+                // into a local the outer catch can free: the factory only takes ownership
+                // once its constructor has returned.
+                if (lvCompile) {
+                    checkpointRowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(
+                            functions,
+                            columns,
+                            baseMetadata,
+                            configuration,
+                            asm,
+                            functionParser,
+                            executionContext
+                    );
+                }
+                final WindowRecordCursorFactory windowFactory = new WindowRecordCursorFactory(
                         base,
                         factoryMetadata,
                         functions,
                         anchorableWindowFunctions,
                         lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
-                        lvCompile
-                                ? LiveViewCheckpointFunctionCompiler.rowsPlan(functions, columns, baseMetadata, configuration, asm)
-                                : null
+                        checkpointRowsPlan
                 );
+                checkpointRowsPlan = null;
+                return windowFactory;
             } else {
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);
@@ -10381,6 +10397,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.freeObjList(e.value);
             }
             Misc.free(base);
+            Misc.free(checkpointRowsPlan);
             Misc.freeObjList(functions);
             Misc.freeObjList(naturalOrderFunctions);
             Misc.freeObjList(partitionByFunctions);

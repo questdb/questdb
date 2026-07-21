@@ -248,6 +248,44 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpressionKeyWalksToTheSameFloorTheColumnKeySeeks() throws Exception {
+        assertMemoryLeak(() -> {
+            // A key the sink cannot read off a page-frame record is projected through the
+            // plan's own compiled function instead. `upper(sym)` partitions the fixture
+            // exactly as `sym` does, so both views must answer the same three results -
+            // what separates them is the descent, and only that.
+            //
+            // The base is the indexed one, so the column-keyed view seeks; the expression
+            // key names no column to seek through and takes the walk over the same 17 rows
+            // a composite or unindexed key costs. That is the whole price of the shape.
+            //
+            // The walk also proves the projector is rebound per cursor: the forward pass
+            // and the descent are two cursors, and a key function reading the second one's
+            // rows through the first one's symbol tables would resolve 'b' as something
+            // else and never satisfy the key the floor belongs to.
+            createSparseBase("indexed_base", true);
+            try (View byColumn = view(sparseView("indexed_base", 3));
+                 View byExpression = view(sparseExpressionView("indexed_base", 3));
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                final Bounds sought = byColumn.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+                final Bounds walked = byExpression.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
+
+                Assert.assertEquals(HighBoundTag.FINITE, walked.highBoundTag);
+                Assert.assertEquals(sought.highTsExclusive, walked.highTsExclusive);
+                Assert.assertEquals(sought.affectedKeyCount, walked.affectedKeyCount);
+                Assert.assertEquals(sought.outputKeyCount, walked.outputKeyCount);
+                Assert.assertEquals(sought.forwardScanRows, walked.forwardScanRows);
+                Assert.assertEquals(sought.dependencyLowTs, walked.dependencyLowTs);
+
+                Assert.assertEquals(2, sought.indexedKeyLookups);
+                Assert.assertEquals(6, sought.backwardScanRows);
+                Assert.assertEquals(0, walked.indexedKeyLookups);
+                Assert.assertEquals(17, walked.backwardScanRows);
+            }
+        });
+    }
+
+    @Test
     public void testFilterCountsOnlyQualifyingRows() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedBase();
@@ -645,6 +683,13 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
 
     private static String sparseCompositeView(String tableName, int precedingRows) {
         return "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, tag ORDER BY ts " + rowsFrame(precedingRows)
+                + ") AS s FROM " + tableName;
+    }
+
+    // Partitions the sparse fixture exactly as sparseView() does, through an expression the
+    // key projector has to compile rather than a column it can read.
+    private static String sparseExpressionView(String tableName, int precedingRows) {
+        return "SELECT ts, sym, sum(x) OVER (PARTITION BY upper(sym) ORDER BY ts " + rowsFrame(precedingRows)
                 + ") AS s FROM " + tableName;
     }
 
