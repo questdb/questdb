@@ -861,6 +861,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlAsOfAdaptiveBackScanBudget() {
+        return -1;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }

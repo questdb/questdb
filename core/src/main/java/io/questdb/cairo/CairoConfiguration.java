@@ -581,6 +581,14 @@ public interface CairoConfiguration {
      */
     long getQueryMemoryLimitBytes();
 
+    /**
+     * @return cumulative slave-row back-scan budget for the adaptive keyed ASOF join. The default
+     * (forward-scan Dense) cursor starts with a targeted Fast-style back-scan and switches to the
+     * resilient forward scan once cumulative back-scan exceeds this budget. {@code -1} disables the
+     * adaptive prelude (pure Dense).
+     */
+    long getSqlAsOfAdaptiveBackScanBudget();
+
     int getQueryRegistryPoolSize();
 
     /**

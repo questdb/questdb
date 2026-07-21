@@ -71,6 +71,7 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                     slaveFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampType()
             );
+            this.cursor.setAdaptiveBackScanBudget(configuration.getSqlAsOfAdaptiveBackScanBudget());
         } catch (Throwable th) {
             Misc.free(bwdScanKeyToRowId);
             Misc.free(fwdScanKeyToRowId);

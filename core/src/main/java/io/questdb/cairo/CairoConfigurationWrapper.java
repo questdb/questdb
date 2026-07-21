@@ -859,6 +859,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlAsOfAdaptiveBackScanBudget() {
+        return getDelegate().getSqlAsOfAdaptiveBackScanBudget();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }

@@ -165,6 +165,12 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         private long forwardRowId = -1;
         private boolean forwardScanExhausted;
         private boolean slaveCursorReadyForForwardScan;
+        // Adaptive prelude: when >= 0, serve master rows via the proven Fast keyed loop (super.hasNext()
+        // + performKeyMatching back-scan below) until the cumulative back-scan length exceeds the budget,
+        // then switch to the resilient forward-scan Dense mode for the remaining rows. -1 = pure Dense.
+        private long adaptiveBackScanBudget = -1;
+        private long adaptiveBackScanUsed;
+        private boolean adaptiveDenseMode;
 
         protected AsOfJoinDenseRecordCursorBase(
                 int columnSplit,
@@ -190,6 +196,15 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         public boolean hasNext() {
+            if (adaptiveBackScanBudget >= 0 && !adaptiveDenseMode) {
+                // Fast keyed loop with correct frame save/restore (AbstractKeyedAsOfJoinRecordCursor),
+                // driving performKeyMatching (the targeted back-scan) below.
+                boolean has = super.hasNext();
+                if (adaptiveBackScanUsed > adaptiveBackScanBudget) {
+                    switchToDenseMode();
+                }
+                return has;
+            }
             // Consult the breaker at the top, so an empty master still observes cancellation.
             circuitBreaker.statefulThrowExceptionIfTripped();
             if (!masterCursor.hasNext()) {
@@ -299,6 +314,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             bwdScanKeyToRowId.reopen();
             bwdScanKeyToRowId.clear();
             resetScanState();
+            adaptiveBackScanUsed = 0;
+            adaptiveDenseMode = false;
             super.of(masterCursor, slaveCursor, circuitBreaker);
         }
 
@@ -319,6 +336,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 bwdScanKeyToRowId.clear();
             }
             resetScanState();
+            adaptiveBackScanUsed = 0;
+            adaptiveDenseMode = false;
         }
 
         private void resetScanState() {
@@ -373,7 +392,70 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            throw new UnsupportedOperationException("AsOfJoinDenseRecordCursorBase does not use performKeyMatching");
+            // Targeted Fast-style back-scan, used only by the adaptive prelude. Mirrors
+            // AsOfJoinFastRecordCursorFactory.performKeyMatching but resolves keys via this cursor's
+            // key methods. The enclosing super.hasNext() handles slave-frame save/restore.
+            int slaveKeyToFind = setupSymbolKeyToFind();
+            if (slaveKeyToFind == SymbolTable.VALUE_NOT_FOUND) {
+                record.hasSlave(false);
+                return;
+            }
+            long rowLo = slaveTimeFrame.getRowLo();
+            int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
+            long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
+            long scanned = 0;
+            for (; ; ) {
+                if (toleranceInterval != Numbers.LONG_NULL) {
+                    long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                    if (slaveTimestamp < masterTimestamp - toleranceInterval) {
+                        record.hasSlave(false);
+                        break;
+                    }
+                }
+                int slaveKey = getSlaveJoinKey();
+                if (joinKeysMatch(slaveKeyToFind, slaveKey)) {
+                    record.hasSlave(true);
+                    break;
+                }
+                keyedRowId--;
+                if (keyedRowId < rowLo) {
+                    if (!slaveTimeFrameCursor.prev()) {
+                        record.hasSlave(false);
+                        break;
+                    }
+                    slaveTimeFrameCursor.open();
+                    keyedFrameIndex = slaveTimeFrame.getFrameIndex();
+                    keyedRowId = slaveTimeFrame.getRowHi() - 1;
+                    rowLo = slaveTimeFrame.getRowLo();
+                }
+                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                scanned++;
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+            adaptiveBackScanUsed += scanned;
+        }
+
+        // Switch from the Fast prelude to resilient Dense mode. Reset both the Fast forward trackers
+        // and the Dense scan state so the next hasNext re-initialises Dense cleanly from the top.
+        private void switchToDenseMode() {
+            adaptiveDenseMode = true;
+            resetScanState();
+            if (fwdScanKeyToRowId.isOpen()) {
+                fwdScanKeyToRowId.clear();
+            }
+            if (bwdScanKeyToRowId.isOpen()) {
+                bwdScanKeyToRowId.clear();
+            }
+            slaveFrameRow = Long.MIN_VALUE;
+            slaveFrameIndex = -1;
+            lookaheadTimestamp = Long.MIN_VALUE;
+            origSlaveRowId = -1;
+            origSlaveFrameIndex = -1;
+            origHasSlave = false;
+        }
+
+        public void setAdaptiveBackScanBudget(long budget) {
+            this.adaptiveBackScanBudget = budget;
         }
 
         protected abstract void putSlaveJoinKey(MapKey key);

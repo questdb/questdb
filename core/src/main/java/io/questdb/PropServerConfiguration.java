@@ -432,6 +432,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int queryCacheEventQueueCapacity;
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
+    private final long sqlAsOfAdaptiveBackScanBudget;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -1655,6 +1656,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            this.sqlAsOfAdaptiveBackScanBudget = getLong(properties, env, PropertyKey.CAIRO_SQL_ASOF_ADAPTIVE_BACKSCAN_BUDGET, -1);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
@@ -4496,6 +4498,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQueryMemoryLimitBytes() {
             return queryMemoryLimitBytes;
+        }
+
+        @Override
+        public long getSqlAsOfAdaptiveBackScanBudget() {
+            return sqlAsOfAdaptiveBackScanBudget;
         }
 
         @Override
