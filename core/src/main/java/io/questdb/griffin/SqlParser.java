@@ -6144,6 +6144,18 @@ public class SqlParser {
                             .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
                 }
 
+                // LIMIT is a global, order-dependent row cap. Incremental refresh re-evaluates the
+                // defining query per changed timestamp slice, so the cap would apply to each slice
+                // and the view contents would diverge from re-running the defining query.
+                final ExpressionNode limitLo = m.getLimitLo();
+                final ExpressionNode limitHi = m.getLimitHi();
+                if (limitLo != null || limitHi != null) {
+                    // The LIMIT keyword position is not propagated when a limit is hoisted between
+                    // models (see parseSelectClause), so anchor the error at the limit value node.
+                    throw SqlException.position(limitLo != null ? limitLo.position : limitHi.position)
+                            .put("LIMIT on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
                 ObjList<QueryColumn> columns = m.getColumns();
                 QueryColumn windowFuncColumn = null;
                 for (int i = 0, n = columns.size(); i < n; i++) {

@@ -717,6 +717,57 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewLimitNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // Non-aggregating (passthrough) view: incremental refresh would apply the limit to
+            // each refreshed timestamp slice, accumulating more rows than the defining query.
+            assertQuery("create materialized view test as (select * from " + TABLE1 + " limit 2) partition by day")
+                    .noLeakCheck()
+                    .fails(61, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // lo,hi (range) form
+            assertQuery("create materialized view test as (select * from " + TABLE1 + " limit 2, 5) partition by day")
+                    .noLeakCheck()
+                    .fails(61, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // aggregating SAMPLE BY view
+            assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s limit 5) partition by day")
+                    .noLeakCheck()
+                    .fails(84, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // limit nested in a subquery over the base table
+            assertQuery("create materialized view test as (select * from (select * from " + TABLE1 + " limit 2)) partition by day")
+                    .noLeakCheck()
+                    .fails(76, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // limit on a self-UNION over the base table
+            assertQuery("create materialized view test as (select ts, v from " + TABLE1 + " union select ts, v from " + TABLE1 + " limit 2) partition by day")
+                    .noLeakCheck()
+                    .fails(96, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewLimitOnOtherTableAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+            // LIMIT is rejected only on the base table's query subtree; a limited subquery over
+            // another table is re-evaluated in full on every refresh, so it stays allowed.
+            execute("create materialized view test with base " + TABLE1 + " as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 " +
+                    "join (select v from " + TABLE2 + " limit 3) as t2 on v sample by 30s) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewMultipleTables() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
