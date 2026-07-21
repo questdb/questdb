@@ -11998,87 +11998,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
-    /**
-     * Restores the symbol index files for a partition just decoded from Parquet
-     * back to native. The index content is invariant across a pure format
-     * conversion: row ids are preserved and POSTING covering sidecars
-     * (.pci/.pc*) are storage-independent value copies. So wherever the Parquet
-     * partition still holds the index files -- the common case, since
-     * {@link #convertPartitionNativeToParquet} linked or rebuilt them into the
-     * partition dir alongside data.parquet -- we hard-link them into the new
-     * native dir. That carries the covering sidecars verbatim; a fresh rebuild
-     * builds only the non-covering .pv, so covering scans over the reconverted
-     * partition would resolve every covered value as NULL.
-     * <p>
-     * A column whose index files are absent from the Parquet dir (e.g. an index
-     * added while the column had no rows in this partition) falls back to a
-     * rebuild from the freshly decoded native column data -- the same rebuild
-     * the whole path used before covering-aware linking.
-     */
-    private void restoreIndexFilesAfterParquetToNative(
-            long partitionTimestamp,
-            long parquetNameTxn,
-            int dstDirLen,
-            long partitionRowCount
-    ) {
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-        final int srcDirLen = path.size();
-        try {
-            final int columnCount = metadata.getColumnCount();
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
-                    continue;
-                }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (columnTop == -1 || columnTop >= partitionRowCount) {
-                    continue;
-                }
-
-                final String columnName = metadata.getColumnName(columnIndex);
-                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
-
-                // Prefer linking the existing index files from the Parquet
-                // partition dir: that preserves the POSTING covering sidecars a
-                // rebuild would drop. The .pk/.k key file gates existence.
-                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
-                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
-                    continue;
-                }
-
-                // Fallback: rebuild from the freshly decoded native column data.
-                final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
-                final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dstDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
-                try {
-                    indexWriter.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
-                    // Runs during parquet->native conversion before
-                    // txWriter.commit; tag the chain entry with the upcoming
-                    // committed txn.
-                    indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
-                    for (long row = columnTop; row < partitionRowCount; row++) {
-                        int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
-                        indexWriter.add(key, row);
-                    }
-                    indexWriter.setMaxValue(partitionRowCount - 1);
-                    indexWriter.seal();
-                } finally {
-                    ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
-                    Misc.free(indexWriter);
-                }
-            }
-        } catch (CairoException e) {
-            LOG.error().$("could not restore index files [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .$(", error=").$safe(e.getMessage()).I$();
-            throw e;
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-    }
-
     private boolean reconcileOptimisticPartitions() {
         if (txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1) > txWriter.getMaxTimestamp()) {
             int maxTimestampPartitionIndex = txWriter.getPartitionIndex(txWriter.getMaxTimestamp());
@@ -12836,6 +12755,87 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         o3PartitionUpdateSink.clear();
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
+    }
+
+    /**
+     * Restores the symbol index files for a partition just decoded from Parquet
+     * back to native. The index content is invariant across a pure format
+     * conversion: row ids are preserved and POSTING covering sidecars
+     * (.pci/.pc*) are storage-independent value copies. So wherever the Parquet
+     * partition still holds the index files -- the common case, since
+     * {@link #convertPartitionNativeToParquet} linked or rebuilt them into the
+     * partition dir alongside data.parquet -- we hard-link them into the new
+     * native dir. That carries the covering sidecars verbatim; a fresh rebuild
+     * builds only the non-covering .pv, so covering scans over the reconverted
+     * partition would resolve every covered value as NULL.
+     * <p>
+     * A column whose index files are absent from the Parquet dir (e.g. an index
+     * added while the column had no rows in this partition) falls back to a
+     * rebuild from the freshly decoded native column data -- the same rebuild
+     * the whole path used before covering-aware linking.
+     */
+    private void restoreIndexFilesAfterParquetToNative(
+            long partitionTimestamp,
+            long parquetNameTxn,
+            int dstDirLen,
+            long partitionRowCount
+    ) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+        final int srcDirLen = path.size();
+        try {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionRowCount) {
+                    continue;
+                }
+
+                final String columnName = metadata.getColumnName(columnIndex);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+
+                // Prefer linking the existing index files from the Parquet
+                // partition dir: that preserves the POSTING covering sidecars a
+                // rebuild would drop. The .pk/.k key file gates existence.
+                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
+                    continue;
+                }
+
+                // Fallback: rebuild from the freshly decoded native column data.
+                final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+                final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
+                final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dstDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
+                try {
+                    indexWriter.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
+                    // Runs during parquet->native conversion before
+                    // txWriter.commit; tag the chain entry with the upcoming
+                    // committed txn.
+                    indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
+                    for (long row = columnTop; row < partitionRowCount; row++) {
+                        int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
+                        indexWriter.add(key, row);
+                    }
+                    indexWriter.setMaxValue(partitionRowCount - 1);
+                    indexWriter.seal();
+                } finally {
+                    ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    Misc.free(indexWriter);
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not restore index files [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", error=").$safe(e.getMessage()).I$();
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
     }
 
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
