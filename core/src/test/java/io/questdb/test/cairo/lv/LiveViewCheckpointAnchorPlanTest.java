@@ -128,6 +128,29 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorBesideASlidingWindowStillPlansItsOwnSegment() throws Exception {
+        // The anchor bounds the functions it resets, and only those. A bounded ROWS window
+        // declared beside the anchored one keeps sliding across every bucket crossing, so
+        // the segment says nothing about its state - but that is the ROWS plan's job to
+        // say, not a reason to withhold the segment. The repair takes the union of the two
+        // and declines only when some function is left outside both.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s, " +
+                    "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r " +
+                    "FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts " +
+                    "ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            final LiveViewCheckpointAnchorPlan plan = refreshAndGetPlan();
+            Assert.assertNotNull("the anchored function's segment is still fixed", plan);
+            Assert.assertEquals('d', plan.getUnit());
+            Assert.assertEquals(1, plan.getStride());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorExpressionFloorPlansStridedSegments() throws Exception {
         assertMemoryLeak(() -> {
             createBaseAndView("ANCHOR EXPRESSION timestamp_floor('4h', ts)");

@@ -92,10 +92,13 @@ public final class LiveViewCheckpointFunctionCompiler {
      * <p>
      * The segment arithmetic is only half the contract. It bounds a repair because the
      * anchor resets state at every boundary, so the plan is withheld unless
-     * {@link #isAnchorSegmentLocal} confirms that every window function in the factory
-     * is one the anchor actually resets. A view mixing an anchored window with a bounded
-     * ROWS/RANGE one keeps that second window sliding across bucket crossings, and its
-     * state is no more segment-local than the anchor is frame-local.
+     * {@link #isAnchorSegmentLocal} confirms that every <i>anchored</i> window function
+     * is one the anchor actually resets. A bounded ROWS/RANGE window declared beside the
+     * anchored one keeps sliding across bucket crossings and is no more segment-local
+     * than the anchor is frame-local, so it is not this plan's to bound - it is
+     * {@link #rowsPlan}'s or {@link #rangePlan}'s, and
+     * {@link #isDependencyComplete} is what proves the three plans between them cover
+     * the whole factory.
      *
      * @param spec                       the definition's captured anchored window
      * @param anchorNode                 the parsed anchor expression, already desugared
@@ -205,13 +208,65 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Builds the union of the finite RANGE dependencies a streaming live-view factory
-     * carries, or null when any window function is not a finite RANGE - a mixed
-     * ROWS/anchor factory stays valid but has no RANGE repair plan. Two RANGE functions
-     * must nevertheless agree on the key/order domain even in a mixed factory, so a later
-     * planner can never combine incompatible descriptors into one repair interval.
+     * Whether the three dependency plans between them cover every window function in the
+     * factory, which is what lets a repair bound them all at once.
      * <p>
-     * The frame shape is necessary but not sufficient: every function must also hold
+     * Each plan describes the functions of its own kind and says nothing about the
+     * others: {@link #rangePlan} bounds the finite RANGE frames, {@link #rowsPlan} the
+     * finite ROWS ones, {@link #anchorPlan} the anchored ones. A localized repair takes
+     * the union - the earliest {@code L} and the latest {@code H} any of them proves -
+     * and a union is only a bound over the view's output when every function that
+     * produced that output is inside it. One uncovered function is therefore a whole
+     * repair declined: the replacement over {@code [R, H)} is timestamp-global, so it
+     * re-emits every function's output from the same replay, and a function whose state
+     * that replay cannot reconstruct would be re-emitted wrong.
+     * <p>
+     * A function is uncovered when its kind has no plan (its own contract failed, or the
+     * factory's functions of that kind disagreed on the key/order domain), when it
+     * carries no dependency contract at all - a window function without checkpoint state
+     * support - or when its kind is one no plan can bound. A factory with no window
+     * function answers false: there is nothing for a dependency contract to be about.
+     */
+    public static boolean isDependencyComplete(
+            @NotNull ObjList<WindowFunction> windowFunctions,
+            boolean hasRangePlan,
+            boolean hasRowsPlan,
+            boolean hasAnchorPlan
+    ) {
+        final int functionCount = windowFunctions.size();
+        if (functionCount == 0) {
+            return false;
+        }
+        for (int i = 0; i < functionCount; i++) {
+            final LiveViewCheckpointDependency dependency = windowFunctions.getQuick(i).checkpointDependency();
+            if (dependency == null) {
+                return false;
+            }
+            final boolean covered;
+            if (dependency.isFiniteRange()) {
+                covered = hasRangePlan;
+            } else if (dependency.isFiniteRows()) {
+                covered = hasRowsPlan;
+            } else {
+                covered = hasAnchorPlan && dependency.getKind() == DependencyKind.FIXED_ANCHOR_SEGMENT;
+            }
+            if (!covered) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Builds the union of the finite RANGE dependencies a streaming live-view factory
+     * carries, or null when it carries none or one of them fails its own contract. The
+     * plan describes the RANGE functions and only those - a factory mixing them with ROWS
+     * or anchored windows still gets one, and {@link #isDependencyComplete} is what
+     * decides whether the three plans together bound the whole view. Two RANGE functions
+     * must nevertheless agree on the key/order domain, so a later planner can never
+     * combine incompatible descriptors into one repair interval.
+     * <p>
+     * The frame shape is necessary but not sufficient: every RANGE function must also hold
      * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}, since a
      * repair warms up over the frame's extent and nothing below it. The domain check still
      * runs for a factory a non-frame-local function declines, so an incompatible pair is
@@ -225,7 +280,6 @@ public final class LiveViewCheckpointFunctionCompiler {
         LiveViewCheckpointDependency firstRange = null;
         LiveViewCheckpointFunctionIdentity firstIdentity = null;
         boolean allFrameLocal = true;
-        boolean allRange = true;
         int rangeFunctionCount = 0;
         long maxFrameWidth = 0;
 
@@ -236,7 +290,8 @@ public final class LiveViewCheckpointFunctionCompiler {
             }
             final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
             if (dependency == null || !dependency.isFiniteRange()) {
-                allRange = false;
+                // Another kind's function, or one with no contract at all. Either way it
+                // is not this plan's to describe.
                 continue;
             }
             final LiveViewCheckpointFunctionIdentity identity = windowFunction.checkpointFunctionIdentity();
@@ -258,7 +313,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             rangeFunctionCount++;
         }
 
-        if (!allRange || !allFrameLocal || firstRange == null) {
+        if (!allFrameLocal || firstRange == null) {
             return null;
         }
         return new LiveViewCheckpointRangePlan(
@@ -282,10 +337,11 @@ public final class LiveViewCheckpointFunctionCompiler {
      * and must stay accepted; declining the plan costs such a view only the localized
      * repair path, which is what it has now.
      * <p>
-     * The plan is declined when any window function is not a finite ROWS frame (a mixed
-     * ROWS/RANGE factory has no single contract), when a function does not hold
-     * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state} and so
-     * reads rows the warm-up over {@code [L, R)} never feeds it, when two functions
+     * Like the RANGE plan, this describes the finite ROWS functions and only those; a
+     * mixed factory still gets one, and {@link #isDependencyComplete} decides whether the
+     * plans together bound the whole view. The plan is declined when a ROWS function does
+     * not hold {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}
+     * and so reads rows the warm-up over {@code [L, R)} never feeds it, when two of them
      * disagree on the key/order domain, when a window is not ordered by the designated
      * timestamp ascending (the row positions {@code Nmax} counts would then be positions
      * in an order the replay's cursor does not produce), when the frame is keyless or
@@ -323,7 +379,12 @@ public final class LiveViewCheckpointFunctionCompiler {
                 continue;
             }
             final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
-            if (dependency == null || !dependency.isFiniteRows() || !dependency.hasFrameLocalState()) {
+            if (dependency == null || !dependency.isFiniteRows()) {
+                // Another kind's function, or one with no contract at all. Either way it
+                // is not this plan's to describe.
+                continue;
+            }
+            if (!dependency.hasFrameLocalState()) {
                 return null;
             }
             if (!(columns.getQuick(i) instanceof WindowExpression window)
@@ -460,43 +521,45 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the anchor's segment determines the state of every window function in the
-     * factory, which is what lets a repair reconstruct that state by replaying one
-     * segment. Two independent things have to hold, and each has its own way of failing:
+     * Whether the anchor's segment determines the state of every <i>anchored</i> window
+     * function in the factory, which is what lets a repair reconstruct that state by
+     * replaying one segment. Two independent things have to hold of each of them, and
+     * each has its own way of failing:
      * <ul>
-     *     <li>every window function is one the anchor resets. The runtime dispatches
+     *     <li>the anchor actually resets it. The runtime dispatches
      *     {@code resetPartition} only to the functions whose frame is
-     *     {@code UNBOUNDED PRECEDING ... CURRENT ROW} - a bounded ROWS/RANGE window
-     *     declared beside the anchored one must keep sliding across bucket crossings -
-     *     so a factory holding one of those has a function whose state reaches below the
-     *     segment start;</li>
-     *     <li>every function's state is keyed and resettable. A function that carries no
-     *     checkpoint dependency at all, or whose per-partition state the anchor cannot
-     *     put back to identity, is not described by the reset the replay relies on.
+     *     {@code UNBOUNDED PRECEDING ... CURRENT ROW}, so an anchored function outside
+     *     that subset carries state reaching below the segment start;</li>
+     *     <li>its state is keyed and resettable. A per-partition state the anchor cannot
+     *     put back to identity is not described by the reset the replay relies on, and
      *     {@code supportsKeyReset} is the descriptor for exactly that.</li>
      * </ul>
-     * A factory with no window function at all answers false: there is nothing for the
-     * anchor to be a dependency contract over.
+     * A bounded ROWS/RANGE window declared beside the anchored one keeps sliding across
+     * bucket crossings, so it is not the segment's to bound - its own frame plan bounds
+     * it, and {@link #isDependencyComplete} checks that one exists. A factory with no
+     * anchored function at all answers false: there is nothing for the anchor to be a
+     * dependency contract over.
      */
     private static boolean isAnchorSegmentLocal(
             ObjList<WindowFunction> windowFunctions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        final int functionCount = windowFunctions.size();
-        if (functionCount == 0
-                || anchorableWindowFunctions == null
-                || anchorableWindowFunctions.size() != functionCount) {
+        if (anchorableWindowFunctions == null) {
             return false;
         }
-        for (int i = 0; i < functionCount; i++) {
-            final LiveViewCheckpointDependency dependency = windowFunctions.getQuick(i).checkpointDependency();
-            if (dependency == null
-                    || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT
-                    || !dependency.supportsKeyReset()) {
+        int anchoredCount = 0;
+        for (int i = 0, n = windowFunctions.size(); i < n; i++) {
+            final WindowFunction function = windowFunctions.getQuick(i);
+            final LiveViewCheckpointDependency dependency = function.checkpointDependency();
+            if (dependency == null || dependency.getKind() != DependencyKind.FIXED_ANCHOR_SEGMENT) {
+                continue;
+            }
+            if (!dependency.supportsKeyReset() || anchorableWindowFunctions.indexOf(function) < 0) {
                 return false;
             }
+            anchoredCount++;
         }
-        return true;
+        return anchoredCount > 0;
     }
 
     /**

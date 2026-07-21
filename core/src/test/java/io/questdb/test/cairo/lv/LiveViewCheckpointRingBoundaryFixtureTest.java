@@ -112,6 +112,34 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
+    public void testAnchorSegmentAndRowsFrameBoundOneRebuildTogether() throws Exception {
+        // A view carrying two dependency shapes at once: an anchored cumulative sum the
+        // minute bucket resets, and a bounded ROWS window declared beside it that keeps
+        // sliding across every crossing. Neither shape describes the other's state, so the
+        // repair bounds them together - the earliest L and the latest H the two prove -
+        // and here the arms trade ends. The discovery answers L = 290s and H = 350s for
+        // the ROWS window; the segment answers 300s and 360s. The union reads from 290s
+        // (the ROWS floor, deeper) and stops at 360s (the segment's end, later), which
+        // satisfies the sliding frame's warm-up and the anchored function's convergence at
+        // the same time.
+        //
+        // The read is 290s..350s - seven groups of 2 - plus the O3 commit's own 2 at 315s,
+        // and the replacement re-emits 315s..350s. The 15-row discovery is the ROWS arm's
+        // and the segment adds none: its bounds are arithmetic over the designated
+        // timestamp.
+        final String slidingWindow = "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r";
+        final String viewSql = "SELECT ts, sym, sum(x) OVER w AS s, " + slidingWindow + " FROM base "
+                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + LOCALIZATION_ANCHOR_EXPRESSION + ")";
+        final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
+                + " ORDER BY ts) AS s, " + slidingWindow + " FROM base";
+        final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, oracleSql, false);
+        Assert.assertEquals("bound discovery plus the union's [L, H) rebuild", 15 + 16, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 10, cost.emittedRows);
+        // The whole-history rebuild this replaces, for scale.
+        Assert.assertEquals(82, 2L * LOCALIZATION_HISTORY_COMMITS + 2);
+    }
+
+    @Test
     public void testAnchorSegmentBoundsAnAnchoredRankingRebuild() throws Exception {
         // The shape the finite-influence scope cut turned away unanchored and gave back
         // anchored. row_number() has no frame to bound anything with - which is exactly
@@ -144,15 +172,16 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     }
 
     @Test
-    public void testAnchorSegmentDeclinesAViewTheAnchorDoesNotWhollyReset() throws Exception {
-        // The safety boundary of the anchor bound, and the one the anchor clause alone
-        // cannot see. The runtime dispatches the reset only to the functions whose frame
-        // is UNBOUNDED PRECEDING ... CURRENT ROW, so the bounded ROWS window declared
-        // beside the anchored one keeps sliding across every bucket crossing - its state
-        // reaches below the segment start, and a repair localized on the segment would
-        // warm it up over rows the frame does not contain. The whole factory therefore
-        // declines the plan and pays the unbounded rebuild.
-        final String slidingWindow = "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r";
+    public void testAnchorSegmentDeclinesAViewWithAnUncoveredFunction() throws Exception {
+        // The safety boundary of the union. Two shapes bounding two functions is only a
+        // bound over the view while every function sits inside one of them, and lag()
+        // sits inside neither: it counts predecessors by its own offset - five here,
+        // through a frame that promises three - so the ROWS plan declines it and the
+        // anchor does not reset it either. The replacement over [R, H) is
+        // timestamp-global and re-emits its column from the same replay, so one
+        // uncovered function costs the whole view its localization rather than only its
+        // own arm.
+        final String slidingWindow = "lag(x, 5) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r";
         final String viewSql = "SELECT ts, sym, sum(x) OVER w AS s, " + slidingWindow + " FROM base "
                 + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + LOCALIZATION_ANCHOR_EXPRESSION + ")";
         final String oracleSql = "SELECT ts, sym, sum(x) OVER (PARTITION BY sym, " + LOCALIZATION_ANCHOR_EXPRESSION
@@ -161,6 +190,28 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
         final long historyRows = 2L * LOCALIZATION_HISTORY_COMMITS + 2;
         Assert.assertEquals("no bound is derived, so the whole history is read", historyRows, cost.scannedRows);
         Assert.assertEquals("and re-emitted", historyRows, cost.emittedRows);
+    }
+
+    @Test
+    public void testRangeAndRowsFramesBoundOneRebuildTogether() throws Exception {
+        // The other mixed factory: a bounded RANGE window and a bounded ROWS one, whose
+        // bounds are the fixture's own 285s/345s and 290s/350s. The arms trade ends here
+        // too - the RANGE width reaches deeper below the floor, the row count reaches
+        // further above the change - so the union reads from 285s and stops at 350s.
+        //
+        // The read is the ROWS case's to the row: no fixture row sits in [285s, 290s), so
+        // the deeper floor costs nothing, while the later ceiling is the one the ROWS arm
+        // would have set anyway. What the case pins is that neither plan was dropped in
+        // favour of the other, which a repair taking only the first shape it found would
+        // do - and that the two functions converge to the from-base recompute together.
+        final String viewSql = "SELECT ts, sym, "
+                + "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '"
+                + LOCALIZATION_RANGE_WIDTH_SECONDS + "' SECOND PRECEDING AND CURRENT ROW) AS s, "
+                + "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS r "
+                + "FROM base";
+        final ReplayCost cost = runOldO3BoundaryRebuild(viewSql, viewSql, false);
+        Assert.assertEquals("bound discovery plus the union's [L, H) rebuild", 15 + 14, cost.scannedRows);
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
 
     @Test

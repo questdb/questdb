@@ -126,19 +126,27 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
-    public void testAnchorSegmentIsNotConsultedAlongsideAFrameDependency() throws SqlException {
-        // The compiler produces at most one of the three plans - an anchored window
-        // carries the FIXED_ANCHOR_SEGMENT dependency kind and so has neither frame
-        // union - but the precedence is stated here so a future factory carrying both
-        // cannot silently take the segment's wider bounds over the frame's.
+    public void testAnchorSegmentUnionsWithAFrameDependency() throws SqlException {
+        // A view mixing an anchored window with a bounded RANGE one - each plan bounds the
+        // functions of its own kind, so neither may be dropped in favour of the other. The
+        // RANGE arm proves L = R - W = 4_900 and H = changeMaxTs + W + 1 = 6_101, the
+        // segment proves 4_000 and 8_000, and the union is the outer pair of the two: the
+        // warm-up satisfies both frames and the replacement stops where the later of them
+        // converges.
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, 9_000);
 
-        // L = R - W and H = changeMaxTs + W + 1, not the segment's 4_000 and 8_000.
         Assert.assertTrue(plan.isLocalized());
-        Assert.assertEquals(4_900, plan.getReplayLowTs());
+        Assert.assertEquals(4_000, plan.getReplayLowTs());
         Assert.assertEquals(5_000, plan.getOutputLowTs());
-        Assert.assertEquals(6_101, plan.getHighTsExclusive());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(8_000, plan.getHighTsExclusive());
+
+        // The frontier now sits between the two arms' bounds. It clears the RANGE arm's
+        // 6_101 but not the union's 8_000, and it is the union the runtime is restored
+        // against - so the plan declines rather than stopping where only one arm converged.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, 7_000);
+        assertAnchorRebuildIsUnlocalized(plan);
     }
 
     @Test
@@ -608,6 +616,72 @@ public class LiveViewCheckpointRepairPlanTest {
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(Long.MAX_VALUE, plan.getReplayLowTs());
         Assert.assertEquals(Long.MAX_VALUE, plan.getCorrectionTs());
+    }
+
+    @Test
+    public void testMixedFrameDependenciesDeclineOnAnUnprovenHighBound() throws SqlException {
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // EOF sits above every timestamp, so it is what the union takes when one arm
+        // proves no finite bound - and a ROWS function cannot be localized behind it:
+        // its frame never expires by time, so a key with no row at or above R keeps
+        // state the replay from L never sees. The RANGE arm's own 6_101 is beside the
+        // point, because the replacement it would bound re-emits the ROWS function too.
+        TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.EOF, Numbers.LONG_NULL);
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000);
+        Assert.assertEquals(1, rows.discoveries);
+        assertRowsRebuildIsUnlocalized(plan);
+
+        // The same refusal from the other side: the change tops out where
+        // changeMaxTs + W leaves the timestamp domain, so the RANGE arm names no bound.
+        // Alone it would still localize its floor and read the tail out; beside a ROWS
+        // arm it cannot, because the tail is what the ROWS runtime would be promoted from.
+        rows = new TestRowsBounds(Long.MAX_VALUE - 300, HighBoundTag.FINITE, Long.MAX_VALUE - 50);
+        plan.of(new TestAnchors(), Long.MAX_VALUE - 200, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, rows, NO_ANCHOR, true, Long.MAX_VALUE, Long.MAX_VALUE - 100, Long.MAX_VALUE);
+        Assert.assertEquals(1, rows.discoveries);
+        Assert.assertFalse(plan.isLocalized());
+        assertEofHighBound(plan);
+        Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
+        Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
+
+        // And the insert-only proof the ROWS arm needs gates the whole union, not just
+        // its own half: a deleting change set leaves the RANGE arm's bounds correct and
+        // the ROWS arm's affected key domain unknowable, so nothing runs.
+        rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 7_000);
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, rows, NO_ANCHOR, NOT_INSERT_ONLY, 9_000, 6_000, 9_000);
+        Assert.assertEquals(0, rows.discoveries);
+        assertRowsRebuildIsUnlocalized(plan);
+    }
+
+    @Test
+    public void testMixedFrameDependenciesUnionTheirBounds() throws SqlException {
+        // A factory holding both a bounded RANGE and a bounded ROWS window. Each plan
+        // bounds the functions of its own kind, and the union takes the earliest L and
+        // the latest H: the warm-up then satisfies both frames, and the replacement stops
+        // where the later of the two converges.
+        //
+        // S=1_000, C=5_000, D=9_000 -> R = 5_000. The RANGE arm proves L = R - W = 4_000
+        // and H = changeMaxTs + W + 1 = 7_001; the discovery answers L = 3_000 and
+        // H = 6_500 for the same floor.
+        final TestRowsBounds rows = new TestRowsBounds(3_000, HighBoundTag.FINITE, 6_500);
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 1_000, rows, NO_ANCHOR, true, 9_000, 6_000, 9_000);
+
+        Assert.assertEquals(1, rows.discoveries);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(3_000, plan.getReplayLowTs());
+        Assert.assertEquals(5_000, plan.getOutputLowTs());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(7_001, plan.getHighTsExclusive());
+        Assert.assertTrue(plan.isRuntimeStatePreserved());
+
+        // Widen the ROWS answer past the RANGE arm's and the union follows it instead:
+        // neither arm is preferred, only the outer bound of the two is kept.
+        final TestRowsBounds deeperRows = new TestRowsBounds(4_500, HighBoundTag.FINITE, 8_000);
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 1_000, deeperRows, NO_ANCHOR, true, 9_000, 6_000, 9_000);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(4_000, plan.getReplayLowTs());
+        Assert.assertEquals(8_000, plan.getHighTsExclusive());
     }
 
     @Test

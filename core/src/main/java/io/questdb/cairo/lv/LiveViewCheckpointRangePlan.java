@@ -28,14 +28,16 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Immutable compiler-owned union of the finite RANGE dependencies in one live
- * view. The plan is present only when every window function belongs to the same
- * partition/order domain and has a finite
- * {@code RANGE W PRECEDING ... CURRENT ROW} dependency.
+ * view. The plan is present when the view's {@code RANGE W PRECEDING ... CURRENT
+ * ROW} functions share one partition/order domain and each holds frame-local
+ * state; it says nothing about window functions of another kind, which the ROWS
+ * and anchor plans describe instead.
  * <p>
  * The union is what a localized out-of-order repair plans against: it takes the
- * widest look-behind of any function in the view, because the dependency floor
- * has to satisfy every one of them at once. The partition/order signatures and
- * the timestamp type are shared by construction, so the plan carries one copy.
+ * widest look-behind of any RANGE function in the view, because the dependency
+ * floor has to satisfy every one of them at once. The partition/order signatures
+ * and the timestamp type are shared by construction, so the plan carries one
+ * copy.
  */
 public final class LiveViewCheckpointRangePlan {
     private final int functionCount;

@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.ObjList;
@@ -140,11 +141,13 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertTrue(rows.dependency.isFiniteRows());
             Assert.assertFalse(rows.dependency.isFiniteRange());
             Assert.assertFalse(range.dependency.isFiniteRows());
-            // The two plans are mutually exclusive by construction: a factory whose
-            // functions are all finite RANGE has no finite ROWS function, and vice versa.
+            // Each plan describes the functions of its own kind and no others, so a
+            // single-function factory carries exactly one of them.
             Assert.assertNull(rows.rangePlan);
             Assert.assertNotNull(rows.rowsPlan);
             Assert.assertNull(range.rowsPlan);
+            Assert.assertTrue(rows.isDependencyComplete);
+            Assert.assertTrue(range.isDependencyComplete);
         });
     }
 
@@ -175,6 +178,68 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertNotNull(rows.rowsPlan.getKeySink());
             Assert.assertEquals(1, rows.rowsPlan.getKeyColumnTypes().getColumnCount());
             Assert.assertEquals(ColumnType.SYMBOL, rows.rowsPlan.getKeyColumnTypes().getColumnType(0));
+        });
+    }
+
+    /**
+     * A factory mixing a bounded RANGE window with a bounded ROWS one carries both plans.
+     * Each describes the functions of its own kind and stays silent about the rest, and a
+     * repair bounds them together by taking the earliest {@code L} and the latest {@code H}
+     * the two prove.
+     * <p>
+     * What the compiler owes the repair is therefore not one plan but a <b>complete set</b>:
+     * every window function inside one of them. The replacement over {@code [R, H)} is
+     * timestamp-global, so it re-emits every function's output from the same replay, and one
+     * function the replay cannot reconstruct is one wrong column - which is why a
+     * half-covered factory declines rather than localizing on the half it can prove.
+     */
+    @Test
+    public void testMixedFrameFactoryCarriesBothPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
+            final Metadata mixed = compileMetadata(
+                    "select ts, sym, "
+                            + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                            + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s "
+                            + "from base",
+                    0
+            );
+            Assert.assertTrue(mixed.dependency.isFiniteRange());
+            Assert.assertNotNull(mixed.rangePlan);
+            Assert.assertEquals(1, mixed.rangePlan.getFunctionCount());
+            Assert.assertEquals(2_000_000L, mixed.rangePlan.getMaxFrameWidth());
+            Assert.assertNotNull(mixed.rowsPlan);
+            Assert.assertEquals(1, mixed.rowsPlan.getFunctionCount());
+            Assert.assertEquals(3, mixed.rowsPlan.getMaxPrecedingRows());
+            Assert.assertTrue(mixed.isDependencyComplete);
+
+            // lag() reads outside its declared frame, so the ROWS plan declines - and the
+            // RANGE plan, correct for the function it does describe, covers only half the
+            // factory.
+            final Metadata halfCovered = compileMetadata(
+                    "select ts, sym, "
+                            + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
+                            + "lag(x, 5) over (partition by sym order by ts rows between 3 preceding and current row) l "
+                            + "from base",
+                    0
+            );
+            Assert.assertNotNull(halfCovered.rangePlan);
+            Assert.assertNull(halfCovered.rowsPlan);
+            Assert.assertFalse(halfCovered.isDependencyComplete);
+
+            // A function of a kind no plan bounds - an unbounded cumulative window with no
+            // anchor to reset it - leaves the set incomplete the same way, even though the
+            // ROWS plan beside it is correct for its own half.
+            final Metadata uncoveredKind = compileMetadata(
+                    "select ts, sym, "
+                            + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s, "
+                            + "count(x) over (partition by sym order by ts rows between unbounded preceding and current row) c "
+                            + "from base",
+                    0
+            );
+            Assert.assertNotNull(uncoveredKind.rowsPlan);
+            Assert.assertEquals(1, uncoveredKind.rowsPlan.getFunctionCount());
+            Assert.assertFalse(uncoveredKind.isDependencyComplete);
         });
     }
 
@@ -324,12 +389,6 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     public void testRowsShapesOutsideTheDiscoverableContractDeclineThePlan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, sym symbol, x double) timestamp(ts) partition by day wal");
-            // A mixed factory has no single contract: the RANGE half is bounded by a
-            // timestamp width and the ROWS half by a row count.
-            assertNoRowsPlan("select ts, sym, "
-                    + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
-                    + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s "
-                    + "from base");
             // An unbounded look-behind has no floor to discover at all.
             assertNoRowsPlan("select ts, sym, sum(x) over (partition by sym order by ts "
                     + "rows between unbounded preceding and current row) s from base");
@@ -377,19 +436,6 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(3_000_000L, micros.rangePlan.getMaxFrameWidth());
             Assert.assertEquals(micros.dependency.getPartitionSignature(), micros.rangePlan.getPartitionSignature());
             Assert.assertEquals(micros.dependency.getOrderSignature(), micros.rangePlan.getOrderSignature());
-
-            // A view mixing a bounded RANGE with a bounded ROWS frame stays
-            // valid, but has no RANGE repair plan - the ROWS half is not
-            // bounded by a timestamp width.
-            final Metadata mixed = compileMetadata(
-                    "select ts, sym, "
-                            + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "
-                            + "sum(x) over (partition by sym order by ts rows between 3 preceding and current row) s "
-                            + "from base",
-                    0
-            );
-            Assert.assertTrue(mixed.dependency.isFiniteRange());
-            Assert.assertNull(mixed.rangePlan);
 
             // The same width normalizes against the base's own timestamp resolution.
             execute("create table base_ns (ts timestamp_ns, sym symbol, x double) timestamp(ts) partition by day wal");
@@ -545,11 +591,19 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             final WindowFunction function = functions.getQuick(functionIndex);
             Assert.assertNotNull(function.getClass().getName(), function.checkpointFunctionIdentity());
             Assert.assertNotNull(function.getClass().getName(), function.checkpointDependency());
+            final LiveViewCheckpointRangePlan rangePlan = windowFactory.getCheckpointRangePlan();
+            final LiveViewCheckpointRowsPlan rowsPlan = windowFactory.getCheckpointRowsPlan();
             return new Metadata(
                     function.checkpointFunctionIdentity(),
                     function.checkpointDependency(),
-                    windowFactory.getCheckpointRangePlan(),
-                    windowFactory.getCheckpointRowsPlan()
+                    rangePlan,
+                    rowsPlan,
+                    LiveViewCheckpointFunctionCompiler.isDependencyComplete(
+                            functions,
+                            rangePlan != null,
+                            rowsPlan != null,
+                            false
+                    )
             );
         } finally {
             sqlExecutionContext.setLiveViewCompile(false);
@@ -559,6 +613,10 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
     private static class Metadata {
         private final LiveViewCheckpointDependency dependency;
         private final LiveViewCheckpointFunctionIdentity identity;
+        // Whether the frame plans between them cover every window function, which is what
+        // a repair checks before it bounds any of them. Computed without an anchor plan,
+        // since this harness compiles the factory rather than the anchor window.
+        private final boolean isDependencyComplete;
         private final LiveViewCheckpointRangePlan rangePlan;
         private final LiveViewCheckpointRowsPlan rowsPlan;
 
@@ -566,12 +624,14 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                 LiveViewCheckpointFunctionIdentity identity,
                 LiveViewCheckpointDependency dependency,
                 LiveViewCheckpointRangePlan rangePlan,
-                LiveViewCheckpointRowsPlan rowsPlan
+                LiveViewCheckpointRowsPlan rowsPlan,
+                boolean isDependencyComplete
         ) {
             this.identity = identity;
             this.dependency = dependency;
             this.rangePlan = rangePlan;
             this.rowsPlan = rowsPlan;
+            this.isDependencyComplete = isDependencyComplete;
         }
     }
 }

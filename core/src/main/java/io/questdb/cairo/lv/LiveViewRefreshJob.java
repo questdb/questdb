@@ -3341,9 +3341,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * The second thing it reads from disk is the live-view table's own frontier, the
      * lower bound on {@code D} the output floor {@code R} is clamped to. Only a
-     * DATA-triggered repair over a view with a finite RANGE, ROWS or anchor-segment
-     * dependency can localize, so the reader opens only for that case: a non-DATA trigger
-     * rebuilds the whole view and a view without a dependency has no floor to raise.
+     * DATA-triggered repair over a view whose window functions are <b>all</b> covered by
+     * a finite RANGE, ROWS or anchor-segment dependency can localize, so the reader opens
+     * only for that case: a non-DATA trigger rebuilds the whole view, and one uncovered
+     * function leaves the repair with no floor it may raise. A view carrying more than one
+     * shape - a bounded ROWS window declared beside an anchored one, say - hands all of
+     * them over together and the plan takes their union.
      * <p>
      * A finite ROWS dependency costs one more read than a RANGE one. Its bounds are
      * per-key row counts rather than timestamp arithmetic, so the plan calls back into
@@ -3394,33 +3397,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         LiveViewCheckpointAnchorPlan anchorPlan = null;
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final LiveViewCheckpointRangePlan rangePlan = windowFactory.getCheckpointRangePlan();
-        // The compiler produces at most one of the three plans - a factory whose window
-        // functions are all finite RANGE has no ROWS union, an anchored one has neither -
-        // so this reads whichever one the view carries rather than choosing between them.
-        final LiveViewCheckpointRowsPlan rowsPlan = rangePlan == null ? windowFactory.getCheckpointRowsPlan() : null;
-        if (lateRowTs != Numbers.LONG_NULL) {
+        final LiveViewCheckpointRowsPlan rowsPlan = windowFactory.getCheckpointRowsPlan();
+        // Null unless the compiler proved both halves of the anchor contract: a
+        // closed-form segment boundary, and every anchored window function reset by it.
+        final LiveViewCheckpointAnchorPlan viewAnchorPlan = anchorWindow == null
+                ? null
+                : anchorWindow.getCheckpointAnchorPlan();
+        // Each plan describes the window functions of its own kind, so a mixed factory
+        // carries several and the repair bounds them together. What it may not do is bound
+        // some of them: a function outside the union is one the replay cannot reconstruct,
+        // and the timestamp-global replacement re-emits its output all the same.
+        final boolean isDependencyComplete = LiveViewCheckpointFunctionCompiler.isDependencyComplete(
+                windowFactory.getWindowFunctions(),
+                rangePlan != null,
+                rowsPlan != null,
+                viewAnchorPlan != null
+        );
+        // Dedup denies a ROWS plan its answer on separate grounds: it replaces a row with
+        // the incoming one, so it can drop a partition key out of the change interval -
+        // either by rewriting the key column of a row that is not itself a dedup key, or by
+        // replacing a row the view's WHERE accepted with one it rejects. Neither raw-WAL
+        // walk sees that, and a table without dedup keys cannot do it at all.
+        if (lateRowTs != Numbers.LONG_NULL
+                && isDependencyComplete
+                && (rowsPlan == null || (effectiveInsertOnly && !hasDedupKeys(reader.getMetadata())))) {
             if (rangePlan != null) {
                 rangeFrameWidth = rangePlan.getMaxFrameWidth();
-                durableOutputMaxTs = readDurableOutputMaxTs(instance);
-            } else if (rowsPlan != null && effectiveInsertOnly && !hasDedupKeys(reader.getMetadata())) {
-                // Dedup replaces a row with the incoming one, so it can drop a partition
-                // key out of the change interval - either by rewriting the key column of
-                // a row that is not itself a dedup key, or by replacing a row the view's
-                // WHERE accepted with one it rejects. Neither raw-WAL walk sees that, and
-                // a table without dedup keys cannot do it at all.
+            }
+            if (rowsPlan != null) {
                 rowsBoundDiscovery.of(rowsPlan, windowFactory, reader);
                 rowsBoundSource = rowsBoundDiscovery;
-                durableOutputMaxTs = readDurableOutputMaxTs(instance);
-            } else if (rowsPlan == null && anchorWindow != null) {
-                // Null unless the compiler proved both halves of the anchor contract: a
-                // closed-form segment boundary, and every window function reset by it. The
-                // segment bounds the repair from both sides without reading a base row, so
-                // unlike the ROWS path this costs only the live-view frontier read.
-                anchorPlan = anchorWindow.getCheckpointAnchorPlan();
-                if (anchorPlan != null) {
-                    durableOutputMaxTs = readDurableOutputMaxTs(instance);
-                }
             }
+            // The segment bounds the repair from both sides without reading a base row, so
+            // unlike the ROWS path this arm costs only the live-view frontier read.
+            anchorPlan = viewAnchorPlan;
+            durableOutputMaxTs = readDurableOutputMaxTs(instance);
         }
         // The runtime state a converging repair puts back travels through the checkpoint
         // freeze/restore contract, so a view without checkpoint-state support cannot save

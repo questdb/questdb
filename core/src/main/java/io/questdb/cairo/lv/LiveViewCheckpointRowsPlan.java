@@ -31,11 +31,11 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Immutable compiler-owned union of the finite ROWS dependencies in one live view.
- * The ROWS counterpart of {@link LiveViewCheckpointRangePlan}, and present only when
- * every window function belongs to the same partition/order domain and has a finite
- * {@code ROWS N PRECEDING ... CURRENT ROW} dependency.
+ * The ROWS counterpart of {@link LiveViewCheckpointRangePlan}, present when the view's
+ * {@code ROWS N PRECEDING ... CURRENT ROW} functions share one partition/order domain
+ * and each holds frame-local state, and silent about window functions of another kind.
  * <p>
- * The union takes the widest look-behind of any function in the view, because the
+ * The union takes the widest look-behind of any ROWS function in the view, because the
  * dependency floor has to satisfy every one of them at once. Where the two plans part
  * company is what that width means. A RANGE width is a timestamp offset, so both
  * repair bounds follow from arithmetic and never touch the data. {@code Nmax} is a
