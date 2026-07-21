@@ -59,11 +59,14 @@ import org.junit.Test;
  * step 4 removes. {@code sum} over small LONG values is bit-exact (section 6.1), so the
  * from-base recompute oracle can compare with exact equality rather than a float tolerance.
  * <p>
- * The class also carries the fixture's counterpart: once the RANGE dependency floor lands
- * (Phase 5 step 4a), the same sub-ring out-of-order row no longer costs the view's age. The
- * localization pair drives a longer history and measures what the rebuild actually read and
- * re-emitted, with the ROWS view as the still-unbounded control until Phase 6 gives it
- * per-key predecessor discovery.
+ * The class also carries the fixture's counterpart: once the RANGE dependency bounds land
+ * (Phase 5 steps 4a and 4b), the same sub-ring out-of-order row no longer costs the view's
+ * age in either direction - the rebuild reads from {@code R - W} and stops at
+ * {@code changeMaxTs + W}. The localization pair drives a longer history, measures what the
+ * rebuild actually read and re-emitted, and then keeps ingesting in order so the runtime
+ * state a converging repair restored is exercised rather than only the output it wrote. The
+ * ROWS view is the still-unbounded control until Phase 6 gives it per-key predecessor
+ * discovery.
  */
 public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewTest {
 
@@ -100,24 +103,24 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
 
     @Test
     public void testRangeDependencyBoundsTheOldO3BoundaryRebuild() throws Exception {
-        // The design's phase 5 step 4a win, on the fixture the pathology was built for.
-        // The change is older than every surviving anchor, so the repair still runs the
-        // boundary rebuild - but a finite RANGE look-behind gives it a floor the ring
-        // could not: the state a row at R sees is exactly the rows in [R - W, R], so the
-        // rebuild reads from R - W and re-emits from R.
+        // The design's phase 5 step 4a/4b win, on the fixture the pathology was built
+        // for. The change is older than every surviving anchor, so the repair still runs
+        // the boundary rebuild - but a finite RANGE look-behind closes it at both ends:
+        // the state a row at R sees is exactly the rows in [R - W, R], and a row at m
+        // sits in the frame of every row in [m, m + W] and no other.
         //
-        // W is 30s over rows spaced 10s apart, so L lands at 285s: the scan admits the
-        // three timestamp groups below the O3 row and everything above it. 290s..400s is
-        // 12 groups of 2 rows, and the O3 commit adds 2 more.
+        // W is 30s over rows spaced 10s apart. L lands at 285s and H one microsecond
+        // past 345s, so the scan admits 290s..345s - six groups of 2 rows - plus the O3
+        // commit's own 2 at 315s.
         final ReplayCost cost = runOldO3BoundaryRebuild(
                 "PARTITION BY sym ORDER BY ts RANGE BETWEEN '" + LOCALIZATION_RANGE_WIDTH_SECONDS
                         + "' SECOND PRECEDING AND CURRENT ROW"
         );
-        Assert.assertEquals("the rebuild must read exactly [R - W, +inf)", 26, cost.scannedRows);
+        Assert.assertEquals("the rebuild must read exactly [R - W, changeMaxTs + W]", 14, cost.scannedRows);
         // R is the O3 row's own timestamp (the live-view table's durable frontier sits
-        // above it, so no non-durable output lowers the floor): 315s..400s is 9 groups of
-        // 2 rows plus the O3 commit's 2.
-        Assert.assertEquals("the rebuild must re-emit exactly [R, +inf)", 20, cost.emittedRows);
+        // above it, so no non-durable output lowers the floor): 315s..345s is the O3
+        // commit's 2 rows plus three groups of 2.
+        Assert.assertEquals("the rebuild must re-emit exactly [R, H)", 8, cost.emittedRows);
     }
 
     @Test
@@ -292,7 +295,8 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
     // re-emitted. Both counters are asserted zero before the out-of-order commit, so the
     // values that come back are that one repair's and nothing else's. The view is checked
     // against the from-base recompute either way - a bounded rebuild that gets the answer
-    // wrong is worse than an unbounded one.
+    // wrong is worse than an unbounded one - and then again after three further in-order
+    // commits, which is what proves the runtime state and not merely the durable output.
     private ReplayCost runOldO3BoundaryRebuild(String windowFrame) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, RETENTION_COUNT);
@@ -347,6 +351,30 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
                 );
                 cost.scannedRows = lv.getO3ReplayScanRows();
                 cost.emittedRows = lv.getO3BoundaryReplayRows();
+                assertViewMatchesRecompute(viewSql);
+
+                // Keep ingesting in order. A repair that converged below the frontier
+                // left the runtime state it entered with in place rather than the state
+                // its replay ended on, and only these follow-up rows can tell the two
+                // apart: they are evaluated incrementally against whatever the repair
+                // left behind, so a runtime rewound to the convergence boundary would
+                // compute their frames over rows the state no longer holds. The output
+                // the repair already wrote would look right either way.
+                for (int commit = LOCALIZATION_HISTORY_COMMITS + 2; commit <= LOCALIZATION_HISTORY_COMMITS + 4; commit++) {
+                    setCurrentMicros(commit * 200_000L);
+                    final String rowTs = secondsTs(commit * 10);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('" + rowTs + "', 'a', " + commit + "), " +
+                            "('" + rowTs + "', 'b', " + (commit + 100) + ")");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                Assert.assertEquals(
+                        "in-order rows after the repair must append, not replay",
+                        cost.emittedRows,
+                        lv.getO3BoundaryReplayRows()
+                );
                 assertViewMatchesRecompute(viewSql);
             }
 

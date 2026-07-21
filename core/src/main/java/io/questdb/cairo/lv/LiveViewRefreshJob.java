@@ -165,6 +165,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
+    // Reusable {minTs, maxTs} out-pair from computeApplyAheadBounds. Worker-owned;
+    // rewritten in full on every call, read out immediately by planO3Repair.
+    private final long[] applyAheadBounds = new long[2];
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
     // Flyweight record over an in-mem tier buffer row, used by the flush path to
@@ -214,6 +217,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
+    // In-RAM copy of the compiled factory's window state, taken by a repair that
+    // stops at a finite convergence boundary and put back once the replay is done
+    // (design section 12.4). Worker-owned and reused across repairs; empty except
+    // between one repair's capture and its restore.
+    private final LiveViewCheckpointScratchOverlay repairOverlay = new LiveViewCheckpointScratchOverlay();
     // Coordinates of the out-of-order repair currently executing: the pinned base
     // snapshot, the correction floor, the retire floor and the chosen executor.
     // One instance per worker, refilled by planO3Repair at the start of each
@@ -346,6 +354,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         checkpointTimelineStoreWriter = Misc.free(checkpointTimelineStoreWriter);
         ringManifestWriter = Misc.free(ringManifestWriter);
         stagingBuffer = Misc.free(stagingBuffer);
+        Misc.free(repairOverlay);
     }
 
     /**
@@ -1282,7 +1291,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // watermarks itself. Returning here keeps the in-WAL-order
             // post-cycle branch out of the picture; the next refresh tick
             // resumes from o3SeqTxn + 1.
-            o3Replay(instance, windowFactory, o3LateRowTs, baseToken, o3SeqTxn);
+            // The drain rolled back exactly the commits it walked, so its change
+            // ceiling is this repair's: advanceTo is the offending seqTxn, the top of
+            // the range the walk covered.
+            o3Replay(instance, windowFactory, o3LateRowTs, drainResult.o3ChangeMaxTs, baseToken, o3SeqTxn);
             return;
         }
 
@@ -1545,7 +1557,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // rebuilds the tier as a pure disk subset, so the stale lead rows must
                 // not be counted (mirrors finishLeadRefresh's o3 branch).
                 instance.setLeadRowCount(0);
-                o3Replay(instance, windowFactory, batchMinTs, baseToken, effectiveSeqTxn);
+                // No change ceiling from this walk: it skips past the structural and
+                // non-DATA entries that would deny one rather than aborting on them
+                // (the applied-reader rebuild is going to read everything anyway), so
+                // the maximum it could report would not be an upper bound on what the
+                // range changed. The rebuild reads to the end of the base table, as it
+                // did before the bound existed.
+                o3Replay(instance, windowFactory, batchMinTs, Numbers.LONG_NULL, baseToken, effectiveSeqTxn);
                 // Coupled invariant: keep refreshedUpTo == lastProcessed so a later
                 // ALTER DEDUP DISABLE flip back to the lead path resumes cleanly with
                 // no stale un-flushed lead.
@@ -1769,6 +1787,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // a straddling commit contributes only its sub-floor prefix. Folded into
         // lowerBoundRowsScanned after the walk so a test can prove the O(1) skip.
         long lowerBoundRowsScanned = 0;
+        // Upper bound on what this pass's commits changed, accumulated across every
+        // entry the walk visits rather than only the offending one: an O3 hand-off
+        // rolls the whole pass back and re-materialises all of it, so the repair's
+        // change set is the pass, not the trigger. That breadth is also what keeps the
+        // repair's runtime-frontier test honest. This pass fed its in-order commits
+        // through the window cursor before the hand-off rolled the WAL writes back and
+        // rewound latestSeenTs, so the window state stands ABOVE that watermark; a
+        // ceiling taken from the trigger alone could sit under the watermark and let a
+        // repair claim it converged below state the pass had already advanced.
+        // Counting those commits puts the ceiling - and therefore H - above them, which
+        // is what makes the frontier comparison reject the case.
+        // changeMaxTsKnown goes false on an entry whose reach the commit metadata does
+        // not describe - a compacted or structural sequencer entry, or a non-DATA
+        // commit - after which no timestamp arithmetic bounds the change and the repair
+        // must read to the end of the base table.
+        long changeMaxTs = Numbers.LONG_NULL;
+        boolean changeMaxTsKnown = true;
         boolean o3Detected = false;
         long o3LateRowTs = Numbers.LONG_NULL;
         long o3SeqTxn = Numbers.LONG_NULL;
@@ -1827,6 +1862,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                 if (walId <= 0) {
                     // Compacted seq entry / non-WAL: skip past, no data to consume.
+                    // Nothing here says what it touched, so a repair over this pass
+                    // cannot claim a convergence boundary.
+                    changeMaxTsKnown = false;
                     continue;
                 }
 
@@ -1857,7 +1895,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // Non-data commit (schema change / DROP PARTITION / TRUNCATE / TTL) —
                     // walked past, no rewrite to the in-memory tier or LV WAL. Schema
                     // changes that touch referenced columns invalidate via
-                    // ApplyWal2TableJob.
+                    // ApplyWal2TableJob. A removal can retire base rows anywhere in the
+                    // table, so nothing in the inserted-row timestamps bounds what a
+                    // repair over this pass has to re-evaluate.
+                    changeMaxTsKnown = false;
                     continue;
                 }
 
@@ -1903,6 +1944,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     o3TriggerTs = deleteLo;
                     crossCommitO3 |= latestSeen != Numbers.LONG_NULL && deleteLo <= latestSeen;
                 }
+                // Raise the pass's change ceiling before the O3 branch: the offending
+                // commit is part of the change set the hand-off re-materialises, so it
+                // has to contribute even though the walk stops on it.
+                changeMaxTs = Math.max(changeMaxTs, effectiveCommitMaxTs(dataInfo, deleteLo));
                 if (crossCommitO3 || dataInfo.isOutOfOrder()) {
                     if (walWriter != null) {
                         walWriter.rollback();
@@ -2109,11 +2154,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         drainResult.advanceTo = advanceTo;
         drainResult.appendedRows = appendedRows;
         drainResult.batchMaxTs = batchMaxTs;
+        drainResult.o3ChangeMaxTs = changeMaxTsKnown ? changeMaxTs : Numbers.LONG_NULL;
         drainResult.o3Detected = o3Detected;
         drainResult.o3LateRowTs = o3LateRowTs;
         drainResult.o3SeqTxn = o3SeqTxn;
         drainResult.stagingMaxTs = stagingMaxTs;
         drainResult.stagingMinTs = stagingMinTs;
+    }
+
+    /**
+     * Highest designated timestamp one base DATA commit can have changed, or
+     * {@link Numbers#LONG_NULL} when it changed nothing. The mirror of
+     * {@link #effectiveReplaceRangeDeleteLo}: that method reports how far down a
+     * commit reaches, this one how far up, and a localized repair needs both to
+     * enclose the change set in a finite interval.
+     * <p>
+     * Two sources. The commit's own rows top out at its recorded maximum timestamp,
+     * which is only meaningful when it carries rows at all - a pure-delete
+     * REPLACE_RANGE carries none and its recorded extremes are the empty-range
+     * sentinels. And a REPLACE_RANGE deletes {@code [rangeLo, rangeHi)} beyond its
+     * inserted rows, whose topmost removed row sits at {@code rangeHi - 1}; a
+     * non-null {@code deleteLo} already proves that range non-empty, so the
+     * decrement cannot wrap.
+     * <p>
+     * The result is not clamped to the view's boundary the way the delete low is.
+     * The clamp down exists because a view holds no row below its {@code START
+     * FROM}, so a deletion there removes nothing of the view's; there is no
+     * equivalent ceiling above, and clamping would understate how far the change
+     * reaches.
+     *
+     * @param dataInfo the commit's WAL-E metadata
+     * @param deleteLo this commit's {@link #effectiveReplaceRangeDeleteLo}, so the
+     *                 caller's single evaluation serves both bounds
+     */
+    private static long effectiveCommitMaxTs(WalEventCursor.DataInfo dataInfo, long deleteLo) {
+        long maxTs = Numbers.LONG_NULL;
+        if (dataInfo.getEndRowID() > dataInfo.getStartRowID()) {
+            maxTs = dataInfo.getMaxTimestamp();
+        }
+        if (deleteLo != Numbers.LONG_NULL) {
+            maxTs = Math.max(maxTs, dataInfo.getReplaceRangeTsHi() - 1);
+        }
+        return maxTs;
     }
 
     /**
@@ -2229,7 +2311,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the tier from the rewritten disk as a pure subset. After it the
             // applied point covers the offending seqTxn, so resume the lead there.
             instance.setLeadRowCount(0);
-            o3Replay(instance, windowFactory, drainResult.o3LateRowTs, baseToken, drainResult.o3SeqTxn);
+            o3Replay(instance, windowFactory, drainResult.o3LateRowTs, drainResult.o3ChangeMaxTs, baseToken, drainResult.o3SeqTxn);
             instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
             return;
         }
@@ -2787,20 +2869,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Minimum in-view timestamp any DATA base commit in the apply-ahead range
-     * {@code (fromSeqTxn, toSeqTxn]} would introduce, used to gate an apply-ahead
-     * resume: when {@code ApplyWal2TableJob} has raced the base reader past the O3
-     * trigger, a resume from a sealed anchor {@code C} is sound only if
-     * {@code C.maxTs} sits strictly below every row those un-examined seqTxns hold
-     * (else a back-dated row below {@code C.maxTs} would be dropped). This returns
-     * that floor.
+     * Timestamp span the apply-ahead range {@code (fromSeqTxn, toSeqTxn]} touches,
+     * returned through the reusable {@link #applyAheadBounds} pair as
+     * {@code [minTs, maxTs]}.
      * <p>
-     * Returns {@link Numbers#LONG_NULL} when the range is <b>not safely
+     * The minimum gates an apply-ahead resume: when {@code ApplyWal2TableJob} has
+     * raced the base reader past the O3 trigger, a resume from a sealed anchor
+     * {@code C} is sound only if {@code C.maxTs} sits strictly below every row those
+     * un-examined seqTxns hold (else a back-dated row below {@code C.maxTs} would be
+     * dropped). The maximum feeds the other end of the same reasoning: the repair
+     * re-materialises this range too, so the convergence boundary {@code H} has to
+     * clear it as well as the trigger's own rows.
+     * <p>
+     * Both are {@link Numbers#LONG_NULL} when the range is <b>not safely
      * resumable</b> and the caller must rebuild from the boundary instead:
      * <ul>
      *     <li>a structural / compacted sequencer entry ({@code walId <= 0}), or a
      *     non-DATA commit (TRUNCATE / DROP PARTITION / UPDATE) is present - a
-     *     bounded resume cannot reproduce whatever it changed below the anchor; or</li>
+     *     bounded resume cannot reproduce whatever it changed below the anchor, and
+     *     no arithmetic over the inserted timestamps bounds it above either; or</li>
      *     <li>the range holds no DATA commit at all.</li>
      * </ul>
      * The min source mirrors {@link #drainAppliedBase}'s overlap walk exactly (the
@@ -2808,10 +2895,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * REPLACE_RANGE delete contributes its clamped range low rather than its
      * inserted-row minimum); it differs only by aborting to {@code LONG_NULL} on
      * the structural / non-DATA commits that walk merely skips - the drain is
-     * still going to scan everything, whereas a resume must not.
+     * still going to scan everything, whereas a resume must not. The max comes from
+     * {@link #effectiveCommitMaxTs} over the same commits.
      */
-    private long computeApplyAheadMinTs(TableToken baseToken, long fromSeqTxn, long toSeqTxn, long viewLowerBoundTimestamp) {
+    private long[] computeApplyAheadBounds(TableToken baseToken, long fromSeqTxn, long toSeqTxn, long viewLowerBoundTimestamp) {
+        applyAheadBounds[0] = Numbers.LONG_NULL;
+        applyAheadBounds[1] = Numbers.LONG_NULL;
         long minTs = Numbers.LONG_NULL;
+        long maxTs = Numbers.LONG_NULL;
         try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
             while (txnCursor.hasNext()) {
                 final long txn = txnCursor.getTxn();
@@ -2822,7 +2913,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (walId <= 0) {
                     // Compacted / structural entry (STRUCTURAL_CHANGE / DROP_TABLE):
                     // a bounded resume cannot see whatever it changed, so refuse it.
-                    return Numbers.LONG_NULL;
+                    return applyAheadBounds;
                 }
                 final int segmentId = txnCursor.getSegmentId();
                 final int segmentTxn = txnCursor.getSegmentTxn();
@@ -2833,7 +2924,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (!WalTxnType.isDataType(eventCursor.getType())) {
                     // TRUNCATE / DROP PARTITION / UPDATE: a non-DATA change whose
                     // effect a bounded resume cannot reproduce - force the rebuild.
-                    return Numbers.LONG_NULL;
+                    return applyAheadBounds;
                 }
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 long txnMinTs = dataInfo.getMinTimestamp();
@@ -2844,9 +2935,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (minTs == Numbers.LONG_NULL || txnMinTs < minTs) {
                     minTs = txnMinTs;
                 }
+                maxTs = Math.max(maxTs, effectiveCommitMaxTs(dataInfo, deleteLo));
             }
         }
-        return minTs;
+        applyAheadBounds[0] = minTs;
+        // A classifiable range with no minimum holds no DATA commit, which the
+        // caller reads as unresumable; pin the maximum to the same verdict rather
+        // than publishing half a span.
+        applyAheadBounds[1] = minTs == Numbers.LONG_NULL ? Numbers.LONG_NULL : maxTs;
+        return applyAheadBounds;
     }
 
     /**
@@ -2878,6 +2975,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @param windowFactory the LV's compiled SELECT (window cursor stack)
      * @param lateRowTs     {@code dataInfo.getMinTimestamp()} that triggered
      *                      O3 detection
+     * @param changeMaxTs   highest designated timestamp the commits this replay
+     *                      re-materialises touched, or {@link Numbers#LONG_NULL}
+     *                      when the caller cannot bound it. Only an upper bound on
+     *                      the change lets the repair converge below the end of the
+     *                      base table; without one it reads the whole tail, which is
+     *                      what every caller did before the bound existed
      * @param baseToken     base table token (passed in so the replay path
      *                      doesn't re-look-it-up from the definition)
      * @param advanceTo     base seqTxn the replay must cover; also the value
@@ -2888,6 +2991,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             long lateRowTs,
+            long changeMaxTs,
             TableToken baseToken,
             long advanceTo
     ) throws SqlException {
@@ -3008,12 +3112,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // rather than reopening at whatever apply has reached by then.
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, changeMaxTs, baseToken, advanceTo, reader);
             LOG.info().$("live view O3 replay [view=").$(viewName)
                     .$(", lateRowTs=").$(lateRowTs)
                     .$(", advanceTo=").$(advanceTo)
                     .$(", pinnedSeqTxn=").$(repairPlan.getPinnedSeqTxn())
                     .$(", correctionTs=").$(repairPlan.getCorrectionTs())
+                    .$(", changeMaxTs=").$(repairPlan.getChangeMaxTs())
+                    .$(", highTsExclusive=").$(repairPlan.getHighTsExclusive())
                     .$(", resumeFromAnchor=").$(repairPlan.isResumeFromAnchor())
                     .$(", anchorLvSeqTxn=").$(repairPlan.getAnchorLvSeqTxn())
                     .$(", anchorMaxTs=").$(repairPlan.getAnchorMaxTs()).I$();
@@ -3058,11 +3164,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * snapshot already holds transactions the forward drain never examined, and the
      * lowest in-view timestamp among them decides both how far the retire floor
      * drops and whether any sealed anchor can still be trusted.
-     * {@link #computeApplyAheadMinTs} reads the base WAL-E files to answer that, so
+     * {@link #computeApplyAheadBounds} reads the base WAL-E files to answer that, so
      * it runs only when {@link LiveViewCheckpointRepairPlan#isApplyAheadClassificationRequired}
      * says the answer can change the plan. It can throw on a torn or purged WAL-E,
      * which the caller's pin ownership turns into a returned reader rather than a
-     * leaked one.
+     * leaked one. Its upper bound joins the caller's {@code changeMaxTs} for the same
+     * reason the lower one joins the correction floor: the repair re-materialises the
+     * ahead range too, so a convergence boundary that does not clear it would leave
+     * those rows unemitted while the watermark walked past them.
      * <p>
      * The head pair is read atomically: without that, a concurrent
      * {@code setHeadCheckpoint} could pair a fresh {@code lvSeqTxn} with the prior
@@ -3073,11 +3182,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * DATA-triggered repair over a view with a finite RANGE dependency can localize,
      * so the reader opens only for that case: a non-DATA trigger rebuilds the whole
      * view and a view without the dependency has no floor to raise.
+     * <p>
+     * The runtime frontier it passes is the view's own {@code latestSeenTs}, but only
+     * when the repair could actually put the runtime window state back: the state
+     * travels through the checkpoint freeze/restore contract, so a view without
+     * checkpoint-state support has no way to save it, and an anchored view's anchor
+     * map is not carried by that contract at all. A view with neither cannot have a
+     * finite RANGE plan today - the compiler classifies an anchored window as
+     * {@code FIXED_ANCHOR_SEGMENT} and a non-capable one seals no checkpoint - so
+     * this is the invariant stated where it is relied on rather than a second gate.
      */
     private void planO3Repair(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             long lateRowTs,
+            long changeMaxTs,
             TableToken baseToken,
             long advanceTo,
             TableReader reader
@@ -3085,8 +3204,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long pinnedSeqTxn = reader.getSeqTxn();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         long applyAheadMinTs = Numbers.LONG_NULL;
+        long effectiveChangeMaxTs = changeMaxTs;
         if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, advanceTo, pinnedSeqTxn)) {
-            applyAheadMinTs = computeApplyAheadMinTs(baseToken, advanceTo, pinnedSeqTxn, viewLowerBoundTimestamp);
+            final long[] aheadBounds = computeApplyAheadBounds(baseToken, advanceTo, pinnedSeqTxn, viewLowerBoundTimestamp);
+            applyAheadMinTs = aheadBounds[0];
+            // An unclassifiable ahead range already denies every anchor through the
+            // retire floor; deny the convergence boundary on the same terms, since
+            // nothing then says how far up those un-examined seqTxns reach.
+            effectiveChangeMaxTs = applyAheadMinTs == Numbers.LONG_NULL
+                    ? Numbers.LONG_NULL
+                    : Math.max(effectiveChangeMaxTs, aheadBounds[1]);
         }
         long rangeFrameWidth = Numbers.LONG_NULL;
         long durableOutputMaxTs = Numbers.LONG_NULL;
@@ -3095,6 +3222,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             rangeFrameWidth = rangePlan.getMaxFrameWidth();
             durableOutputMaxTs = readDurableOutputMaxTs(instance);
         }
+        final long runtimeFrontierTs = instance.isSnapshotCapability() && instance.getAnchorWindow() == null
+                ? instance.getLatestSeenTs()
+                : Numbers.LONG_NULL;
         final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
         repairPlan.of(
                 instance,
@@ -3106,7 +3236,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 headPair[1],
                 applyAheadMinTs,
                 rangeFrameWidth,
-                durableOutputMaxTs
+                durableOutputMaxTs,
+                effectiveChangeMaxTs,
+                runtimeFrontierTs
         );
     }
 
@@ -3398,7 +3530,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * drift, mid-drain recovery and WAL-loss re-derive. They all pass a non-DATA
      * trigger ({@code lateRowTs == LONG_NULL}), which authorises no deletion, so
      * the plan reduces to the pinned snapshot's {@code seqTxn} and a whole-ring
-     * retire.
+     * retire. The same non-DATA trigger denies localization, so the change ceiling
+     * these callers cannot supply would not be read anyway.
      * <p>
      * Apply-lag handling: a base-table {@code TableReader} obtained right after
      * detection may not yet reflect {@code advanceTo}, because the global
@@ -3420,7 +3553,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, windowFactory, lateRowTs, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, baseToken, advanceTo, reader);
             o3HeadMissReplay(instance, windowFactory, repairPlan, reader, fullRebuild);
         } finally {
             reader.close();
@@ -3432,8 +3565,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * partition map and the anchor map, drives the compiled SELECT's
      * filter / anchor / window cursor stack over the pinned {@code TableReader}'s
      * ts-sorted view starting from the plan's scan floor {@code L}, emits
-     * a single REPLACE_RANGE commit covering everything from the plan's output
-     * floor {@code R} through positive infinity, and applies inline.
+     * a single REPLACE_RANGE commit covering the plan's replacement interval
+     * {@code [R, H)}, and applies inline.
      * <p>
      * {@code L} and {@code R} are both {@code viewLowerBoundTimestamp} unless the
      * plan localized the rebuild (design section 12.3), in which case the two split:
@@ -3443,6 +3576,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code L} at all, which is the whole point - its cost stops tracking the view's
      * age. See {@link LiveViewCheckpointRepairPlan#isLocalized()} for when that
      * applies.
+     * <p>
+     * {@code H} closes the interval from above. It is end-of-frame - the whole tail,
+     * as every rebuild read before the bound existed - unless the plan proved a finite
+     * convergence boundary, which it does only for a localized rebuild whose change
+     * set has a known ceiling and whose runtime state provably survives the repair. A
+     * finite {@code H} changes three things at once, and they stand or fall together:
+     * the scan stops there, the replacement's high bound is that value rather than
+     * positive infinity so the durable output above it is left alone, and the runtime
+     * window state - correct on entry, and describing {@code H - 1} rather than the
+     * frontier once the replay has run over it - is taken out of the way beforehand
+     * and put back after (design section 12.4/12.6). See
+     * {@link LiveViewCheckpointRepairPlan#isRuntimeStatePreserved()}.
      * <p>
      * Cost of the unlocalized rebuild is O(retained_rows x n_window_functions) of
      * {@code computeNext} plus the partition-rewrite I/O - acceptable for short-lived
@@ -3510,6 +3655,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // R: the lowest output row the replay emits, and the REPLACE_RANGE floor.
         // Rows scanned below it warm the window state up and produce nothing.
         final long emitLowTs = localized ? plan.getOutputLowTs() : viewLowerBoundTimestamp;
+        // H: finite only for a localized rebuild, and only when the plan proved the
+        // repair converges below the runtime frontier. It governs three things that
+        // have to move together - where the scan stops, where the replacement stops,
+        // and whether the runtime keeps the state it entered with - so they all read
+        // this one flag rather than the plan directly. Routed through the same
+        // fullRebuild veto as the floors: a rebuild that must recompute the whole view
+        // may not stop early, whatever the plan derived.
+        final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
+        boolean overlayCaptured = false;
         boolean readerAttached = false;
         long appendedRows = 0;
         long o3ScanRows = 0;
@@ -3570,9 +3724,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // which the cursor turns into a full scan; a localized rebuild replaces that with
             // its dependency floor L and culls the history below it as well.
             // Both take their high bound from the plan's tagged H, so probe and recompute
-            // agree on the read interval; every plan tags EOF today, which admits the whole
-            // tail exactly as an unbounded scan did.
-            final long scanHighTs = plan.getScanHighTsInclusive();
+            // agree on the read interval. Long.MAX_VALUE as an INCLUSIVE bound admits the
+            // whole tail exactly as an unbounded scan did; a finite H culls the partitions
+            // above the convergence boundary as well.
+            final long scanHighTs = finiteHighBound ? plan.getScanHighTsInclusive() : Long.MAX_VALUE;
 
             // Probe pass: open a separate cursor over the same source + filter
             // chain and check whether any row survives. Skipping the wipe when
@@ -3582,9 +3737,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             //
             // A localized rebuild needs no probe and must not take one: it reconstructs the
             // window state from [L, R) whatever the emit range holds, so the wipe it does is
-            // never the permanent erasure the probe guards against, and an empty [R, +inf)
+            // never the permanent erasure the probe guards against, and an empty [R, H)
             // must still commit a truncating replacement to clear the ghost rows sitting
-            // there. Skipping the probe also saves it the second pass over [L, +inf).
+            // there. Skipping the probe also saves it the second pass over [L, H).
             final boolean hasReplayRow;
             if (localized) {
                 hasReplayRow = true;
@@ -3604,6 +3759,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (hasReplayRow) {
+                if (finiteHighBound) {
+                    // Copy the published runtime state aside before the wipe below
+                    // reaches it. The replay has to run through these same function
+                    // instances - the compiled cursor stack owns them and there is only
+                    // one of it - so the overlay is what keeps the repair from
+                    // overwriting state it has already proved correct.
+                    repairOverlay.capture(windowFactory.getWindowFunctions());
+                    overlayCaptured = true;
+                }
                 // Reset per-function accumulator state and the anchor map to
                 // identity. The compiled factory's WindowFunction instances
                 // stay live so the cursor chain below can reuse them; only
@@ -3681,14 +3845,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // entire view range to purge any stale below-frontier row.
                             //
                             // A localized rebuild answers all of this with R directly: it
-                            // re-emitted every qualifying row at or above R, so anything the
-                            // LV table still holds up there is stale whatever produced it -
+                            // re-emitted every qualifying row in [R, H), so anything the
+                            // LV table still holds in there is stale whatever produced it -
                             // a dropped filter row, a dedup replacement or a base removal.
                             // R already sits at or below the trigger ts, so the clamp above
                             // could only raise it. The commit is unconditional here: an empty
-                            // emit range means the base no longer has a qualifying row above
-                            // R, and the rows the LV table still holds there are ghosts that
-                            // the truncating replacement has to clear.
+                            // emit range means the base no longer has a qualifying row in
+                            // [R, H), and the rows the LV table still holds there are ghosts
+                            // that the truncating replacement has to clear.
                             final long replaceLowTs = localized
                                     ? emitLowTs
                                     : fullRebuild
@@ -3696,10 +3860,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                       : triggerLowTs != Numbers.LONG_NULL
                                         ? Math.min(replayMinTs, triggerLowTs)
                                         : replayMinTs;
+                            // The replacement's high bound is the same H the scan stopped at,
+                            // so what the replay did not re-evaluate it also does not delete.
+                            // Positive infinity otherwise, which is the truncating
+                            // replacement every rebuild issued before the bound existed.
+                            final long replaceHighTs = finiteHighBound
+                                    ? plan.getHighTsExclusive()
+                                    : Long.MAX_VALUE;
                             fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
-                                    Long.MAX_VALUE
+                                    replaceHighTs
                             ));
                             if (appendedRows == 0) {
                                 // The apply + on-disk row-count re-read below is gated on
@@ -3750,6 +3921,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
 
+        // Hand the runtime back its own state. Deliberately on the success path only:
+        // a replay that threw left the window state partially advanced with no
+        // durable change behind it, and the retry that follows starts by wiping and
+        // rebuilding it anyway, so restoring here would only mask the failure. The
+        // overlay is dropped either way - capture() discards whatever it held.
+        if (overlayCaptured) {
+            repairOverlay.restore(windowFactory.getWindowFunctions());
+        }
+
         if (appendedRows > 0 || deletedGhostRange) {
             applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
             // Re-read the on-disk row count: the REPLACE_RANGE only rewrites the
@@ -3781,7 +3961,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
         }
-        if (lvConsumedPersisted && appendedRows > 0) {
+        if (lvConsumedPersisted && (appendedRows > 0 || overlayCaptured)) {
             // Post-replay head: invalidateRetainedCheckpointsOnO3 cleared the head
             // metadata and dropped the unsealed ring entries above, so force
             // writes a fresh head reflecting the post-replay state (firstCp is
@@ -3790,10 +3970,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the head's hit zone instead of paying for another full head-miss
             // replay.
             //
+            // The head's maxTs has to describe the state the checkpoint is about to
+            // serialise. That is replayMaxTs for a rebuild that ran to the end of the
+            // base table, but the runtime frontier for one that stopped at a finite H
+            // and put its own state back - the restore just rewound the functions past
+            // replayMaxTs, so sealing them under it would claim a boundary the state
+            // does not sit at, and the next O3 would resume from it and re-read rows
+            // the state already holds. The frontier is a real timestamp whenever the
+            // plan tagged a finite H (it had to be at or above H to do so), so this
+            // seals even when the replacement emitted nothing at all - the retire above
+            // dropped every anchor, and a view left with none rebuilds from scratch on
+            // the next restart.
+            //
             // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
             // from the on-disk size above), so adding them again would
             // double-count lvRowPosition. Mirrors the seed-completion path.
-            maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, replayMaxTs, 0L, true);
+            final long headMaxTs = overlayCaptured ? instance.getLatestSeenTs() : replayMaxTs;
+            maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, headMaxTs, 0L, true);
         }
         // The boundary rebuild is the residual O(view age) fallback (late row below
         // the whole retained ring, or a deep / unresumable apply-ahead range). Counted
@@ -3809,6 +4002,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /
         // emitLowTs are L and R: equal to the view boundary on an unlocalized rebuild,
         // and the proof of what a localized one did not read when they are not.
+        // highTsExclusive is H, LONG_NULL when the rebuild ran to the end of the base
+        // table; runtimeStatePreserved says whether the primary runtime kept the state
+        // it entered with rather than the state the replay produced.
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(effectiveSeqTxn)
@@ -3816,6 +4012,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", localized=").$(localized)
                 .$(", scanLowTs=").$(scanLowTs)
                 .$(", emitLowTs=").$(emitLowTs)
+                .$(", highTsExclusive=").$(finiteHighBound ? plan.getHighTsExclusive() : Numbers.LONG_NULL)
+                .$(", runtimeStatePreserved=").$(overlayCaptured)
                 .$(", rowsScanned=").$(o3ScanRows)
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
@@ -4763,7 +4961,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     null, null, false, instance.getLatestSeenTs()
             );
             if (drainResult.o3Detected) {
-                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, baseToken, toSeqTxn);
+                // No change ceiling: the hand-off advances to the applied point, not
+                // to the offending seqTxn, so it re-materialises commits above the
+                // ones this drain pass walked and the pass's ceiling would not bound
+                // them.
+                o3Replay(instance, windowFactory, drainResult.o3LateRowTs, Numbers.LONG_NULL, baseToken, toSeqTxn);
                 return REPLAY_TO_APPLIED_O3;
             }
             replayedRows += drainResult.appendedRows;
@@ -7910,6 +8112,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         public long appendedRows;
         // Max output timestamp across the pass, in base-table units (LONG_NULL if none).
         public long batchMaxTs;
+        // Highest designated timestamp any commit this pass walked touched - inserted
+        // rows plus the top of a REPLACE_RANGE delete band - or LONG_NULL when the
+        // pass walked something whose reach cannot be read off the commit metadata (a
+        // compacted / structural sequencer entry, or a non-DATA commit such as DROP
+        // PARTITION, TTL or TRUNCATE). Meaningful when o3Detected: the hand-off
+        // re-materialises everything this pass rolled back, so it is that repair's
+        // change-set upper bound and the input its convergence boundary H is derived
+        // from.
+        public long o3ChangeMaxTs;
         // The offending late-row timestamp when o3Detected.
         public long o3LateRowTs;
         // True when a base commit arrived out of order; the caller hands off to o3Replay.
@@ -7925,6 +8136,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             advanceTo = -1;
             appendedRows = 0;
             batchMaxTs = Numbers.LONG_NULL;
+            o3ChangeMaxTs = Numbers.LONG_NULL;
             o3Detected = false;
             o3LateRowTs = Numbers.LONG_NULL;
             o3SeqTxn = Numbers.LONG_NULL;

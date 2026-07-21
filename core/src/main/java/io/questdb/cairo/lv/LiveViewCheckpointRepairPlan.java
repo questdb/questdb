@@ -66,9 +66,9 @@ import org.jetbrains.annotations.NotNull;
  *     output, because their durable output is already correct.</li>
  *     <li>{@code H} - {@link #getHighBoundTag() highBoundTag} plus
  *     {@link #getHighTsExclusive() highTsExclusive}, the tagged exclusive bound
- *     after which every eligible function has converged. Always
- *     {@link HighBoundTag#EOF} today; step 4b of the design's phase 5 derives a
- *     finite bound for a bounded RANGE frame.</li>
+ *     after which every eligible function has converged. {@code FINITE(changeMaxTs
+ *     + W + 1)} for a bounded RANGE view whose pre-repair runtime state provably
+ *     survives the repair, {@link HighBoundTag#EOF} otherwise.</li>
  * </ul>
  * The high bound is tagged rather than a bare {@code long} because no timestamp
  * value can also mean infinity: an exclusive bound one past {@code Long.MAX_VALUE}
@@ -88,8 +88,20 @@ import org.jetbrains.annotations.NotNull;
  * it the two floors collapse to {@code S} and the rebuild reads the whole view
  * history as before.
  * <p>
- * Steps 4b-6 of the design's phase 5 extend this plan with the derivation of
- * {@code H} and the affected/output key domains {@code A}/{@code Q}.
+ * The same width bounds the repair from above. A row at {@code m} sits in the frame
+ * of every row in {@code [m, m + W]} and in no other, so a change whose highest
+ * touched timestamp is {@code changeMaxTs} cannot reach output at or above
+ * {@code changeMaxTs + W + 1}. That is {@code H}, and because every incorporated
+ * change sits in {@code [R, H)} by construction, the durable output above {@code H}
+ * stays correct while the watermark advances over the whole pinned snapshot.
+ * <p>
+ * Steps 5-6 of the design's phase 5 extend this plan with the affected/output key
+ * domains {@code A}/{@code Q}. For the timestamp-global RANGE replacement they are
+ * degenerate: {@code Q} is every key with a qualifying row in {@code [R, H)}, which
+ * is exactly what the replay emits when it re-evaluates the whole interval, and
+ * {@code A} does not enter the bounds at all because {@code L} and {@code H} are
+ * key-independent timestamp arithmetic. They become load-bearing for the ROWS
+ * shapes of phase 6, whose per-key predecessor discovery has no such closed form.
  * <p>
  * One instance per refresh job, reused across repairs - {@link #of} overwrites
  * every field, so no reset is needed between plans.
@@ -110,6 +122,7 @@ public final class LiveViewCheckpointRepairPlan {
     private long anchorLvSeqTxn;
     private long anchorMaxTs;
     private long applyAheadMinTs;
+    private long changeMaxTs;
     private long correctionTs;
     private int disposition;
     private HighBoundTag highBoundTag = HighBoundTag.EOF;
@@ -160,6 +173,16 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public long getApplyAheadMinTs() {
         return applyAheadMinTs;
+    }
+
+    /**
+     * @return the highest designated timestamp any change this repair incorporates
+     * touched, or {@link Numbers#LONG_NULL} when the caller could not bound it.
+     * This is the input {@code H} is derived from, and it is the whole reason a
+     * repair may stop short of the end of the base table.
+     */
+    public long getChangeMaxTs() {
+        return changeMaxTs;
     }
 
     /**
@@ -292,6 +315,21 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
+     * @return true when the repair must put the pre-repair runtime window state
+     * back after replaying, instead of promoting what the replay leaves behind.
+     * <p>
+     * A finite {@code H} is derived only when the runtime frontier sits at or above
+     * it, which proves no changed row lies inside the frame the runtime currently
+     * holds - so the state the repair found was already correct, and the state the
+     * replay ends on (describing {@code H - 1}, not the frontier) is not. The two
+     * are therefore the same predicate: whenever this repair stops short of the end
+     * of the base table, it owes the runtime a restore.
+     */
+    public boolean isRuntimeStatePreserved() {
+        return highBoundTag == HighBoundTag.FINITE;
+    }
+
+    /**
      * Classifies one out-of-order change against one pinned base snapshot and
      * selects the executor.
      * <p>
@@ -345,6 +383,21 @@ public final class LiveViewCheckpointRepairPlan {
      *                                 at all; a lower bound on {@code D}, the
      *                                 earliest output the runtime incorporated but
      *                                 has not made durable
+     * @param changeMaxTs              the highest designated timestamp any change
+     *                                 this repair incorporates touched - the
+     *                                 triggering commit, everything the drain rolled
+     *                                 back with it, and the apply-ahead range - or
+     *                                 {@link Numbers#LONG_NULL} when the caller
+     *                                 cannot bound it (a non-DATA or structural entry
+     *                                 in the incorporated range, an unclassified
+     *                                 apply-ahead range, or a caller that does not
+     *                                 track it)
+     * @param runtimeFrontierTs        the highest designated timestamp the runtime
+     *                                 window state has incorporated, or
+     *                                 {@link Numbers#LONG_NULL} when the repair
+     *                                 cannot put that state back afterwards (no
+     *                                 checkpoint-state support, or an anchored view
+     *                                 whose anchor state this phase does not carry)
      */
     public void of(
             @NotNull AnchorSource anchors,
@@ -356,17 +409,20 @@ public final class LiveViewCheckpointRepairPlan {
             long headMaxTs,
             long applyAheadMinTs,
             long rangeFrameWidth,
-            long durableOutputMaxTs
+            long durableOutputMaxTs,
+            long changeMaxTs,
+            long runtimeFrontierTs
     ) {
         assert pinnedSeqTxn >= triggerSeqTxn : "pinned base snapshot is below the trigger";
         this.triggerSeqTxn = triggerSeqTxn;
         this.pinnedSeqTxn = pinnedSeqTxn;
-        // H: no dependency descriptor is consulted yet, so no repair can prove a
-        // convergence boundary below the end of the base table. Both executors
-        // therefore read and replace through positive infinity, as they did before
-        // the bound existed. Step 4 of the design's phase 5 derives a finite bound
-        // from the view's RANGE descriptors; until then this is the only honest
-        // value - a finite guess would drop rows the repair still has to re-emit.
+        this.changeMaxTs = changeMaxTs;
+        // H starts pinned to end-of-frame and is lowered only by deriveHighBound
+        // below, which runs after the floors and only for a localized rebuild. A
+        // resume, an unlocalized rebuild and every repair whose change set has no
+        // proven upper bound keep this value: reading and replacing through positive
+        // infinity is the one disposition that cannot drop a row the repair still
+        // owes.
         highBoundTag = HighBoundTag.EOF;
         highTsExclusive = Numbers.LONG_NULL;
         // C: the trigger's authority to delete and to unseal, expressed in the
@@ -444,6 +500,7 @@ public final class LiveViewCheckpointRepairPlan {
             anchorLvSeqTxn = Numbers.LONG_NULL;
             anchorMaxTs = Numbers.LONG_NULL;
             deriveRebuildFloors(viewLowerBoundTimestamp, rangeFrameWidth, durableOutputMaxTs);
+            deriveHighBound(rangeFrameWidth, durableOutputMaxTs, runtimeFrontierTs);
         }
     }
 
@@ -457,6 +514,90 @@ public final class LiveViewCheckpointRepairPlan {
         final long result = value - width;
         // width >= 0, so a result ABOVE value can only be wrap-around.
         return result > value ? Long.MIN_VALUE : result;
+    }
+
+    /**
+     * Derives the tagged high bound {@code H} for a localized boundary rebuild, or
+     * leaves it at {@link HighBoundTag#EOF}.
+     * <p>
+     * {@code H = changeMaxTs + W + 1}. A {@code RANGE W PRECEDING ... CURRENT ROW}
+     * frame at {@code t} spans {@code [t - W, t]}, so a row at {@code m} belongs to
+     * the frame of every row in {@code [m, m + W]} and to no frame above that.
+     * {@code changeMaxTs} is the highest timestamp anything this repair incorporates
+     * touched - inserted, replaced or deleted - so {@code changeMaxTs + W} is the
+     * last output row any of it can reach, and the exclusive bound is one past it.
+     * The whole timestamp tie at {@code changeMaxTs + W} is admitted because the
+     * bound is exclusive at the next distinct value, not at a row position.
+     * <p>
+     * The replacement interval {@code [R, H)} then contains every incorporated
+     * change: {@code R} is at or below the change floor and {@code H} is strictly
+     * above {@code changeMaxTs}. That is what lets the repair advance the watermark
+     * over the whole pinned snapshot while leaving the durable output above
+     * {@code H} untouched - nothing up there was changed, so what is already stored
+     * there is still what a full recompute would produce.
+     * <p>
+     * Four conditions have to hold, and each drops the plan back to {@code EOF}:
+     * <ul>
+     *     <li>the rebuild is localized. Without a finite {@code W} there is no
+     *     forward influence bound to compute, and without a change floor there is
+     *     nothing the bound could be relative to.</li>
+     *     <li>{@code changeMaxTs} is known. A non-DATA or structural entry in the
+     *     incorporated range can change rows anywhere, so no arithmetic on the
+     *     inserted timestamps bounds it.</li>
+     *     <li>the arithmetic is representable. {@code changeMaxTs + W} may overflow,
+     *     and an exclusive bound one past {@link Long#MAX_VALUE} does not exist -
+     *     which is exactly why the bound is tagged rather than spelled as a
+     *     timestamp. A change reaching the top of the timestamp range therefore
+     *     converges nowhere the repair can name, and reads to the end of the base
+     *     table.</li>
+     *     <li>the runtime frontier sits at or above {@code H}, and every output row
+     *     the runtime produced is already durable. The first proves the change is
+     *     outside the frame the runtime currently holds, so the pre-repair state is
+     *     correct and must be restored rather than replaced by the state the replay
+     *     ends on. The second closes the other direction: output that exists only in
+     *     an un-flushed lead or a rolled-back draft sits above the durable frontier,
+     *     and a replacement that stops at {@code H} would neither re-emit it nor
+     *     leave it on disk - it would be lost while the watermark advanced past the
+     *     base rows that produced it.</li>
+     * </ul>
+     * The frontier the caller supplies may be a lower bound on where the runtime's
+     * state actually stands - a drain that fed in-order commits through the window
+     * cursor and then rolled the hand-off back leaves the watermark behind the state.
+     * That direction is safe here (a lower bound only makes the comparison stricter),
+     * and the case does not slip through in disguise either: those same commits are in
+     * the change set, so they raise {@code changeMaxTs}, {@code H} lands above them,
+     * and the comparison refuses. Which is why the caller's ceiling has to cover the
+     * whole incorporated range rather than the triggering commit alone.
+     * The degenerate clamp is the case where every changed row sits so far below the
+     * output floor that {@code H} lands at or under {@code R}. The interval must
+     * still be non-empty (a replacement's high bound is exclusive and strictly above
+     * its low bound), and re-emitting the single timestamp group at {@code R} is
+     * always sound - the replay reproduces it identically.
+     */
+    private void deriveHighBound(long rangeFrameWidth, long durableOutputMaxTs, long runtimeFrontierTs) {
+        if (!localized
+                || changeMaxTs == Numbers.LONG_NULL
+                || runtimeFrontierTs == Numbers.LONG_NULL
+                || durableOutputMaxTs < runtimeFrontierTs) {
+            return;
+        }
+        final long lastAffectedTs = changeMaxTs + rangeFrameWidth;
+        // rangeFrameWidth >= 0, so a sum BELOW changeMaxTs can only be wrap-around.
+        if (lastAffectedTs < changeMaxTs || lastAffectedTs == Long.MAX_VALUE) {
+            return;
+        }
+        long highTs = lastAffectedTs + 1;
+        if (highTs <= outputLowTs) {
+            if (outputLowTs == Long.MAX_VALUE) {
+                return;
+            }
+            highTs = outputLowTs + 1;
+        }
+        if (runtimeFrontierTs < highTs) {
+            return;
+        }
+        highBoundTag = HighBoundTag.FINITE;
+        highTsExclusive = highTs;
     }
 
     /**
