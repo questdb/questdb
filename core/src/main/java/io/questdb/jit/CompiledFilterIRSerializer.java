@@ -3496,8 +3496,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // long width, so a predicate mixing it with a LONG operand has to widen
                     // the narrow leaf; otherwise the four-lane path negates a sign-extended
                     // 64-bit lane with 32-bit lane semantics and corrupts the high half.
+                    //
+                    // Only in wide-lane mode, though. That corruption needs 64-bit lanes to
+                    // exist: the single-size backend runs eight 4-byte lanes, where an i32 and
+                    // its operand cannot differ in width, and every other shape is already on a
+                    // scalar loop. Widening unconditionally would emit SX_I64 outside wide-lane
+                    // mode, and maybeEmitI64Widening turns that into forceScalarMode - dropping
+                    // filters like "-i32 < 5000000000 OR sym = 'ABC'" from the vectorized
+                    // single-size loop to the scalar one for no correctness gain.
                     hasArithmetic |= isArithmeticOperation(node)
-                            || (node.paramCount == 1 && Chars.equals(node.token, '-'));
+                            || (isWideLaneMode && node.paramCount == 1 && Chars.equals(node.token, '-'));
                     // Overflowing pure-constant subtree folds to an IMM in
                     // descend(). Observe it as I4 (it keeps INT type), so
                     // shouldWiden() fires only on a real LONG operand - then
