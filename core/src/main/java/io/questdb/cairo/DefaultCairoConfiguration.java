@@ -1733,6 +1733,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalCompositeLagEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isWalApplyParallelSqlEnabled() {
         return true;
     }

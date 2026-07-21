@@ -456,6 +456,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
+    // Composite-partitioning Plan #5 (flag-gated cell-aware WAL lag). RAM-only lag substrate for a real
+    // composite table when cairo.wal.composite.lag.enabled is on and the table is lag-eligible (all
+    // fixed-width columns). Lazily created on first accumulate; reset (clear) after every flush; freed in
+    // doClose. Null (and unused) for every plain table and whenever the flag is off, so composite
+    // ingestion stays byte-identical to the full-commit path in that case.
+    private CompositeWalLagBuffer compositeWalLagBuffer;
+    // Reusable scratch, sized to columnCount: the per-column type list the buffer is built from (the
+    // designated timestamp slot is LONG128, i.e. 16 bytes, because the WAL/O3-staging timestamp column
+    // is a (timestamp, rowIndex) pair, not a plain 8-byte value -- see flushCompositeLag).
+    private final IntList compositeWalLagColumnTypes = new IntList();
+    // Reusable scratch: the dense (one-entry-per-column) view over the remapped o3Columns handed to
+    // CompositeWalLagBuffer.append (which does NOT use the doubled primary/secondary o3Columns indexing).
+    private final ObjList<MemoryCR> compositeWalLagDenseView = new ObjList<>();
+    // Max designated timestamp across all rows currently accumulated (un-flushed) in the composite lag
+    // buffer -- feeds the same commit-decision threshold predicates the plain WAL lag uses. Long.MIN_VALUE
+    // when the buffer is empty; reset on flush.
+    private long compositeWalLagMaxTimestamp = Long.MIN_VALUE;
+    // One-shot guard so a lag-ineligible composite table (var-len / dropped column) is logged once, not
+    // on every commit.
+    private boolean compositeWalLagIneligibleLogged;
     private volatile boolean o3oomObserved;
     private long partitionTimestampHi;
     private boolean performRecovery;
@@ -3962,6 +3982,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void rollback() {
         checkDistressed();
+        // Discard any un-flushed composite WAL-lag rows. They are uncommitted (seqTxn was never advanced
+        // for them), so a rollback must drop them; the next WAL apply simply replays them. This mirrors
+        // how the plain lag counters are reset by unsafeLoadAll below, and keeps a reused writer from
+        // double-accumulating already-replayed rows.
+        if (compositeWalLagBuffer != null) {
+            compositeWalLagBuffer.clear();
+        }
+        compositeWalLagMaxTimestamp = Long.MIN_VALUE;
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
@@ -5574,7 +5602,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
-        if (txWriter.getLagRowCount() > 0) {
+        // A non-empty lag forces single-transaction processing: the block path (processWalCommitBlock)
+        // would commit its whole block and advance seqTxn WITHOUT first draining the lag, which for the
+        // plain lag would reorder rows and for the composite RAM lag would additionally advance seqTxn
+        // past rows that are still only in memory (data loss on replay). The plain path guards this via
+        // txWriter.getLagRowCount(); the composite lag keeps that counter at 0 and tracks its own buffer,
+        // so mirror the guard for it too.
+        if (txWriter.getLagRowCount() > 0 || compositeWalLagHasRows()) {
             pressureControl.updateInflightTxnBlockLength(
                     1,
                     Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
@@ -7364,6 +7398,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(path);
             Misc.free(o3TimestampMem);
             Misc.free(o3TimestampMemCpy);
+            compositeWalLagBuffer = Misc.free(compositeWalLagBuffer);
             Misc.free(ownMessageBus);
             if (tempMem16b != 0) {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
@@ -12382,8 +12417,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long commitRowCount = rowHi - rowLo;
                 boolean copiedToMemory;
 
-                long totalUncommitted = walLagRowCount + commitRowCount;
-                long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                // Composite cell-aware WAL lag (Plan #5): only for a real (routed/routable) composite
+                // table, only when the flag is on, and only when every column is fixed-width (the buffer
+                // cannot hold var-len columns; such a table falls back to the full-commit path exactly as
+                // when the flag is off). When active, the composite table participates in the SAME
+                // commit-decision predicates as a plain table, its accumulated RAM buffer standing in for
+                // the plain last-partition lag.
+                final boolean useCompositeLag = metadata.getPartitionSpec().getDimensionCount() > 0
+                        && !isDormantWithPreexistingData()
+                        && configuration.isWalCompositeLagEnabled()
+                        && isCompositeLagEligible();
+                final long compositeLagRows = useCompositeLag && compositeWalLagBuffer != null ? compositeWalLagBuffer.getRowCount() : 0;
+                long totalUncommitted = walLagRowCount + compositeLagRows + commitRowCount;
+                long newMaxLagTimestamp = Math.max(o3TimestampMax, useCompositeLag ? compositeWalLagMaxTimestamp : txWriter.getLagMaxTimestamp());
                 boolean lastPartitionIsParquet = isLastPartitionParquet();
                 // On a FORMAT PARQUET table with no committed rows yet, the only
                 // partition is the native placeholder that openPartition above
@@ -12415,7 +12461,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // applyFromWalLagToLastPartitionPossible always returning false for composite,
                         // which keeps canFastCommitNew false too) guarantees every composite commit
                         // routes through processO3Block's cell-aware dispatch instead.
-                        || metadata.getPartitionSpec().getDimensionCount() > 0;
+                        // Composite full-commit guard: force a full commit for a composite table UNLESS
+                        // the cell-aware WAL lag is active for it (flag on + lag-eligible). When the lag
+                        // is active this clause is false and the composite table flushes on the same
+                        // thresholds as a plain table (evaluated above over the buffer's counters); when
+                        // it is inactive (flag off, dormant, or a var-len table) this stays true and
+                        // composite ingestion is byte-identical to the pre-lag full-commit path.
+                        || (metadata.getPartitionSpec().getDimensionCount() > 0 && !useCompositeLag);
+
+                if (useCompositeLag) {
+                    // Remap this transaction's WAL-local symbol keys to global keys (exactly as the
+                    // full-commit path does), then accumulate the remapped rows into the RAM lag buffer.
+                    // No lag row ever reaches disk here -- only a flush (below) routes rows through the
+                    // cell-aware dispatch, so nothing writes this.columns / transientRowCount cell-blind.
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                    appendToCompositeLag(rowLo, rowHi);
+                    compositeWalLagMaxTimestamp = Math.max(compositeWalLagMaxTimestamp, o3TimestampMax);
+                    // Every accumulated transaction bumps the lag txn count so the invariant asserted in
+                    // commitWalInsertTransactions holds (lagTxnCount == seqTxn - persistedSeqTxn); a flush
+                    // resets it to 0 there when committed == true.
+                    txWriter.setLagTxnCount(txWriter.getLagTxnCount() + 1);
+                    if (!needFullCommit) {
+                        // Accumulate only: nothing reaches disk, seqTxn stays un-advanced, no commit00.
+                        // A crash here simply replays these transactions from the WAL (the buffer is RAM
+                        // only). This mirrors the plain batch path's committed == false return.
+                        return false;
+                    }
+                    // Threshold reached: flush the whole buffer (this transaction included) through the
+                    // cell-aware dispatch, then let commitWalInsertTransactions advance seqTxn + commit00.
+                    // The guard covers the degenerate empty-buffer case (e.g. a 0-row force commit): there
+                    // is nothing to flush, but seqTxn must still advance, so return true.
+                    if (compositeWalLagHasRows()) {
+                        flushCompositeLag(initialPartitionTimestampHi, pressureControl);
+                        compositeWalLagMaxTimestamp = Long.MIN_VALUE;
+                        compositeWalLagBuffer.clear();
+                    }
+                    return true;
+                }
 
                 boolean canFastCommit = !noLag && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
@@ -12590,6 +12672,153 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             walPath.trimTo(walRootPathLen);
             segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
         }
+    }
+
+    /**
+     * Accumulates one transaction's already-remapped rows (currently in {@code o3Columns}) into the
+     * composite RAM lag buffer, lazily (re)building the buffer to match the current column layout. A
+     * column-layout change is a structural (FORCE_FULL_COMMIT) transaction, which flushes+clears the
+     * buffer first, so a rebuild is only ever reached with an empty buffer.
+     */
+    private void appendToCompositeLag(long rowLo, long rowHi) {
+        if (compositeWalLagBuffer == null || compositeWalLagBuffer.getColumnCount() != columnCount) {
+            assert compositeWalLagBuffer == null || compositeWalLagBuffer.getRowCount() == 0;
+            compositeWalLagBuffer = Misc.free(compositeWalLagBuffer);
+            compositeWalLagColumnTypes.clear();
+            final int tsIndex = metadata.getTimestampIndex();
+            for (int i = 0; i < columnCount; i++) {
+                // The designated timestamp is a 16-byte (timestamp, rowIndex) pair at the WAL/O3-staging
+                // layer, so size its buffer slot to 16 bytes (LONG128). flushCompositeLag re-derives the
+                // row index. Every other column keeps its real fixed-width type.
+                compositeWalLagColumnTypes.add(i == tsIndex ? ColumnType.LONG128 : metadata.getColumnType(i));
+            }
+            compositeWalLagBuffer = new CompositeWalLagBuffer(compositeWalLagColumnTypes);
+        }
+        compositeWalLagDenseView.clear();
+        for (int i = 0; i < columnCount; i++) {
+            compositeWalLagDenseView.add(o3Columns.getQuick(getPrimaryColumnIndex(i)));
+        }
+        compositeWalLagBuffer.append(compositeWalLagDenseView, rowLo, rowHi);
+    }
+
+    private boolean compositeWalLagHasRows() {
+        return compositeWalLagBuffer != null && compositeWalLagBuffer.getRowCount() > 0;
+    }
+
+    /**
+     * Flushes the whole composite RAM lag buffer through the existing O3 sort + cell-aware dispatch,
+     * UNCHANGED: copy the buffer's plain columns into the writer's O3 staging ({@code o3MemColumns1}),
+     * build the {@code (timestamp, rowIndex)} sort index in {@code o3TimestampMem}, sort + reshuffle
+     * exactly as {@link #o3Commit(long)} does, then {@link #processO3Block} (which routes composite tables
+     * to {@code processO3BlockComposite} -&gt; {@code dispatchCompositeCellRange}) and
+     * {@link #finishO3Commit}. The three historical composite landmines (the {@code .i} scratch ts-index
+     * rowid corruption in multi-cell regroup, the cell-blind bookkeeping quartet hit when a flush extends
+     * an already-populated cell, and the {@code finishO3Commit} malloc region) all live inside that
+     * machinery and are already fixed there; this method only feeds it correctly-prepared inputs and never
+     * writes {@code this.columns} / {@code transientRowCount} cell-blind. The caller advances {@code
+     * seqTxn} and calls {@code commit00} only after this returns -- the crash-safety boundary.
+     */
+    private void flushCompositeLag(long initialPartitionTimestampHi, TableWriterPressureControl pressureControl) {
+        final long rowCount = compositeWalLagBuffer.getRowCount();
+        assert rowCount > 0;
+        final int timestampIndex = metadata.getTimestampIndex();
+        // o3MemColumns1's timestamp slot IS o3TimestampMem (o3MemColumns2's is o3TimestampMemCpy) -- the
+        // same invariant processWalCommitBlock asserts. The reshuffle below relies on it.
+        assert o3MemColumns1.getQuick(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMem;
+
+        // 1. Copy the buffer into O3 staging. Data columns go straight into o3MemColumns1; the timestamp
+        //    column is re-derived into o3TimestampMem as fresh (timestamp, bufferRow) pairs -- the buffered
+        //    pairs' WAL-local row indices are meaningless once several transactions are concatenated, so we
+        //    keep only each pair's timestamp (its low 8 bytes) and renumber the index 0..rowCount-1.
+        o3TimestampMem.jumpTo(0);
+        final long tsPairsAddr = compositeWalLagBuffer.getColumnAddress(timestampIndex);
+        for (long r = 0; r < rowCount; r++) {
+            o3TimestampMem.putLong128(Unsafe.getLong(tsPairsAddr + (r << 4)), r);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (i == timestampIndex) {
+                continue;
+            }
+            final MemoryCARW dst = o3MemColumns1.getQuick(getPrimaryColumnIndex(i));
+            final long sizeBytes = compositeWalLagBuffer.getColumnSize(i);
+            dst.jumpTo(sizeBytes);
+            Vect.memcpy(dst.addressOf(0), compositeWalLagBuffer.getColumnAddress(i), sizeBytes);
+        }
+        o3Columns = o3MemColumns1;
+        o3RowCount = rowCount;
+
+        // 2. Sort the (timestamp, rowIndex) index ascending by timestamp.
+        final long sortedTimestampsAddr = o3TimestampMem.getAddress();
+        o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
+        Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, rowCount, o3TimestampMemCpy.addressOf(0));
+        final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
+        final long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, rowCount - 1);
+
+        // 3. Reshuffle every data column into timestamp order (o3MemColumns1 -> o3MemColumns2, then swap).
+        dispatchColumnTasks(sortedTimestampsAddr, rowCount, IGNORE, IGNORE, IGNORE, cthO3SortColumnRef);
+        swapO3ColumnsExcept(timestampIndex);
+
+        // 4. This table never uses the this.columns lag, so keep the plain-lag watermarks at their
+        //    empty-lag sentinels -- commit00 then persists a consistent no-lag state.
+        txWriter.setLagMinTimestamp(Long.MAX_VALUE);
+        txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
+
+        // 5. Remove the artificial 0-length partition created to hold lag when a fresh composite table
+        //    had no partitions yet (mirrors processWalCommitFinishApply). Reachable on such a table's very
+        //    first flush; without it the bare placeholder day would linger as an orphan.
+        if (txWriter.getRowCount() == 0 && txWriter.getPartitionCount() == 1 && txWriter.getPartitionSize(0) == 0) {
+            txWriter.setMaxTimestamp(Long.MIN_VALUE);
+            lastPartitionTimestamp = Long.MIN_VALUE;
+            closeActivePartition(false);
+            partitionTimestampHi = Long.MIN_VALUE;
+            final long artificialTs = txWriter.getPartitionTimestampByIndex(0);
+            final long artificialNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
+            final int artificialCellKey = txWriter.getPartitionCellKey(0);
+            txWriter.removeAttachedPartitions(artificialTs);
+            safeDeletePartitionDir(artificialTs, artificialNameTxn, artificialCellKey);
+        }
+
+        // 6. Cell-aware dispatch to disk + finish. flattenTimestamp is inert for the composite path (it
+        //    reads timestamps straight from the sorted index), passed true to mirror o3Commit's caller.
+        processO3Block(
+                0,
+                timestampIndex,
+                sortedTimestampsAddr,
+                rowCount,
+                o3TimestampMin,
+                o3TimestampMax,
+                true,
+                0L,
+                pressureControl,
+                Long.MIN_VALUE
+        );
+        finishO3Commit(initialPartitionTimestampHi);
+    }
+
+    /**
+     * A composite table can use the cell-aware WAL lag only when every column is fixed-width and live:
+     * {@link CompositeWalLagBuffer} models no secondary/aux vector, so a var-len column
+     * (VARCHAR/STRING/BINARY/ARRAY) -- and a dropped/undefined column slot -- must fall back to the
+     * full-commit path. This aligns with {@code processO3BlockComposite} already refusing an interleaved
+     * multi-cell commit on a var-size table. Dimension source columns are always SYMBOL (fixed), so only
+     * non-dimension data columns can disqualify a table. The reason is logged once per writer at info.
+     */
+    private boolean isCompositeLagEligible() {
+        final int tsIndex = metadata.getTimestampIndex();
+        for (int i = 0; i < columnCount; i++) {
+            final int type = metadata.getColumnType(i);
+            final boolean varLen = i != tsIndex && type > 0 && ColumnType.isVarSize(type);
+            if (type <= 0 || varLen) {
+                if (!compositeWalLagIneligibleLogged) {
+                    compositeWalLagIneligibleLogged = true;
+                    LOG.info().$("composite WAL lag disabled, falling back to full commit [table=").$(tableToken)
+                            .$(", reason=").$(type <= 0 ? "dropped column" : "variable-length column")
+                            .$(", column=").$(i).I$();
+                }
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean processWalCommit(Path walPath, long seqTxn, TableWriterPressureControl pressureControl, long commitToTimestamp, long wallClockMicros) {
