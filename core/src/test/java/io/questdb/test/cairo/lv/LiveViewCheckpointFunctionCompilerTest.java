@@ -161,8 +161,9 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(micros.dependency.getPartitionSignature(), micros.rangePlan.getPartitionSignature());
             Assert.assertEquals(micros.dependency.getOrderSignature(), micros.rangePlan.getOrderSignature());
 
-            // A view mixing a bounded RANGE with a bounded ROWS frame stays valid, but has no
-            // RANGE repair plan - the ROWS half is bounded by Phase 6, not by a timestamp width.
+            // A view mixing a bounded RANGE with a bounded ROWS frame stays
+            // valid, but has no RANGE repair plan - the ROWS half is not
+            // bounded by a timestamp width.
             final Metadata mixed = compileMetadata(
                     "select ts, sym, "
                             + "avg(x) over (partition by sym order by ts range between 2 seconds preceding and current row) a, "

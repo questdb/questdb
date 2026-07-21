@@ -139,12 +139,11 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
     @Test
     public void testRejectUnanchoredRanking() throws Exception {
-        // Phase 0 finite-influence scope cut (see
-        // LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md section 6.2): the ranking
-        // functions row_number/rank/dense_rank have no finite forward influence
-        // boundary when they run unanchored - an out-of-order row shifts every
-        // following row's rank without bound - so the localized O3 repair the
-        // checkpoint timeline relies on cannot bound its work. Reject them at CREATE.
+        // The finite-influence scope cut: the ranking functions
+        // row_number/rank/dense_rank have no finite forward influence boundary
+        // when they run unanchored - an out-of-order row shifts every following
+        // row's rank without bound - so the localized O3 repair the checkpoint
+        // timeline relies on cannot bound its work. Reject them at CREATE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
@@ -165,8 +164,9 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     "row_number"
             );
 
-            // Positive control: the anchored, per-segment-reset form stays eligible - it
-            // has a finite H (the segment end) and returns fully in Phase 7.
+            // Positive control: the anchored, per-segment-reset form stays
+            // eligible - it has a finite H (the segment end); its full O3
+            // repair is not wired yet.
             execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");

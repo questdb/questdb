@@ -41,13 +41,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Coverage for the persistent copy-on-write timeline B+ tree (design sections 7,
- * 8.1) built by {@link LiveViewCheckpointTimelineWriter} and navigated by
- * {@link LiveViewCheckpointTimelineReader}. Each mutation copies only the search
- * path into a fresh metadata segment and reuses untouched subtrees, so the tests
- * assert both correctness against a sorted-list oracle - append, predecessor,
- * range {@code [C, H)}, point lookup, splice - and the structural sharing the
- * copy-on-write contract promises.
+ * Coverage for the persistent copy-on-write timeline B+ tree built by
+ * {@link LiveViewCheckpointTimelineWriter} and navigated by
+ * {@link LiveViewCheckpointTimelineReader}. Each mutation copies only the
+ * search path into a fresh metadata segment and reuses untouched subtrees, so
+ * the tests assert both correctness against a sorted-list oracle - append,
+ * predecessor, range {@code [C, H)}, point lookup, splice - and the structural
+ * sharing the copy-on-write contract promises.
  * <p>
  * Small node capacities force many tree levels and repeated splits so the
  * assertions exercise internal navigation rather than a single fat leaf.

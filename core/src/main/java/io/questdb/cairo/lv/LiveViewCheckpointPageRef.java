@@ -29,10 +29,9 @@ import io.questdb.cairo.vm.api.MemoryW;
 
 /**
  * A reference to an immutable metadata page inside a metadata segment
- * ({@code m.<segmentId>}). This is the {@code META_PAGE_REF} the design
- * (sections 7-9) holds inside checksummed parent metadata - a superblock slot's
- * root references, a timeline tree node's child pointers, a checkpoint root's
- * function directory, and so on.
+ * ({@code m.<segmentId>}). Every reference to a page lives inside checksummed
+ * parent metadata - a superblock slot's root references, a timeline tree node's
+ * child pointers, a checkpoint root's function directory, and so on.
  * <p>
  * A page reference locates a page by {@code (segmentId, offset)} and carries the
  * page's total on-disk {@code length} (header + payload). The length lets a

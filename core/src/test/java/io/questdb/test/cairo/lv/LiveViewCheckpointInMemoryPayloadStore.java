@@ -29,21 +29,21 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
 /**
- * Test-only in-memory stand-in for the not-yet-built on-disk checkpoint state/data
- * store (design section 9, delivered in Phase 2). It models a versioned checkpoint
- * timeline as a mapping from timeline generation to the {@code CheckpointRoot}s
- * current in that generation, each root referencing immutable data segments by id.
+ * Test-only in-memory stand-in for the not-yet-built on-disk checkpoint
+ * state/data store. It models a versioned checkpoint timeline as a mapping from
+ * timeline generation to the {@code CheckpointRoot}s current in that
+ * generation, each root referencing immutable data segments by id.
  * <p>
- * It exists so Phase 1's generation-pin mechanism
- * ({@link LiveViewCheckpointGenerationTracker}) can be exercised end to end without
- * the real page store: a reader pins a generation, resolves that generation's
- * payload roots, and {@link #purge} honors the pin - "files referenced by a
- * published superblock slot or a pinned reader are not deleted" (design invariant
- * 5). A generation is retained when it is one of the two live superblock slots
- * (current or fallback) or still pinned; a data segment exists on the simulated
- * filesystem exactly while some retained generation references it, so a segment
- * shared with a retained generation survives while a dropped generation's exclusive
- * segments are collected.
+ * It exists so the generation-pin mechanism
+ * ({@link LiveViewCheckpointGenerationTracker}) can be exercised end to end
+ * without the real page store: a reader pins a generation, resolves that
+ * generation's payload roots, and {@link #purge} honors the pin - "files
+ * referenced by a published superblock slot or a pinned reader are not
+ * deleted". A generation is retained when it is one of the two live superblock
+ * slots (current or fallback) or still pinned; a data segment exists on the
+ * simulated filesystem exactly while some retained generation references it, so
+ * a segment shared with a retained generation survives while a dropped
+ * generation's exclusive segments are collected.
  */
 public class LiveViewCheckpointInMemoryPayloadStore {
 
@@ -126,8 +126,8 @@ public class LiveViewCheckpointInMemoryPayloadStore {
     }
 
     /**
-     * One {@code CheckpointRoot} (design section 9.1) held entirely in memory: the
-     * boundary identity plus the ids of the immutable data segments it references.
+     * One checkpoint root held entirely in memory: the boundary identity plus
+     * the ids of the immutable data segments it references.
      */
     public static final class PayloadRoot {
         public final long checkpointId;

@@ -26,8 +26,7 @@ package io.questdb.cairo.lv;
 
 /**
  * Node framing and key ordering for the persistent copy-on-write B+ tree that
- * indexes logical checkpoints (Phase 1 step 2 of
- * {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md}, sections 7 and 8.1).
+ * indexes logical checkpoints.
  * <p>
  * The timeline is ordered by {@code (maxTimestamp, checkpointId)} and stored as
  * immutable, individually-checksummed metadata pages (kind

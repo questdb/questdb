@@ -31,8 +31,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Names, paths, and file framing for the versioned checkpoint timeline (Phase 1
- * of {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md}, section 8.4).
+ * Names, paths, and file framing for the versioned checkpoint timeline.
  * <p>
  * All names here are relative to a live view's {@code _checkpoints} directory;
  * this class deliberately does not own the {@code _checkpoints} name itself, so
@@ -46,26 +45,26 @@ import org.jetbrains.annotations.NotNull;
  *       m.&lt;segmentId&gt;           immutable, per-page-checksummed metadata segment
  *       m.&lt;segmentId&gt;.tmp       unpublished metadata segment
  *     data/
- *       d.&lt;segmentId&gt;           immutable checkpoint data bytes, no CRC (Phase 2)
+ *       d.&lt;segmentId&gt;           immutable checkpoint data bytes, no CRC
  *       d.&lt;segmentId&gt;.tmp       unpublished data segment
  *     repair/
- *       r.&lt;repairId&gt;            checksummed resumable-repair descriptor (Phase 8)
+ *       r.&lt;repairId&gt;            checksummed resumable-repair descriptor
  * </pre>
  * Metadata segment IDs are monotonic within a history epoch and never reused,
  * even after purge; the zero-padded encoding makes lexical enumeration equal
  * numeric ordering, matching the {@code .cp} filename convention.
  *
  * <h2>Metadata segment framing</h2>
- * A metadata segment ({@code m.<segmentId>}) begins with a fixed, self-checksummed
- * header and then packs immutable pages back to back. Each page carries its own
- * CRC32 so a localized read validates one page without touching the rest of the
- * segment (design section 9.4). Data segments, by contrast, carry no CRC (design
- * section 9.3) and are handled elsewhere.
+ * A metadata segment ({@code m.<segmentId>}) begins with a fixed,
+ * self-checksummed header and then packs immutable pages back to back. Each
+ * page carries its own CRC32 so a localized read validates one page without
+ * touching the rest of the segment. Data segments, by contrast, carry no CRC
+ * and are handled elsewhere.
  */
 public final class LiveViewCheckpointLayout {
 
     /**
-     * Subdirectory holding immutable checkpoint data segments (Phase 2).
+     * Subdirectory holding immutable checkpoint data segments.
      */
     public static final String DATA_DIR_NAME = "data";
     /**
@@ -100,7 +99,7 @@ public final class LiveViewCheckpointLayout {
      */
     public static final int PAGE_HEADER_SIZE = PAGE_KIND_OFFSET + Integer.BYTES; // 12
     /**
-     * Subdirectory holding checksummed resumable-repair descriptors (Phase 8).
+     * Subdirectory holding checksummed resumable-repair descriptors.
      */
     public static final String REPAIR_DIR_NAME = "repair";
     /**

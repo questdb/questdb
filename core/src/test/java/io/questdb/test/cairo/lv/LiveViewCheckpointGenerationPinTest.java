@@ -39,11 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Standalone coverage for the generation-pin mechanism
- * ({@link LiveViewCheckpointGenerationTracker} / {@link LiveViewCheckpointGenerationPin},
- * design section 5 invariants 4-5, section 16.2), plus its garbage-collection
+ * ({@link LiveViewCheckpointGenerationTracker} /
+ * {@link LiveViewCheckpointGenerationPin}), plus its garbage-collection
  * contract exercised through the test-only
- * {@link LiveViewCheckpointInMemoryPayloadStore} stand-in for the Phase 2 state
- * store.
+ * {@link LiveViewCheckpointInMemoryPayloadStore} stand-in for the state store.
  * <p>
  * The properties under test: a pin snapshots exactly the generation current at pin
  * time and keeps it after a later publication (a reader pins one generation before

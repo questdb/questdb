@@ -37,9 +37,9 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * In-RAM copy of the compiled factory's window-function state, taken before a
- * localized out-of-order repair replays over it and put back afterwards. This is
- * the scratch overlay of design section 12.4: "construct scratch state without
- * mutating the published runtime".
+ * localized out-of-order repair replays over it and put back afterwards. It is
+ * how the repair constructs scratch state without mutating the published
+ * runtime.
  * <p>
  * A repair with a finite convergence boundary {@code H} replays only
  * {@code [L, H)}, so the state the replay ends on describes {@code H - 1} rather

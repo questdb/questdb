@@ -41,8 +41,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * The scratch overlay a repair with a finite convergence boundary takes over the
- * published window state before replaying on top of it (design section 12.4).
+ * The scratch overlay a repair with a finite convergence boundary takes over
+ * the published window state before replaying on top of it.
  * <p>
  * Its contract is narrow but load-bearing: whatever the replay does to the live
  * function instances, the state the repair entered with has to come back. A silent

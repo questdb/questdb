@@ -31,24 +31,24 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * In-memory owner of live {@link LiveViewCheckpointGenerationPin}s and the current
- * published timeline generation (design section 5 invariants 4-5, section 16.2).
+ * In-memory owner of live {@link LiveViewCheckpointGenerationPin}s and the
+ * current published timeline generation.
  * <p>
- * A publication records the new current generation and its three superblock root
- * references with {@link #setCurrentGeneration}; a reader then takes a pin on the
- * current generation with {@link #pin()}. The tracker is the garbage-collection
- * authority the future purge job (design section 16.2) consults: it reports
- * {@link #minPinnedGeneration()} - the oldest generation any reader still pins - so
- * a physical object retired at generation {@code r} is deletable only when
+ * A publication records the new current generation and its three superblock
+ * root references with {@link #setCurrentGeneration}; a reader then takes a pin
+ * on the current generation with {@link #pin()}. The tracker is the
+ * garbage-collection authority the future purge job consults: it reports
+ * {@link #minPinnedGeneration()} - the oldest generation any reader still pins
+ * - so a physical object retired at generation {@code r} is deletable only when
  * {@code minPinnedGeneration() > r} (in addition to being unreachable from both
  * live superblock slots). {@link #isGenerationPinned(long)} answers the exact
  * "is any reader still on this specific generation" question the after-reader-
- * release lifecycle steps (design section 16.4) need.
+ * release lifecycle steps need.
  * <p>
- * The current-generation snapshot advances under publication while old pins keep
- * their own captured snapshot, so a reader that pinned {@code G} is unaffected by a
- * later {@code G + 1} publication (invariant 4). Generations advance monotonically;
- * {@link #setCurrentGeneration} rejects a backwards move.
+ * The current-generation snapshot advances under publication while old pins
+ * keep their own captured snapshot, so a reader that pinned {@code G} is
+ * unaffected by a later {@code G + 1} publication. Generations advance
+ * monotonically; {@link #setCurrentGeneration} rejects a backwards move.
  * <p>
  * All mutating and reading methods synchronize on this instance, so pins, releases,
  * publications, and purge-floor reads from different threads (a refresh reader, a
@@ -133,8 +133,8 @@ public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
 
     /**
      * @return the oldest generation any reader still pins, or {@link #NO_PINS} when
-     * no pin is held. This is the reader floor the purge job (design section 16.2)
-     * combines with the two live superblock slots.
+     * no pin is held. This is the reader floor the purge job combines with the
+     * two live superblock slots.
      */
     public synchronized long minPinnedGeneration() {
         final int n = pinnedGenerations.size();

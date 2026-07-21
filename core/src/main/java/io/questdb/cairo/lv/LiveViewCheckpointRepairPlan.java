@@ -30,10 +30,10 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Everything one out-of-order repair decides before it touches anything: the
- * pinned base snapshot it works against, the change-set coordinates derived from
- * that snapshot, and which executor runs. This is the plan half of design
- * section 12.1 ("pin and classify"), split out of the execution so both repair
- * executors read one decision instead of re-deriving their own.
+ * pinned base snapshot it works against, the change-set coordinates derived
+ * from that snapshot, and which executor runs. This is the pin-and-classify
+ * half of a repair, split out of the execution so both repair executors read
+ * one decision instead of re-deriving their own.
  * <p>
  * The caller pins exactly one applied base reader for the whole repair and hands
  * its {@code seqTxn} in as {@code pinnedSeqTxn} ({@code E}). Planning against one
@@ -41,7 +41,7 @@ import org.jetbrains.annotations.NotNull;
  * second reader opened later could sit at a different {@code seqTxn}, and the
  * bounds derived here would no longer describe the data the replay reads.
  * <p>
- * The coordinates, in the design's terms:
+ * The coordinates:
  * <ul>
  *     <li>{@code C} - {@link #getCorrectionTs() correctionTs}, the earliest
  *     timestamp whose existing live-view output may have changed: the triggering
@@ -71,22 +71,22 @@ import org.jetbrains.annotations.NotNull;
  *     survives the repair, {@link HighBoundTag#EOF} otherwise.</li>
  * </ul>
  * The high bound is tagged rather than a bare {@code long} because no timestamp
- * value can also mean infinity: an exclusive bound one past {@code Long.MAX_VALUE}
- * is not representable, and spelling it {@code Long.MAX_VALUE} would exclude a row
- * sitting there (design section 6). Its one consumer today is
- * {@link #getScanHighTsInclusive()}, which both executors hand to the bounded
- * forward page-frame cursor; an {@code EOF} plan therefore scans through positive
- * infinity exactly as an unbounded scan did.
+ * value can also mean infinity: an exclusive bound one past
+ * {@code Long.MAX_VALUE} is not representable, and spelling it
+ * {@code Long.MAX_VALUE} would exclude a row sitting there. Its one consumer
+ * today is {@link #getScanHighTsInclusive()}, which both executors hand to the
+ * bounded forward page-frame cursor; an {@code EOF} plan therefore scans
+ * through positive infinity exactly as an unbounded scan did.
  * <p>
- * The {@code L}/{@code R} split is what makes a correction older than every sealed
- * anchor local. A boundary rebuild has no anchor to restore from, but a bounded
- * {@code RANGE W PRECEDING ... CURRENT ROW} view needs none: the state a row at
- * {@code R} sees is exactly the rows in {@code [R - W, R]}, so replaying from
- * {@code L = R - W} reconstructs it without reading a single row below that. The
- * finite dependency, rather than checkpoint availability, provides the lower bound
- * (design section 12.3). {@link #isLocalized()} reports when that applies; without
- * it the two floors collapse to {@code S} and the rebuild reads the whole view
- * history as before.
+ * The {@code L}/{@code R} split is what makes a correction older than every
+ * sealed anchor local. A boundary rebuild has no anchor to restore from, but a
+ * bounded {@code RANGE W PRECEDING ... CURRENT ROW} view needs none: the state
+ * a row at {@code R} sees is exactly the rows in {@code [R - W, R]}, so
+ * replaying from {@code L = R - W} reconstructs it without reading a single row
+ * below that. The finite dependency, rather than checkpoint availability,
+ * provides the lower bound. {@link #isLocalized()} reports when that applies;
+ * without it the two floors collapse to {@code S} and the rebuild reads the
+ * whole view history as before.
  * <p>
  * The same width bounds the repair from above. A row at {@code m} sits in the frame
  * of every row in {@code [m, m + W]} and in no other, so a change whose highest
@@ -95,13 +95,13 @@ import org.jetbrains.annotations.NotNull;
  * change sits in {@code [R, H)} by construction, the durable output above {@code H}
  * stays correct while the watermark advances over the whole pinned snapshot.
  * <p>
- * Steps 5-6 of the design's phase 5 extend this plan with the affected/output key
- * domains {@code A}/{@code Q}. For the timestamp-global RANGE replacement they are
- * degenerate: {@code Q} is every key with a qualifying row in {@code [R, H)}, which
- * is exactly what the replay emits when it re-evaluates the whole interval, and
- * {@code A} does not enter the bounds at all because {@code L} and {@code H} are
- * key-independent timestamp arithmetic. They become load-bearing for the ROWS
- * shapes of phase 6, whose per-key predecessor discovery has no such closed form.
+ * A later extension adds the affected/output key domains {@code A}/{@code Q}.
+ * For the timestamp-global RANGE replacement they are degenerate: {@code Q} is
+ * every key with a qualifying row in {@code [R, H)}, which is exactly what the
+ * replay emits when it re-evaluates the whole interval, and {@code A} does not
+ * enter the bounds at all because {@code L} and {@code H} are key-independent
+ * timestamp arithmetic. They become load-bearing for the ROWS shapes, whose
+ * per-key predecessor discovery has no such closed form.
  * <p>
  * One instance per refresh job, reused across repairs - {@link #of} overwrites
  * every field, so no reset is needed between plans.
@@ -655,8 +655,8 @@ public final class LiveViewCheckpointRepairPlan {
      * The sealed checkpoints a resume may roll back to, ordered by ascending
      * {@code maxTs} with the newest (the head) last.
      * <p>
-     * {@link LiveViewInstance} implements this over the retained-checkpoint ring.
-     * The design's versioned timeline replaces that ring with a logarithmic
+     * {@link LiveViewInstance} implements this over the retained-checkpoint
+     * ring. The versioned timeline replaces that ring with a logarithmic
      * predecessor lookup over permanently retained roots; it substitutes behind
      * these three methods.
      */

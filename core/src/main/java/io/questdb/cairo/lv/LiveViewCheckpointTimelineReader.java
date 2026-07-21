@@ -33,9 +33,9 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * Read-only navigator over the persistent copy-on-write timeline B+ tree (design
- * sections 7, 8.1), given a tree root {@link LiveViewCheckpointPageRef} (normally
- * a superblock generation's {@code timelineRootRef}). It resolves:
+ * Read-only navigator over the persistent copy-on-write timeline B+ tree, given
+ * a tree root {@link LiveViewCheckpointPageRef} (normally a superblock
+ * generation's {@code timelineRootRef}). It resolves:
  * <ul>
  *     <li>{@link #predecessor} - the greatest logical checkpoint whose
  *     {@code maxTimestamp} is strictly below a correction timestamp {@code C},
@@ -176,10 +176,10 @@ public class LiveViewCheckpointTimelineReader implements Closeable {
 
     /**
      * Finds the greatest entry whose {@code maxTimestamp} is strictly less than
-     * {@code correctionTimestamp} (design section 7: the strict inequality
-     * preserves a complete timestamp tie). Fills {@code out} and returns true when
-     * such an entry exists; returns false for an empty tree or when every entry is
-     * at or above {@code correctionTimestamp}.
+     * {@code correctionTimestamp}; the strict inequality preserves a complete
+     * timestamp tie. Fills {@code out} and returns true when such an entry
+     * exists; returns false for an empty tree or when every entry is at or
+     * above {@code correctionTimestamp}.
      */
     public boolean predecessor(@NotNull LiveViewCheckpointPageRef rootRef, long correctionTimestamp, @NotNull LiveViewCheckpointTimelineEntry out) {
         if (rootRef.isNull()) {

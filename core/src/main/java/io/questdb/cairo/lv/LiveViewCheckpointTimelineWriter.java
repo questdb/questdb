@@ -34,24 +34,24 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * Copy-on-write publisher for the timeline B+ tree (design sections 7, 8.1). Each
- * mutation reads the prior generation's tree through a {@link
- * LiveViewCheckpointTimelineReader}, writes only the changed pages into one fresh
- * metadata segment, and returns the new tree root reference; the caller commits
- * the generation by publishing that root in a superblock slot.
+ * Copy-on-write publisher for the timeline B+ tree. Each mutation reads the
+ * prior generation's tree through a {@link LiveViewCheckpointTimelineReader},
+ * writes only the changed pages into one fresh metadata segment, and returns
+ * the new tree root reference; the caller commits the generation by publishing
+ * that root in a superblock slot.
  * <ul>
- *     <li>{@link #append} inserts one logical checkpoint entry, path-copying the
- *     {@code O(log N)} spine and splitting nodes that overflow, reusing every
- *     untouched subtree by its existing page reference.</li>
+ *     <li>{@link #append} inserts one logical checkpoint entry, path-copying
+ *     the {@code O(log N)} spine and splitting nodes that overflow, reusing
+ *     every untouched subtree by its existing page reference.</li>
  *     <li>{@link #splice} re-versions a set of existing entries in place (same
- *     keys, new root/positions - the O3 repair of {@code [C, H)} in design
- *     section 12.5). It copies only the leaves holding the affected keys and their
- *     ancestor spine, reusing the prefix and suffix subtrees. Keys are preserved,
- *     so no node splits or merges.</li>
+ *     keys, new root/positions - the out-of-order repair of {@code [C, H)}). It
+ *     copies only the leaves holding the affected keys and their ancestor
+ *     spine, reusing the prefix and suffix subtrees. Keys are preserved, so no
+ *     node splits or merges.</li>
  * </ul>
  * Metadata pages are immutable and never rewritten in place, so a reader of the
- * prior generation keeps walking the old paths (design invariant 3-8). The
- * instance is reusable across mutations and is not thread safe.
+ * prior generation keeps walking the old paths. The instance is reusable across
+ * mutations and is not thread safe.
  */
 public class LiveViewCheckpointTimelineWriter implements Closeable {
 

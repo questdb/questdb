@@ -33,10 +33,10 @@ import org.junit.Test;
 
 /**
  * Pins the change-set classification an out-of-order repair plans from: which
- * executor runs, which sealed anchor it may trust, where it commits, and how far
- * down it unseals retained checkpoints. The refresh job derives all of this once
- * per repair against one pinned base snapshot (design section 12.1); these tests
- * exercise that decision directly, without an engine, a base table or a replay.
+ * executor runs, which sealed anchor it may trust, where it commits, and how
+ * far down it unseals retained checkpoints. The refresh job derives all of this
+ * once per repair against one pinned base snapshot; these tests exercise that
+ * decision directly, without an engine, a base table or a replay.
  * <p>
  * The properties under test are safety properties, not optimisations: an anchor
  * chosen at or above a change would silently drop rows the resume never re-reads,

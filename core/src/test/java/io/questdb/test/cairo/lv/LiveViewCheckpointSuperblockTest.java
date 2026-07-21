@@ -40,7 +40,7 @@ import org.junit.Test;
 /**
  * Standalone coverage for the fixed A/B {@code _checkpoints/_timeline}
  * superblock, the sole commit point for a versioned-checkpoint-timeline
- * generation (design section 8.2).
+ * generation.
  * <p>
  * Two independently-checksummed slots give the crash-safety property under test:
  * a publication writes the inactive slot and its higher generation wins on

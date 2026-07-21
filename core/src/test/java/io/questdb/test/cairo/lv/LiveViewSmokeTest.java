@@ -18895,10 +18895,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testCheckpointRingDropLiveViewRemovesCheckpointsDir() throws Exception {
-        // Section 11.7's last lifecycle item, and the one the design flagged as
-        // "argued to collapse but NOT proven". The argument for collapsing it was
-        // that DROP LIVE VIEW needs no _ring special-casing because _checkpoints/
-        // rides the recursive table-directory removal, and that
+        // The last checkpoint-ring lifecycle item, and the one flagged as
+        // "argued to collapse but NOT proven". The argument for collapsing it
+        // was that DROP LIVE VIEW needs no _ring special-casing because
+        // _checkpoints/ rides the recursive table-directory removal, and that
         // testDropLiveViewPurgesTableFiles already covers it. The first half is
         // true. The second is not, and that gap is why this test exists.
         //
@@ -18917,17 +18917,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // in that path names the ring, and nothing needs to - which is precisely
         // the claim a reader cannot verify without this test.
         //
-        // And the collapse argument named the WRONG mechanism, which the mutation
-        // run is the only way to see. It credits the recursive rmdir - i.e.
-        // WalPurgeJob's (:259), the second of the two stages. That rmdir does not
-        // carry this test at all: stubbing it to fullyDeleted=false leaves this
-        // GREEN, because the view's txn_seq/ and wal1/ shells outlive the purge
-        // loop and the directory terminates at TABLE_RESERVED - the very state
-        // the design flagged as the reason to doubt the collapse. It is stage
-        // one's unlinkOrRemove that removes _checkpoints/, and neutering that
-        // branch alone is what reddens the assertion below. So the doubt was
-        // right, the verdict is right, and the reason was wrong: the rmdir that
-        // was supposed to make this free never runs here.
+        // And the collapse argument named the WRONG mechanism, which the
+        // mutation run is the only way to see. It credits the recursive rmdir -
+        // i.e. WalPurgeJob's (:259), the second of the two stages. That rmdir
+        // does not carry this test at all: stubbing it to fullyDeleted=false
+        // leaves this GREEN, because the view's txn_seq/ and wal1/ shells
+        // outlive the purge loop and the directory terminates at TABLE_RESERVED
+        // - the very state named as the reason to doubt the collapse. It is
+        // stage one's unlinkOrRemove that removes _checkpoints/, and neutering
+        // that branch alone is what reddens the assertion below. So the doubt
+        // was right, the verdict is right, and the reason was wrong: the rmdir
+        // that was supposed to make this free never runs here.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -19326,12 +19326,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testO3ResumeAndBoundaryReplayRowsSurfaceInCatalogue() throws Exception {
-        // Observability (section 8 step 9). live_views() splits the rows an O3
-        // re-emits by path: o3_resume_replay_rows counts bounded resume-from-anchor
-        // replays ("the win"), o3_boundary_replay_rows counts the residual O(view age)
-        // boundary rebuild taken when the late row predates the whole ring. The two
-        // are disjoint - a given O3 replay bumps exactly one - so an operator can see
-        // the ring bounding O3 cost and spot any residual full rebuilds.
+        // Observability. live_views() splits the rows an O3 re-emits by path:
+        // o3_resume_replay_rows counts bounded resume-from-anchor replays ("the
+        // win"), o3_boundary_replay_rows counts the residual O(view age)
+        // boundary rebuild taken when the late row predates the whole ring. The
+        // two are disjoint - a given O3 replay bumps exactly one - so an
+        // operator can see the ring bounding O3 cost and spot any residual full
+        // rebuilds.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1); // one head per flush -> dense ring
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");

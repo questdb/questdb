@@ -25,9 +25,8 @@
 package io.questdb.cairo.lv;
 
 /**
- * A mutable value holder for one {@code LogicalCheckpointEntry} (design section
- * 7): the permanent identity and per-generation leaf values of a logical
- * checkpoint boundary.
+ * A mutable value holder for one logical checkpoint entry: the permanent
+ * identity and per-generation leaf values of a checkpoint boundary.
  * <p>
  * The type is a reusable flyweight, like {@link LiveViewCheckpointPageRef}:
  * callers pass one instance into an append or reuse one across reader results to
@@ -38,9 +37,9 @@ public final class LiveViewCheckpointTimelineEntry {
 
     /**
      * Runtime output-row position observed at checkpoint time, minus the
-     * generation's prefix delta correction. The effective position is this value
-     * plus the row-position delta index prefix sum (Phase 1 step 3); this class
-     * stores only the raw per-root component.
+     * generation's prefix delta correction. The effective position is this
+     * value plus the row-position delta index prefix sum; this class stores
+     * only the raw per-root component.
      */
     public long baseLvRowPosition;
     /**
@@ -49,8 +48,8 @@ public final class LiveViewCheckpointTimelineEntry {
      */
     public long checkpointId;
     /**
-     * Diagnostic live-view-writer {@code seqTxn} at which the boundary was first
-     * created (design section 7). Not a recovery watermark.
+     * Diagnostic live-view-writer {@code seqTxn} at which the boundary was
+     * first created. Not a recovery watermark.
      */
     public long createdLvSeqTxn;
     /**

@@ -55,21 +55,19 @@ import static io.questdb.cairo.lv.LiveViewCheckpointLayout.SEG_PAGE_COUNT_OFFSET
 /**
  * Reads an immutable metadata segment ({@code m.<segmentId>}) written by
  * {@link LiveViewCheckpointMetaSegmentWriter}, validating the self-checksummed
- * header once at open and each page's own CRC32 on access (design sections 8.4,
- * 9.4).
+ * header once at open and each page's own CRC32 on access.
  * <p>
  * Page access is bounded: {@link #openPage(LiveViewCheckpointPageRef)} verifies
  * segment identity, file-length-checked offset/length arithmetic, and the
  * reference-vs-header length agreement before the CRC check, so a malformed
- * length can never drive an out-of-bounds read (design section 9.2). After a
- * page is opened, {@link #getInt(long)} / {@link #getLong(long)} read fields
- * within the payload with their own bounds checks.
+ * length can never drive an out-of-bounds read. After a page is opened,
+ * {@link #getInt(long)} / {@link #getLong(long)} read fields within the payload
+ * with their own bounds checks.
  * <p>
  * Structural failures raise {@link CairoException} with errno
  * {@link CairoException#LV_CHECKPOINT_TIMELINE_INVALID}: timeline state is
  * derived, so a caller treats a bad page as invalidating one root version and
- * schedules its reconstruction rather than failing the view (design sections
- * 14.1, 14.2).
+ * schedules its reconstruction rather than failing the view.
  */
 public class LiveViewCheckpointMetaSegmentReader implements Closeable {
 

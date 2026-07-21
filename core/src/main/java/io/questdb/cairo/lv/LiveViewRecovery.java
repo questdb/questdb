@@ -73,16 +73,15 @@ public final class LiveViewRecovery {
      * refresh worker. Everything this method knows about {@code _lv.s} is the
      * raw and legitimately stale value.
      * <p>
-     * Validation is structural and cheap by design (design section 7.2): the
-     * codec's own invariants, plus {@link FilesFacade#exists} per listed entry.
-     * It opens no {@code .cp} file. CRCing each one would cost the full
-     * retention byte budget per view on the startup thread, to validate state
-     * only an O3 needs; a listed checkpoint that turns out corrupt is evicted
-     * lazily at use time, without disturbing its neighbours. The
-     * {@code exists()} check is not mere hygiene: the add path unlinks pruned
-     * checkpoints even when their publication failed, so a manifest naming a
-     * missing file is a reachable state that must fall back rather than promise
-     * an anchor that is gone.
+     * Validation is structural and cheap by design: the codec's own invariants,
+     * plus {@link FilesFacade#exists} per listed entry. It opens no {@code .cp}
+     * file. CRCing each one would cost the full retention byte budget per view
+     * on the startup thread, to validate state only an O3 needs; a listed
+     * checkpoint that turns out corrupt is evicted lazily at use time, without
+     * disturbing its neighbours. The {@code exists()} check is not mere
+     * hygiene: the add path unlinks pruned checkpoints even when their
+     * publication failed, so a manifest naming a missing file is a reachable
+     * state that must fall back rather than promise an anchor that is gone.
      * <p>
      * Every failure - absent, corrupt, version-skewed, or naming a missing
      * checkpoint - is non-fatal and costs a boundary rebuild at most. Ring state

@@ -29,12 +29,12 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * A reader's handle on one published timeline generation (design section 5,
- * invariants 4 and 5). It is the concrete realization of "a reader pins one
- * generation before resolving any root or page reference": while a pin is held,
- * the generation's superblock roots stay resolvable through this handle and the
- * files it references are protected from garbage collection, even if a concurrent
- * publication has already advanced the current generation.
+ * A reader's handle on one published timeline generation. It is the concrete
+ * realization of "a reader pins one generation before resolving any root or
+ * page reference": while a pin is held, the generation's superblock roots stay
+ * resolvable through this handle and the files it references are protected from
+ * garbage collection, even if a concurrent publication has already advanced the
+ * current generation.
  * <p>
  * A pin captures, at pin time, the generation number and a snapshot of that
  * generation's three superblock root references ({@code timelineRootRef},

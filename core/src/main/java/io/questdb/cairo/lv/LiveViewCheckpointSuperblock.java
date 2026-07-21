@@ -40,18 +40,17 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * The fixed A/B superblock {@code _checkpoints/_timeline} that names the current
- * generation of the versioned checkpoint timeline (design section 8.2).
+ * The fixed A/B superblock {@code _checkpoints/_timeline} that names the
+ * current generation of the versioned checkpoint timeline.
  * <p>
  * The file holds two independently-checksummed, fixed-size slots. A publication
  * writes the <em>inactive</em> slot (the one not currently selected) and its
- * higher generation number makes it the new current slot; the other slot remains
- * the recovery fallback. On open, the highest-generation slot that passes its own
- * checksum and format checks is selected; a torn or corrupt newest slot falls
- * back to the previous slot without any wider scan (design sections 8.2, 14.1).
- * This is the sole commit point for a timeline generation: a reader observes
- * either the complete old generation or the complete new one, never a partial
- * splice.
+ * higher generation number makes it the new current slot; the other slot
+ * remains the recovery fallback. On open, the highest-generation slot that
+ * passes its own checksum and format checks is selected; a torn or corrupt
+ * newest slot falls back to the previous slot without any wider scan. This is
+ * the sole commit point for a timeline generation: a reader observes either the
+ * complete old generation or the complete new one, never a partial splice.
  * <p>
  * Each slot carries only authoritative metadata - generation and history/definition
  * identity, the two seqTxn coordinates ({@code normalizedBaseSeqTxn} in base-txn
@@ -113,7 +112,7 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      */
     public static final long FILE_SIZE = 2L * SLOT_SIZE;
     private static final int SLOT_RESERVED_OFFSET = 12;
-    // Value fields reflecting the currently selected slot (design section 8.2).
+    // Value fields reflecting the currently selected slot.
     public long coveredLvSeqTxn;
     public long dataBytes;
     public long definitionTxn;

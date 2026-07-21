@@ -33,10 +33,10 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * Read-only navigator over the persistent copy-on-write row-position delta tree
- * (design sections 7, 10.3, 12.5), given a tree root {@link
- * LiveViewCheckpointPageRef} (normally a superblock generation's
- * {@code rowPositionDeltaRootRef}). Its primary query is:
+ * Read-only navigator over the persistent copy-on-write row-position delta
+ * tree, given a tree root {@link LiveViewCheckpointPageRef} (normally a
+ * superblock generation's {@code rowPositionDeltaRootRef}). Its primary query
+ * is:
  * <ul>
  *     <li>{@link #prefixSum} - the sum of every difference whose key is {@code <=}
  *     the query key. A logical checkpoint's effective cumulative
@@ -82,9 +82,9 @@ public class LiveViewCheckpointRowPositionDeltaReader implements Closeable {
     /**
      * @return the effective cumulative {@code lvRowPosition} of {@code entry} in the
      * generation rooted at {@code rootRef}: the entry's stored
-     * {@code baseLvRowPosition} plus the prefix sum at the entry's search key (design
-     * section 7). This is the recovery coordinate a suffix root reports after an O3
-     * repair shifted it without rewriting its leaf.
+     * {@code baseLvRowPosition} plus the prefix sum at the entry's search key.
+     * This is the recovery coordinate a suffix root reports after an O3 repair
+     * shifted it without rewriting its leaf.
      */
     public long effectivePosition(@NotNull LiveViewCheckpointPageRef rootRef, @NotNull LiveViewCheckpointTimelineEntry entry) {
         return entry.baseLvRowPosition + prefixSum(rootRef, entry.maxTimestamp, entry.checkpointId);

@@ -1560,10 +1560,10 @@ public class SqlParser {
         // we walk the named-window map here.
         validateLiveViewAnchors(queryModel);
 
-        // Enforce the Phase 0 finite-influence scope cut: unanchored ranking
-        // functions (row_number / rank / dense_rank) have no finite forward
-        // influence and are rejected at CREATE. Runs after validateLiveViewAnchors
-        // so the named-window anchor kinds it inspects are already validated.
+        // Enforce the finite-influence scope cut: unanchored ranking functions
+        // (row_number / rank / dense_rank) have no finite forward influence and
+        // are rejected at CREATE. Runs after validateLiveViewAnchors so the
+        // named-window anchor kinds it inspects are already validated.
         validateLiveViewFiniteInfluence(queryModel);
 
         // Defense-in-depth lead() reject. The factory-side check inside
@@ -1878,8 +1878,7 @@ public class SqlParser {
     }
 
     /**
-     * Parser-side half of the Phase 0 finite-influence scope cut (see
-     * {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md} section 6.2 and
+     * Parser-side half of the finite-influence scope cut (see
      * {@code io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind}).
      * The localized out-of-order repair the checkpoint timeline relies on can
      * only bound its work when every window function has a finite forward
@@ -1888,9 +1887,9 @@ public class SqlParser {
      * run unanchored: an out-of-order row shifts every following row's rank
      * without bound. Reject them at CREATE, naming the function.
      * <p>
-     * The anchored, per-segment-reset forms have a finite {@code H} (the segment
-     * end) and stay eligible; they route through the fixed-anchor dependency
-     * kind and their full O3 repair returns in Phase 7.
+     * The anchored, per-segment-reset forms have a finite {@code H} (the
+     * segment end) and stay eligible; they route through the fixed-anchor
+     * dependency kind, whose full O3 repair is not wired yet.
      * <p>
      * Partitioned-but-unanchored ranking (e.g. {@code row_number() OVER
      * (PARTITION BY sym ORDER BY ts)}) is already turned away by

@@ -25,18 +25,17 @@
 package io.questdb.cairo.lv;
 
 /**
- * Frozen Phase 0 contracts for the versioned checkpoint timeline and localized
- * O3 repair (see {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md}).
+ * Frozen contracts for the versioned checkpoint timeline and localized
+ * out-of-order repair.
  * <p>
  * This class carries no runtime behavior beyond the floating-point tolerance
  * helper. It exists to <b>pin</b>, at compile time and under test, the design
- * decisions that later phases build their file schemas and planning logic on,
- * so an accidental drift in the supported-window matrix, the repair publication
- * ordering, or the floating tolerance breaks a test rather than silently
- * changing the contract. The matching test is
- * {@code LiveViewCheckpointContractsTest}.
+ * decisions the file schemas and planning logic are built on, so an accidental
+ * drift in the supported-window matrix, the repair publication ordering, or the
+ * floating tolerance breaks a test rather than silently changing the contract.
+ * The matching test is {@code LiveViewCheckpointContractsTest}.
  *
- * <h2>Coordinate terminology (design section 5)</h2>
+ * <h2>Coordinate terminology</h2>
  * These coordinates live in three distinct spaces that must never be conflated:
  * base-table {@code seqTxn} progress, live-view-writer {@code seqTxn} progress,
  * and per-root designated timestamp plus effective {@code lvRowPosition}.
@@ -69,7 +68,7 @@ package io.questdb.cairo.lv;
  *     the timestamp-global replacement range {@code [R, H)}.</li>
  * </ul>
  *
- * <h2>Timeline invariants (design section 5)</h2>
+ * <h2>Timeline invariants</h2>
  * <ol>
  *     <li>A boundary {@code B} represents function state after all qualifying
  *     rows with designated timestamp {@code <= B} in canonical cursor order.</li>
@@ -97,32 +96,32 @@ package io.questdb.cairo.lv;
  *     replacement changes the cumulative position.</li>
  * </ol>
  *
- * <h2>Three contracts pulled forward before the Phase 1 schema freeze</h2>
+ * <h2>Three contracts the file schemas depend on</h2>
  * <ol>
- *     <li><b>Dual recovery model (design section 14.1).</b> Recovery reconciles
- *     into two coordinates: the authoritative base-{@code seqTxn} inclusion
- *     boundary (which base transaction <i>versions</i> may be incorporated) and
- *     the durable designated-timestamp frontier {@code F} plus the selected
- *     root's effective {@code lvRowPosition} (which output is already durable).
- *     The {@code (B, F]} runtime rebuild is bounded by the base-{@code seqTxn}
+ *     <li><b>Dual recovery model.</b> Recovery reconciles into two coordinates:
+ *     the authoritative base-{@code seqTxn} inclusion boundary (which base
+ *     transaction <i>versions</i> may be incorporated) and the durable
+ *     designated-timestamp frontier {@code F} plus the selected root's
+ *     effective {@code lvRowPosition} (which output is already durable). The
+ *     {@code (B, F]} runtime rebuild is bounded by the base-{@code seqTxn}
  *     boundary, never by {@code F}, so an apply-ahead O3 correction below
  *     {@code F} is deferred to post-restore classification rather than double
  *     counted.</li>
- *     <li><b>Output-floor split (design sections 5 and 12).</b> Durable output
- *     is replaced over {@code [R, H)}; logical state roots are versioned only
- *     over {@code [C, H)}. When {@code R < C}, roots in {@code [R, C)} are
+ *     <li><b>Output-floor split.</b> Durable output is replaced over
+ *     {@code [R, H)}; logical state roots are versioned only over
+ *     {@code [C, H)}. When {@code R < C}, roots in {@code [R, C)} are
  *     re-emitted by the timestamp-global replacement but keep their existing
  *     state version - re-emitted, not re-versioned.</li>
- *     <li><b>Bounded startup validation / lazy corruption (design sections 8.2
- *     and 14).</b> Startup selects the highest superblock slot that passes
- *     <i>bounded</i> validation (its own checksum, its root metadata pages, and
- *     the checksummed segment/completeness catalogue it references) without
- *     walking the whole timeline. Deep tree paths and state pages are validated
- *     lazily on first access; a structurally invalid page invalidates only that
- *     one root version, never the pinned generation.</li>
+ *     <li><b>Bounded startup validation / lazy corruption.</b> Startup selects
+ *     the highest superblock slot that passes <i>bounded</i> validation (its
+ *     own checksum, its root metadata pages, and the checksummed
+ *     segment/completeness catalogue it references) without walking the whole
+ *     timeline. Deep tree paths and state pages are validated lazily on first
+ *     access; a structurally invalid page invalidates only that one root
+ *     version, never the pinned generation.</li>
  * </ol>
  *
- * <h2>Failure ordering (design sections 12.6 and 15.2)</h2>
+ * <h2>Failure ordering</h2>
  * A localized repair advances through {@link RepairPublicationStage} in strict
  * ordinal order. The inactive superblock slot is the sole commit point: recovery
  * selects either the complete old generation {@code G} or the complete new
@@ -136,19 +135,18 @@ public final class LiveViewCheckpointContracts {
     /**
      * Absolute floor for {@link #isWithinFloatingTolerance(double, double)}.
      * Guards comparisons where the expected value is at or near zero, for which
-     * the relative term collapses. See design section 6.1.
+     * the relative term collapses.
      */
     public static final double FLOATING_ABSOLUTE_TOLERANCE = 1e-9;
 
     /**
      * Documented relative tolerance ceiling for <b>approved floating aggregate
-     * fields and outputs only</b> after a localized replay (design section 6.1).
-     * Restored checkpoint bits are exact; frame contents, counts, deque
-     * structure, and all non-floating state converge exactly and must be
-     * compared with exact equality. Integer, decimal, and otherwise exact
-     * aggregates remain bit-exact. A later phase may record a tighter per-
-     * function tolerance alongside its approved-field list, but must not exceed
-     * this ceiling.
+     * fields and outputs only</b> after a localized replay. Restored checkpoint
+     * bits are exact; frame contents, counts, deque structure, and all
+     * non-floating state converge exactly and must be compared with exact
+     * equality. Integer, decimal, and otherwise exact aggregates remain
+     * bit-exact. Later work may record a tighter per-function tolerance
+     * alongside its approved-field list, but must not exceed this ceiling.
      */
     public static final double FLOATING_RELATIVE_TOLERANCE = 1e-9;
 
@@ -180,12 +178,12 @@ public final class LiveViewCheckpointContracts {
     }
 
     /**
-     * The supported-window dependency matrix (design section 6). Each kind
-     * declares its low-bound ({@code L}) and high-bound ({@code H}) derivation
-     * strategy and its eligibility {@link Disposition}. Eligibility is a
-     * property of the proven forward-influence contract, not of snapshot
-     * capability alone: a function may support a snapshot codec and still be
-     * rejected here for lacking a finite {@code H}.
+     * The supported-window dependency matrix. Each kind declares its low-bound
+     * ({@code L}) and high-bound ({@code H}) derivation strategy and its
+     * eligibility {@link Disposition}. Eligibility is a property of the proven
+     * forward-influence contract, not of snapshot capability alone: a function
+     * may support a snapshot codec and still be rejected here for lacking a
+     * finite {@code H}.
      */
     public enum DependencyKind {
         /**
@@ -209,13 +207,13 @@ public final class LiveViewCheckpointContracts {
         /**
          * Fixed compiler-derived anchor segment, including anchored
          * {@code row_number}/{@code rank}/{@code dense_rank} with per-segment
-         * reset. The segment boundaries give an exact {@code [L, H)}. Returns in
-         * Phase 7.
+         * reset. The segment boundaries give an exact {@code [L, H)}. Not wired
+         * yet.
          */
         FIXED_ANCHOR_SEGMENT(
                 "segment start, clamped to S",
                 "segment end, exclusive",
-                Disposition.ELIGIBLE_PHASE_7
+                Disposition.ELIGIBLE_NOT_YET_WIRED
         ),
         /**
          * Unbounded cumulative aggregate without a fixed reset. No finite
@@ -227,11 +225,11 @@ public final class LiveViewCheckpointContracts {
                 Disposition.REJECT
         ),
         /**
-         * Unanchored {@code row_number}, {@code rank}, {@code dense_rank} with no
-         * bounding anchor. A historical prefix is required and there is no finite
-         * {@code H}; rejected at CREATE. This is the deliberate, product-visible
-         * scope cut of Phase 0: the anchored, segment-reset forms remain eligible
-         * via {@link #FIXED_ANCHOR_SEGMENT} and return in Phase 7.
+         * Unanchored {@code row_number}, {@code rank}, {@code dense_rank} with
+         * no bounding anchor. A historical prefix is required and there is no
+         * finite {@code H}; rejected at CREATE. This is the deliberate,
+         * product-visible scope cut: the anchored, segment-reset forms remain
+         * eligible via {@link #FIXED_ANCHOR_SEGMENT} and return with it.
          */
         UNANCHORED_RANK(
                 "historical prefix required",
@@ -273,8 +271,8 @@ public final class LiveViewCheckpointContracts {
 
         /**
          * Whether {@code CREATE LIVE VIEW} may accept this shape today. The
-         * anchored path ({@link Disposition#ELIGIBLE_PHASE_7}) is proven but not
-         * wired until Phase 7, so it is not yet accepted.
+         * anchored path ({@link Disposition#ELIGIBLE_NOT_YET_WIRED}) is proven
+         * but not wired, so it is not yet accepted.
          */
         public boolean isEligibleNow() {
             return disposition == Disposition.ELIGIBLE;
@@ -299,10 +297,10 @@ public final class LiveViewCheckpointContracts {
          */
         ELIGIBLE,
         /**
-         * Finite via a fixed compiler-derived anchor segment; proven, but wired
-         * and accepted only from Phase 7.
+         * Finite via a fixed compiler-derived anchor segment; proven, but not
+         * yet wired, so not yet accepted at CREATE.
          */
-        ELIGIBLE_PHASE_7,
+        ELIGIBLE_NOT_YET_WIRED,
         /**
          * No finite {@code H}; rejected at CREATE permanently.
          */
@@ -315,12 +313,12 @@ public final class LiveViewCheckpointContracts {
     }
 
     /**
-     * Tag for the exclusive high influence boundary {@code H} (design section
-     * 6). {@code H} is a tagged bound, not a bare {@code long}, because
-     * {@code Long.MAX_VALUE} is a valid designated timestamp and cannot also
-     * mean infinity. A {@code REPLACE_RANGE} that reaches end-of-frame carries
-     * {@link #EOF} through planning and WAL application rather than encoding it
-     * as {@code Long.MAX_VALUE} or {@code hi = maxTimestamp + 1}.
+     * Tag for the exclusive high influence boundary {@code H}. It is a tagged
+     * bound, not a bare {@code long}, because {@code Long.MAX_VALUE} is a valid
+     * designated timestamp and cannot also mean infinity. A
+     * {@code REPLACE_RANGE} that reaches end-of-frame carries {@link #EOF}
+     * through planning and WAL application rather than encoding it as
+     * {@code Long.MAX_VALUE} or {@code hi = maxTimestamp + 1}.
      */
     public enum HighBoundTag {
         /**
@@ -335,10 +333,10 @@ public final class LiveViewCheckpointContracts {
     }
 
     /**
-     * The strictly ordered stages of a localized O3 repair publication (design
-     * section 12.6). Ordinal order is the required happens-before order: a stage
-     * may begin only after every earlier stage has completed. No watermark may
-     * advance past unmaterialized output, which is why
+     * The strictly ordered stages of a localized O3 repair publication. Ordinal
+     * order is the required happens-before order: a stage may begin only after
+     * every earlier stage has completed. No watermark may advance past
+     * unmaterialized output, which is why
      * {@link #CONSUMED_WATERMARK_AND_PURGE_FLOOR_ADVANCED} is last.
      */
     public enum RepairPublicationStage {

@@ -25,11 +25,9 @@
 package io.questdb.cairo.lv;
 
 /**
- * Node framing for the persistent copy-on-write difference/prefix-sum B+ tree that
- * corrects a checkpoint suffix's cumulative {@code lvRowPosition} without a linear
- * suffix rewrite (Phase 1 step 3 of
- * {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md}, sections 7, 10.3, 12.5,
- * 20.3, invariant 10).
+ * Node framing for the persistent copy-on-write difference/prefix-sum B+ tree
+ * that corrects a checkpoint suffix's cumulative {@code lvRowPosition} without
+ * a linear suffix rewrite.
  * <p>
  * The timeline stores a per-root {@code baseLvRowPosition}; the effective
  * cumulative position of a logical checkpoint is

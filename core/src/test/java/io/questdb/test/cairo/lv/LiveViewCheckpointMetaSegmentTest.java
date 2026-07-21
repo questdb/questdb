@@ -44,8 +44,7 @@ import org.junit.Test;
 
 /**
  * Standalone coverage for the immutable, per-page-checksummed metadata segment
- * store ({@code m.<segmentId>}) that Phase 1 of the versioned checkpoint
- * timeline builds on.
+ * store ({@code m.<segmentId>}) the versioned checkpoint timeline builds on.
  * <p>
  * A metadata segment packs many small pages, each with its own CRC32, so a
  * localized read validates one page in isolation. The contract cuts both ways: a

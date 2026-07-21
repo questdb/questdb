@@ -34,13 +34,12 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Phase 0 baseline fixtures for the versioned checkpoint timeline
- * (LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md, Phase 0 step 3): deterministic
- * RANGE and ROWS window views with enough history to collapse the retained checkpoint
+ * Baseline fixtures for the versioned checkpoint timeline: deterministic RANGE
+ * and ROWS window views with enough history to collapse the retained checkpoint
  * ring and then reproduce an older out-of-order boundary replay.
  * <p>
- * The scenario reproduces, on eligible window shapes, exactly the pathology section 2 of
- * the design calls out and the timeline replaces:
+ * The scenario reproduces, on eligible window shapes, exactly the pathology the
+ * timeline replaces:
  * <ul>
  *     <li><b>Collapse the ring.</b> With one head sealed per flush
  *     ({@code checkpoint.rows = 1}) the retained ring fills to the {@code retention.count}
@@ -51,22 +50,23 @@ import org.junit.Test;
  *     ({@code o3_resume_replay_rows}, the ring "win"), but a row older than the whole
  *     collapsed ring finds no anchor and falls back to the O(view age) boundary rebuild
  *     from the {@code START FROM} boundary ({@code o3_boundary_replay_rows}, the residual
- *     the timeline design removes).</li>
+ *     the timeline removes).</li>
  * </ul>
- * These use {@code sum(x)} over a partitioned RANGE / ROWS frame - eligible dependency
- * kinds under the design's window matrix (section 6), unlike the unanchored
- * {@code row_number() OVER ()} the older ring/boundary smoke fixtures lean on, which Phase 0
- * step 4 removes. {@code sum} over small LONG values is bit-exact (section 6.1), so the
- * from-base recompute oracle can compare with exact equality rather than a float tolerance.
+ * These use {@code sum(x)} over a partitioned RANGE / ROWS frame - eligible
+ * dependency kinds under the supported-window matrix, unlike the unanchored
+ * {@code row_number() OVER ()} the older ring/boundary smoke fixtures leant on,
+ * which the finite-influence scope cut removes. {@code sum} over small LONG
+ * values is bit-exact, so the from-base recompute oracle can compare with exact
+ * equality rather than a float tolerance.
  * <p>
- * The class also carries the fixture's counterpart: once the RANGE dependency bounds land
- * (Phase 5 steps 4a and 4b), the same sub-ring out-of-order row no longer costs the view's
- * age in either direction - the rebuild reads from {@code R - W} and stops at
- * {@code changeMaxTs + W}. The localization pair drives a longer history, measures what the
- * rebuild actually read and re-emitted, and then keeps ingesting in order so the runtime
- * state a converging repair restored is exercised rather than only the output it wrote. The
- * ROWS view is the still-unbounded control until Phase 6 gives it per-key predecessor
- * discovery.
+ * The class also carries the fixture's counterpart: with the RANGE dependency
+ * bounds in place, the same sub-ring out-of-order row no longer costs the
+ * view's age in either direction - the rebuild reads from {@code R - W} and
+ * stops at {@code changeMaxTs + W}. The localization pair drives a longer
+ * history, measures what the rebuild actually read and re-emitted, and then
+ * keeps ingesting in order so the runtime state a converging repair restored is
+ * exercised rather than only the output it wrote. The ROWS view is the
+ * still-unbounded control until per-key predecessor discovery bounds it too.
  */
 public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewTest {
 
@@ -103,11 +103,12 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
 
     @Test
     public void testRangeDependencyBoundsTheOldO3BoundaryRebuild() throws Exception {
-        // The design's phase 5 step 4a/4b win, on the fixture the pathology was built
-        // for. The change is older than every surviving anchor, so the repair still runs
-        // the boundary rebuild - but a finite RANGE look-behind closes it at both ends:
-        // the state a row at R sees is exactly the rows in [R - W, R], and a row at m
-        // sits in the frame of every row in [m, m + W] and no other.
+        // The two-sided RANGE bound, on the fixture the pathology was built
+        // for. The change is older than every surviving anchor, so the repair
+        // still runs the boundary rebuild - but a finite RANGE look-behind
+        // closes it at both ends: the state a row at R sees is exactly the rows
+        // in [R - W, R], and a row at m sits in the frame of every row in
+        // [m, m + W] and no other.
         //
         // W is 30s over rows spaced 10s apart. L lands at 285s and H one microsecond
         // past 345s, so the scan admits 290s..345s - six groups of 2 rows - plus the O3
@@ -133,11 +134,12 @@ public class LiveViewCheckpointRingBoundaryFixtureTest extends AbstractLiveViewT
 
     @Test
     public void testRowsDependencyLeavesTheOldO3BoundaryRebuildUnbounded() throws Exception {
-        // The control. A ROWS frame carries no finite RANGE descriptor, so the plan
-        // derives no floor and the same change costs the whole view history: every base
-        // row is read and every output row re-emitted. Phase 6 bounds this shape through
-        // per-key predecessor discovery; until then the difference against the RANGE case
-        // above is exactly what the dependency floor buys.
+        // The control. A ROWS frame carries no finite RANGE descriptor, so the
+        // plan derives no floor and the same change costs the whole view
+        // history: every base row is read and every output row re-emitted.
+        // Per-key predecessor discovery will bound this shape; until then the
+        // difference against the RANGE case above is exactly what the
+        // dependency floor buys.
         final ReplayCost cost = runOldO3BoundaryRebuild(
                 "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW"
         );

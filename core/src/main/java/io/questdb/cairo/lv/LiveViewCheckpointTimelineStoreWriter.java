@@ -55,14 +55,13 @@ import java.util.HashSet;
  * publication. Two publications exist, and they differ only in which logical
  * entries they touch:
  * <ul>
- *     <li>{@link #append} is the strictly in-order cadence seal (design section
- *     11). It adds one logical boundary above the current head and reuses every
- *     older root.</li>
+ *     <li>{@link #append} is the strictly in-order cadence seal. It adds one
+ *     logical boundary above the current head and reuses every older root.</li>
  *     <li>{@link #beginRepair} plus {@link #publishRepair} is the localized
- *     out-of-order range splice (design section 12.5). It re-versions the roots a
- *     repair replayed over - same {@code checkpointId}, new state and position -
- *     while the prefix below the correction floor and the converged suffix at or
- *     above {@code H} keep their existing payload roots, and one persistent
+ *     out-of-order range splice. It re-versions the roots a repair replayed
+ *     over - same {@code checkpointId}, new state and position - while the
+ *     prefix below the correction floor and the converged suffix at or above
+ *     {@code H} keep their existing payload roots, and one persistent
  *     row-position range-add corrects the suffix's cumulative recovery
  *     coordinate without walking it.</li>
  * </ul>
@@ -190,8 +189,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * Publishes one localized out-of-order repair as a timeline range splice
-     * (design section 12.5).
+     * Publishes one localized out-of-order repair as a timeline range splice.
      * <p>
      * The splice preserves every logical key: the captured boundaries keep their
      * {@code checkpointId}, {@code maxTimestamp} and {@code createdLvSeqTxn} and
@@ -1101,10 +1099,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         /**
          * Lists, ascending by key, the logical boundaries the repair has to
-         * re-version: every entry with {@code lowTsInclusive <= maxTimestamp <
-         * highTsExclusive} in the generation this capture was opened against
-         * - the same one {@link #publishRepair} refuses to splice past. That is the
-         * design's {@code [C, H)} interval - the prefix below {@code C} and the
+         * re-version: every entry with
+         * {@code lowTsInclusive <= maxTimestamp < highTsExclusive} in the
+         * generation this capture was opened against - the same one
+         * {@link #publishRepair} refuses to splice past. That is the repaired
+         * {@code [C, H)} interval - the prefix below {@code C} and the
          * converged suffix at or above {@code H} keep their existing payload
          * roots, so neither appears here.
          * <p>

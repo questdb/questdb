@@ -34,12 +34,12 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * Copy-on-write publisher for the row-position delta tree (design sections 7, 10.3,
- * 12.5). Each mutation reads the prior generation's tree through a {@link
- * LiveViewCheckpointRowPositionDeltaReader}, writes only the changed pages into one
- * fresh metadata segment, and returns the new tree root reference; the caller
- * commits the generation by publishing that root as {@code rowPositionDeltaRootRef}
- * in a superblock slot.
+ * Copy-on-write publisher for the row-position delta tree. Each mutation reads
+ * the prior generation's tree through a
+ * {@link LiveViewCheckpointRowPositionDeltaReader}, writes only the changed
+ * pages into one fresh metadata segment, and returns the new tree root
+ * reference; the caller commits the generation by publishing that root as
+ * {@code rowPositionDeltaRootRef} in a superblock slot.
  * <p>
  * The sole mutation is {@link #suffixAdd}: an O3 repair's suffix range-add over
  * {@code [H, +inf)} is one difference-array point add at the breakpoint key

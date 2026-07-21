@@ -54,17 +54,16 @@ import static io.questdb.cairo.lv.LiveViewCheckpointLayout.SEG_PAGE_COUNT_OFFSET
 
 /**
  * Writes one immutable metadata segment ({@code m.<segmentId>}) for the
- * versioned checkpoint timeline (Phase 1). A segment packs many small,
- * individually-checksummed metadata pages into a single file, so the design
+ * versioned checkpoint timeline. A segment packs many small,
+ * individually-checksummed metadata pages into a single file, so the store
  * avoids one file per partition/tree-node while still validating each page in
- * isolation on read (design sections 8.4, 9.4).
+ * isolation on read.
  * <p>
  * The writer stages into {@code m.<segmentId>.tmp}, syncs per
  * {@code cairo.commit.mode}, and atomically renames to the final
  * {@code m.<segmentId>} name at {@link #commit()}. Nothing references a segment
  * until that rename completes, so a crash mid-write leaves only an orphan
- * {@code .tmp} for startup to remove (design section 15.1). A published segment
- * is never modified.
+ * {@code .tmp} for startup to remove. A published segment is never modified.
  * <p>
  * Usage:
  * <pre>

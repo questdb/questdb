@@ -58,20 +58,19 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Phase 5 step 5 of LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md: the
- * localized out-of-order repair publishes as a timeline range splice rather than
- * as a whole-timeline retire.
+ * The localized out-of-order repair publishes as a timeline range splice rather
+ * than as a whole-timeline retire.
  * <p>
  * Every case here drives a real cadence history through the refresh job - one
  * logical root per commit - and then repairs a chosen {@code [C, H)} window
  * through {@link LiveViewCheckpointTimelineStoreWriter#beginRepair} /
  * {@link LiveViewCheckpointTimelineStoreWriter#publishRepair}, which is what a
- * replay does once it has re-materialised that window. The properties under test
- * are the ones design section 20 argues and section 24 accepts on: the prefix and
- * the converged suffix keep their payload roots by page identity, only the
- * repaired interval receives new root versions, and the suffix's cumulative
- * recovery position is corrected through the persistent delta index without the
- * splice walking it.
+ * replay does once it has re-materialised that window. The properties under
+ * test are the ones the correctness argument rests on: the prefix and the
+ * converged suffix keep their payload roots by page identity, only the repaired
+ * interval receives new root versions, and the suffix's cumulative recovery
+ * position is corrected through the persistent delta index without the splice
+ * walking it.
  */
 public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
@@ -827,12 +826,13 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
     @Test
     public void testUnlocalizedO3ReplayStillRetiresTheTimeline() throws Exception {
-        // The scope boundary of the splice, stated as a test. A ROWS frame carries no
-        // finite RANGE dependency, so the plan localizes nothing and the rebuild
-        // replaces through positive infinity - there is no converged suffix to keep
-        // and the runtime it promotes is the replay's own. The timeline is retired
-        // whole and the post-replay seal opens a fresh history with one root, exactly
-        // as it did before the splice existed. Phase 6 bounds this shape.
+        // The scope boundary of the splice, stated as a test. A ROWS frame
+        // carries no finite RANGE dependency, so the plan localizes nothing and
+        // the rebuild replaces through positive infinity - there is no
+        // converged suffix to keep and the runtime it promotes is the replay's
+        // own. The timeline is retired whole and the post-replay seal opens a
+        // fresh history with one root, exactly as it did before the splice
+        // existed. Per-key predecessor discovery will bound this shape.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_RETENTION_COUNT, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");

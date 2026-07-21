@@ -197,8 +197,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // does not pay reopen cost. Freed at job close.
     private LiveViewCheckpointWriter checkpointWriter;
     // Dedicated publisher for strictly in-order versioned-timeline cadence
-    // entries. O3 forced checkpoints remain on the ring path until Phase 5 can
-    // range-splice historical roots.
+    // entries. An out-of-order repair that cannot range-splice its historical
+    // roots falls back to the ring path.
     private LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter;
     @TestOnly
     private volatile int checkpointTimelineTestFailureStage;
@@ -224,10 +224,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // consumed by the replay, which freezes one root version per entry as it crosses
     // it. Worker-owned; cleared before each use and empty outside a repair.
     private final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries = new ObjList<>();
-    // In-RAM copy of the compiled factory's window state, taken by a repair that
-    // stops at a finite convergence boundary and put back once the replay is done
-    // (design section 12.4). Worker-owned and reused across repairs; empty except
-    // between one repair's capture and its restore.
+    // In-RAM copy of the compiled factory's window state, taken by a repair
+    // that stops at a finite convergence boundary and put back once the replay
+    // is done. Worker-owned and reused across repairs; empty except between one
+    // repair's capture and its restore.
     private final LiveViewCheckpointScratchOverlay repairOverlay = new LiveViewCheckpointScratchOverlay();
     // Coordinates of the out-of-order repair currently executing: the pinned base
     // snapshot, the correction floor, the retire floor and the chosen executor.
@@ -753,9 +753,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
             capture = checkpointTimelineStoreWriter.beginRepair(checkpointsDir);
-            // C, not R: a root in [R, C) keeps its state - nothing it holds changed -
-            // and its output is re-emitted identically, so the splice reuses it
-            // (design section 12.3). Only [C, H) receives new payload versions.
+            // C, not R: a root in [R, C) keeps its state - nothing it holds
+            // changed - and its output is re-emitted identically, so the splice
+            // reuses it. Only [C, H) receives new payload versions.
             capture.collectBoundaries(plan.getRetireLowTs(), plan.getHighTsExclusive(), repairBoundaries);
             return capture;
         } catch (Throwable t) {
@@ -3069,10 +3069,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * via {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
      * applies inline, and writes a fresh head .cp post-replay.
      * <p>
-     * Planning and replay share one pinned reader (design section 12.1). The
-     * executors neither open nor close it: this method owns it for the whole
-     * repair, so a plan that rejects a resume can rebuild from the same snapshot
-     * its bounds were derived against instead of reopening at a newer one.
+     * Planning and replay share one pinned reader. The executors neither open
+     * nor close it: this method owns it for the whole repair, so a plan that
+     * rejects a resume can rebuild from the same snapshot its bounds were
+     * derived against instead of reopening at a newer one.
      * <p>
      * Replay only fires for snapshot-capable LVs - the per-function state
      * resets used here rely on every WindowFunction exposing its partition
@@ -3264,11 +3264,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Fills {@link #repairPlan} with the coordinates one out-of-order repair works
-     * from: the pinned snapshot's {@code seqTxn}, the correction floor {@code C},
-     * the retire floor, and the executor the change qualifies for. This is the
-     * "pin and classify" half of design section 12.1, with the pin itself owned by
-     * the caller.
+     * Fills {@link #repairPlan} with the coordinates one out-of-order repair
+     * works from: the pinned snapshot's {@code seqTxn}, the correction floor
+     * {@code C}, the retire floor, and the executor the change qualifies for.
+     * This is the pin-and-classify half of a repair, with the pin itself owned
+     * by the caller.
      * <p>
      * The one classification this needs from disk is the apply-ahead range: when
      * {@code ApplyWal2TableJob} raced the reader past {@code advanceTo}, the pinned
@@ -3679,25 +3679,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a single REPLACE_RANGE commit covering the plan's replacement interval
      * {@code [R, H)}, and applies inline.
      * <p>
-     * {@code L} and {@code R} are both {@code viewLowerBoundTimestamp} unless the
-     * plan localized the rebuild (design section 12.3), in which case the two split:
-     * rows in {@code [L, R)} are fed through the window stack to warm its state up
-     * and emit nothing, because their durable output is already correct, and the
-     * replacement starts at {@code R}. A localized rebuild reads no base row below
-     * {@code L} at all, which is the whole point - its cost stops tracking the view's
-     * age. See {@link LiveViewCheckpointRepairPlan#isLocalized()} for when that
-     * applies.
+     * {@code L} and {@code R} are both {@code viewLowerBoundTimestamp} unless
+     * the plan localized the rebuild, in which case the two split: rows in
+     * {@code [L, R)} are fed through the window stack to warm its state up and
+     * emit nothing, because their durable output is already correct, and the
+     * replacement starts at {@code R}. A localized rebuild reads no base row
+     * below {@code L} at all, which is the whole point - its cost stops
+     * tracking the view's age. See
+     * {@link LiveViewCheckpointRepairPlan#isLocalized()} for when that applies.
      * <p>
-     * {@code H} closes the interval from above. It is end-of-frame - the whole tail,
-     * as every rebuild read before the bound existed - unless the plan proved a finite
-     * convergence boundary, which it does only for a localized rebuild whose change
-     * set has a known ceiling and whose runtime state provably survives the repair. A
-     * finite {@code H} changes three things at once, and they stand or fall together:
-     * the scan stops there, the replacement's high bound is that value rather than
-     * positive infinity so the durable output above it is left alone, and the runtime
-     * window state - correct on entry, and describing {@code H - 1} rather than the
-     * frontier once the replay has run over it - is taken out of the way beforehand
-     * and put back after (design section 12.4/12.6). See
+     * {@code H} closes the interval from above. It is end-of-frame - the whole
+     * tail, as every rebuild read before the bound existed - unless the plan
+     * proved a finite convergence boundary, which it does only for a localized
+     * rebuild whose change set has a known ceiling and whose runtime state
+     * provably survives the repair. A finite {@code H} changes three things at
+     * once, and they stand or fall together: the scan stops there, the
+     * replacement's high bound is that value rather than positive infinity so
+     * the durable output above it is left alone, and the runtime window state -
+     * correct on entry, and describing {@code H - 1} rather than the frontier
+     * once the replay has run over it - is taken out of the way beforehand and
+     * put back after. See
      * {@link LiveViewCheckpointRepairPlan#isRuntimeStatePreserved()}.
      * <p>
      * Cost of the unlocalized rebuild is O(retained_rows x n_window_functions) of
@@ -3794,12 +3795,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // ts-ascending, so the first appended row is the minimum). Base of the
         // REPLACE_RANGE low boundary decided at the commit site below.
         long replayMinTs = Numbers.LONG_NULL;
-        // The timeline range splice this repair publishes instead of retiring the
-        // whole timeline (design section 12.5). Taken only by a repair that stopped
-        // at a finite H: that is exactly the case with a converged suffix to keep,
-        // and the case whose runtime is restored rather than promoted, so it creates
-        // no new logical boundary either. Null leaves the retire in place, and the
-        // boundary list stays empty so the replay's segmentation is a dead branch.
+        // The timeline range splice this repair publishes instead of retiring
+        // the whole timeline. Taken only by a repair that stopped at a finite
+        // H: that is exactly the case with a converged suffix to keep, and the
+        // case whose runtime is restored rather than promoted, so it creates no
+        // new logical boundary either. Null leaves the retire in place, and the
+        // boundary list stays empty so the replay's segmentation is a dead
+        // branch.
         repairBoundaries.clear();
         LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture =
                 finiteHighBound ? beginCheckpointTimelineRepair(instance, plan) : null;
@@ -5045,9 +5047,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Commits one localized repair's timeline range splice (design section 12.5):
-     * the roots the replay froze into {@code capture} take new payload versions
-     * under their existing {@code checkpointId}s, the prefix below {@code C} and the
+     * Commits one localized repair's timeline range splice: the roots the
+     * replay froze into {@code capture} take new payload versions under their
+     * existing {@code checkpointId}s, the prefix below {@code C} and the
      * converged suffix at or above {@code highTsExclusive} keep theirs, and one
      * persistent range-add shifts every suffix root's cumulative
      * {@code lvRowPosition} by {@code suffixRowDelta}.
@@ -5160,13 +5162,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * As above, with {@code appendTimelineRoot} deciding whether the seal also adds
      * a logical boundary to the versioned checkpoint timeline.
      * <p>
-     * Only a repair that published a timeline range splice passes {@code false}. It
-     * has already published this repair's generation, and it left the runtime
-     * standing exactly where it found it - the state describes the same frontier the
-     * newest root already does - so appending would claim a boundary that is either a
-     * duplicate of the head root or a root over state nothing new produced. The
-     * legacy {@code .cp} is still written: it is the ring's resume anchor, which the
-     * timeline does not replace until Phase 9.
+     * Only a repair that published a timeline range splice passes
+     * {@code false}. It has already published this repair's generation, and it
+     * left the runtime standing exactly where it found it - the state describes
+     * the same frontier the newest root already does - so appending would claim
+     * a boundary that is either a duplicate of the head root or a root over
+     * state nothing new produced. The legacy {@code .cp} is still written: it
+     * is the ring's resume anchor, which the timeline does not replace yet.
      */
     private void maybeWriteHeadCheckpoint(
             LiveViewInstance instance,
@@ -6040,7 +6042,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             if (replayedRows == REPLAY_TO_APPLIED_O3) {
                 // The legacy O3 path completed a full, timestamp-ordered rewrite.
-                // Phase 5 replaces this hand-off with bounded timeline repair.
                 instance.setCheckpointRestoreSucceeded();
                 return;
             }

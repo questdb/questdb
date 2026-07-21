@@ -42,15 +42,15 @@ import java.util.List;
 
 /**
  * Coverage for the persistent copy-on-write row-position difference/prefix-sum
- * B+ tree (design sections 7, 10.3, 12.5, invariant 10) built by
- * {@link LiveViewCheckpointRowPositionDeltaWriter} and navigated by
- * {@link LiveViewCheckpointRowPositionDeltaReader}. A localized O3 repair shifts
- * every reused suffix root's cumulative {@code lvRowPosition} with one suffix
- * range-add (a difference-array point add); {@code prefixSum} reads back the
- * accumulated shift for any key. The tests assert prefix-sum and effective-position
- * correctness against a sorted-list oracle - suffix semantics, composite-key ties,
- * accumulation, negative deltas, {@code Long.MAX_VALUE} keys - plus the structural
- * sharing the copy-on-write contract promises.
+ * B+ tree built by {@link LiveViewCheckpointRowPositionDeltaWriter} and
+ * navigated by {@link LiveViewCheckpointRowPositionDeltaReader}. A localized O3
+ * repair shifts every reused suffix root's cumulative {@code lvRowPosition}
+ * with one suffix range-add (a difference-array point add); {@code prefixSum}
+ * reads back the accumulated shift for any key. The tests assert prefix-sum and
+ * effective-position correctness against a sorted-list oracle - suffix
+ * semantics, composite-key ties, accumulation, negative deltas,
+ * {@code Long.MAX_VALUE} keys - plus the structural sharing the copy-on-write
+ * contract promises.
  * <p>
  * Small node capacities force many tree levels and repeated splits so the
  * assertions exercise internal navigation and subtree-sum aggregation rather than a

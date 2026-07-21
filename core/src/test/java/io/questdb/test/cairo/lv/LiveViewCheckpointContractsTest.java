@@ -36,20 +36,19 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * Freezes the Phase 0 contracts pinned by {@link LiveViewCheckpointContracts} so
- * that a later phase cannot silently drift the supported-window matrix, the repair
+ * Freezes the contracts pinned by {@link LiveViewCheckpointContracts} so that
+ * later work cannot silently drift the supported-window matrix, the repair
  * publication ordering, or the floating-point tolerance while wiring up the
- * versioned checkpoint timeline. Each assertion mirrors a decision in
- * {@code LIVE_VIEW_VERSIONED_CHECKPOINT_TIMELINE_DESIGN.md}; changing the contract
- * must be a deliberate edit here, not an accident elsewhere.
+ * versioned checkpoint timeline. Changing any of them must be a deliberate edit
+ * here, not an accident elsewhere.
  */
 public class LiveViewCheckpointContractsTest {
 
     @Test
     public void testDependencyKindSetIsFrozen() {
-        // The matrix has exactly six rows (design section 6). Adding or removing a
-        // shape must force a conscious update to this test and the expected-
-        // disposition map below.
+        // The matrix has exactly six rows. Adding or removing a shape must
+        // force a conscious update to this test and the expected-disposition
+        // map below.
         Assert.assertEquals(6, DependencyKind.values().length);
         Assert.assertEquals(4, Disposition.values().length);
     }
@@ -125,8 +124,8 @@ public class LiveViewCheckpointContractsTest {
 
     @Test
     public void testHighBoundTagIsTagged() {
-        // H must be a tagged bound so Long.MAX_VALUE stays a valid data timestamp
-        // rather than a sentinel for infinity (design section 6).
+        // H must be a tagged bound so Long.MAX_VALUE stays a valid data
+        // timestamp rather than a sentinel for infinity.
         Assert.assertEquals(2, HighBoundTag.values().length);
         Assert.assertNotNull(HighBoundTag.valueOf("FINITE"));
         Assert.assertNotNull(HighBoundTag.valueOf("EOF"));
@@ -134,7 +133,7 @@ public class LiveViewCheckpointContractsTest {
 
     @Test
     public void testRepairPublicationStageOrderingIsFrozen() {
-        // Ordinal order is the required happens-before order (design section 12.6).
+        // Ordinal order is the required happens-before order.
         final RepairPublicationStage[] expected = {
                 RepairPublicationStage.PLAN,
                 RepairPublicationStage.CANDIDATE_ROOTS_AND_RUNTIME_READY,
@@ -172,28 +171,28 @@ public class LiveViewCheckpointContractsTest {
 
     @Test
     public void testUnanchoredRankIsCutButAnchoredSegmentStaysEligible() {
-        // The Phase 0 scope cut: unanchored row_number/rank/dense_rank are rejected
-        // with no finite H, while their anchored, segment-reset forms remain proven
-        // and return in Phase 7.
+        // The scope cut: unanchored row_number/rank/dense_rank are rejected
+        // with no finite H, while their anchored, segment-reset forms remain
+        // proven and return with the fixed-anchor path.
         Assert.assertEquals(Disposition.REJECT, DependencyKind.UNANCHORED_RANK.getDisposition());
         Assert.assertTrue(DependencyKind.UNANCHORED_RANK.isRejectedPermanently());
         Assert.assertFalse(DependencyKind.UNANCHORED_RANK.isEligibleNow());
 
-        Assert.assertEquals(Disposition.ELIGIBLE_PHASE_7, DependencyKind.FIXED_ANCHOR_SEGMENT.getDisposition());
+        Assert.assertEquals(Disposition.ELIGIBLE_NOT_YET_WIRED, DependencyKind.FIXED_ANCHOR_SEGMENT.getDisposition());
         Assert.assertFalse(
-                "the anchored segment is proven but not wired until Phase 7",
+                "the anchored segment is proven but not wired yet",
                 DependencyKind.FIXED_ANCHOR_SEGMENT.isEligibleNow()
         );
     }
 
     @Test
     public void testWindowMatrixDispositionsAreFrozen() {
-        // Every row of the design section 6 matrix, pinned exactly. A change to any
-        // disposition must be a deliberate edit to this map.
+        // Every row of the supported-window matrix, pinned exactly. A change to
+        // any disposition must be a deliberate edit to this map.
         final Map<DependencyKind, Disposition> expected = new EnumMap<>(DependencyKind.class);
         expected.put(DependencyKind.ROWS_N_PRECEDING_CURRENT_ROW, Disposition.ELIGIBLE);
         expected.put(DependencyKind.RANGE_W_PRECEDING_CURRENT_ROW, Disposition.ELIGIBLE);
-        expected.put(DependencyKind.FIXED_ANCHOR_SEGMENT, Disposition.ELIGIBLE_PHASE_7);
+        expected.put(DependencyKind.FIXED_ANCHOR_SEGMENT, Disposition.ELIGIBLE_NOT_YET_WIRED);
         expected.put(DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET, Disposition.REJECT);
         expected.put(DependencyKind.UNANCHORED_RANK, Disposition.REJECT);
         expected.put(DependencyKind.FOLLOWING_OR_DATA_DEPENDENT, Disposition.REJECT_INITIALLY);
