@@ -3100,6 +3100,22 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCadenceDesugarsToWindowFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
+            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            assertQuery("SELECT ts, v FROM t SUBSAMPLE cadence(3)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindowLight\n" +
+                            "          unorderedFunctions: [cadence(3) over (order by [ts])]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
     public void testUniformDesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");

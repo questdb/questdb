@@ -9317,18 +9317,37 @@ public class SqlOptimiser implements Mutable {
             }
 
             final ExpressionNode subsample = nested.getSubsample();
-            if (subsample != null
-                    && subsample.paramCount == 1
-                    && Chars.equalsIgnoreCase(subsample.token, "uniform")) {
+            if (subsample != null) {
                 final ExpressionNode timestamp = nested.getTimestamp();
-                final ExpressionNode targetNode = subsample.args.getQuick(0);
                 // Skip the aggregation context (e.g. SAMPLE BY / GROUP BY, once rewriteSampleBy has
                 // turned it into a group-by projection): a window function cannot be injected into an
-                // aggregating model. Those uniform() cases stay on the untouched custom cursor path.
-                if (timestamp != null
-                        && !isAggregationContext(model, nested)
-                        && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
-                    model = desugarUniformSubsample(model, nested, subsample, timestamp);
+                // aggregating model. Those SUBSAMPLE cases stay on the untouched custom cursor path.
+                if (subsample.paramCount == 1
+                        && Chars.equalsIgnoreCase(subsample.token, "uniform")) {
+                    final ExpressionNode targetNode = subsample.args.getQuick(0);
+                    if (timestamp != null
+                            && !isAggregationContext(model, nested)
+                            && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
+                        model = desugarUniformSubsample(model, nested, subsample, timestamp);
+                    }
+                } else if ((subsample.paramCount == 1 || subsample.paramCount == 2)
+                        && Chars.equalsIgnoreCase(subsample.token, "cadence")) {
+                    // Migrate cadence only when the window path is byte-identical to the old cursor:
+                    //  - stride (arg 0) is a compile-time constant in [2, MAX_INT]. This falls through
+                    //    cadence(1) (the cursor special-cases it to return the base cursor directly) and
+                    //    out-of-range / bind-variable strides, whose exact errors the cursor re-reports.
+                    //  - a 2-arg seed (arg 1) is a compile-time integer constant that is not NULL. A NULL
+                    //    (random) seed, a bind-variable / runtime-constant seed, or a non-integer seed all
+                    //    fall through to the old cursor (random mode draws a different RNG, so it cannot be
+                    //    byte-identical; the non-integer case must reproduce the cursor's exact error).
+                    final ExpressionNode strideNode = subsample.args.getQuick(0);
+                    if (timestamp != null
+                            && !isAggregationContext(model, nested)
+                            && isConstantUniformTarget(strideNode, sqlExecutionContext)
+                            && (subsample.paramCount == 1
+                            || isConstantCadenceSeed(subsample.args.getQuick(1), sqlExecutionContext))) {
+                        model = desugarCadenceSubsample(model, nested, subsample, timestamp);
+                    }
                 }
             }
         }
@@ -9368,6 +9387,35 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * True only when {@code seedNode} is a compile-time integer constant that is not NULL - the sole
+     * cadence seed shape the window function reproduces byte-for-byte (a deterministic splitmix64 offset).
+     * A literal NULL (random mode), a bind-variable / runtime-constant seed, or a non-integer seed all
+     * return false, leaving the SUBSAMPLE node in place so the custom cursor path handles them (drawing
+     * its own RNG for random, or re-reporting the identical seed-type error).
+     */
+    private boolean isConstantCadenceSeed(ExpressionNode seedNode, SqlExecutionContext sqlExecutionContext) {
+        if (seedNode == null) {
+            return false;
+        }
+        Function func = null;
+        try {
+            func = functionParser.parseFunction(seedNode, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                return false;
+            }
+            final int tag = ColumnType.tagOf(func.getType());
+            if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+                return false;
+            }
+            return func.getLong(null) != Numbers.LONG_NULL;
+        } catch (Throwable th) {
+            return false;
+        } finally {
+            Misc.free(func);
+        }
+    }
+
+    /**
      * True when {@code model} projects an aggregation (GROUP BY / SAMPLE BY result, DISTINCT, or a
      * group-by function column). A window keep-flag cannot be injected into such a model, so those
      * uniform() cases are left on the custom SUBSAMPLE cursor path.
@@ -9396,20 +9444,55 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode subsample,
             ExpressionNode timestamp
     ) throws SqlException {
-        // model:  SELECT <cols> FROM <nested>   (nested holds the SUBSAMPLE clause + designated timestamp)
-
         // uniform(N) window call. paramCount == 1 => the argument lives in rhs (ExpressionNode invariant).
         final ExpressionNode uni = expressionNodePool.next().of(FUNCTION, "uniform", 0, subsample.position);
         uni.paramCount = 1;
         uni.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
+        return desugarSubsample(model, nested, timestamp, uni);
+    }
 
+    private IQueryModel desugarCadenceSubsample(
+            IQueryModel model,
+            IQueryModel nested,
+            ExpressionNode subsample,
+            ExpressionNode timestamp
+    ) throws SqlException {
+        // cadence(stride[, seed]) window call. 1 arg => stride in rhs; 2 args => stride in lhs, seed in
+        // rhs (ExpressionNode 2-arg invariant). The gate has already proved stride is a constant in
+        // [2, MAX_INT] and any seed is a non-NULL integer constant, so both resolve to the deterministic
+        // cadence(L) / cadence(LL) window overloads that reproduce the old cursor byte-for-byte.
+        final ExpressionNode cadence = expressionNodePool.next().of(FUNCTION, "cadence", 0, subsample.position);
+        if (subsample.paramCount == 1) {
+            cadence.paramCount = 1;
+            cadence.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
+        } else {
+            cadence.paramCount = 2;
+            cadence.lhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(0));
+            cadence.rhs = ExpressionNode.deepClone(expressionNodePool, subsample.args.getQuick(1));
+        }
+        return desugarSubsample(model, nested, timestamp, cadence);
+    }
+
+    /**
+     * Method-agnostic tail shared by the uniform and cadence desugarings: wraps the pre-built keep-flag
+     * window call ({@code windowCall}) in an {@code OVER (ORDER BY ts)} window column, filters on it, and
+     * re-projects the original columns. The caller is responsible only for building {@code windowCall}
+     * (the method-specific function node); everything below is identical regardless of algorithm.
+     */
+    private IQueryModel desugarSubsample(
+            IQueryModel model,
+            IQueryModel nested,
+            ExpressionNode timestamp,
+            ExpressionNode windowCall
+    ) throws SqlException {
+        // model:  SELECT <cols> FROM <nested>   (nested holds the SUBSAMPLE clause + designated timestamp)
         final CharSequence keepAlias = createColumnAlias("__keep_subsample", model);
         final WindowExpression keepCol = windowExpressionPool.next();
-        keepCol.of(keepAlias, uni);
+        keepCol.of(keepAlias, windowCall);
         // The keep flag is an internal helper consumed by the WHERE filter only. Exclude it from
-        // wildcard expansion so it cannot leak into the output of SELECT * FROM t SUBSAMPLE uniform(N).
+        // wildcard expansion so it cannot leak into the output of SELECT * FROM t SUBSAMPLE <method>(...).
         keepCol.setIncludeIntoWildcard(false);
-        uni.windowExpression = keepCol;
+        windowCall.windowExpression = keepCol;
         // OVER (ORDER BY ts): the designated timestamp gives deterministic input order.
         final ExpressionNode orderByTs = expressionNodePool.next().of(LITERAL, timestamp.token, 0, timestamp.position);
         keepCol.addOrderBy(orderByTs, IQueryModel.ORDER_DIRECTION_ASCENDING);
