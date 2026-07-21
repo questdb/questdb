@@ -104,6 +104,10 @@ public class LiveViewWindow implements QuietCloseable {
     private final Function anchorExpression;
     private final int anchorValueType;
     private final CairoConfiguration cairoConfiguration;
+    // The fixed segment boundary the compiler derived from the anchor expression, or
+    // null when the anchor has none. Carried on the window because the segment is a
+    // property of the anchor, not of any one function on it.
+    private final @Nullable LiveViewCheckpointAnchorPlan checkpointAnchorPlan;
     // Anchor-map size above which a frontier sweep is attempted (mirrors
     // cairo.live.view.partition.compact.threshold). The sweep itself is gated on
     // the anchor having advanced since the last sweep, so it fires at most once
@@ -172,6 +176,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull RecordSink partitionKeySink,
             @NotNull ObjList<WindowFunction> functions,
             boolean isAnchorMonotone,
+            @Nullable LiveViewCheckpointAnchorPlan checkpointAnchorPlan,
             @Nullable MemoryTracker memoryTracker
     ) {
         this.cairoConfiguration = cairoConfiguration;
@@ -183,6 +188,7 @@ public class LiveViewWindow implements QuietCloseable {
         this.partitionKeySink = partitionKeySink;
         this.functions = functions;
         this.isAnchorMonotone = isAnchorMonotone;
+        this.checkpointAnchorPlan = checkpointAnchorPlan;
         this.memoryTracker = memoryTracker;
         this.compactThreshold = cairoConfiguration.getLiveViewPartitionCompactThreshold();
         // Frontier compaction is sound only when the anchor advances monotonically
@@ -241,6 +247,11 @@ public class LiveViewWindow implements QuietCloseable {
      * derives solely from the base's designated timestamp, and so advances
      * monotonically with the incremental-refresh scan order. It gates frontier
      * compaction: only a monotone anchor may evict behind-frontier partitions.
+     * <p>
+     * {@code checkpointAnchorPlan} is the compiler's determination (see
+     * {@code LiveViewCheckpointFunctionCompiler.anchorPlan}) of where this anchor's
+     * segments begin and end, or null when the anchor has no fixed boundary. It carries
+     * no runtime behavior; a localized out-of-order repair reads it to bound its work.
      */
     public static LiveViewWindow build(
             @NotNull CairoConfiguration configuration,
@@ -251,6 +262,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull Function anchorExpression,
             @NotNull ObjList<WindowFunction> functions,
             boolean isAnchorMonotone,
+            @Nullable LiveViewCheckpointAnchorPlan checkpointAnchorPlan,
             @Nullable MemoryTracker memoryTracker
     ) {
         int n = partitionColumnNames.size();
@@ -315,7 +327,7 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(returnType));
         }
-        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions, isAnchorMonotone, memoryTracker);
+        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions, isAnchorMonotone, checkpointAnchorPlan, memoryTracker);
     }
 
     @Override
@@ -334,6 +346,15 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public long getAnchorMapSize() {
         return anchorMap.size();
+    }
+
+    /**
+     * @return the fixed segment boundary this anchor resets on, or null when the
+     * compiler could not derive one. A localized out-of-order repair bounds itself
+     * with it; a null plan leaves the view on the from-boundary rebuild.
+     */
+    public @Nullable LiveViewCheckpointAnchorPlan getCheckpointAnchorPlan() {
+        return checkpointAnchorPlan;
     }
 
     @TestOnly

@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.DependencyKind;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency.NumericConvergence;
@@ -38,10 +39,12 @@ import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -49,6 +52,8 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -59,6 +64,77 @@ public final class LiveViewCheckpointFunctionCompiler {
     private static final String STATE_PAGE_CODEC_FAMILY = "live-view-state-page";
 
     private LiveViewCheckpointFunctionCompiler() {
+    }
+
+    /**
+     * Builds the fixed segment boundary an anchored live view resets on, or null when
+     * the anchor has none. The anchor counterpart of {@link #rangePlan} and
+     * {@link #rowsPlan}: those read the frame descriptors the window functions carry,
+     * this one reads the anchor expression the definition carries, because an anchored
+     * window's dependency is the segment rather than any function's frame.
+     * <p>
+     * The recognized shape is a calendar-period floor of the base's designated
+     * timestamp, in the two forms the definition can hold it:
+     * <ul>
+     *     <li>{@code timestamp_floor('<stride><unit>', ts)} - a hand-written
+     *     {@code ANCHOR EXPRESSION}, and equally what {@code ANCHOR DAILY} at UTC
+     *     midnight desugars to. The buckets are epoch-aligned;</li>
+     *     <li>{@code timestamp_floor('1d', ts, <origin>)} - what {@code ANCHOR DAILY}
+     *     at any other time of day desugars to. The origin is a constant the AST
+     *     carries as a cast expression, so this reads it from the definition's own
+     *     {@code anchorDailyTimeUs} instead of folding the node, which is also why the
+     *     three-argument form is accepted only for a DAILY anchor.</li>
+     * </ul>
+     * Everything else declines, including the time-zone-aware daily anchor: it desugars
+     * to {@code timestamp_floor_utc}, whose buckets change width at a DST transition and
+     * so have no closed-form end. Declining costs a view only the localized repair path.
+     *
+     * @param spec              the definition's captured anchored window
+     * @param anchorNode        the parsed anchor expression, already desugared for a
+     *                          DAILY anchor
+     * @param projectedMetadata the metadata the anchor expression resolves against - the
+     *                          same one the runtime anchor function is compiled with
+     */
+    public static @Nullable LiveViewCheckpointAnchorPlan anchorPlan(
+            @NotNull LiveViewDefinition.LvAnchorSpec spec,
+            @Nullable ExpressionNode anchorNode,
+            @NotNull RecordMetadata projectedMetadata
+    ) {
+        final int timestampIndex = projectedMetadata.getTimestampIndex();
+        if (timestampIndex == -1 || anchorNode == null || anchorNode.type != ExpressionNode.FUNCTION
+                || anchorNode.token == null
+                || !Chars.equalsIgnoreCase(anchorNode.token, TimestampFloorFunctionFactory.NAME)) {
+            return null;
+        }
+        final ExpressionNode unitNode;
+        final ExpressionNode timestampNode;
+        final long segmentOffset;
+        final int timestampType = projectedMetadata.getTimestampType();
+        if (anchorNode.paramCount == 2) {
+            // Two children live in lhs/rhs, in the order they were written.
+            unitNode = anchorNode.lhs;
+            timestampNode = anchorNode.rhs;
+            segmentOffset = 0;
+        } else if (anchorNode.paramCount == 3 && anchorNode.args.size() == 3
+                && spec.anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
+            // Three or more children live in args, inverted, so the first written
+            // argument is the last entry.
+            unitNode = anchorNode.args.getQuick(2);
+            timestampNode = anchorNode.args.getQuick(1);
+            if (!ColumnType.isTimestamp(timestampType)) {
+                return null;
+            }
+            segmentOffset = ColumnType.getTimestampDriver(timestampType)
+                    .from(spec.anchorDailyTimeUs, ColumnType.TIMESTAMP_MICRO);
+        } else {
+            return null;
+        }
+        if (timestampNode == null || timestampNode.type != ExpressionNode.LITERAL
+                || timestampNode.token == null
+                || SqlUtil.getColumnIndexQuiet(projectedMetadata, timestampNode.token) != timestampIndex) {
+            return null;
+        }
+        return segmentPlan(unitNode, segmentOffset, timestampType);
     }
 
     public static void configure(
@@ -433,6 +509,41 @@ public final class LiveViewCheckpointFunctionCompiler {
                     .put(functionName).put("(), width=").put(-rowsLo).put(unit).put(']');
         }
         return frameLo;
+    }
+
+    /**
+     * Reads a {@code timestamp_floor} period literal - {@code '1d'}, {@code '15m'} - into
+     * the segment plan it describes, or null when the token is not one. The literal is the
+     * function's own first argument, so this repeats the split
+     * {@code TimestampFloorFunctionFactory} applies to it: a trailing unit character, and an
+     * optional leading count that defaults to one. A non-constant, unquoted, or
+     * unparseable token declines rather than throws - an anchor this cannot read is an
+     * anchor with no fixed segment, which is an answer rather than a compile error.
+     */
+    private static LiveViewCheckpointAnchorPlan segmentPlan(
+            ExpressionNode unitNode,
+            long segmentOffset,
+            int timestampType
+    ) {
+        if (unitNode == null || unitNode.type != ExpressionNode.CONSTANT || unitNode.token == null) {
+            return null;
+        }
+        final CharSequence token = unitNode.token;
+        if (!Chars.isQuoted(token) || token.length() < 3) {
+            return null;
+        }
+        final int lo = 1;
+        final int hi = token.length() - 1;
+        final char unit = token.charAt(hi - 1);
+        int stride = 1;
+        if (hi - lo > 1) {
+            try {
+                stride = Numbers.parseInt(token, lo, hi - 1);
+            } catch (NumericException e) {
+                return null;
+            }
+        }
+        return LiveViewCheckpointAnchorPlan.of(unit, stride, segmentOffset, timestampType);
     }
 
     private static void validateRangeOrder(

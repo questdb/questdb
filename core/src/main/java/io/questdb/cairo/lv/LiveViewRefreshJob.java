@@ -76,6 +76,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.window.LiveViewCheckpointFunctionCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -947,6 +948,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     fn,
                     anchoredFunctions,
                     isAnchorMonotoneWithBaseOrder(anchorNode, projectedMeta),
+                    LiveViewCheckpointFunctionCompiler.anchorPlan(spec, anchorNode, projectedMeta),
                     instance.getMemoryTracker()
             );
             // Commit the anchor Function and window together, only after the full
