@@ -1159,15 +1159,6 @@ public interface CairoConfiguration {
 
     boolean isWalApplyEnabled();
 
-    /**
-     * When {@code true}, a composite-partitioned (multi-dimension) table batches high-frequency small WAL
-     * commits through a cell-aware RAM lag buffer (composite-partitioning Plan #5) instead of routing
-     * every commit through a full, per-cell O3 dispatch. Default {@code false}: when off, composite
-     * ingestion is byte-identical to the pre-lag full-commit path. Fixed-width columns only; a composite
-     * table with any variable-length column always uses the full-commit path regardless of this flag.
-     */
-    boolean isWalCompositeLagEnabled();
-
     boolean isWalApplyParallelSqlEnabled();
 
     boolean isWalSupported();

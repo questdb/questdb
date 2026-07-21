@@ -610,7 +610,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
-    private final boolean walCompositeLagEnabled;
     private final long walApplySleepTimeout;
     private final ObjHashSet<String> walApplySuspendedTables = new ObjHashSet<>();
     private final boolean walApplySuspendedWriteDenied;
@@ -922,7 +921,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
-        walCompositeLagEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMPOSITE_LAG_ENABLED, false);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walSegmentRolloverSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 50 * Numbers.SIZE_1MB);
         if ((this.walSegmentRolloverSize != 0) && (this.walSegmentRolloverSize < 1024)) {  // 1KiB segments minimum
@@ -5412,11 +5410,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplyEnabled() {
             return walApplyEnabled;
-        }
-
-        @Override
-        public boolean isWalCompositeLagEnabled() {
-            return walCompositeLagEnabled;
         }
 
         @Override

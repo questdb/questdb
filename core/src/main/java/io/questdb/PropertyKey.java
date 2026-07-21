@@ -580,7 +580,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
     CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
     CAIRO_WAL_APPLY_ENABLED("cairo.wal.apply.enabled"),
-    CAIRO_WAL_COMPOSITE_LAG_ENABLED("cairo.wal.composite.lag.enabled"),
     TABLE_TYPE_CONVERSION_ENABLED("table.type.conversion.enabled"),
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
     CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),

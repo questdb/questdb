@@ -1764,11 +1764,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isWalCompositeLagEnabled() {
-        return getDelegate().isWalCompositeLagEnabled();
-    }
-
-    @Override
     public boolean isWalApplyParallelSqlEnabled() {
         return getDelegate().isWalApplyParallelSqlEnabled();
     }

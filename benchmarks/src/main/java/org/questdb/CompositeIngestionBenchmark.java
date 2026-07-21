@@ -68,12 +68,7 @@ import java.util.Arrays;
  * Tunables (system properties): {@code composite.bench.k} (measured iterations/table, default 2000),
  * {@code composite.bench.warmup} (warmup iterations/table, default 100), {@code composite.bench.exch}
  * (distinct exch values = rows/batch, default 6), {@code composite.bench.step.us} (microseconds between
- * consecutive rows, default 1000), {@code composite.bench.lag} (overrides
- * {@code isWalCompositeLagEnabled()} to enable the composite cell-aware WAL-LAG on the {@code ci} table,
- * default false -- unset reproduces today's flag-off behavior byte-for-byte), and
- * {@code composite.bench.commitlatency.us} (overrides {@code getCommitLatency()}'s data-visibility SLA
- * in microseconds, default 30_000_000 i.e. 30s -- copied verbatim from
- * {@code DefaultCairoConfiguration}'s own default, so an unset property changes nothing).
+ * consecutive rows, default 1000).
  * <p>
  * Build (note {@code -am} so the benchmark links the in-tree core, not the installed jar) and run via
  * this class's plain {@code main} (manual {@code System.nanoTime} timing + percentile table -- the
@@ -97,17 +92,6 @@ public class CompositeIngestionBenchmark {
     private static final long STEP_MICROS = Long.getLong("composite.bench.step.us", 1000L);
     private static final int WARMUP_ITERATIONS = Integer.getInteger("composite.bench.warmup", 100);
     private static final int K = Integer.getInteger("composite.bench.k", 2000);
-    // Composite cell-aware WAL-LAG flag (Deferred #5, Task 3): off by default so an unset property
-    // reproduces today's flag-off behavior exactly -- composite forces a full commit/dispatch on every
-    // WAL apply via TableWriter.processWalCommit's needFullCommit composite-partitioning guard clause.
-    private static final boolean COMPOSITE_LAG_ENABLED = Boolean.getBoolean("composite.bench.lag");
-    // Wall-clock data-visibility SLA (TableWriter.processWalCommit's needFullCommit commitLatency
-    // OR-clause): once wallClockMicros since the last WAL commit exceeds this, a full commit is forced
-    // regardless of accumulated row/txn count -- in production this is what bounds how much the
-    // composite lag can batch. Default (30_000_000us = 30s) is copied verbatim from
-    // DefaultCairoConfiguration.getCommitLatency() so an unset property reproduces today's real default,
-    // not just "some large number".
-    private static final long COMMIT_LATENCY_US = Long.getLong("composite.bench.commitlatency.us", 30_000_000L);
     // Anchor seed data at 2024-01-01T00:00:00Z.
     private static final String BASE_TS = "2024-01-01T00:00:00.000000Z";
 
@@ -115,24 +99,11 @@ public class CompositeIngestionBenchmark {
         System.out.printf(
                 "CompositeIngestionBenchmark: %d exch values, %d rows/batch, %d warmup + %d measured commits/table%n",
                 NUM_EXCH, BATCH_ROWS, WARMUP_ITERATIONS, K);
-        System.out.printf(
-                "composite.bench.lag=%b (isWalCompositeLagEnabled)  composite.bench.commitlatency.us=%d (getCommitLatency)%n",
-                COMPOSITE_LAG_ENABLED, COMMIT_LATENCY_US);
         System.out.println();
 
         final Path root = Files.createTempDirectory("composite-ingest-bench-");
         try {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString()) {
-                @Override
-                public boolean isWalCompositeLagEnabled() {
-                    return COMPOSITE_LAG_ENABLED;
-                }
-
-                @Override
-                public long getCommitLatency() {
-                    return COMMIT_LATENCY_US;
-                }
-            };
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString());
             try (CairoEngine engine = new CairoEngine(configuration);
                  SqlCompiler compiler = engine.getSqlCompiler()) {
 
