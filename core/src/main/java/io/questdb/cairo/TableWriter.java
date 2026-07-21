@@ -5290,12 +5290,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (type > 0) {
             dataMem = Vm.getPMARInstance(configuration);
             dataMem.setApplyLazy(applyLazyColumns);
+            // Thread the per-table EFFECTIVE commit mode into the page-release durability decision so a
+            // WITH commit_mode='sync' column on a nosync instance still msyncs its completed pages (the
+            // apply-side syncColumns() already uses effectiveCommitMode; release() must match).
+            dataMem.setCommitMode(effectiveCommitMode);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             if (ColumnType.isVarSize(type)) {
                 auxMem = Vm.getPMARInstance(configuration);
                 auxMem.setApplyLazy(applyLazyColumns);
+                auxMem.setCommitMode(effectiveCommitMode);
                 o3AuxMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                 o3AuxMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             } else {
