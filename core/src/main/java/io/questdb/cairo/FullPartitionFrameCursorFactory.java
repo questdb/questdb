@@ -39,9 +39,9 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     private final int baseOrder;
     private FullBwdPartitionFrameCursor bwdCursor;
     private FullFwdPartitionFrameCursor fwdCursor;
-    private IntervalFwdPartitionFrameCursor lowerBoundCursor;
-    private LongList lowerBoundIntervals;
-    private RuntimeIntervalModel lowerBoundIntervalModel;
+    private IntervalFwdPartitionFrameCursor rangeCursor;
+    private RuntimeIntervalModel rangeIntervalModel;
+    private LongList rangeIntervals;
 
     public FullPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -61,8 +61,8 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         super.close();
         fwdCursor = Misc.free(fwdCursor);
         bwdCursor = Misc.free(bwdCursor);
-        lowerBoundCursor = Misc.free(lowerBoundCursor);
-        lowerBoundIntervalModel = Misc.free(lowerBoundIntervalModel);
+        rangeCursor = Misc.free(rangeCursor);
+        rangeIntervalModel = Misc.free(rangeIntervalModel);
     }
 
     @Override
@@ -100,27 +100,56 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             @NotNull IntList columnIndexes,
             long timestampLo
     ) throws SqlException {
+        return getCursor(executionContext, columnIndexes, timestampLo, Long.MAX_VALUE);
+    }
+
+    /**
+     * Returns a forward cursor over the timestamp range
+     * {@code [timestampLo, timestampHi]}, <b>inclusive of both edges</b> - the
+     * convention every QuestDB interval model uses. The interval cursor culls the
+     * partitions below {@code timestampLo} and above {@code timestampHi}, then
+     * binary searches each boundary partition, so neither end costs a row scan.
+     * <p>
+     * A caller holding an <i>exclusive</i> high bound converts it before calling.
+     * The conversion cannot be folded in here, because it is not total: an
+     * exclusive bound one past {@code Long.MAX_VALUE} has no {@code long} to
+     * express it, so a caller reaching the end of the frame must carry that case as
+     * a tag rather than as a timestamp (see {@code LiveViewCheckpointRepairPlan}).
+     * <p>
+     * {@code timestampLo > timestampHi} is an empty range, not an error: the cursor
+     * yields no frame at all.
+     */
+    public PartitionFrameCursor getCursor(
+            SqlExecutionContext executionContext,
+            @NotNull IntList columnIndexes,
+            long timestampLo,
+            long timestampHi
+    ) throws SqlException {
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
             reader.setActiveColumns(columnIndexes);
-            if (lowerBoundCursor == null) {
-                lowerBoundIntervals = new LongList(2);
-                lowerBoundIntervals.add(timestampLo);
-                lowerBoundIntervals.add(Long.MAX_VALUE);
-                lowerBoundIntervalModel = new RuntimeIntervalModel(
+            if (rangeCursor == null) {
+                rangeIntervals = new LongList(2);
+                rangeIntervalModel = new RuntimeIntervalModel(
                         ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
                         PartitionBy.NONE,
-                        lowerBoundIntervals
+                        rangeIntervals
                 );
-                lowerBoundCursor = new IntervalFwdPartitionFrameCursor(
-                        lowerBoundIntervalModel,
+                rangeCursor = new IntervalFwdPartitionFrameCursor(
+                        rangeIntervalModel,
                         getMetadata().getTimestampIndex()
                 );
-            } else {
-                lowerBoundIntervals.setQuick(0, timestampLo);
             }
-            return lowerBoundCursor.of(reader, executionContext);
+            // An empty interval list is how the interval cursor spells "matches
+            // nothing"; an inverted pair would instead drive its binary searches
+            // off a range that cannot exist.
+            rangeIntervals.clear();
+            if (timestampLo <= timestampHi) {
+                rangeIntervals.add(timestampLo);
+                rangeIntervals.add(timestampHi);
+            }
+            return rangeCursor.of(reader, executionContext);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;

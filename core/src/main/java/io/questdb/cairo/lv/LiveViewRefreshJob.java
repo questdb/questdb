@@ -3200,7 +3200,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // is what wrapping a full scan in TimestampLowerBoundCursor did - spent the
                 // very cost the branch was built to avoid. Same cursor the seed and the
                 // forward drain take, so all three agree on the boundary row for row.
-                try (RecordCursor pageCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, replayLowTs)) {
+                //
+                // The high bound comes from the plan's tagged H, so a repair that proves a
+                // finite convergence boundary reads no partition above it. Today every plan
+                // tags EOF, which is Long.MAX_VALUE inclusive - the same unbounded tail this
+                // scan always read.
+                try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
+                        executionContext,
+                        replayLowTs,
+                        plan.getScanHighTsInclusive()
+                )) {
                     RecordCursor source = pageCursor;
                     if (filter != null) {
                         filteringCursor.of(source, filter, executionContext);
@@ -3490,6 +3499,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // mid-drain failure, corrupt checkpoint or checkpoint-less restart - so the
             // walk was paid twice per rebuild (probe + recompute). BEGINNING persists
             // Numbers.LONG_NULL (= Long.MIN_VALUE), which the cursor turns into a full scan.
+            // Both take their high bound from the plan's tagged H, so probe and recompute
+            // agree on the read interval; every plan tags EOF today, which admits the whole
+            // tail exactly as an unbounded scan did.
+            final long scanHighTs = plan.getScanHighTsInclusive();
 
             // Probe pass: open a separate cursor over the same source + filter
             // chain and check whether any row survives. Skipping the wipe when
@@ -3497,7 +3510,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // discards every row in the replay window) from permanently
             // erasing cumulative accumulator state for every partition.
             final boolean hasReplayRow;
-            try (RecordCursor probeCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, viewLowerBoundTimestamp)) {
+            try (RecordCursor probeCursor = pageFrameFactory.getCursorInTimestampRange(
+                    executionContext,
+                    viewLowerBoundTimestamp,
+                    scanHighTs
+            )) {
                 RecordCursor probeSource = probeCursor;
                 if (filter != null) {
                     filteringCursor.of(probeSource, filter, executionContext);
@@ -3519,7 +3536,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
-                    try (RecordCursor pageCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, viewLowerBoundTimestamp)) {
+                    try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
+                            executionContext,
+                            viewLowerBoundTimestamp,
+                            scanHighTs
+                    )) {
                         RecordCursor source = pageCursor;
                         if (filter != null) {
                             filteringCursor.of(source, filter, executionContext);

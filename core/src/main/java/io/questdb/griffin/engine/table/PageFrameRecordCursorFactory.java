@@ -112,13 +112,39 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
      * Opens this full forward scan at an inclusive timestamp lower bound.
      */
     public RecordCursor getCursorFromTimestamp(SqlExecutionContext executionContext, long timestampLo) throws SqlException {
+        return getCursorInTimestampRange(executionContext, timestampLo, Long.MAX_VALUE);
+    }
+
+    /**
+     * Opens this full forward scan over the timestamp range
+     * {@code [timestampLo, timestampHi]}, <b>inclusive of both edges</b>. The
+     * underlying interval cursor culls the partitions outside the range and binary
+     * searches each boundary partition, so a bounded caller pays for neither the
+     * history below {@code timestampLo} nor the tail above {@code timestampHi}.
+     * <p>
+     * This is the read bound a localized live-view repair plans against: it must
+     * not read above its proven convergence boundary {@code H}, and a record-level
+     * stop filter would still have visited every partition above it. The caller
+     * converts its exclusive {@code H} to the inclusive {@code timestampHi} this
+     * takes, carrying an end-of-frame {@code H} as a tag rather than as a
+     * timestamp - no {@code long} expresses an exclusive bound one past
+     * {@code Long.MAX_VALUE}.
+     * <p>
+     * {@code timestampLo > timestampHi} is an empty range and yields no row.
+     */
+    public RecordCursor getCursorInTimestampRange(
+            SqlExecutionContext executionContext,
+            long timestampLo,
+            long timestampHi
+    ) throws SqlException {
         if (!(partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory fullFrameFactory)) {
-            throw CairoException.nonCritical().put("timestamp lower-bound cursor requires a full partition scan");
+            throw CairoException.nonCritical().put("timestamp range cursor requires a full partition scan");
         }
         final PartitionFrameCursor partitionFrameCursor = fullFrameFactory.getCursor(
                 executionContext,
                 columnIndexes,
-                timestampLo
+                timestampLo,
+                timestampHi
         );
         final PageFrameCursor frameCursor = initFwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {

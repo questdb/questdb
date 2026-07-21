@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -197,6 +198,23 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
+    public void testHighBoundIsTaggedEofUntilRangeDerivation() {
+        // H is the tagged exclusive bound above which the repair may not read. No
+        // dependency descriptor is consulted yet, so no plan can prove one below the
+        // end of the base table and every plan tags EOF - whichever executor it
+        // selects, and however many repairs the instance is reused for.
+        final TestAnchors anchors = new TestAnchors().add(100, 11);
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(anchors, 500, BEGINNING, 9, 9, 11, 100, Numbers.LONG_NULL);
+        Assert.assertTrue(plan.isResumeFromAnchor());
+        assertEofHighBound(plan);
+
+        plan.of(anchors, 50, BEGINNING, 10, 10, 11, 100, Numbers.LONG_NULL);
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        assertEofHighBound(plan);
+    }
+
+    @Test
     public void testLateRowAtExactlyHeadMaxTsIsNotAHeadHit() {
         // The head covers rows up to AND INCLUDING its maxTs while the resume starts
         // strictly above it, so a late row at exactly headMaxTs would be neither
@@ -279,6 +297,18 @@ public class LiveViewCheckpointRepairPlanTest {
         // Gap with a non-DATA trigger: the plan already retires everything and
         // rebuilds, so reading the base WAL-E would change nothing.
         Assert.assertFalse(LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(Numbers.LONG_NULL, 7, 8));
+    }
+
+    private static void assertEofHighBound(LiveViewCheckpointRepairPlan plan) {
+        Assert.assertTrue(plan.isHighBoundEof());
+        Assert.assertEquals(HighBoundTag.EOF, plan.getHighBoundTag());
+        // No timestamp can express the bound, so none is offered as one.
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getHighTsExclusive());
+        // The bounded forward cursor takes an INCLUSIVE high, and Long.MAX_VALUE as
+        // an inclusive bound admits every row - up to one sitting at the very top of
+        // the range, which the same value as an exclusive bound would drop. That
+        // asymmetry is the whole reason the bound is tagged rather than a long.
+        Assert.assertEquals(Long.MAX_VALUE, plan.getScanHighTsInclusive());
     }
 
     /**

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
@@ -57,11 +58,23 @@ import org.jetbrains.annotations.NotNull;
  *     <li>{@link #getReplayLowTs() replayLowTs} - the inclusive timestamp the
  *     replay scans and replaces from. A resume floors it at the anchor's
  *     {@code maxTs + 1}; a boundary rebuild floors it at {@code S}.</li>
+ *     <li>{@code H} - {@link #getHighBoundTag() highBoundTag} plus
+ *     {@link #getHighTsExclusive() highTsExclusive}, the tagged exclusive bound
+ *     after which every eligible function has converged. Always
+ *     {@link HighBoundTag#EOF} today; step 4 of the design's phase 5 derives a
+ *     finite bound for a bounded RANGE frame.</li>
  * </ul>
- * Steps 4-6 of the design's phase 5 extend this plan with the tagged high bound
+ * The high bound is tagged rather than a bare {@code long} because no timestamp
+ * value can also mean infinity: an exclusive bound one past {@code Long.MAX_VALUE}
+ * is not representable, and spelling it {@code Long.MAX_VALUE} would exclude a row
+ * sitting there (design section 6). Its one consumer today is
+ * {@link #getScanHighTsInclusive()}, which both executors hand to the bounded
+ * forward page-frame cursor; an {@code EOF} plan therefore scans through positive
+ * infinity exactly as an unbounded scan did.
+ * <p>
+ * Steps 4-6 of the design's phase 5 extend this plan with the derivation of
  * {@code H}, the dependency floor {@code L}, the output floor {@code R}, and the
- * affected/output key domains {@code A}/{@code Q}. Until then the high bound is
- * implicitly {@code EOF}: both executors replace through positive infinity.
+ * affected/output key domains {@code A}/{@code Q}.
  * <p>
  * One instance per refresh job, reused across repairs - {@link #of} overwrites
  * every field, so no reset is needed between plans.
@@ -84,6 +97,8 @@ public final class LiveViewCheckpointRepairPlan {
     private long applyAheadMinTs;
     private long correctionTs;
     private int disposition;
+    private HighBoundTag highBoundTag = HighBoundTag.EOF;
+    private long highTsExclusive;
     private long pinnedSeqTxn;
     private long replayLowTs;
     private long retireLowTs;
@@ -154,6 +169,25 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
+     * @return whether {@code H} is a concrete exclusive timestamp
+     * ({@link HighBoundTag#FINITE}) or pinned to end-of-frame
+     * ({@link HighBoundTag#EOF}).
+     */
+    public HighBoundTag getHighBoundTag() {
+        return highBoundTag;
+    }
+
+    /**
+     * @return {@code H}: the exclusive timestamp after which every eligible
+     * function has converged. Meaningful only for {@link HighBoundTag#FINITE};
+     * {@link Numbers#LONG_NULL} under {@link HighBoundTag#EOF}, where no timestamp
+     * can express the bound.
+     */
+    public long getHighTsExclusive() {
+        return highTsExclusive;
+    }
+
+    /**
      * @return {@code E}: the applied base {@code seqTxn} of the pinned reader.
      */
     public long getPinnedSeqTxn() {
@@ -178,6 +212,22 @@ public final class LiveViewCheckpointRepairPlan {
     }
 
     /**
+     * {@code H} restated as the <b>inclusive</b> high bound the bounded forward
+     * page-frame cursor takes, so the source scan stops at the convergence boundary
+     * instead of running to the end of the base table.
+     * <p>
+     * {@link HighBoundTag#EOF} maps to {@code Long.MAX_VALUE}, which as an
+     * inclusive bound admits every row, up to and including one at the very top of
+     * the timestamp range. That is the whole reason the bound is tagged: the same
+     * value as an <i>exclusive</i> bound would silently drop that row.
+     *
+     * @return the inclusive timestamp at or below which the repair may read
+     */
+    public long getScanHighTsInclusive() {
+        return highBoundTag == HighBoundTag.EOF ? Long.MAX_VALUE : highTsExclusive - 1;
+    }
+
+    /**
      * @return the base {@code seqTxn} that triggered the repair. Below
      * {@link #getPinnedSeqTxn()} exactly when apply raced ahead of it.
      */
@@ -191,6 +241,14 @@ public final class LiveViewCheckpointRepairPlan {
      */
     public boolean isApplyAhead() {
         return pinnedSeqTxn != triggerSeqTxn;
+    }
+
+    /**
+     * @return true when {@code H} is pinned to end-of-frame, so the repair's
+     * influence reaches the runtime head and the scratch runtime must be promoted.
+     */
+    public boolean isHighBoundEof() {
+        return highBoundTag == HighBoundTag.EOF;
     }
 
     public boolean isResumeFromAnchor() {
@@ -253,6 +311,14 @@ public final class LiveViewCheckpointRepairPlan {
         assert pinnedSeqTxn >= triggerSeqTxn : "pinned base snapshot is below the trigger";
         this.triggerSeqTxn = triggerSeqTxn;
         this.pinnedSeqTxn = pinnedSeqTxn;
+        // H: no dependency descriptor is consulted yet, so no repair can prove a
+        // convergence boundary below the end of the base table. Both executors
+        // therefore read and replace through positive infinity, as they did before
+        // the bound existed. Step 4 of the design's phase 5 derives a finite bound
+        // from the view's RANGE descriptors; until then this is the only honest
+        // value - a finite guess would drop rows the repair still has to re-emit.
+        highBoundTag = HighBoundTag.EOF;
+        highTsExclusive = Numbers.LONG_NULL;
         // C: the trigger's authority to delete and to unseal, expressed in the
         // view's own coordinate space. A commit routinely reaches below the view's
         // boundary - those rows are simply not the view's - so the raw trigger is
