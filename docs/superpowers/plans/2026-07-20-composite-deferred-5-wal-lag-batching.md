@@ -2,46 +2,59 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use checkbox syntax.
 
-**Goal:** Let a composite table batch high-frequency small WAL commits through the WAL LAG (as plain tables
-do) instead of forcing a full commit on every apply — **but only if a measurement first proves the gap is
-LAG-removable**. This is the deepest, historically corruption-prone unit; Task 1 is a hard go/no-go gate.
+**Goal:** Let a composite table batch high-frequency small WAL commits through a cell-aware WAL LAG (as plain
+tables do) instead of forcing a full commit on every apply — built FAIL-SAFE behind a config flag so the proven
+full-commit path always remains the default fallback.
 
-**Architecture (measurement-gated, day-scoped RAM lag):** Plain tables append small WAL commits into the last
-partition's shared column files and defer `commit00` (msync/fsync + `_txn`/columnVersion write + `processO3Block`
-open/sort/merge) until a lag threshold fires. Composite disables this via TWO off-switches
-(`applyFromWalLagToLastPartitionPossible`→false for `dimensionCount>0`; `needFullCommit`→forced true for
-`dimensionCount>0`) because the plain lag appends into a day-keyed `this.columns` that a composite table never
-repoints at a per-cell segment — the naive attempt reproduced a glibc "corrupted top size" heap abort. The
-cell-aware design: a **day-scoped RAM lag substrate** that accumulates rows across WAL txns, then at threshold
-flushes lag+new rows through the EXISTING `processO3BlockComposite` (which already routes per-row to cells via
+**MEASUREMENT VERDICT (Task 1, DONE — GO):** baseline gap composite/plain **1.83x** avg (769us vs 419us; p50
+1.73x / p90 2.12x / p99 2.60x). Mechanism proven empirically: the per-commit `"o3 composite range"` dispatch log
+fires **2100x for composite, 0x for plain** — composite is forced through full commit on every apply while plain
+batches via the lag. Gap decomposition: **removable ≈90–99%** (`commit00` + `processO3BlockComposite`
+dispatch/merge) / **irreducible ≈1–10%** (`resolveRowCellKey`), confirmed two independent ways (JFR 99.5%/0.5% +
+per-dimension-kind sweep IDENTITY 1.76x / HASH 1.63x / EXPRESSION 1.73x, a ~4% band proving `resolveRowCellKey` is
+not the driver). Full report: `.superpowers/sdd/deferred5-task1-measurement.md`.
+
+**Architecture (fail-safe, flag-gated, day-scoped RAM lag):** Plain tables append small WAL commits into the last
+partition's shared column files and defer `commit00` (msync/fsync + `_txn`/columnVersion write + `updateIndexes`)
+and `processO3Block` until a lag threshold. Composite disables this via TWO off-switches
+(`applyFromWalLagToLastPartitionPossible`→false @5052; `needFullCommit`→forced true @12418 for `dimensionCount>0`),
+because the plain lag appends into a day-keyed `this.columns` that composite never repoints at a per-cell segment
+— the naive attempt reproduced a glibc "corrupted top size" heap abort. The cell-aware design adds a **day-scoped
+RAM lag substrate** (Task 2, an off-heap buffer accumulating WAL rows across txns) and, GATED BEHIND A NEW CONFIG
+FLAG (Task 3), routes composite commits through it: under threshold → accumulate (no `commit00`); at threshold →
+flush lag+new rows through the EXISTING `processO3BlockComposite` (which already routes per-row to cells via
 `resolveRowCellKey` → `dispatchCompositeCellRange`). It must **NOT** reuse the plain fast-apply
-(`applyLagToLastPartition`'s `transientRowCount += lagRowCount` is a cell-blind bump — the exact bug class the
-off-switches forbid). Composite keeps the "fewer flushes" win but not zero-copy apply. Crash-safety: keep
-`seqTxn` un-advanced until the flush's `commit00`, so a mid-lag crash simply replays the WAL.
+(`applyLagToLastPartition`'s `transientRowCount += lagRowCount` is a cell-blind bump — the exact bug the
+off-switches forbid). **When the flag is OFF the off-switches stay active and behavior is byte-identical to
+today's full-commit path** — the flag-off branch is the safety fallback, never removed. Crash-safety: `seqTxn`
+stays un-advanced until the flush's `commit00`, so a mid-lag crash simply replays the WAL.
 
-**Tech Stack:** Java 25 (`/usr/lib/jvm/java-25-openjdk-amd64`), Maven. JFR for the Task-1 decomposition. Worktree
-`~/claude/wt/oss/composite-partitioning`, branch `feat/composite-partitioning`, HEAD `b67d14188d`. Spec:
+**Tech Stack:** Java 25 (`/usr/lib/jvm/java-25-openjdk-amd64`), Maven. Worktree
+`~/claude/wt/oss/composite-partitioning`, branch `feat/composite-partitioning`, HEAD `f49ee986a6`. Spec:
 `docs/superpowers/specs/2026-07-20-composite-partitioning-deferred-issues-design.md`. Grounding:
 `.superpowers/sdd/deferred5-wallag-map.md` (line-anchored map of every call site named below — RE-GROUND lines
 before editing; they drift).
 
 ## Global Constraints
-- **Plain (`dimCount==0`) BYTE-IDENTICAL.** Every change is gated on `getPartitionSpec().getDimensionCount()>0`
-  (or the composite path). A plain table's WAL commit/lag path must be untouched — the regression bar is the full
-  `Wal*`/`O3*`/`Commit*` suite, byte-for-byte.
-- **No new silent-wrong / no corruption path.** Composite high-frequency ingestion must produce data == an
+- **Plain (`dimCount==0`) BYTE-IDENTICAL, always.** Every change is gated on
+  `getPartitionSpec().getDimensionCount()>0`. A plain table's WAL commit/lag path is untouched — regression bar =
+  the full `Wal*`/`O3*`/`Commit*` suite, byte-for-byte.
+- **Composite flag-OFF BYTE-IDENTICAL to today.** The new lag path is reachable only when the new config flag is
+  ON. With it OFF, the two off-switches remain active and composite ingestion is exactly today's full-commit
+  behavior. The flag-off branch is the permanent safety fallback; do NOT delete the off-switches.
+- **No new silent-wrong / no corruption path.** Flag-ON composite high-frequency ingestion must produce data == an
   equivalent plain twin AND == the same rows ingested in one big commit; a crash at any point recovers to a
   consistent state (== replay-from-WAL), never a torn per-cell segment or a lost/duplicated row. If any shape
-  cannot be made correct, it stays on the current full-commit path (the safe status quo) — the LAG is an
-  optimization, never a correctness dependency.
+  cannot be made correct under the flag, it stays on the full-commit path (flag-off is always safe).
 - **THE PRINCIPAL LANDMINE:** any cell-blind write to `this.columns` / `transientRowCount` / the last-partition
-  bookkeeping during a composite lag-apply. The plain fast-apply and the `applyLagToLastPartition`
-  `transientRowCount` bump assume ONE day-keyed column set; composite has N per-cell segments. Reintroducing that
-  assumption is what abort-crashed the naive attempt. Every lag row must reach disk ONLY via
-  `processO3BlockComposite` → `dispatchCompositeCellRange`.
-- **Benchmark-gated (Task 1 is the gate).** Do NOT build the substrate (Tasks 2–5) unless Task 1 shows the
-  LAG-removable portion of the gap (amortizable `commit00` + `processO3Block` dispatch) is material. If per-row
-  `resolveRowCellKey` dominates, STOP and report — the LAG cannot remove it.
+  bookkeeping during a composite lag-apply. The plain fast-apply assumes ONE day-keyed column set; composite has N
+  per-cell segments. Reintroducing that assumption is what abort-crashed the naive attempt. Every lag row must
+  reach disk ONLY via `processO3BlockComposite` → `dispatchCompositeCellRange`.
+- **The config flag:** add ONE boolean (e.g. `cairo.wal.composite.lag.enabled` →
+  `CairoConfiguration.isWalCompositeLagEnabled()`, default **false**), mirroring the existing WAL-lag getters
+  (`getWalMaxLagRows`/`getWalMaxLagTxnCount`). Wire it through `DefaultCairoConfiguration` +
+  `PropServerConfiguration` like a sibling boolean. The lag reuses the EXISTING thresholds (`getWalMaxLagRows` /
+  `walMaxLagTxnCount` / `metaMaxUncommittedRows` / `commitLatency`) — do NOT add new threshold knobs.
 - **NEVER `git checkout`/`git stash`/`git restore`** a file for a negative control — in-place Edit + inverse, or
   `cp` aside (this branch has uncommitted WIP elsewhere; a checkout discards it).
 - **Java tests use fluent** `assertQuery()`/`assertSql()`/`assertSqlCursors()`, not raw `printSql`+`assertEquals`.
@@ -52,209 +65,164 @@ before editing; they drift).
 
 ---
 
-### Task 1: Decompose the ingestion gap — the go/no-go measurement (GATE)
+### Task 2: Isolated day-scoped RAM lag buffer (component + unit tests, NOT wired)
 
-**No production code changes.** This task decides whether Tasks 2–5 happen at all. It answers ONE question: of the
-measured composite-vs-plain per-commit gap, how much is **LAG-removable** (`commit00` msync/`_txn` write +
-`processO3Block` open/sort/merge, paid once per commit today, amortizable to once-per-flush by a lag) versus
-**LAG-irreducible** (`resolveRowCellKey`, run per row every commit — a lag amortizes the dispatch overhead but the
-per-row key resolution still runs at flush)?
-
-**Files:**
-- Read/run only: `benchmarks/src/main/java/org/questdb/CompositeIngestionBenchmark.java` (exists, from Plan #2 —
-  IDENTITY composite `ci(ts, exch symbol, px) partition by day, exch wal` vs plain twin `pi`; measured unit =
-  insert 6-row multi-cell batch + `drainWal`; K=2000).
-- Create (report): `.superpowers/sdd/deferred5-task1-measurement.md`.
-- Optionally create (throwaway, NOT committed): a small variant benchmark or a JFR launch script under the
-  scratch dir — do not add production instrumentation.
-
-**Interfaces:** Produces a measurement report + a GO or NO-GO verdict for Tasks 2–5. No code interface.
-
-- [ ] **Step 1: Baseline the gap.** Build (`mvn -pl benchmarks -am package -o -DskipTests`) and run
-  `CompositeIngestionBenchmark` (default K=2000, 6 exch) with the module `--add-*` flags. Record the composite/plain
-  avg + p50 + p90 + p99 ratios. This is the gap to explain.
-- [ ] **Step 2: Isolate the `commit00` I/O component (LAG-removable).** Re-run with commit durability forced to the
-  cheapest mode and again to the most durable, by launching with a `CairoConfiguration` override of the commit mode
-  (property or a one-off subclass in a throwaway variant): compare the composite/plain ratio under NOSYNC (msync/no
-  fsync — QuestDB's default) versus SYNC (fsync). GROUND the exact knob: read `TableWriter.commit00` (`~:5841`) and
-  `syncColumns` (`~:16630`) and `CairoConfiguration.getCommitMode`/`getO3...` to find the property. If the ratio
-  collapses toward 1.0 as durability is cheapened, the gap is `commit00`-I/O-dominated → strongly LAG-removable
-  (the lag pays that cost once per flush instead of once per commit).
-- [ ] **Step 3: Isolate `resolveRowCellKey` (LAG-irreducible) by dimension kind.** Add a throwaway benchmark
-  variant (or parameterize a copy) that ingests into THREE composite shapes with identical data volume: (a) IDENTITY
-  `partition by day, exch` (cheap raw symbol read — `resolveRowCellKey` ~`:11692`); (b) a TRUNCATE/HASH bucket
-  dimension (memoized `resolveDimensionOrdinal` ~`:11695`); (c) an EXPRESSION dimension (a compiled `Function` per
-  row ~`:11721`). If IDENTITY already shows the full ~1.5–2.9x gap while HASH/EXPRESSION widen it only modestly,
-  `resolveRowCellKey` is a small constant and the gap is commit-overhead-dominated → GO. If EXPRESSION's gap is
-  several times IDENTITY's, per-row key resolution is a large irreducible component → the LAG helps less than hoped;
-  weigh that in the verdict.
-- [ ] **Step 4: Confirm the mechanism directly with JFR.** Run the composite `runCommitLoop` under
-  `-XX:+FlightRecorder -XX:StartFlightRecording=duration=...,filename=composite.jfr` (K raised so the loop runs long
-  enough to sample), and the plain loop likewise. From the recordings, attribute composite in-loop CPU + I/O to:
-  `commit00`/`syncColumns` (+ `_txn`/columnVersion writes), `processO3BlockComposite`/`dispatchCompositeCellRange`
-  (open/sort/merge), and `resolveRowCellKey`. Report the split. (If JFR method-sampling is too coarse at this
-  timescale, raise K and lower `STEP_MICROS`, or fall back to the Step 2/3 config-variant evidence — say which was
-  used.)
-- [ ] **Step 5: Verdict.** Write `.superpowers/sdd/deferred5-task1-measurement.md`: the baseline ratios, the
-  Step-2 durability sweep, the Step-3 per-dimension gaps, the Step-4 JFR split, and a one-line **GO / NO-GO**:
-  - **GO** if the amortizable component (`commit00` + `processO3Block` dispatch) is a material fraction (guideline:
-    ≥~30%) of the composite per-commit cost — the lag will remove most of it.
-  - **NO-GO** if `resolveRowCellKey` (or another per-row, non-amortizable cost) dominates — report that the LAG
-    would not close the gap, and STOP (do not build Tasks 2–5). A measurement showing no material removable overhead
-    is a valid, complete outcome per the spec's measure-then-keep discipline.
-- [ ] **Step 6: Commit** — `docs(composite): WAL-LAG ingestion-gap decomposition measurement + go/no-go`. (Commit
-  the report; no production code.)
-
-**STOP CONDITION:** If Step 5 is NO-GO, this plan ends here. Record it in the ledger and proceed to the final
-whole-branch review. Do not build the substrate.
-
----
-
-### Task 2: Day-scoped RAM lag substrate for composite (accumulate, do not apply)
-
-**Precondition: Task 1 verdict = GO.**
+**A self-contained, unit-tested off-heap buffer, with ZERO changes to the commit path.** This de-risks the
+integration by getting the memory management (append, growth, read-back, free — leaks/growth are easy to get
+wrong) correct and tested in isolation before Task 3 wires it in. The commit path is untouched here, so composite
+ingestion still works exactly as today.
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java` — add a composite-only RAM lag buffer + its
-  lifecycle. RE-GROUND every line: `applyFromWalLagToLastPartitionPossible` (~`:5052-5054`), `applyLagToLastPartition`
-  (~`:5063`), `processWalCommit` (~`:12321`), `needFullCommit` (~`:12399-12418`), `processO3BlockComposite`
-  (~`:11258`, accepts `o3LagRowCount`), `commit00` (~`:5841`), the composite partition spec accessor
-  (`getPartitionSpec().getDimensionCount()`).
-- Test: `core/src/test/java/io/questdb/test/cairo/CompositeWalLagSubstrateTest.java` (new) — unit-level: drive
-  several small WAL commits under a threshold, assert rows accumulate in the substrate and are INVISIBLE to readers
-  until a flush (mirrors how plain lag rows are invisible until committed).
+- Create: `core/src/main/java/io/questdb/cairo/CompositeWalLagBuffer.java` — an off-heap, per-column, day-scoped
+  row accumulator. Mirror the memory idiom the writer already uses for O3 staging (`MemoryCARW`/`Vect`-backed
+  growable regions — grep `o3Columns`/`MemoryCARW.getInstance`/`o3MoveUncommitted` in `TableWriter.java` for the
+  established allocation + growth + `Misc.free` pattern). Holds, per table column: a growable native region of the
+  column's raw (already symbol-remapped) values, appended across multiple WAL txns.
+- Test: `core/src/test/java/io/questdb/test/cairo/CompositeWalLagBufferTest.java` (new).
 
 **Interfaces:**
-- Consumes: the WAL commit rows (segment cursor) that `processWalCommit` reads.
-- Produces: a `compositeLagAppend(...)` that copies the txn's rows into the day-scoped RAM buffer WITHOUT touching
-  `this.columns`/`transientRowCount`, and a `compositeLagRowCount()`/`compositeLagMinTs`/`compositeLagMaxTs`
-  accessor set that Task 3's threshold logic + flush consume. The buffer holds raw column values keyed by day (an
-  `o3Mem`-style off-heap region per column, sized/grown like the existing O3 columns), NOT per cell — cell routing
-  happens only at flush.
+- Produces `CompositeWalLagBuffer` with (names indicative — the implementer finalizes signatures and records them
+  in the report for Task 3): a ctor taking the column set / types; `append(...)` copying a contiguous row range of
+  already-remapped column values in; `getRowCount()`; a per-column address/size accessor
+  (`getColumnAddress(int col)` / `getColumnSize(int col)`) that Task 3's flush feeds to
+  `processO3BlockComposite`; `clear()` (reset counts, keep capacity for reuse); `close()`/`Misc.free`-style
+  teardown that releases every region.
 
-- [ ] **Step 1: Failing test.** In `CompositeWalLagSubstrateTest`: composite `c(ts, exch, sym, px) partition by day,
-  exch wal`; a config with a HIGH lag threshold so nothing flushes. Insert K small multi-cell WAL commits + drain.
-  Assert (a) `select count() from c` == 0 (rows are in the lag, not yet committed — invisible), AND (b) after
-  forcing a flush (a commit that crosses the threshold, or `commit()`), `select * from c` == the plain twin. Today
-  (off-switches force full commit) count() is already K*BATCH after each drain → the "invisible until flush"
-  assertion is RED.
-- [ ] **Step 2:** run → FAIL. Capture that composite commits eagerly (no lag).
-- [ ] **Step 3:** implement the RAM lag substrate: allocate per-column off-heap buffers on first composite lag
-  append (lazy, freed in `close()`/`_o3Free`-style teardown); `compositeLagAppend` copies the txn rows in; maintain
-  scalar `compositeLagRowCount`/min/max-ts/txn-count counters (day-scoped, NOT per cell). Do NOT advance `seqTxn`,
-  do NOT write `_txn`, do NOT touch `this.columns`/`transientRowCount`. Wire `processWalCommit` so that for a
-  composite table under threshold it calls `compositeLagAppend` and RETURNS without `commit00` (mirror the plain
-  batch-path early return at `~:12443-12472`, but into the RAM substrate).
-- [ ] **Step 4:** run → the "invisible until flush" half PASSES; the "== twin after flush" half needs Task 3's
-  flush and may still be RED (no flush path yet) — leave a `@Ignore`-free but explicitly-asserted TODO only if the
-  test cannot pass without Task 3; otherwise split the test so Step-4 asserts only invisibility. Prefer: assert
-  invisibility here; the flush-equivalence assertion lands in Task 3's test.
-- [ ] **Step 5: Regression.** `mvn -q -pl core test -Dtest='Composite*,Wal*Commit*,O3*'` — plain paths unaffected
-  (0 new failures vs baseline; the composite flush-equivalence is Task 3). Read surefire summaries.
-- [ ] **Step 6: Commit** — `feat(cairo): day-scoped RAM WAL-lag substrate for composite tables (accumulate only)`
+- [ ] **Step 1: Failing test.** In `CompositeWalLagBufferTest`: construct a buffer for a small column set
+  (e.g. `ts LONG`, `exch SYMBOL/INT`, `px DOUBLE`); append several row ranges from a synthetic in-memory source;
+  assert `getRowCount()` accumulates across appends, the per-column addresses read back the exact values appended
+  (in order), growth across a capacity boundary preserves earlier rows, `clear()` resets the count while allowing
+  reuse, and `close()` frees without leak. Assert on real read-back values (`Unsafe.getLong/getDouble` at the
+  returned addresses), not just counts.
+- [ ] **Step 2:** run → FAIL (class does not exist).
+- [ ] **Step 3:** implement `CompositeWalLagBuffer` (lazy per-column region allocation on first append; power-of-two
+  growth; bounds-safe address accessors; idempotent `close`). No `TableWriter`/commit-path changes at all.
+- [ ] **Step 4:** run → PASS. Run under the project's leak-tracking if the buffer uses tracked allocators (mirror
+  how other `*Test` cairo unit tests assert no native leak — grep `assertMemoryLeak`).
+- [ ] **Step 5: Regression.** `mvn -q -pl core test -Dtest='CompositeWalLagBufferTest'` green; a quick
+  `-Dtest='Composite*'` to confirm nothing else references the new class yet / no build break.
+- [ ] **Step 6: Commit** — `feat(cairo): day-scoped off-heap WAL-lag buffer for composite tables (isolated component)`
 
 ---
 
-### Task 3: Flush routing — lag+new rows through `processO3BlockComposite`, drop the off-switches
+### Task 3: Flag-gated cell-aware lag integration (accumulate + flush) — OPUS REVIEW
 
-**Precondition: Task 2 merged.**
+**The risky integration.** Wire `CompositeWalLagBuffer` into `processWalCommit` behind the new config flag: under
+threshold accumulate into the buffer (no commit); at threshold flush lag+new rows through `processO3BlockComposite`.
+**When the flag is OFF, the two off-switches stay active and the path is byte-identical to today.**
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java`:
-  - Replace off-switch (a): `applyFromWalLagToLastPartitionPossible` (~`:5052-5054`) — instead of returning false for
-    composite, route composite to a NEW `flushCompositeLag()` that feeds lag+new rows through
-    `processO3BlockComposite` (NO `applyLagToLastPartition` fast-apply / `transientRowCount` bump).
-  - Replace off-switch (b): `needFullCommit` (~`:12418`) — drop the `dimensionCount>0` clause that forces a full
-    commit; let composite use the SAME threshold predicates as plain (`getWalMaxLagRows` ~`:7955`,
-    `walMaxLagTxnCount`, `metaMaxUncommittedRows` ~`:2693`, `commitLatency` ~`:12410`) but computed over the RAM
-    substrate's counters from Task 2.
-  - `flushCompositeLag()`: drive the accumulated lag rows (+ the current txn's rows) through
-    `processO3BlockComposite` (`~:11258`, `o3LagRowCount` param) → `resolveRowCellKey` (`~:11674`) →
-    `dispatchCompositeCellRange` (`~:11523`) → `finishO3Commit` (`~:7760`) → `commit00` (`~:5841`); THEN advance
-    `seqTxn` and reset the substrate counters. This is the only place composite lag rows reach disk.
-- Test: `core/src/test/java/io/questdb/test/cairo/CompositeWalLagFlushTest.java` (new) + finish the Task-2
-  flush-equivalence assertion.
+- Modify: `core/src/main/java/io/questdb/cairo/CairoConfiguration.java` +
+  `core/src/main/java/io/questdb/cairo/DefaultCairoConfiguration.java` +
+  `core/src/main/java/io/questdb/cairo/PropServerConfiguration.java` — add
+  `isWalCompositeLagEnabled()` (default false), mirroring `getWalMaxLagRows` plumbing. RE-GROUND those getters.
+- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java`. RE-GROUND every line via the map:
+  - Off-switch (a) `applyFromWalLagToLastPartitionPossible` (~`:5042`; composite return-false `:5052-5054`) —
+    leave AS-IS (composite never uses the plain fast-apply). The lag does NOT go through this method.
+  - Off-switch (b) `needFullCommit` (~`:12399`; composite clause `:12418`) — change the composite clause from an
+    unconditional force to: force full commit for composite ONLY WHEN `!isWalCompositeLagEnabled()`. When the flag
+    is ON, composite participates in the SAME threshold predicates as plain (`getWalMaxLagRows` ~`:7955`,
+    `walMaxLagTxnCount`, `metaMaxUncommittedRows` ~`:2693`, `commitLatency` ~`:12410`) evaluated over the buffer's
+    counters.
+  - Accumulate path: for composite + flag-on + under-threshold, mirror the plain batch-path (`:12443-12472`:
+    `remapWalSymbols` @`:12449` → append) but copy the remapped rows into `CompositeWalLagBuffer` (a new
+    column-task variant or a direct buffer append) instead of `cthAppendWalColumnToLastPartition` into
+    `this.columns`; bump day-scoped lag counters; return without `commit00`; leave `seqTxn` un-advanced.
+  - Flush path `flushCompositeLag()`: drive the buffered rows (+ current txn) through `processO3BlockComposite`
+    (`:11258`, `o3LagRowCount` param) → `resolveRowCellKey` (`:11674`) → `dispatchCompositeCellRange` (`:11523`) →
+    `finishO3Commit` (`:7760`) → `commit00` (`:5841`); THEN advance `seqTxn` and `clear()` the buffer. This is the
+    only place composite lag rows reach disk. NO `applyLagToLastPartition` `transientRowCount` bump.
+- Test: `core/src/test/java/io/questdb/test/cairo/CompositeWalLagFlushTest.java` (new).
 
-**Interfaces:** Consumes Task 2's substrate + counters. Produces the committed, cell-routed on-disk state.
+**Interfaces:** Consumes Task 2's `CompositeWalLagBuffer`. Produces the committed, cell-routed on-disk state.
 
-- [ ] **Step 1: Failing test.** `CompositeWalLagFlushTest`: composite `c` + plain twin `p`, a MODERATE threshold so
-  a flush fires every N commits. Ingest a long high-frequency multi-cell stream (interleaved exch, some batches
-  extending an already-populated cell → forces `O3_BLOCK_MERGE`, some creating new cells). Assert: `select * from c`
-  (all shapes: `order by ts`, per-cell `where exch=...`, `LATEST ON`, `SAMPLE BY`) == the plain twin `p` fed the
-  identical stream; AND == a THIRD table `c1` fed the SAME rows in ONE big commit (proves batching doesn't change
-  the on-disk result). RED today (no flush path).
-- [ ] **Step 2:** run → FAIL.
-- [ ] **Step 3:** implement `flushCompositeLag()` + drop the two off-switch clauses. Watch the three known
-  landmines while wiring: the `.i` scratch ts-index rowid corruption in multi-cell regroup (`~:11418-11426` — the
-  `#25` bug: write the in-group index `j`, never the absolute row); the cell-blind bookkeeping quartet
-  (`trackedTail`/`beginPartitionSizeUpdate`/`initLastPartition`/partition purge candidates, `~:11541-11557`, hit when
-  a flush EXTENDS a populated cell); and the `finishO3Commit` malloc region (`~:7760-7777`). Every lag row goes
-  through `dispatchCompositeCellRange`; nothing writes `this.columns`/`transientRowCount` cell-blind.
-- [ ] **Step 4:** run → PASS (`c` == `p` == `c1` across all shapes).
+- [ ] **Step 1: Failing tests (two arms).** (a) FLAG-OFF byte-identity: with the flag default (off), a
+  high-frequency multi-cell composite ingestion produces the SAME `select count()` progression + final data as
+  today (this passes immediately — it's the guard that the default path is untouched; keep it as a permanent
+  regression). (b) FLAG-ON equivalence: with the flag ON and a MODERATE threshold, ingest a long high-frequency
+  multi-cell stream (interleaved exch; some batches extend an already-populated cell → forces `O3_BLOCK_MERGE`,
+  some create new cells) and assert `select * from c` (shapes: `order by ts`, per-cell `where exch=...`,
+  `LATEST ON`, `SAMPLE BY`) == a plain twin `p` fed the identical stream AND == a third table `c1` fed the same
+  rows in ONE big commit. RED today (flag/lag path doesn't exist).
+- [ ] **Step 2:** run → FLAG-OFF arm PASSES; FLAG-ON arm FAILS (unknown config method / no lag path).
+- [ ] **Step 3:** implement the flag plumbing + accumulate + `flushCompositeLag()` + the flag-gated `needFullCommit`
+  change. Watch the three known landmines: the `.i` scratch ts-index rowid corruption in multi-cell regroup
+  (`:11418-11426` — write the in-group index `j`, never the absolute row); the cell-blind bookkeeping quartet
+  (`trackedTail`/`beginPartitionSizeUpdate`/`initLastPartition`/partition purge, `:11541-11557`, hit when a flush
+  EXTENDS a populated cell); the `finishO3Commit` malloc region (`:7760-7777`). Every lag row goes through
+  `dispatchCompositeCellRange`; nothing writes `this.columns`/`transientRowCount` cell-blind.
+- [ ] **Step 4:** run → both arms PASS (flag-off == today; flag-on `c` == `p` == `c1` across all shapes).
 - [ ] **Step 5: Regression.** `mvn -q -pl core test -Dtest='Composite*,Wal*,O3*,Commit*'` — 0 new failures; plain
-  WAL commit/lag byte-identical (spot-check a plain `Wal*Commit*` test's row counts + a plain lag test).
-- [ ] **Step 6: Commit** — `feat(cairo): flush composite WAL-lag through the per-cell O3 path; drop the full-commit off-switches`
+  WAL commit/lag byte-identical (spot-check a plain `Wal*Commit*` row count + a plain lag test). Confirm flag-off
+  composite tests unchanged.
+- [ ] **Step 6: Commit** — `feat(cairo): flag-gated cell-aware WAL-lag for composite (accumulate + per-cell flush)`
 
 ---
 
-### Task 4: Crash / power-loss suite (the corruption-audit rigor)
+### Task 4: Crash / power-loss suite (flag-on) — OPUS REVIEW
 
-**Precondition: Task 3 merged.** This unit carries the write side's power-loss discipline (per the spec) — a
-composite lag that loses/tears/duplicates a row on crash is worse than no lag.
+**The corruption-audit rigor (per the spec).** A composite lag that loses/tears/duplicates a row on crash is worse
+than no lag. All tests run with the flag ON.
 
 **Files:**
 - Test: `core/src/test/java/io/questdb/test/cairo/CompositeWalLagCrashTest.java` (new). Reuse the branch's existing
-  composite crash/fuzz harness pattern (grep the composite tests for the fuzz/`TestFilesFacade`/simulated-power-cut
-  scaffolding already used on this branch; if none, mirror the OSS `O3FailureTest`/`WalWriterFuzzTest` fault-injection
-  idiom).
+  composite crash/fuzz harness (grep the composite tests for the fuzz/`TestFilesFacade`/simulated-power-cut
+  scaffolding already on this branch; else mirror OSS `O3FailureTest`/`WalWriterFuzzTest` fault-injection).
 - Modify (only if a crash reveals a gap): `TableWriter.java`, minimally, to make the flush crash-atomic.
 
-**Interfaces:** Consumes Tasks 2–3. Produces proof the lag is crash-safe: crash → recover → == plain twin.
+**Interfaces:** Consumes Task 3. Produces proof the flag-on lag is crash-safe: crash → recover → == plain twin.
 
-- [ ] **Step 1: Failing/também tests — three crash points.** (a) Crash with rows in the RAM lag, BEFORE any flush:
-  assert on restart the WAL replays those txns and the table == the plain twin (nothing lost — the substrate was
-  RAM-only and `seqTxn` was never advanced). (b) Crash MID-FLUSH of an interleaved multi-cell + cell-extending batch
-  (fault-inject a failure between `processO3BlockComposite` and `commit00`): assert restart recovers to the
-  PRE-flush committed state (uncommitted per-cell bytes are dropped and replayed), no torn per-cell segment, ==
-  twin after replay. (c) Crash AFTER `processO3Block` but BEFORE `_txn` is written: same invariant — the un-advanced
-  `seqTxn` means the whole flush replays; no double-apply, no half-cell.
-- [ ] **Step 2:** run → identify any non-crash-safe point (a torn segment, a double-applied row, a lost row).
+- [ ] **Step 1: Three crash-point tests.** (a) Crash with rows in the RAM lag BEFORE any flush: on restart the WAL
+  replays those txns and the table == the plain twin (nothing lost — the substrate was RAM-only, `seqTxn` never
+  advanced). (b) Crash MID-FLUSH of an interleaved multi-cell + cell-extending batch (fault-inject between
+  `processO3BlockComposite` and `commit00`): restart recovers to the PRE-flush committed state (uncommitted
+  per-cell bytes dropped + replayed), no torn per-cell segment, == twin after replay. (c) Crash AFTER
+  `processO3Block` but BEFORE `_txn` written: same invariant — the un-advanced `seqTxn` replays the whole flush; no
+  double-apply, no half-cell.
+- [ ] **Step 2:** run → identify any non-crash-safe point (torn segment / double-apply / lost row).
 - [ ] **Step 3:** if a gap exists, fix minimally so the flush is atomic w.r.t. the durable `seqTxn` advance
-  (`seqTxn` advances only after `commit00` durably lands — the same ordering plain relies on). If no gap, document
-  why each crash point is already safe (the un-advanced-`seqTxn` invariant).
+  (`seqTxn` advances only after `commit00` durably lands — the ordering plain relies on). Also address the Task-1
+  concern: verify the lag's flush cadence interacts sanely with the `commitLatency` wall-clock trigger (a
+  long-idle lag must still flush + become visible within `commitLatency`). If no gap, document why each crash
+  point is already safe (the un-advanced-`seqTxn` invariant).
 - [ ] **Step 4:** run → all three crash tests PASS (recover == twin).
 - [ ] **Step 5: Regression.** `mvn -q -pl core test -Dtest='Composite*,*Wal*Fuzz*,O3Failure*'` — 0 failures.
 - [ ] **Step 6: Commit** — `test(cairo): composite WAL-lag crash/power-loss recovery == plain twin`
 
 ---
 
-### Task 5: Benchmark re-run — confirm the win (or report it didn't)
+### Task 5: Benchmark re-run + default decision
 
 **Precondition: Task 4 merged.**
 
 **Files:**
-- Run only: `benchmarks/src/main/java/org/questdb/CompositeIngestionBenchmark.java`.
-- Report: append to `.superpowers/sdd/deferred5-task1-measurement.md` (before/after section).
+- Run only: `benchmarks/src/main/java/org/questdb/CompositeIngestionBenchmark.java` (add a flag-on config override,
+  or a throwaway variant, to measure the flag-on path; the benchmark's `DefaultCairoConfiguration` can override
+  `isWalCompositeLagEnabled()`).
+- Report: append a before/after section to `.superpowers/sdd/deferred5-task1-measurement.md`.
+- Possibly modify: the flag default in `PropServerConfiguration`/`DefaultCairoConfiguration`, IF the results +
+  crash suite justify flipping it on (see Step 3).
 
-- [ ] **Step 1: Re-measure.** Rebuild (`mvn -pl benchmarks -am package -o -DskipTests`) and re-run
-  `CompositeIngestionBenchmark` with the SAME settings as Task 1 Step 1. Record the new composite/plain per-commit
-  ratios (avg/p50/p90/p99).
-- [ ] **Step 2: Compare to the Task-1 baseline.** Report the closure: the gap should shrink toward the
-  LAG-irreducible floor Task 1 predicted (composite still pays per-row `resolveRowCellKey` + one flush per threshold,
-  but no longer a full `commit00` every commit). If the win did NOT materialize (or a config makes it worse), report
-  it honestly — the optimization may not be worth keeping.
-- [ ] **Step 3: Commit** — `docs(composite): WAL-lag ingestion benchmark before/after (measured win)`
+- [ ] **Step 1: Re-measure flag-ON.** Rebuild + re-run `CompositeIngestionBenchmark` with the composite lag flag
+  ON, SAME settings as Task 1's baseline (K=2000, 6 exch). Record the new composite/plain ratios (avg/p50/p90/p99).
+- [ ] **Step 2: Compare to the 1.83x baseline.** The gap should shrink toward the ~1.0x floor Task 1 predicted
+  (composite still pays per-row `resolveRowCellKey` + one flush per threshold, no longer full `commit00` every
+  commit). Report the closure. If the win did NOT materialize, report it honestly.
+- [ ] **Step 3: Default decision.** Given the measured win + the crash-suite result, RECOMMEND whether to (a) keep
+  the flag default OFF (opt-in; conservative) or (b) flip it ON with the flag retained as a kill-switch. State the
+  recommendation + rationale in the report; make the code change only if flipping on (and only if Task 4 is fully
+  green). Leave the final call to the controller/whole-branch review.
+- [ ] **Step 4: Commit** — `docs(composite): WAL-lag flag-on ingestion benchmark before/after + default recommendation`
 
 ---
 
 ## Self-Review
-**Coverage:** the spec's item 5 (cell-aware WAL-LAG, benchmark-gated, crash-safe) → measurement gate (Task 1) +
-substrate (Task 2) + flush routing / off-switch removal (Task 3) + crash suite (Task 4) + benchmark confirmation
-(Task 5). **Risk:** highest on the branch — Task 3 rewires the corruption-prone commit path and removes the two
-guards that were added because the naive lag heap-aborted; the three named landmines (`.i` scratch, cell-blind
-bookkeeping quartet, `finishO3Commit` malloc) are called out at their line anchors, and Task 4's crash suite is the
-net. **Fail-safe:** the off-switches are only dropped once the RAM substrate + cell-routed flush replace them; if
-any shape can't be made correct it stays on the full-commit status quo. **Benchmark-gated:** Task 1 is a hard
-go/no-go — if `resolveRowCellKey` dominates, Tasks 2–5 do not run. **Reviews:** opus for Task 3 (the flush/commit
-rewrite) and Task 4 (crash safety); sonnet for Tasks 1/2/5; whole-branch pass at the end of the deferred-issues
-phase.
+**Coverage:** the spec's item 5 (cell-aware WAL-LAG, benchmark-gated, crash-safe) → measurement gate (Task 1, DONE
+= GO) + isolated buffer (Task 2) + flag-gated integration (Task 3) + crash suite (Task 4) + benchmark + default
+call (Task 5). **Risk:** highest on the branch — Task 3 wires the corruption-prone commit path; mitigated by (i)
+the config flag keeping today's full-commit path as the untouched default fallback (flag-off byte-identity is a
+permanent test), (ii) building/proving the buffer in isolation first (Task 2), (iii) the three named landmines
+called out at their line anchors, (iv) Task 4's crash suite. **Fail-safe by construction:** the off-switches are
+NEVER removed — they are the flag-off branch. **Benchmark-gated:** Task 1 already returned GO (1.83x, ~90–99%
+removable). **Reviews:** OPUS for Task 3 (the flush/commit integration) and Task 4 (crash safety); sonnet for
+Tasks 2 and 5; whole-branch pass at the end of the deferred-issues phase.
