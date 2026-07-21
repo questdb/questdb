@@ -6583,6 +6583,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .fails(14, "offset must be a positive integer");
 
+        assertQuery("select lag(d, 9223372036854775807) over (partition by i) from tab")
+                .noLeakCheck()
+                .fails(14, "offset is too large");
+
         assertExceptionNoLeakCheck(
                 "select lag(d, 1, s) over () from tab",
                 17,
@@ -7324,6 +7328,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertQuery("select lead(d, -1) over () from tab")
                 .noLeakCheck()
                 .fails(15, "offset must be a positive integer");
+
+        assertQuery("select lead(d, 9223372036854775807) over (partition by i) from tab")
+                .noLeakCheck()
+                .fails(15, "offset is too large");
 
         assertExceptionNoLeakCheck(
                 "select lead(d, 1, s) over () from tab",

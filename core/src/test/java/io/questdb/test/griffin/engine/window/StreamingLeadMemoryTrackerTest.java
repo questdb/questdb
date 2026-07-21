@@ -52,6 +52,52 @@ public class StreamingLeadMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrdinaryLagFallbackRingBreachesAndReleases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x AS v, 1 AS k, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            // Phase 4 turns the large descending LEAD into an ordinary partitioned LAG inside the
+            // deferred cursor. Its 65_537-element ring must count against the per-query limit.
+            final String query = "SELECT v, " +
+                    "lag(v, 1) OVER (PARTITION BY k ORDER BY ts DESC), " +
+                    "lead(v, 65_537) OVER (PARTITION BY k ORDER BY ts DESC) FROM tab";
+
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 320 * 1024L);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, DeferredEmitWindowRecordCursorFactory.class);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        // Drain until the ordinary LAG ring breaches the query limit.
+                    }
+                    Assert.fail("expected per-query memory breach on the ordinary LAG ring");
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024L);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, DeferredEmitWindowRecordCursorFactory.class);
+                for (int i = 0; i < 3; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long rows = 0;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals("iteration " + i, 3, rows);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPartitionMapFailsOnOpen() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (" +
@@ -123,8 +169,8 @@ public class StreamingLeadMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    // --- C11: no fixed partition-slice reserve. A one-partition (or empty) partitioned query must
-    // succeed under a per-query limit far below what the removed 256-slice up-front reserve charged.
+    // A one-partition (or empty) partitioned query must succeed under a per-query limit far below
+    // what the removed 256-slice up-front reserve charged.
 
     @Test
     public void testEmptyPartitionedSucceedsBelowOldReserve() throws Exception {
@@ -209,8 +255,8 @@ public class StreamingLeadMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    // --- C2: each streaming-LAG type binds its per-partition ring to the per-query tracker. A large
-    // per-partition ring must breach the limit during iteration, a modest one must run and release.
+    // Each streaming-LAG type binds its per-partition ring to the per-query tracker. A large ring
+    // must breach the limit during iteration, while a modest ring must run and release.
 
     @Test
     public void testStreamingLagDateBreachAndRelease() throws Exception {

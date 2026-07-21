@@ -47,8 +47,10 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public class LeadLagWindowFunctionFactoryHelper {
 
@@ -67,6 +69,9 @@ public class LeadLagWindowFunctionFactoryHelper {
     // fit in 64 bits, i.e. offset <= 63. Distinct from MAX_STREAMING_LAG_OFFSET, which is a
     // memory-reservation guard rather than a bit-mask capacity limit.
     public static final int MAX_STREAMING_LEAD_OFFSET = 63;
+    // Keep the byte count below half the signed address range. MemoryCARW adds the native base
+    // address to the byte count, so merely preventing offset * 8 from wrapping is not sufficient.
+    private static final long MAX_SAFE_PARTITIONED_OFFSET = Long.MAX_VALUE / (2L * Long.BYTES);
 
     static Function newInstance(int position,
                                 ObjList<Function> args,
@@ -115,6 +120,13 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         if (windowContext.getPartitionByRecord() != null) {
+            // A partition reserves the full offset-sized ring on first touch. Reject absurd sizes
+            // before offset * 8 or MemoryCARW's native-base-plus-size arithmetic can overflow and
+            // turn the append pointer backwards. Practical limits still fail through maxPages.
+            if (offset > MAX_SAFE_PARTITIONED_OFFSET) {
+                throw SqlException.$(argPositions.getQuick(1), "offset is too large");
+            }
+
             Map map = null;
             MemoryARW mem = null;
             try {
@@ -372,6 +384,14 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.reset();
             Misc.free(memory);
             nullStreamingFields();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            if (memory != null) {
+                memory.setMemoryTracker(tracker);
+            }
         }
 
         @Override
@@ -644,6 +664,14 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.reset();
             Misc.free(memory);
             nullStreamingFields();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            if (memory != null) {
+                memory.setMemoryTracker(tracker);
+            }
         }
 
         @Override

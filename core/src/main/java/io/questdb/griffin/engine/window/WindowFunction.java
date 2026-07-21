@@ -361,13 +361,11 @@ public interface WindowFunction extends Function {
      * frees against it at cursor close. A null tracker degrades to global-only
      * accounting. Default no-op for functions with no tracker-aware state.
      * <p>
-     * Coverage limitation: ROWS-frame functions bind only their per-partition map,
-     * not the per-partition ring buffers that hold the sliding-window values. Those
-     * buffers stay global-only. A single ROWS frame is bounded by the frame literal,
-     * but under PARTITION BY ... ROWS the total ring-buffer memory scales with the
-     * partition cardinality and is not charged to the per-query counter; the bound
-     * per-partition map is only a partial backstop. RANGE-frame functions bind their
-     * tracker-aware state and are not affected.
+     * LEAD/LAG functions bind both their per-partition map and ring buffer. Some other
+     * ROWS-frame functions bind only their map, leaving the sliding-window ring on the
+     * global counter. Under PARTITION BY ... ROWS, those untracked rings can still scale
+     * with partition cardinality; the bound map provides only a partial backstop.
+     * RANGE-frame functions bind their tracker-aware state and are not affected.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
     }

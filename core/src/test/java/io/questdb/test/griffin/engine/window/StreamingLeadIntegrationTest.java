@@ -79,6 +79,26 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadOffsetAboveStreamingLimitFallsBackToCached() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (10, 0), (20, 1000), (30, 2000)");
+
+            assertQuery("SELECT x, lead(x, 64) OVER () lx FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .withPlanNotContaining("DeferredEmitWindow")
+                    .returns("""
+                            x\tlx
+                            10\tnull
+                            20\tnull
+                            30\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLeadOneStreamsAndProducesExpectedRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
@@ -96,6 +116,27 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                     "select x, lead(x, 1) over () as lx from t",
                     null, false, true
             );
+        });
+    }
+
+    @Test
+    public void testLeadRingProductAboveLimitFallsBackToCached() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (10, 0), (20, 1000), (30, 2000)");
+
+            // ringCapacity=33 and leadCount=2 require 66 pending bits, above the 64-bit layout.
+            assertQuery("SELECT x, lead(x, 32) OVER () lx, lead(x, 1) OVER () ly FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CachedWindow")
+                    .withPlanNotContaining("DeferredEmitWindow")
+                    .returns("""
+                            x\tlx\tly
+                            10\tnull\t20
+                            20\tnull\t30
+                            30\tnull\tnull
+                            """);
         });
     }
 
