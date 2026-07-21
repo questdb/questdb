@@ -228,6 +228,24 @@ public class RecoveryCoordinator {
             return;
         }
 
+        // SYMMETRIC C2 (review Finding C2, second half). The guard above rejects an epoch AHEAD of the live
+        // _txn. The reverse — a stale epoch BELOW a divergently-restored live _txn — is NOT (and cannot cheaply
+        // be) rejected here: seqTxn carries no lineage tag, so a below-_txn epoch is indistinguishable from the
+        // NORMAL same-lineage past cut that recover() is meant to adopt (rewind _txn/_cv to the epoch, then
+        // WAL-replay forward). Its safety rests entirely on the INVARIANT that every path which rewinds or
+        // diverges the live _txn (a backup / checkpoint / PITR restore; a primary->replica demote) clears
+        // _snapshot/.epoch via TableSnapshotRestore -> RecoveryCoordinator.removeAdaptiveEpochArtifacts. So any
+        // epoch that SURVIVES to this adoption point is necessarily the SAME lineage as the live _txn (a
+        // legitimate fast-boot anchor), never a stale wrong-lineage one. A full runtime symmetric guard is
+        // infeasible (no cheap lineage signal — see the AHEAD-case reasoning in epochIsAheadOfLiveTxn), so this
+        // is a documented invariant. Defensive, assertion-only re-check (read-only, zero prod cost): a refactor
+        // that ever let an AHEAD epoch reach adoption — the wrong-lineage resurrection this guard prevents —
+        // trips here loudly instead of silently corrupting the restored table.
+        assert !epochIsAheadOfLiveTxn(token, src, epochSeqTxn)
+                : "adaptive recovery would ADOPT an epoch that post-dates the live _txn (wrong-lineage "
+                + "resurrection); the freshness guard must SKIP it [table=" + token.getTableName()
+                + ", epochSeqTxn=" + epochSeqTxn + ']';
+
         // Restore the durable cut: _txn.epoch -> _txn, _cv.epoch -> _cv. ff.copy() (creat O_TRUNC)
         // fully replaces the live, lazily-advanced files with the epoch's canonical A/B record. The
         // .epoch copies are immutable until the next epoch, so re-running this (a crash mid-recovery)

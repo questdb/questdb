@@ -526,13 +526,32 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         // Verify the per-record CRC in the reserved trailing slot, if present.
-        // 0 in the reserved slot means a legacy/V1-compat record with no CRC: skip verification (back-compat).
-        // calculateCvAreaChecksum never returns 0, so 0 unambiguously means "no CRC written".
-        // A non-zero slot that does not match the body checksum means a torn/partially-written record.
+        // calculateCvAreaChecksum never returns 0, so stored==0 means "no CRC written" — but that has TWO
+        // possible causes the CRC alone cannot tell apart:
+        //   (1) a genuine LEGACY/V1-compat record written before the per-record CRC existed. Its body is fully
+        //       populated (walId, structureVersion, ...), so it is read unverified for backward compatibility.
+        //   (2) an ABSENT record: a slot never written back to the device (all-zero) that the cursor reached
+        //       because the header MAX_TXN was made device-durable AHEAD of this record's body. Under adaptive
+        //       W>0 the ordered flush (data->events->sequencer, then the header) normally prevents this, so it
+        //       is only reachable on a device that reorders those flushes across the crash — narrow, but not
+        //       provably impossible. Returning here would silently inject a garbage all-zero txn.
+        // Cheap, clearly-safe disambiguation: NO legitimate record — legacy or current — ever carries
+        // walId == 0 (real writers use walId >= 1; STRUCTURAL_CHANGE_WAL_ID = -1; DROP_TABLE_WAL_ID = -2;
+        // MIN_WAL_ID = -2), and the cursor only ever reads txns below the committed MAX_TXN, all of which have
+        // a real walId. So stored==0 AND walId==0 is definitionally an absent/torn record: route it into the
+        // SAME loud torn-record error the recovery/apply path already handles (it stops at the last good
+        // record) rather than reading garbage. A legitimate legacy record keeps its historical unverified read.
+        // A non-zero stored slot that does not match the body checksum means a torn/partially-written record.
         private void verifyRecordChecksum() {
             final long recordBase = address + txnOffset;
             final long stored = Unsafe.getLong(recordBase + RESERVED_OFFSET);
             if (stored == 0L) {
+                if (Unsafe.getInt(recordBase + TX_LOG_WAL_ID_OFFSET) == 0) {
+                    throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                            .put("absent/torn sequencer txnlog record beyond the durable frontier [txn=").put(txn)
+                            .put(", txnOffset=").put(txnOffset)
+                            .put(']');
+                }
                 return; // legacy record without CRC — read unverified for backward compatibility
             }
             final long actual = TableUtils.calculateCvAreaChecksum(recordBase, RESERVED_OFFSET);

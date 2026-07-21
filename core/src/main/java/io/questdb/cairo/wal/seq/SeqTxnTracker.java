@@ -304,6 +304,12 @@ public class SeqTxnTracker {
         }
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
+        // Also release this table's contribution to the engine-wide durable-ack frontier gauge
+        // (wal_apply_local_durable_seq_txn) so an adaptive table that advanced it does not leak its last
+        // value after the table is dropped. Route through resetDurableFrontier() (added for recovery) so the
+        // gauge decrement is the SAME one it uses — there is exactly one decrement, never a double-count.
+        // notifyOnDrop is idempotent (the dropped guard above), so this runs at most once per table.
+        resetDurableFrontier();
         fireWaiters();
     }
 

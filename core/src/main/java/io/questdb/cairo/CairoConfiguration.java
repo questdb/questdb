@@ -208,10 +208,21 @@ public interface CairoConfiguration {
      * Minimum interval, in milliseconds, between adaptive durable epochs for a single table. Under
      * {@link CommitMode#ADAPTIVE} the apply worker fires a durable epoch
      * ({@link TableWriter#advanceDurableEpoch(long)}) at most once per this interval per table, right after an apply
-     * batch commits while it still holds the writer. {@code 0} fires on every apply batch; a NEGATIVE
-     * value DISABLES adaptive epochs entirely (operator opt-out). The default (1000ms) bounds the
-     * amount of post-epoch WAL that must be rolled forward on recovery while keeping the per-epoch
-     * fsync cost off the hot apply path most of the time.
+     * batch commits while it still holds the writer. {@code 0} fires on every apply batch.
+     *
+     * <p>A NEGATIVE value DISABLES adaptive epochs entirely (including the {@link #getAdaptiveEpochMaxRows()}
+     * row cap). This is NOT a routine opt-out: with no epoch the {@code WalPurgeJob} retention floor is gone,
+     * so <b>WAL retention is unbounded</b> (the WAL below the frontier is never purged and grows with ingest)
+     * and <b>recovery falls back to full WAL replay from the base</b> (boot time grows with the retained WAL).
+     * Use only as a deliberate operator opt-out / test isolation.
+     *
+     * <p><b>Intentional default divergence (not a bug):</b> this interface default is {@code 1000} ms — the
+     * value used by embedded {@code CairoConfiguration}s and tests — whereas the SERVER default (the
+     * {@code cairo.adaptive.epoch.interval} property in {@code PropServerConfiguration}) is {@code 60000} ms.
+     * The server can afford the longer interval because {@link #getAdaptiveEpochMaxRows()} does the
+     * safety-bounding under load (an epoch also fires once the un-epoched applied-row backlog hits the cap),
+     * so the interval only has to bound the IDLE case; embedded/test configs keep the shorter 1000 ms backstop.
+     * See {@code docs/adaptive-commit-mode.md} §6 ("Why the interval could move from 1000 ms to 60000 ms").
      *
      * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
      */

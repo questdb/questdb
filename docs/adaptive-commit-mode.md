@@ -140,6 +140,20 @@ cairo.adaptive.commit.group.window=50ms     # default 50ms (RPO <= 50ms); 0 = sy
   acknowledged commits. The durable-ack frontier (`localDurableSeqTxn`) advances
   only when the batch `fdatasync` completes.
 
+> **Idle-tail caveat — the effective RPO bound is `W` + the background flush-sweep
+> cadence, not `W` alone.** While commits keep arriving, each commit re-arms the
+> in-window batch flush, so the bound is `~W`. When ingestion **stops** part-way
+> through a window (an idle tail), the last batch's `fdatasync` is driven not by a
+> following commit but by the background group-commit flusher in `WalPurgeJob`,
+> which runs on a shared worker. The effective RPO for that final batch is therefore
+> bounded by `W + shared-worker sleep cadence`
+> (`shared.worker.sleep.timeout`), not by `W` alone. Keep the sweep cadence
+> commensurate with `W`: a **large `shared.worker.sleep.timeout` combined with a tiny
+> `W`** widens the idle-tail RPO well past `W` (the flusher may sleep far longer than
+> the window before it fires). If you set a sub-millisecond `W`, keep
+> `shared.worker.sleep.timeout` short too, or accept that the *idle-tail* worst case
+> is the sleep cadence rather than `W`.
+
 **Recommended starting point: `W` = 1–10 ms** (`1000`–`10000` us) for a
 throughput-oriented deployment — RPO of 1–10 ms with latency approaching `nosync`.
 
@@ -349,9 +363,14 @@ cairo.adaptive.epoch.interval=60000     # default: at most one epoch per 60 seco
   overhead.
 - **`0`** → take an epoch on **every** apply batch (fastest recovery, highest
   overhead — the worst case for apply cost).
-- **Negative** → **epochs disabled entirely**, including the row cap below:
-  recovery falls back to full WAL replay from the base. Operator opt-out / test
-  isolation only.
+- **Negative** → **epochs disabled entirely**, including the row cap below. This is
+  NOT a routine opt-out — it removes the durability *fast-boot anchor*, so it has two
+  compounding consequences: (1) **unbounded WAL retention** — the epoch is the
+  `WalPurgeJob` retention floor, so with no epoch the WAL below the frontier is never
+  purged and grows without bound for as long as the table ingests; and (2)
+  **full-replay recovery** — a restart must replay the *entire* WAL from the base
+  cut, so boot time grows with the retained WAL. Use only as a deliberate operator
+  opt-out / test isolation, and only on tables whose WAL you are certain stays small.
 
 **`cairo.adaptive.epoch.max.rows` — recovery-time ↔ apply-overhead, row-based.**
 

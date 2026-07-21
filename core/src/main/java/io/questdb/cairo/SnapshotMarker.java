@@ -40,29 +40,29 @@ import java.io.Closeable;
  * <h2>Format</h2>
  * The file uses an A/B-versioned slot layout mirroring {@code _cv}/{@code _txn}:
  * <pre>
- * [0,  8)  = version (long): bumped on each write; (version &amp; 1) == 1 => slot B is live, else slot A
- * [8,  52) = slot A (SLOT_SIZE = 44 bytes)
- * [52, 96) = slot B (SLOT_SIZE = 44 bytes)
+ * [0,   8)  = version (long): bumped on each write; (version &amp; 1) == 1 => slot B is live, else slot A
+ * [8,   56) = slot A (SLOT_SIZE = 48 bytes, at {@link #OFFSET_SLOT_A})
+ * [56, 104) = slot B (SLOT_SIZE = 48 bytes, at {@link #OFFSET_SLOT_B})
  * </pre>
- * Each slot is:
+ * Each slot is a 32-byte body followed by a 16-byte checksum trailer:
  * <pre>
- * [+0,  +8)  = epochSeqTxn (long)
- * [+8,  +16) = epochTxn    (long)
- * [+16, +24) = ts          (long)
+ * [+0,  +8)  = epochSeqTxn   (long)
+ * [+8,  +16) = epochTxn      (long)
+ * [+16, +24) = ts            (long)
  * [+24, +28) = formatVersion (int) = FORMAT_VERSION
  * [+28, +32) = padding (4 bytes, zeroed)
- * [+32, +40) = MAGIC  = SNAPSHOT_CHECKSUM_MAGIC (long)
- * [+40, +44) ... wait, this is 12 bytes short — see constants below for actual layout
+ * [+32, +40) = MAGIC = SNAPSHOT_CHECKSUM_MAGIC (long)
+ * [+40, +48) = checksum (long): xxh3 over the 32-byte body
  * </pre>
  * <p>
- * SLOT body = 28 bytes ({@link #SLOT_BODY_SIZE}):
+ * SLOT body = 32 bytes ({@link #SLOT_BODY_SIZE}):
  * epochSeqTxn + epochTxn + ts + formatVersion + padding.
  * <p>
  * Checksum trailer = 16 bytes ({@link #SLOT_TRAILER_SIZE}):
  * {@link TableUtils#SNAPSHOT_CHECKSUM_MAGIC} + 8-byte xxh3 checksum over the whole body.
  * <p>
- * Total slot = {@link #SLOT_SIZE} = 44 bytes.
- * Total file = {@link #FILE_SIZE} = 8 + 2 * 44 = 96 bytes.
+ * Total slot = {@link #SLOT_SIZE} = 48 bytes.
+ * Total file = {@link #FILE_SIZE} = 8 + 2 * 48 = 104 bytes.
  *
  * <h2>Write protocol (mirrors _cv doCommit)</h2>
  * <ol>

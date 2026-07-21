@@ -47,6 +47,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -238,10 +239,14 @@ public class WalUtils {
     }
 
     // Recursively make every file under {@code dir} device-durable (full-range MS_SYNC msync + fdatasync of the
-    // mmap-written content), so an ALTER TABLE ... REBASE WAL staging table is crash-durable before the caller's
-    // atomic rename publishes it (see cloneTableDirForRebase). ADAPTIVE-gated by the caller. Hard-linked partition
-    // columns are synced too: durability is tracked per path, so an unsynced new path would be lost on a crash
-    // even though it shares the source table's durable inode. {@code dir} is restored to its entry length.
+    // mmap-written content), then fsync {@code dir} itself, so an ALTER TABLE ... REBASE WAL staging table is
+    // crash-durable before the caller's atomic rename publishes it (see cloneTableDirForRebase). ADAPTIVE-gated
+    // by the caller. Hard-linked partition columns are synced too: durability is tracked per path, so an
+    // unsynced new path would be lost on a crash even though it shares the source table's durable inode. The
+    // DIRECTORY fsync is required in addition to the per-file content fsync: on POSIX, fdatasync of a newly
+    // created file's CONTENT does NOT make its DIRECTORY ENTRY (dentry) durable — only fsync of the parent
+    // directory does. Children are synced before {@code dir}, so a child dir's own dentries are journaled
+    // before its dentry is journaled into this parent. {@code dir} is restored to its entry length.
     private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
         final int len = dir.size();
         final long pFind = ff.findFirst(dir.$());
@@ -264,6 +269,22 @@ public class WalUtils {
                 ff.findClose(pFind);
                 dir.trimTo(len);
             }
+        }
+        // Now that every child (file content + nested dirs) is durable, fsync THIS directory so the newly
+        // created children's dentries are journaled. Without it a crash could publish (via the rename) a
+        // directory whose entries point at not-yet-durable inodes.
+        fsyncDirDurable(ff, dir);
+    }
+
+    // fsync a single staging DIRECTORY so its dentries are journaled. Best-effort and Windows-guarded, mirroring
+    // RecoveryCoordinator.fsyncDir / TableWriter's dir-sync guards (directory fsync is a POSIX-only operation).
+    private static void fsyncDirDurable(FilesFacade ff, Path dir) {
+        if (Os.isWindows()) {
+            return;
+        }
+        final long dirFd = ff.openRO(dir.$());
+        if (dirFd > -1) {
+            ff.fsyncAndClose(dirFd);
         }
     }
 
