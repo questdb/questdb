@@ -3008,7 +3008,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // rather than reopening at whatever apply has reached by then.
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, lateRowTs, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, baseToken, advanceTo, reader);
             LOG.info().$("live view O3 replay [view=").$(viewName)
                     .$(", lateRowTs=").$(lateRowTs)
                     .$(", advanceTo=").$(advanceTo)
@@ -3067,9 +3067,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The head pair is read atomically: without that, a concurrent
      * {@code setHeadCheckpoint} could pair a fresh {@code lvSeqTxn} with the prior
      * {@code maxTs} and drive the anchor decision off a torn read.
+     * <p>
+     * The second thing it reads from disk is the live-view table's own frontier, the
+     * lower bound on {@code D} the output floor {@code R} is clamped to. Only a
+     * DATA-triggered repair over a view with a finite RANGE dependency can localize,
+     * so the reader opens only for that case: a non-DATA trigger rebuilds the whole
+     * view and a view without the dependency has no floor to raise.
      */
     private void planO3Repair(
             LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
             long lateRowTs,
             TableToken baseToken,
             long advanceTo,
@@ -3081,6 +3088,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(lateRowTs, advanceTo, pinnedSeqTxn)) {
             applyAheadMinTs = computeApplyAheadMinTs(baseToken, advanceTo, pinnedSeqTxn, viewLowerBoundTimestamp);
         }
+        long rangeFrameWidth = Numbers.LONG_NULL;
+        long durableOutputMaxTs = Numbers.LONG_NULL;
+        final LiveViewCheckpointRangePlan rangePlan = windowFactory.getCheckpointRangePlan();
+        if (lateRowTs != Numbers.LONG_NULL && rangePlan != null) {
+            rangeFrameWidth = rangePlan.getMaxFrameWidth();
+            durableOutputMaxTs = readDurableOutputMaxTs(instance);
+        }
         final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
         repairPlan.of(
                 instance,
@@ -3090,8 +3104,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 pinnedSeqTxn,
                 headPair[0],
                 headPair[1],
-                applyAheadMinTs
+                applyAheadMinTs,
+                rangeFrameWidth,
+                durableOutputMaxTs
         );
+    }
+
+    /**
+     * Reads the highest designated timestamp the live-view table durably holds, or
+     * {@link Numbers#LONG_NULL} when it holds no row. This is the lower bound on
+     * {@code D}: every output row the runtime has incorporated but not made durable -
+     * a discarded in-RAM lead, a rolled-back current-turn draft - was produced after
+     * the last flush and therefore sits at or above this frontier.
+     * <p>
+     * A live-view WAL block that is committed but not yet applied leaves the frontier
+     * behind the true one, which only lowers {@code R} and makes the repair re-emit
+     * more. There is no error in that direction.
+     */
+    private long readDurableOutputMaxTs(LiveViewInstance instance) {
+        try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+            return lvReader.size() > 0 ? lvReader.getMaxTimestamp() : Numbers.LONG_NULL;
+        }
     }
 
     /**
@@ -3289,7 +3322,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // leaves the LV exactly at the head's snapshot moment, which the
                     // restore above already reproduced in the window state. Mirrors
                     // the pure-delete branch in o3HeadMissReplay.
-                    fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(committedSeqTxn, replayLowTs, Long.MAX_VALUE));
+                    //
+                    // The output floor R equals the scan floor L on a resume - the
+                    // restored anchor state IS the warm-up, so every row read is a row
+                    // emitted - but the commit takes R to keep the two roles distinct.
+                    final long replaceLowTs = plan.getOutputLowTs();
+                    fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(committedSeqTxn, replaceLowTs, Long.MAX_VALUE));
                 }
             }
         } finally {
@@ -3382,7 +3420,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         final TableReader reader = waitForApply(baseToken, advanceTo);
         try {
-            planO3Repair(instance, lateRowTs, baseToken, advanceTo, reader);
+            planO3Repair(instance, windowFactory, lateRowTs, baseToken, advanceTo, reader);
             o3HeadMissReplay(instance, windowFactory, repairPlan, reader, fullRebuild);
         } finally {
             reader.close();
@@ -3393,28 +3431,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Head-miss replay path: discards every window-function
      * partition map and the anchor map, drives the compiled SELECT's
      * filter / anchor / window cursor stack over the pinned {@code TableReader}'s
-     * ts-sorted view starting from {@code viewLowerBoundTimestamp}, emits
-     * a single REPLACE_RANGE commit covering everything from the lower
-     * bound through positive infinity, and applies inline.
+     * ts-sorted view starting from the plan's scan floor {@code L}, emits
+     * a single REPLACE_RANGE commit covering everything from the plan's output
+     * floor {@code R} through positive infinity, and applies inline.
      * <p>
-     * Cost is O(retained_rows x n_window_functions) of {@code computeNext}
-     * plus the partition-rewrite I/O - acceptable for short-lived views
-     * but several seconds to minutes for long-lived ones per the
-     * cost model. {@link #replayFromAnchor} avoids the worst of this when the
-     * plan finds a sealed anchor below the change.
+     * {@code L} and {@code R} are both {@code viewLowerBoundTimestamp} unless the
+     * plan localized the rebuild (design section 12.3), in which case the two split:
+     * rows in {@code [L, R)} are fed through the window stack to warm its state up
+     * and emit nothing, because their durable output is already correct, and the
+     * replacement starts at {@code R}. A localized rebuild reads no base row below
+     * {@code L} at all, which is the whole point - its cost stops tracking the view's
+     * age. See {@link LiveViewCheckpointRepairPlan#isLocalized()} for when that
+     * applies.
+     * <p>
+     * Cost of the unlocalized rebuild is O(retained_rows x n_window_functions) of
+     * {@code computeNext} plus the partition-rewrite I/O - acceptable for short-lived
+     * views but several seconds to minutes for long-lived ones per the cost model.
+     * {@link #replayFromAnchor} avoids the worst of this when the plan finds a sealed
+     * anchor below the change.
      * <p>
      * Pure execution: {@code plan} carries the pinned snapshot's {@code seqTxn}
-     * (the commit and watermark point), the correction floor {@code C} and the
-     * retire floor, all derived once in {@link #planO3Repair}. The caller owns
-     * {@code reader} and closes it; this method only detaches it for the execution
-     * context and re-attaches it on the way out.
+     * (the commit and watermark point), the correction floor {@code C}, the scan and
+     * output floors {@code L}/{@code R}, and the retire floor, all derived once in
+     * {@link #planO3Repair}. The caller owns {@code reader} and closes it; this
+     * method only detaches it for the execution context and re-attaches it on the way
+     * out.
      * <p>
      * The rebuild commits at the pinned {@code seqTxn} rather than at the trigger.
-     * The scan from {@code viewLowerBoundTimestamp} materialises everything the
-     * snapshot holds, including transactions {@code ApplyWal2TableJob} raced past
-     * the trigger; leaving the watermarks at the trigger would make the forward
-     * path re-read those already-materialised seqTxns, and a trailing in-order
-     * commit (a lone row at the global max, say) would re-append a duplicate row.
+     * The scan materialises everything the snapshot holds at or above {@code L},
+     * including transactions {@code ApplyWal2TableJob} raced past the trigger;
+     * leaving the watermarks at the trigger would make the forward path re-read those
+     * already-materialised seqTxns, and a trailing in-order commit (a lone row at the
+     * global max, say) would re-append a duplicate row. That is also why the plan
+     * derives {@code L}/{@code R} from the retire floor rather than from {@code C}:
+     * the watermark advances past the whole snapshot, so a floor above a back-dated
+     * apply-ahead row would drop it permanently.
      * <p>
      * {@code fullRebuild} distinguishes a wholesale rebuild (restart restore,
      * corrupt-checkpoint restore, base-metadata-drift / mid-drain recovery, WAL-loss
@@ -3425,7 +3476,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * filter, whose stale pre-replacement row sits below the recompute's lowest surviving
      * ts and would otherwise survive the {@code replayMinTs}-floored replace. The
      * incremental path ({@code fullRebuild == false}) keeps the trigger-clamped floor so a
-     * non-DATA removal (DROP PARTITION / TTL / TRUNCATE) still freezes its prefix.
+     * non-DATA removal (DROP PARTITION / TTL / TRUNCATE) still freezes its prefix. A full
+     * rebuild never localizes - every one of its callers passes a non-DATA trigger, which
+     * the plan refuses to derive floors from.
      */
     private void o3HeadMissReplay(
             LiveViewInstance instance,
@@ -3445,9 +3498,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // what makes the trigger usable once a finite START FROM boundary is in play.
         final long triggerLowTs = plan.getCorrectionTs();
         final long effectiveSeqTxn = plan.getCommitSeqTxn();
+        // A finite dependency raised the floors above the view boundary, so this
+        // rebuild is bounded below. fullRebuild is redundant here - its callers all
+        // pass a non-DATA trigger, which the plan refuses to localize - and is kept
+        // only so a future full-rebuild caller with a timestamp cannot silently
+        // inherit a localized floor.
+        final boolean localized = plan.isLocalized() && !fullRebuild;
+        // L: the lowest base row the replay reads. Everything below it is provably
+        // outside every frame the replay evaluates.
+        final long scanLowTs = localized ? plan.getReplayLowTs() : viewLowerBoundTimestamp;
+        // R: the lowest output row the replay emits, and the REPLACE_RANGE floor.
+        // Rows scanned below it warm the window state up and produce nothing.
+        final long emitLowTs = localized ? plan.getOutputLowTs() : viewLowerBoundTimestamp;
         boolean readerAttached = false;
         long appendedRows = 0;
         long o3ScanRows = 0;
+        // Rows the window cursor produced, emitted or suppressed. Equals appendedRows
+        // unless a warm-up ran; the scan-cost counter is sourced from it when no
+        // filter is present to count base rows itself.
+        long scannedRows = 0;
         // True when the zero-surviving-row path issued a pure-delete
         // REPLACE_RANGE to clear ghost rows (appendedRows stays 0 there, but the
         // apply + on-disk row-count re-read below still have to run).
@@ -3490,15 +3559,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             RecordMetadata outMetadata = windowFactory.getMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
-            // Both scans below open the snapshot AT the START FROM boundary rather than
-            // scanning up to it, the same inclusive-lower-bound cursor the seed and the
-            // forward drain take: it culls whole partitions and binary-searches into the
-            // first one instead of walking the sub-boundary history row by row. A view with
-            // a finite boundary over a long-lived base has that history in front of it on
-            // every rebuild - and a rebuild fires on any O3 commit, base metadata drift,
-            // mid-drain failure, corrupt checkpoint or checkpoint-less restart - so the
-            // walk was paid twice per rebuild (probe + recompute). BEGINNING persists
-            // Numbers.LONG_NULL (= Long.MIN_VALUE), which the cursor turns into a full scan.
+            // Both scans below open the snapshot AT the scan floor rather than scanning up
+            // to it, the same inclusive-lower-bound cursor the seed and the forward drain
+            // take: it culls whole partitions and binary-searches into the first one instead
+            // of walking the sub-floor history row by row. A view with a finite boundary over
+            // a long-lived base has that history in front of it on every rebuild - and a
+            // rebuild fires on any O3 commit, base metadata drift, mid-drain failure, corrupt
+            // checkpoint or checkpoint-less restart - so the walk was paid twice per rebuild
+            // (probe + recompute). BEGINNING persists Numbers.LONG_NULL (= Long.MIN_VALUE),
+            // which the cursor turns into a full scan; a localized rebuild replaces that with
+            // its dependency floor L and culls the history below it as well.
             // Both take their high bound from the plan's tagged H, so probe and recompute
             // agree on the read interval; every plan tags EOF today, which admits the whole
             // tail exactly as an unbounded scan did.
@@ -3509,18 +3579,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // no rows pass the filter prevents a degenerate replay (e.g. WHERE
             // discards every row in the replay window) from permanently
             // erasing cumulative accumulator state for every partition.
+            //
+            // A localized rebuild needs no probe and must not take one: it reconstructs the
+            // window state from [L, R) whatever the emit range holds, so the wipe it does is
+            // never the permanent erasure the probe guards against, and an empty [R, +inf)
+            // must still commit a truncating replacement to clear the ghost rows sitting
+            // there. Skipping the probe also saves it the second pass over [L, +inf).
             final boolean hasReplayRow;
-            try (RecordCursor probeCursor = pageFrameFactory.getCursorInTimestampRange(
-                    executionContext,
-                    viewLowerBoundTimestamp,
-                    scanHighTs
-            )) {
-                RecordCursor probeSource = probeCursor;
-                if (filter != null) {
-                    filteringCursor.of(probeSource, filter, executionContext);
-                    probeSource = filteringCursor;
+            if (localized) {
+                hasReplayRow = true;
+            } else {
+                try (RecordCursor probeCursor = pageFrameFactory.getCursorInTimestampRange(
+                        executionContext,
+                        scanLowTs,
+                        scanHighTs
+                )) {
+                    RecordCursor probeSource = probeCursor;
+                    if (filter != null) {
+                        filteringCursor.of(probeSource, filter, executionContext);
+                        probeSource = filteringCursor;
+                    }
+                    hasReplayRow = probeSource.hasNext();
                 }
-                hasReplayRow = probeSource.hasNext();
             }
 
             if (hasReplayRow) {
@@ -3538,7 +3618,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
                     try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
                             executionContext,
-                            viewLowerBoundTimestamp,
+                            scanLowTs,
                             scanHighTs
                     )) {
                         RecordCursor source = pageCursor;
@@ -3554,6 +3634,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             Record outRecord = windowCursor.getRecord();
                             while (windowCursor.hasNext()) {
                                 long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                                scannedRows++;
+                                if (ts < emitLowTs) {
+                                    // Warm-up row: the window functions have advanced over it,
+                                    // which is the only reason it was read. Its durable output
+                                    // is already correct and the replacement below does not
+                                    // reach it, so emitting it would duplicate a row the LV
+                                    // table still holds.
+                                    continue;
+                                }
                                 if (replayMinTs == Numbers.LONG_NULL) {
                                     // First (= lowest) output row of the replay.
                                     replayMinTs = ts;
@@ -3573,12 +3662,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             }
                             // Capture base rows scanned before the cursor chain closes
                             // (FilteringRecordCursor.close() resets its counter). No
-                            // filter -> scan equals emit; a filter makes scan exceed
-                            // emit by the rows it dropped.
-                            o3ScanRows = filter != null ? filteringCursor.getBaseRowsConsumed() : appendedRows;
+                            // filter -> scan equals the rows the window cursor produced;
+                            // a filter makes scan exceed it by the rows it dropped.
+                            o3ScanRows = filter != null ? filteringCursor.getBaseRowsConsumed() : scannedRows;
                         }
 
-                        if (appendedRows > 0) {
+                        if (appendedRows > 0 || localized) {
                             // REPLACE_RANGE low boundary. replayMinTs alone freezes the
                             // prefix when the base lost rows below it (DROP PARTITION /
                             // TTL / TRUNCATE - intended). But a below-frontier dedup
@@ -3590,16 +3679,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // frozen prefixes stay safe. A full rebuild has no single
                             // trigger - it recomputes the whole view - so it replaces the
                             // entire view range to purge any stale below-frontier row.
-                            final long replaceLowTs = fullRebuild
-                                    ? viewLowerBoundTimestamp
-                                    : triggerLowTs != Numbers.LONG_NULL
-                                      ? Math.min(replayMinTs, triggerLowTs)
-                                      : replayMinTs;
+                            //
+                            // A localized rebuild answers all of this with R directly: it
+                            // re-emitted every qualifying row at or above R, so anything the
+                            // LV table still holds up there is stale whatever produced it -
+                            // a dropped filter row, a dedup replacement or a base removal.
+                            // R already sits at or below the trigger ts, so the clamp above
+                            // could only raise it. The commit is unconditional here: an empty
+                            // emit range means the base no longer has a qualifying row above
+                            // R, and the rows the LV table still holds there are ghosts that
+                            // the truncating replacement has to clear.
+                            final long replaceLowTs = localized
+                                    ? emitLowTs
+                                    : fullRebuild
+                                      ? viewLowerBoundTimestamp
+                                      : triggerLowTs != Numbers.LONG_NULL
+                                        ? Math.min(replayMinTs, triggerLowTs)
+                                        : replayMinTs;
                             fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
                                     replaceLowTs,
                                     Long.MAX_VALUE
                             ));
+                            if (appendedRows == 0) {
+                                // The apply + on-disk row-count re-read below is gated on
+                                // rows having moved; a zero-row truncating replacement moved
+                                // them by deletion.
+                                deletedGhostRange = true;
+                            }
                         }
                     }
                 }
@@ -3691,17 +3798,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The boundary rebuild is the residual O(view age) fallback (late row below
         // the whole retained ring, or a deep / unresumable apply-ahead range). Counted
         // separately from the resume path so a growing value in live_views() flags a
-        // view the ring is failing to bound.
+        // view the ring is failing to bound. A localized rebuild is bounded by the
+        // dependency floor instead, so it is not that residual - but it is still the
+        // same executor and still counted here.
         instance.bumpO3BoundaryReplayRows(appendedRows);
         // Baseline scan-cost signal: base rows this boundary rebuild pulled (>= emit).
         instance.bumpO3ReplayScanRows(o3ScanRows);
         // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
         // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
-        // sealed anchor sits below the ahead range's minimum in-view ts.
+        // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /
+        // emitLowTs are L and R: equal to the view boundary on an unlocalized rebuild,
+        // and the proof of what a localized one did not read when they are not.
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
                 .$(", advanceTo=").$(effectiveSeqTxn)
                 .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
+                .$(", localized=").$(localized)
+                .$(", scanLowTs=").$(scanLowTs)
+                .$(", emitLowTs=").$(emitLowTs)
+                .$(", rowsScanned=").$(o3ScanRows)
                 .$(", rowsEmitted=").$(appendedRows).I$();
     }
 

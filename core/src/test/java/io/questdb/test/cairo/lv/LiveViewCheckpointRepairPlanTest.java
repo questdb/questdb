@@ -45,6 +45,12 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointRepairPlanTest {
     private static final long BEGINNING = Long.MIN_VALUE; // START FROM BEGINNING, = Numbers.LONG_NULL
+    // The live-view table holds no durable row, so nothing bounds D from below and the
+    // output floor R collapses to S.
+    private static final long NO_DURABLE_OUTPUT = Numbers.LONG_NULL;
+    // No finite RANGE dependency covers every window function, so the rebuild has no
+    // dependency floor to localize to.
+    private static final long NO_RANGE = Numbers.LONG_NULL;
 
     @Test
     public void testApplyAheadKeepsAnchorBelowAheadFloor() {
@@ -54,7 +60,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // alone - is rejected in favour of the one at 100.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(300, 13);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 400, BEGINNING, 7, 10, 13, 300, 150);
+        plan.of(anchors, 400, BEGINNING, 7, 10, 13, 300, 150, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertTrue(plan.isApplyAhead());
@@ -75,7 +81,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // Same ring, but the ahead range reaches down to 50 - below every anchor.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(300, 13);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 400, BEGINNING, 7, 10, 13, 300, 50);
+        plan.of(anchors, 400, BEGINNING, 7, 10, 13, 300, 50, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertFalse(plan.isResumeFromAnchor());
         Assert.assertEquals(LiveViewCheckpointRepairPlan.DISPOSITION_BOUNDARY_REBUILD, plan.getDisposition());
@@ -92,7 +98,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // ring is retired.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(300, 13);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 400, BEGINNING, 7, 10, 13, 300, Numbers.LONG_NULL);
+        plan.of(anchors, 400, BEGINNING, 7, 10, 13, 300, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertFalse(plan.isResumeFromAnchor());
         Assert.assertEquals(Numbers.LONG_NULL, plan.getRetireLowTs());
@@ -107,7 +113,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // anchor selection is the one the trigger alone would make.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(300, 13);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 400, BEGINNING, 7, 9, 13, 300, 900);
+        plan.of(anchors, 400, BEGINNING, 7, 9, 13, 300, 900, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(300, plan.getAnchorMaxTs());
@@ -123,7 +129,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // The next entry down (200) can.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(200, 12).add(300, 13);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 300, BEGINNING, 5, 5, 13, 300, Numbers.LONG_NULL);
+        plan.of(anchors, 300, BEGINNING, 5, 5, 13, 300, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(12, plan.getAnchorLvSeqTxn());
@@ -138,7 +144,7 @@ public class LiveViewCheckpointRepairPlanTest {
     public void testChangeBelowWholeRingRebuilds() {
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(200, 12).add(300, 13);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 50, BEGINNING, 5, 5, 13, 300, Numbers.LONG_NULL);
+        plan.of(anchors, 50, BEGINNING, 5, 5, 13, 300, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertFalse(plan.isResumeFromAnchor());
         Assert.assertEquals(5, plan.getCommitSeqTxn());
@@ -155,7 +161,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // delete authority and the retire floor follow it.
         final TestAnchors anchors = new TestAnchors();
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 10, 1_000, 5, 5, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        plan.of(anchors, 10, 1_000, 5, 5, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertEquals(1_000, plan.getCorrectionTs());
         Assert.assertEquals(1_000, plan.getRetireLowTs());
@@ -169,7 +175,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // row anchors the resume directly - no ring search at all.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(200, 12);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 500, BEGINNING, 9, 9, 12, 200, Numbers.LONG_NULL);
+        plan.of(anchors, 500, BEGINNING, 9, 9, 12, 200, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(12, plan.getAnchorLvSeqTxn());
@@ -189,7 +195,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // as no head at all, and the ring search takes over.
         final TestAnchors anchors = new TestAnchors().add(100, 11);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 500, BEGINNING, 9, 9, 12, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        plan.of(anchors, 500, BEGINNING, 9, 9, 12, Numbers.LONG_NULL, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(11, plan.getAnchorLvSeqTxn());
@@ -205,11 +211,11 @@ public class LiveViewCheckpointRepairPlanTest {
         // selects, and however many repairs the instance is reused for.
         final TestAnchors anchors = new TestAnchors().add(100, 11);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 500, BEGINNING, 9, 9, 11, 100, Numbers.LONG_NULL);
+        plan.of(anchors, 500, BEGINNING, 9, 9, 11, 100, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
         Assert.assertTrue(plan.isResumeFromAnchor());
         assertEofHighBound(plan);
 
-        plan.of(anchors, 50, BEGINNING, 10, 10, 11, 100, Numbers.LONG_NULL);
+        plan.of(anchors, 50, BEGINNING, 10, 10, 11, 100, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
         Assert.assertFalse(plan.isResumeFromAnchor());
         assertEofHighBound(plan);
     }
@@ -221,11 +227,150 @@ public class LiveViewCheckpointRepairPlanTest {
         // covered nor re-read. The strict comparison routes it to the older anchor.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(200, 12);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 200, BEGINNING, 9, 9, 12, 200, Numbers.LONG_NULL);
+        plan.of(anchors, 200, BEGINNING, 9, 9, 12, 200, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(100, plan.getAnchorMaxTs());
         Assert.assertEquals(101, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testLocalizedFloorsClampToViewLowerBound() {
+        // Neither floor may reach below the view's START FROM boundary: rows under it
+        // are not the view's, so reading them would warm the state up with data the
+        // view never incorporated and replacing from below it would delete a prefix
+        // the view does not own. W pulls L under the boundary here; S wins.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 500, 450, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 900);
+
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(500, plan.getOutputLowTs());
+        Assert.assertEquals(450, plan.getReplayLowTs());
+
+        // A boundary above the late row clamps C itself, so both floors land on the
+        // boundary and there is nothing left to localize: reading and re-emitting from
+        // S IS the whole-history rebuild, so the executor keeps its established
+        // replayMinTs-clamped replacement boundary rather than a redundant R.
+        plan.of(new TestAnchors(), 500, 520, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 900);
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(520, plan.getOutputLowTs());
+        Assert.assertEquals(520, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testLocalizedFloorsFollowTheApplyAheadFloor() {
+        // Safety, not optimisation. The rebuild materialises the whole pinned snapshot
+        // and then advances the watermark past it, so a back-dated row in the range
+        // apply raced past the trigger gets exactly one chance to be read. Floors
+        // derived from C alone would sit above it and lose it for good; they follow the
+        // retire floor, which already carries min(C, applyAheadMinTs).
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 800, BEGINNING, 7, 10, Numbers.LONG_NULL, Numbers.LONG_NULL, 600, 100, 900);
+
+        Assert.assertTrue(plan.isApplyAhead());
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(800, plan.getCorrectionTs());
+        Assert.assertEquals(600, plan.getRetireLowTs());
+        Assert.assertEquals(600, plan.getOutputLowTs());
+        Assert.assertEquals(500, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testLocalizedFloorsFromRangeDependency() {
+        // The motivating case: no anchor sits below the change, so the repair falls to
+        // the boundary rebuild - but a 100-unit RANGE look-behind bounds it anyway. The
+        // rebuild reads from C - W and re-emits from C, whatever the view's age.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 500, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 900);
+
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(500, plan.getCorrectionTs());
+        // R = C: the durable frontier sits above the change, so no non-durable output
+        // can lower the floor.
+        Assert.assertEquals(500, plan.getOutputLowTs());
+        // L = R - W: the state a row at R sees is exactly the rows in [R - W, R].
+        Assert.assertEquals(400, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testLocalizedFloorsResetOnPlanReuse() {
+        // One plan instance per refresh worker. A repair over a view with no RANGE
+        // dependency must not inherit the previous repair's floors, or it would skip
+        // history it is required to read.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 500, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 900);
+        Assert.assertTrue(plan.isLocalized());
+
+        plan.of(new TestAnchors(), 500, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
+        Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testLocalizedOutputFloorClampsToDurableFrontier() {
+        // The change sits ABOVE the live-view table's frontier, so output between the
+        // two exists only in runtime state - a discarded in-RAM lead or a rolled-back
+        // draft. C alone would strand it: nothing else would ever re-emit it. R drops
+        // to the frontier so the replacement re-materialises it.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 900, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 500);
+
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(900, plan.getCorrectionTs());
+        Assert.assertEquals(500, plan.getOutputLowTs());
+        Assert.assertEquals(400, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testLocalizedRebuildRequiresDataTriggerRangeAndDurableOutput() {
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // A non-DATA / recovery trigger carries no timestamp, so there is no C to
+        // derive floors from and the whole view has to be rebuilt.
+        plan.of(new TestAnchors(), Numbers.LONG_NULL, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 900);
+        assertUnlocalized(plan);
+
+        // No finite RANGE dependency covers every window function: nothing proves how
+        // far back the state at R reaches.
+        plan.of(new TestAnchors(), 500, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, NO_RANGE, 900);
+        assertUnlocalized(plan);
+
+        // The live-view table holds no durable row, so every row the runtime produced
+        // is non-durable and the replacement must start at the view boundary.
+        plan.of(new TestAnchors(), 500, BEGINNING, 9, 9, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, NO_DURABLE_OUTPUT);
+        assertUnlocalized(plan);
+
+        // Apply raced ahead over a range that could not be classified: nothing bounds
+        // what changed in it, so no floor may be raised above the view boundary.
+        plan.of(new TestAnchors(), 500, BEGINNING, 7, 10, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 100, 900);
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getRetireLowTs());
+        assertUnlocalized(plan);
+    }
+
+    @Test
+    public void testLocalizedScanFloorSaturatesAtBottomOfRange() {
+        // A width wider than the distance from R to the bottom of the timestamp range
+        // must clamp, not wrap: a wrapped floor would sit ABOVE R and the scan would
+        // skip the warm-up entirely. The output floor stays localized either way.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(
+                new TestAnchors(),
+                Long.MIN_VALUE + 10,
+                BEGINNING,
+                9,
+                9,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Long.MAX_VALUE,
+                Long.MIN_VALUE + 50
+        );
+
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(Long.MIN_VALUE + 10, plan.getOutputLowTs());
+        Assert.assertEquals(Long.MIN_VALUE, plan.getReplayLowTs());
     }
 
     @Test
@@ -235,7 +380,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // range.
         final TestAnchors anchors = new TestAnchors().add(Long.MAX_VALUE - 1, 11);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, Long.MAX_VALUE, BEGINNING, 9, 9, 11, Long.MAX_VALUE - 1, Numbers.LONG_NULL);
+        plan.of(anchors, Long.MAX_VALUE, BEGINNING, 9, 9, 11, Long.MAX_VALUE - 1, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(Long.MAX_VALUE, plan.getReplayLowTs());
@@ -249,7 +394,7 @@ public class LiveViewCheckpointRepairPlanTest {
         // ring. Restart restore, metadata drift and WAL-loss re-derive all land here.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(200, 12);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, Numbers.LONG_NULL, BEGINNING, 4, 8, 12, 200, Numbers.LONG_NULL);
+        plan.of(anchors, Numbers.LONG_NULL, BEGINNING, 4, 8, 12, 200, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertFalse(plan.isResumeFromAnchor());
         Assert.assertEquals(Numbers.LONG_NULL, plan.getCorrectionTs());
@@ -264,10 +409,10 @@ public class LiveViewCheckpointRepairPlanTest {
         // the first one's anchor.
         final TestAnchors anchors = new TestAnchors().add(100, 11).add(200, 12);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 500, BEGINNING, 9, 9, 12, 200, Numbers.LONG_NULL);
+        plan.of(anchors, 500, BEGINNING, 9, 9, 12, 200, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
         Assert.assertTrue(plan.isResumeFromAnchor());
 
-        plan.of(anchors, 50, BEGINNING, 10, 10, 12, 200, Numbers.LONG_NULL);
+        plan.of(anchors, 50, BEGINNING, 10, 10, 12, 200, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
         Assert.assertFalse(plan.isResumeFromAnchor());
         Assert.assertEquals(Numbers.LONG_NULL, plan.getAnchorLvSeqTxn());
         Assert.assertEquals(Numbers.LONG_NULL, plan.getAnchorMaxTs());
@@ -281,10 +426,26 @@ public class LiveViewCheckpointRepairPlanTest {
         // however it was written, can pull the scan below the boundary.
         final TestAnchors anchors = new TestAnchors().add(100, 11);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
-        plan.of(anchors, 5_000, 1_000, 9, 9, 11, 100, Numbers.LONG_NULL);
+        plan.of(anchors, 5_000, 1_000, 9, 9, 11, 100, Numbers.LONG_NULL, NO_RANGE, NO_DURABLE_OUTPUT);
 
         Assert.assertTrue(plan.isResumeFromAnchor());
         Assert.assertEquals(1_000, plan.getReplayLowTs());
+    }
+
+    @Test
+    public void testResumeOutputFloorEqualsScanFloorAndNeverLocalizes() {
+        // A resume restores the anchor's state instead of warming one up, so every row
+        // it reads is a row it emits: L and R coincide. Localization is a property of
+        // the boundary rebuild only - the plan must not raise a resume's floors even
+        // when the view carries a RANGE dependency, since the anchor already bounds it.
+        final TestAnchors anchors = new TestAnchors().add(100, 11);
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(anchors, 500, BEGINNING, 9, 9, 12, 300, Numbers.LONG_NULL, 100, 900);
+
+        Assert.assertTrue(plan.isResumeFromAnchor());
+        Assert.assertFalse(plan.isLocalized());
+        Assert.assertEquals(301, plan.getReplayLowTs());
+        Assert.assertEquals(301, plan.getOutputLowTs());
     }
 
     @Test
@@ -309,6 +470,15 @@ public class LiveViewCheckpointRepairPlanTest {
         // the range, which the same value as an exclusive bound would drop. That
         // asymmetry is the whole reason the bound is tagged rather than a long.
         Assert.assertEquals(Long.MAX_VALUE, plan.getScanHighTsInclusive());
+    }
+
+    private static void assertUnlocalized(LiveViewCheckpointRepairPlan plan) {
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        Assert.assertFalse(plan.isLocalized());
+        // Both floors collapse to the view boundary, which is the whole-history
+        // rebuild the executor ran before any dependency was derived.
+        Assert.assertEquals(BEGINNING, plan.getOutputLowTs());
+        Assert.assertEquals(BEGINNING, plan.getReplayLowTs());
     }
 
     /**
