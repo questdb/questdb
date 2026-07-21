@@ -26,16 +26,16 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
-import io.questdb.cairo.lv.LiveViewCheckpointDataSegmentReader;
 import io.questdb.cairo.lv.LiveViewCheckpointFunctionDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
+import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
-import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreReader;
@@ -202,8 +202,6 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         LiveViewCheckpointTimelineReader reader = openTimelineReader(instance);
                         LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
                         LiveViewCheckpointAnchorRoot anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
-                        LiveViewCheckpointDataSegmentReader dataReader =
-                                new LiveViewCheckpointDataSegmentReader(configuration);
                         LiveViewCheckpointFunctionDirectory functions =
                                 new LiveViewCheckpointFunctionDirectory(configuration);
                         Path checkpointsDir = checkpointsDir(instance)
@@ -257,10 +255,19 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     root.getAnchorRootRef(anchorRootRef);
                     Assert.assertFalse(anchorRootRef.isNull());
                     anchorRoot.of(checkpointsDir, anchorRootRef);
-                    final LiveViewCheckpointStatePageRef anchorStateRef = new LiveViewCheckpointStatePageRef();
-                    anchorRoot.getStatePageRef(anchorStateRef);
-                    Assert.assertEquals(LiveViewCheckpointTimelineStoreWriter.ANCHOR_STATE_PAGE_KIND,
-                            anchorStateRef.getPageKind());
+                    Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, anchorRoot.getAnchorValueType());
+                    final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
+                    anchorRoot.getPartitionMapRootRef(anchorMapRootRef);
+                    Assert.assertFalse(anchorMapRootRef.isNull());
+                    try (LiveViewCheckpointPartitionMapReader anchorMap =
+                                 new LiveViewCheckpointPartitionMapReader(configuration)) {
+                        anchorMap.of(checkpointsDir);
+                        Assert.assertEquals(1, anchorMap.size(anchorMapRootRef));
+                        anchorMap.iterateAll(anchorMapRootRef, entry -> {
+                            Assert.assertEquals(0, entry.getStatePageCount());
+                            Assert.assertEquals(Long.BYTES, entry.getScalarState().length);
+                        });
+                    }
                     final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
                     root.getFunctionDirectoryRef(functionDirectoryRef);
                     functions.of(checkpointsDir, functionDirectoryRef);
@@ -274,20 +281,10 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         for (int i = 0; i < directory.size(); i++) {
                             Assert.assertEquals(1, directory.getReferenceCountAt(i));
                         }
-                        dataReader.of(
-                                checkpointsDir,
-                                anchorStateRef.getSegmentId(),
-                                directory.getFileLength(anchorStateRef.getSegmentId())
-                        );
-                        dataReader.openPage(
-                                anchorStateRef,
-                                LiveViewCheckpointTimelineStoreWriter.ANCHOR_STATE_PAGE_KIND,
-                                LiveViewCheckpointTimelineStoreWriter.RAW_CODEC,
-                                0,
-                                1,
-                                Integer.MAX_VALUE
-                        );
-                        Assert.assertEquals(anchorStateRef.getDecodedLength(), dataReader.getPageStoredLength());
+                        // The anchor reaches no data segment, so the newest root's
+                        // only one is the function state the same seal wrote.
+                        Assert.assertEquals(1, root.getSegmentIdCount());
+                        Assert.assertTrue(directory.getFileLength(root.getSegmentId(0)) > 0);
                     } finally {
                         directory.close();
                     }
@@ -342,6 +339,59 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     Assert.assertEquals(4, newest.generation);
                     Assert.assertEquals(4, newest.effectiveLvRowPosition);
                     assertRuntimeSnapshot(newestState, functions, instance.getAnchorWindow());
+                }
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    @Test
+    public void testAnchorRootsRestoreTheAnchorValuesTheirOwnBoundaryHeld() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertAndRefresh(job, "2026-01-01T00:00:10.000000Z", "a");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+                Assert.assertNotNull(anchorWindow);
+
+                insertAndRefresh(job, "2026-01-01T00:00:20.000000Z", "b");
+                // Both symbols anchored on day one.
+                final RuntimeSnapshot dayOne = snapshotRuntime(functions, anchorWindow);
+                Assert.assertEquals(2, anchorWindow.getAnchorMapSize());
+
+                // Crossing midnight moves only symbol 'a' into a new segment, so
+                // the newest root shares 'b' with the previous one and versions 'a'.
+                insertAndRefresh(job, "2026-01-02T00:00:10.000000Z", "a");
+                final RuntimeSnapshot dayTwo = snapshotRuntime(functions, anchorWindow);
+                Assert.assertEquals(2, anchorWindow.getAnchorMapSize());
+                Assert.assertFalse(Arrays.equals(dayOne.anchor, dayTwo.anchor));
+
+                try (
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreReader reader =
+                                new LiveViewCheckpointTimelineStoreReader(configuration)
+                ) {
+                    reader.of(checkpointsDir);
+                    reader.restore(
+                            ts("2026-01-01T00:00:20.000000Z"),
+                            1,
+                            instance.getLiveViewToken().getTableId(),
+                            functions,
+                            anchorWindow
+                    );
+                    assertRuntimeSnapshot(dayOne, functions, anchorWindow);
+
+                    reader.restore(
+                            ts("2026-01-02T00:00:10.000000Z"),
+                            2,
+                            instance.getLiveViewToken().getTableId(),
+                            functions,
+                            anchorWindow
+                    );
+                    assertRuntimeSnapshot(dayTwo, functions, anchorWindow);
                 }
                 assertNoRefreshFaults("lv");
             }
@@ -417,6 +467,14 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     private void appendAndRefresh(LiveViewRefreshJob job, int second, long value) throws Exception {
         setCurrentMicros(currentMicros + 200_000);
         execute("INSERT INTO base VALUES ('" + timestamp(second) + "', 'a', " + value + ")");
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    private void insertAndRefresh(LiveViewRefreshJob job, String timestamp, String symbol) throws Exception {
+        setCurrentMicros(currentMicros + 200_000);
+        execute("INSERT INTO base VALUES ('" + timestamp + "', '" + symbol + "', 1)");
         drainWalQueue();
         drainJob(job);
         drainWalQueue();

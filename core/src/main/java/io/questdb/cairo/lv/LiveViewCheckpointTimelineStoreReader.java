@@ -26,7 +26,6 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -42,7 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -202,16 +201,6 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
     }
 
-    private static byte[] encodeKeySchema(@Nullable ColumnTypes keyTypes) {
-        final int count = keyTypes == null ? 0 : keyTypes.getColumnCount();
-        final ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES + count * Integer.BYTES);
-        buffer.putInt(count);
-        for (int i = 0; i < count; i++) {
-            buffer.putInt(keyTypes.getColumnType(i));
-        }
-        return buffer.array();
-    }
-
     private static CairoException invalid(CharSequence reason) {
         return CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                 .put("live view checkpoint ").put(reason);
@@ -251,12 +240,20 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         return lo < functionRoot.getSegmentUseCountSize() && functionRoot.getSegmentId(lo) == segmentId;
     }
 
-    private LiveViewCheckpointDataSegmentReader openStatePage(
-            @NotNull LiveViewCheckpointStatePageRef ref,
-            boolean requireFunctionCatalogue
-    ) {
-        if (!rootCatalogueContains(ref.getSegmentId())
-                || (requireFunctionCatalogue && !functionCatalogueContains(ref.getSegmentId()))) {
+    /**
+     * Frames one encoded partition key as a bounded page reader, so a key
+     * decoder cannot read past the reference the map entry published.
+     */
+    private LiveViewStatePageReader openKeyPage(@NotNull byte[] encodedKey) {
+        keyMemory.jumpTo(0);
+        for (int i = 0; i < encodedKey.length; i++) {
+            keyMemory.putByte(encodedKey[i]);
+        }
+        return keyPageReader.of(keyMemory, 0, encodedKey.length);
+    }
+
+    private LiveViewCheckpointDataSegmentReader openStatePage(@NotNull LiveViewCheckpointStatePageRef ref) {
+        if (!rootCatalogueContains(ref.getSegmentId()) || !functionCatalogueContains(ref.getSegmentId())) {
             throw invalid("state page segment is absent from its root catalogue, segmentId=")
                     .put(ref.getSegmentId());
         }
@@ -274,9 +271,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
         reader.openPage(
                 ref,
-                requireFunctionCatalogue
-                        ? LiveViewCheckpointTimelineStoreWriter.FUNCTION_STATE_PAGE_KIND
-                        : LiveViewCheckpointTimelineStoreWriter.ANCHOR_STATE_PAGE_KIND,
+                LiveViewCheckpointTimelineStoreWriter.FUNCTION_STATE_PAGE_KIND,
                 LiveViewCheckpointTimelineStoreWriter.RAW_CODEC,
                 0,
                 1,
@@ -354,10 +349,15 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
         root.getAnchorRootRef(anchorRootRef);
         anchorRoot.of(checkpointsDir, anchorRootRef);
-        final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
-        anchorRoot.getStatePageRef(ref);
-        openStatePage(ref, false);
-        anchorWindow.restoreCheckpointState(statePageReader);
+        final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
+        anchorRoot.getPartitionMapRootRef(anchorMapRootRef);
+        // validateAnchor already walked every entry, so the map cannot be
+        // half-restored by a framing failure discovered mid-iteration.
+        anchorWindow.beginCheckpointRestore();
+        partitionReader.iterateAll(anchorMapRootRef, entry -> anchorWindow.restoreCheckpointEntry(
+                openKeyPage(entry.getKey()),
+                LiveViewCheckpointAnchorRoot.readAnchorValue(entry)
+        ));
     }
 
     private void restoreFunction(WindowFunction function, LiveViewCheckpointPageRef functionRootRef) {
@@ -367,7 +367,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
         functionRoot.getScalarStateRef(scalarRef);
         if (!scalarRef.isNull()) {
-            final LiveViewCheckpointDataSegmentReader reader = openStatePage(scalarRef, true);
+            final LiveViewCheckpointDataSegmentReader reader = openStatePage(scalarRef);
             final long consumed = function.restoreCheckpointState(statePageReader, 0, null, formatVersion);
             reader.assertFullyConsumed(scalarRef.getStoredLength(), consumed, 1);
             return;
@@ -376,16 +376,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
         partitionReader.iterateAll(partitionRootRef, entry -> {
-            keyMemory.jumpTo(0);
             final byte[] encodedKey = entry.getKey();
-            for (int i = 0; i < encodedKey.length; i++) {
-                keyMemory.putByte(encodedKey[i]);
-            }
-            keyPageReader.of(keyMemory, 0, encodedKey.length);
             final MapKey key = map.withKey();
             final long keyBytes = LiveViewSnapshotKeyCodec.readKey(
                     key,
-                    keyPageReader,
+                    openKeyPage(encodedKey),
                     0,
                     function.getCheckpointKeyColumnTypes()
             );
@@ -397,7 +392,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 throw invalid("function root contains a duplicate partition key");
             }
             final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
-            final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref, true);
+            final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
             final long consumed = function.restoreCheckpointState(statePageReader, 0, value, formatVersion);
             reader.assertFullyConsumed(ref.getStoredLength(), consumed, 1);
         });
@@ -435,13 +430,31 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         if ((anchorWindow == null) != anchorRootRef.isNull()) {
             throw invalid("anchor presence does not match the compiled runtime");
         }
-        if (anchorWindow != null) {
-            anchorRoot.of(checkpointsDir, anchorRootRef);
-            final LiveViewCheckpointStatePageRef ref = new LiveViewCheckpointStatePageRef();
-            anchorRoot.getStatePageRef(ref);
-            openStatePage(ref, false);
-            anchorWindow.validateCheckpointState(statePageReader);
+        if (anchorWindow == null) {
+            return;
         }
+        anchorRoot.of(checkpointsDir, anchorRootRef);
+        if (!Arrays.equals(
+                anchorWindow.getWindowName().getBytes(StandardCharsets.UTF_8),
+                anchorRoot.getWindowName()
+        )) {
+            throw invalid("anchor window name does not match the compiled runtime");
+        }
+        if (anchorRoot.getAnchorValueType() != anchorWindow.getAnchorValueType()) {
+            throw invalid("anchor value type does not match the compiled runtime");
+        }
+        if (!Arrays.equals(
+                LiveViewCheckpointMetadata.encodeKeySchema(anchorWindow.getPartitionKeyTypes()),
+                anchorRoot.getKeySchema()
+        )) {
+            throw invalid("anchor key schema does not match the compiled runtime");
+        }
+        final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
+        anchorRoot.getPartitionMapRootRef(anchorMapRootRef);
+        partitionReader.iterateAll(anchorMapRootRef, entry -> {
+            LiveViewCheckpointAnchorRoot.readAnchorValue(entry);
+            anchorWindow.validateCheckpointEntry(openKeyPage(entry.getKey()));
+        });
     }
 
     private void validateFunction(WindowFunction function, LiveViewCheckpointPageRef functionRootRef) {
@@ -450,7 +463,10 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         if (!Arrays.equals(identity, functionRoot.getFunctionIdentity())) {
             throw invalid("function directory and root identities differ");
         }
-        if (!Arrays.equals(encodeKeySchema(function.getCheckpointKeyColumnTypes()), functionRoot.getKeySchema())) {
+        if (!Arrays.equals(
+                LiveViewCheckpointMetadata.encodeKeySchema(function.getCheckpointKeyColumnTypes()),
+                functionRoot.getKeySchema()
+        )) {
             throw invalid("function key schema does not match the compiled runtime");
         }
         final int formatVersion = functionRoot.getStateFormatVersion();
@@ -471,7 +487,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             throw invalid("function scalar/partition shape does not match the compiled runtime");
         }
         if (!scalarRef.isNull()) {
-            openStatePage(scalarRef, true);
+            openStatePage(scalarRef);
             return;
         }
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
@@ -480,21 +496,16 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             if (entry.getScalarState().length != 0 || entry.getStatePageCount() != 1) {
                 throw invalid("function partition entry shape invalid");
             }
-            keyMemory.jumpTo(0);
             final byte[] encodedKey = entry.getKey();
-            for (int i = 0; i < encodedKey.length; i++) {
-                keyMemory.putByte(encodedKey[i]);
-            }
-            keyPageReader.of(keyMemory, 0, encodedKey.length);
             final long consumed = LiveViewSnapshotKeyCodec.validateKey(
-                    keyPageReader,
+                    openKeyPage(encodedKey),
                     0,
                     function.getCheckpointKeyColumnTypes()
             );
             if (consumed != encodedKey.length) {
                 throw invalid("partition key decoder did not consume reference exactly");
             }
-            openStatePage(entry.getStatePageRef(0), true);
+            openStatePage(entry.getStatePageRef(0));
         });
     }
 

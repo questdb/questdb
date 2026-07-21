@@ -25,7 +25,11 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.vm.api.MemoryA;
+import org.jetbrains.annotations.Nullable;
+
+import java.nio.ByteBuffer;
 
 final class LiveViewCheckpointMetadata {
 
@@ -46,6 +50,22 @@ final class LiveViewCheckpointMetadata {
             }
         }
         return Integer.compare(left.length, right.length);
+    }
+
+    /**
+     * Encodes a partition-key column-type list into the byte string a root
+     * persists and a restore compares against the compiled runtime. A null list
+     * encodes as a zero column count, which is how a function without a
+     * partition map is distinguished from one keyed on no columns at all.
+     */
+    static byte[] encodeKeySchema(@Nullable ColumnTypes keyTypes) {
+        final int count = keyTypes == null ? 0 : keyTypes.getColumnCount();
+        final ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES + count * Integer.BYTES);
+        buffer.putInt(count);
+        for (int i = 0; i < count; i++) {
+            buffer.putInt(keyTypes.getColumnType(i));
+        }
+        return buffer.array();
     }
 
     static CairoException invalid(CharSequence reason) {

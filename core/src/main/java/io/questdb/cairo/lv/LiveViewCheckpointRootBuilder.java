@@ -81,13 +81,17 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         }
     }
 
+    /**
+     * Starts one checkpoint root. The anchor root reference may be null when the
+     * live view has no anchored WINDOW; it contributes no data segment, because
+     * an anchor entry's whole state is scalar metadata inside its own map pages.
+     */
     public void begin(
             @Transient @NotNull Path checkpointsDir,
             long checkpointId,
             long maxTimestamp,
             long definitionTxn,
-            @NotNull LiveViewCheckpointPageRef anchorRootRef,
-            @NotNull LongList anchorSegmentIds
+            @NotNull LiveViewCheckpointPageRef anchorRootRef
     ) {
         initialized = false;
         if (checkpointId < 0 || definitionTxn < 0) {
@@ -101,13 +105,6 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
         functionCount = 0;
         segmentIds.clear();
-        for (int i = 0; i < anchorSegmentIds.size(); i++) {
-            final long segmentId = anchorSegmentIds.getQuick(i);
-            if (segmentId < 0) {
-                throw CairoException.critical(0).put("negative live view checkpoint anchor segment id, segmentId=").put(segmentId);
-            }
-            addSegmentId(segmentId);
-        }
         initialized = true;
     }
 

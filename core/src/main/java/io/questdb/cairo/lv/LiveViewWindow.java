@@ -43,12 +43,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -330,6 +332,18 @@ public class LiveViewWindow implements QuietCloseable {
         return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions, isAnchorMonotone, checkpointAnchorPlan, memoryTracker);
     }
 
+    /**
+     * Drops every anchor entry and the frontier that tracks them so a checkpoint
+     * restore can rehydrate the map through {@link #restoreCheckpointEntry}. The
+     * caller validates the complete root first, so a framing failure cannot
+     * leave the window with a half-restored map.
+     */
+    public void beginCheckpointRestore() {
+        anchorMap.clear();
+        tombstoneCount = 0;
+        resetFrontier();
+    }
+
     @Override
     public void close() {
         // The Map and RecordSink are exclusively owned by this object. The anchor
@@ -341,11 +355,64 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Encodes every live anchor entry - tombstoned ones are skipped - into
+     * {@code keysOut} and {@code valuesOut}, which stay index-aligned. One entry
+     * is a partition key plus its last-seen anchor value, small enough that a
+     * checkpoint root carries it as scalar metadata rather than a data page.
+     * <p>
+     * {@code keyBuffer} is caller-owned scratch the key codec writes through; it
+     * is rewound per entry and holds nothing once this returns.
+     */
+    public void freezeCheckpointEntries(
+            @NotNull MemoryCARW keyBuffer,
+            @NotNull ObjList<byte[]> keysOut,
+            @NotNull LongList valuesOut
+    ) {
+        keysOut.clear();
+        valuesOut.clear();
+        // MapRecord column layout is [value0, value1, value2, key0, ..., keyN-1] - keys
+        // sit after the three value slots, so the codec needs the key-start index to
+        // address them via record.getXxx(columnIndex).
+        final int keyStartIndex = AnchorMapValueTypes.INSTANCE.getColumnCount();
+        final MapRecordCursor cursor = anchorMap.getCursor();
+        final MapRecord record = anchorMap.getRecord();
+        while (cursor.hasNext()) {
+            final MapValue value = record.getValue();
+            if (value.getByte(SLOT_TOMBSTONE) == 1) {
+                continue;
+            }
+            keyBuffer.jumpTo(0);
+            LiveViewSnapshotKeyCodec.writeKey(keyBuffer, record, partitionKeyTypes, keyStartIndex);
+            final long length = keyBuffer.getAppendOffset();
+            if (length <= 0 || length > Integer.MAX_VALUE) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint anchor key length out of bounds, bytes=").put(length);
+            }
+            final byte[] key = new byte[(int) length];
+            for (int i = 0; i < key.length; i++) {
+                key[i] = keyBuffer.getByte(i);
+            }
+            keysOut.add(key);
+            valuesOut.add(value.getLong(SLOT_ANCHOR_VALUE));
+        }
+    }
+
+    /**
      * @return current live (non-tombstoned + tombstoned) entry count in the
      * anchor map. Useful for tests and the {@code live_views()} catalogue.
      */
     public long getAnchorMapSize() {
         return anchorMap.size();
+    }
+
+    /**
+     * @return the column type the anchor expression evaluates to. Persisted in
+     * the checkpoint anchor root and compared against the recompiled runtime on
+     * restore, because a widened return type changes how the stored LONG slot
+     * must be read back.
+     */
+    public int getAnchorValueType() {
+        return anchorValueType;
     }
 
     /**
@@ -605,87 +672,32 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Restores an anchor snapshot from an exactly bounded versioned-checkpoint
-     * data page. The complete payload is validated before the live map is
-     * cleared, so framing corruption cannot erase a running frontier.
+     * Rehydrates one anchor entry read from a checkpoint anchor-map leaf.
+     * {@code keySource} is the entry's encoded partition key, bounded to its
+     * exact length; the decoder must consume all of it.
+     * <p>
+     * Callers restore a complete root, so {@link #beginCheckpointRestore()}
+     * must precede the first entry. The two retained frontier generations are
+     * reconstructed as the entries arrive, leaving the first post-restore sweep
+     * with exact reclaimable counts.
      */
-    public void restoreCheckpointState(LiveViewStatePageReader source) {
-        decodeCheckpointState(source, false);
-        decodeCheckpointState(source, true);
-    }
-
-    /** Validates a bounded anchor snapshot without changing runtime state. */
-    public void validateCheckpointState(LiveViewStatePageReader source) {
-        decodeCheckpointState(source, false);
-    }
-
-    private void decodeCheckpointState(LiveViewStatePageReader source, boolean restore) {
-        long offset = 0;
-        final CharSequence storedName = source.getStrA(offset);
-        if (storedName == null || !storedName.toString().equals(windowName)) {
+    public void restoreCheckpointEntry(@NotNull LiveViewStatePageReader keySource, long anchorValue) {
+        final MapKey key = anchorMap.withKey();
+        final long consumed = LiveViewSnapshotKeyCodec.readKey(key, keySource, 0, partitionKeyTypes);
+        if (consumed != keySource.size()) {
             throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor window name mismatch [expected=")
-                    .put(windowName).put(", got=").put(storedName).put(']');
+                    .put("live view checkpoint anchor key decoder did not consume the entry exactly [expected=")
+                    .put(keySource.size()).put(", consumed=").put(consumed).put(']');
         }
-        final int nameLen = source.getInt(offset);
-        offset += Integer.BYTES + (long) nameLen * Character.BYTES;
-        final int keyColumnCount = source.getInt(offset);
-        offset += Integer.BYTES;
-        if (keyColumnCount != partitionKeyTypes.getColumnCount()) {
+        final MapValue value = key.createValue();
+        if (!value.isNew()) {
             throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor key column count mismatch");
+                    .put("live view checkpoint anchor contains a duplicate partition key");
         }
-        for (int i = 0; i < keyColumnCount; i++) {
-            final int storedType = source.getInt(offset);
-            offset += Integer.BYTES;
-            if (storedType != partitionKeyTypes.getColumnType(i)) {
-                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                        .put("live view checkpoint anchor key column type mismatch, index=").put(i);
-            }
-        }
-        final int storedAnchorType = source.getInt(offset);
-        offset += Integer.BYTES;
-        if (storedAnchorType != anchorValueType) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor value type mismatch");
-        }
-        final long partitionCount = source.getLong(offset);
-        offset += Long.BYTES;
-        if (partitionCount < 0 || offset > source.size()
-                || partitionCount > (source.size() - offset) / Long.BYTES) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor partition count invalid, count=").put(partitionCount);
-        }
-        if (restore) {
-            anchorMap.clear();
-            tombstoneCount = 0;
-            resetFrontier();
-        }
-        for (long i = 0; i < partitionCount; i++) {
-            if (restore) {
-                final MapKey key = anchorMap.withKey();
-                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, partitionKeyTypes);
-                final MapValue value = key.createValue();
-                if (!value.isNew()) {
-                    throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                            .put("live view checkpoint anchor contains a duplicate partition key");
-                }
-                final long restoredAnchor = source.getLong(offset);
-                value.putLong(SLOT_ANCHOR_VALUE, restoredAnchor);
-                value.putByte(SLOT_INITIALIZED, (byte) 1);
-                value.putByte(SLOT_TOMBSTONE, (byte) 0);
-                restoreFrontierEntry(restoredAnchor);
-            } else {
-                offset = LiveViewSnapshotKeyCodec.validateKey(source, offset, partitionKeyTypes);
-                source.getLong(offset);
-            }
-            offset += Long.BYTES;
-        }
-        if (offset != source.size()) {
-            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
-                    .put("live view checkpoint anchor payload length mismatch [expected=")
-                    .put(source.size()).put(", consumed=").put(offset).put(']');
-        }
+        value.putLong(SLOT_ANCHOR_VALUE, anchorValue);
+        value.putByte(SLOT_INITIALIZED, (byte) 1);
+        value.putByte(SLOT_TOMBSTONE, (byte) 0);
+        restoreFrontierEntry(anchorValue);
     }
 
     /**
@@ -763,6 +775,16 @@ public class LiveViewWindow implements QuietCloseable {
         tombstoneCount = 0;
         resetFrontier();
         anchorExpression.toTop();
+    }
+
+    /** Validates one anchor entry's encoded key without changing runtime state. */
+    public void validateCheckpointEntry(@NotNull LiveViewStatePageReader keySource) {
+        final long consumed = LiveViewSnapshotKeyCodec.validateKey(keySource, 0, partitionKeyTypes);
+        if (consumed != keySource.size()) {
+            throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                    .put("live view checkpoint anchor key decoder did not consume the entry exactly [expected=")
+                    .put(keySource.size()).put(", consumed=").put(consumed).put(']');
+        }
     }
 
     /**
