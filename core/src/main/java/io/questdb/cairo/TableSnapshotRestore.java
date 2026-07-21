@@ -401,9 +401,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             // cellSegment) -- the same shape as C2's now-fixed day-dir walk and every other bare-path
             // call site Plan 4b's feature-gate sweep found and gated, but this one sits behind this
             // class's OWN (until now, blanket) entry-point gate, so that sweep explicitly deferred
-            // auditing it (see .superpowers/sdd/plan4b-feature-gate-sweep-report.md, "Honest open items"
-            // -- "TableSnapshotRestore's many internal rebuild* methods sit behind that class's single
-            // already-gated entry point"). A real composite table CAN legitimately have an indexed real
+            // auditing it: these internal rebuild* methods sit behind that class's single
+            // already-gated entry point. A real composite table CAN legitimately have an indexed real
             // column declared at CREATE time (ADD INDEX is separately gated, but CREATE-time SYMBOL
             // INDEX is not -- see CompositeUnsupportedOpsTest#testDropIndexGated's own documented
             // workaround), so this is reachable, not just theoretical. Parquet needs no equivalent guard

@@ -44,8 +44,7 @@ import org.junit.Test;
  * Every gated op below was independently confirmed SILENT or CRASH-prone on a routed 2-cell
  * composite table (one day with two distinct dimension values, {@code exch='A'}/{@code 'B'}, routed
  * in a single commit -- the safe multi-cell shape {@code CompositeRoutingTest}'s own acceptance tests
- * already prove routes correctly) before its gate was added -- see
- * {@code .superpowers/sdd/plan4a-ddl-gate-sweep-report.md} for the full op-by-op evidence, including
+ * already prove routes correctly) before its gate was added. The op-by-op evidence includes
  * a live-reproduced INFINITE LOOP for DROP PARTITION (not just a clean crash).
  */
 public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
@@ -631,8 +630,7 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
     // stated hazards (cell-blind purge/rename/rebuild of PHYSICAL PER-CELL FILES) can exist yet: no
     // row has ever been routed, so no per-cell directory has ever been created. This is the
     // regression lock for the bug found via ShowCreateTableTest's 3 pre-existing failures
-    // (testShowCreateCompositeAfterDropLowerIndexDimensionColumn and 2 siblings -- see
-    // .superpowers/sdd/plan4-comprehensive-redtest-report.md) and fixed by
+    // (testShowCreateCompositeAfterDropLowerIndexDimensionColumn and 2 siblings) and fixed by
     // TableWriter#isRoutedComposite() (see its own doc for the full reasoning).
     // ------------------------------------------------------------------------------------------
 

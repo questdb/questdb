@@ -225,8 +225,7 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
      * ({@code isDormantWithPreexistingData()}).
      * <p>
      * <b>That reasoning was itself wrong, and is the root cause of a real GATE-TOO-BROAD regression fixed
-     * by {@code TableWriter#isRoutedComposite()}</b> (see its own doc, and
-     * {@code .superpowers/sdd/plan4-comprehensive-redtest-report.md}): {@code isDormantWithPreexistingData()}
+     * by {@code TableWriter#isRoutedComposite()}</b> (see its own doc): {@code isDormantWithPreexistingData()}
      * requires PREEXISTING DATA to read {@code true} ({@code maxTimestamp != MIN_VALUE}), so it reads
      * {@code false} for THIS test's table {@code t} -- created here but never once written to before
      * {@code removeColumn} is called -- and the old blanket gate fired anyway, even though a table that

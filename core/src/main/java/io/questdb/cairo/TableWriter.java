@@ -10706,7 +10706,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Composite red-test convergence fix (see {@code .superpowers/sdd/plan4-comprehensive-redtest-report.md}).
+     * Composite red-test convergence fix.
      * {@code true} only for a composite table that has actually routed at least one row into a real
      * per-cell physical partition (the cell registry has at least one entry). This -- NOT {@code
      * dimCount > 0 && !isDormantWithPreexistingData()} -- is the correct predicate for every "does not
