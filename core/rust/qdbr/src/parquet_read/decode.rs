@@ -26,7 +26,7 @@ use crate::parquet_read::slicer::{
     DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
     PlainVarSlicer,
 };
-use crate::parquet_read::ColumnChunkBuffers;
+use crate::parquet_read::{ColumnChunkBuffers, ExternalColumnView};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -59,6 +59,17 @@ impl ColumnChunkBuffers {
             page_buffers_charged: 0,
             page_buffers_counted: 0,
         }
+    }
+
+    /// Replace the exposed addresses with a borrowed view. `reset` and `Drop`
+    /// still touch only this chunk's owned vectors/page buffers, so neither can
+    /// free the external allocation.
+    pub fn install_external(&mut self, view: ExternalColumnView) {
+        self.reset();
+        self.data_ptr = view.data_ptr;
+        self.data_size = view.data_size;
+        self.aux_ptr = view.aux_ptr;
+        self.aux_size = view.aux_size;
     }
 
     // Unconditional re-read so a hypothetical second call between resets cannot keep
@@ -3352,7 +3363,7 @@ mod tests {
     fn decode_row_group_clears_varchar_slice_reuse_pool() {
         // The VarcharSlice page-buffer reuse pool lives on the DecodeContext, which outlives
         // individual decode-cache entries. Spare buffers left in it are uncounted by the Java
-        // byte budget and would otherwise survive cache eviction and releaseParquetBuffers(),
+        // byte budget and would otherwise survive cache eviction and releaseDecodedFrameBuffers(),
         // letting the budget read zero while RSS still held varchar page allocations. A
         // row-group decode must drop the pool at the end. The live buffers a decode produces
         // are held in ColumnChunkBuffers::page_buffers (counted), not the pool.

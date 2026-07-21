@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -206,6 +207,20 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
+    }
+
+    protected void failOnVisibleDelta(int partitionIndex) {
+        if (reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
+            // Interval pruning is base-only until R4. Inspect delta visibility
+            // before a caller can discard the partition using base metadata.
+            reader.openPartition(partitionIndex);
+            final long state = reader.getOrOpenPartitionFrameState(partitionIndex);
+            if (state != 0 && PartitionFrameState.hasCustomFrames(state)) {
+                throw CairoException.nonCritical()
+                        .put("interval scan is unavailable for a cold delta partition [partitionIndex=")
+                        .put(partitionIndex).put(']');
+            }
+        }
     }
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {

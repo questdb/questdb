@@ -65,6 +65,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             final int currentPartition = partitionHi1 - 1;
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
+            failOnVisibleDelta(currentPartition);
             final long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);
@@ -151,6 +152,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final int currentInterval = intervalsHi - 1;
             final int currentPartition = partitionHi - 1;
+            failOnVisibleDelta(currentPartition);
             long rowCount = reader.getPartitionRowCountFromMetadata(currentPartition);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(currentPartition, rowCount);

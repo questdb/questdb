@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
@@ -41,6 +42,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -614,6 +616,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         runFirstFrames.clear();
         taskCount = 0;
         byte prevFormat = -1;
+        boolean prevCustomDecode = false;
         int prevRowGroup = -1;
         int prevPartitionIndex = -1;
         PageFrame frame;
@@ -623,15 +626,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
                         .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
             }
-            // A row group is the unit of parallel work: consecutive parquet sub-frames of the same row
-            // group (same partition, same row-group index) join one task; native frames and unsplit
-            // parquet are single-frame tasks, so taskCount == frameCount when nothing is split.
+            // A row group is the unit of parallel work: consecutive sub-frames of the same row group
+            // join one task when they either use Parquet storage or a decoder-supplied custom path.
+            // Ordinary native frames remain single-frame tasks.
             final byte format = frame.getFormat();
             final int rowGroup = frame.getParquetRowGroup();
             final int partitionIndex = frame.getPartitionIndex();
+            final boolean customDecode = rowGroup >= 0
+                    && frame.getPartitionFrameState() != 0
+                    && PartitionFrameState.requiresMaterialization(frame.getPartitionFrameState(), rowGroup);
             final boolean sameRun = frameCount > 0
-                    && format == PartitionFormat.PARQUET
-                    && prevFormat == PartitionFormat.PARQUET
+                    && ((format == PartitionFormat.PARQUET && prevFormat == PartitionFormat.PARQUET)
+                    || (customDecode && prevCustomDecode))
                     && rowGroup == prevRowGroup
                     && partitionIndex == prevPartitionIndex;
             if (!sameRun) {
@@ -639,6 +645,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 taskCount++;
             }
             prevFormat = format;
+            prevCustomDecode = customDecode;
             prevRowGroup = rowGroup;
             prevPartitionIndex = partitionIndex;
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
