@@ -3148,6 +3148,22 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxDesugarsToWindowFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
+            // After the rewrite, EXPLAIN must show a windowed subquery + filter, not a Subsample node.
+            assertQuery("SELECT ts, v FROM t SUBSAMPLE minmax(v, 3)")
+                    .assertsPlan("SelectedRecord\n" +
+                            "    Filter filter: __keep_subsample\n" +
+                            "        CachedWindowLight\n" +
+                            "          unorderedFunctions: [minmax(ts,v,3) over (order by [ts])]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
     public void testUniformSelectStarDoesNotLeakKeepColumn() throws Exception {
         // Regression: SELECT * must project only the table's columns. The internal __keep_subsample
         // window flag used by the rewrite must never surface in wildcard output.

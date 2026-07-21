@@ -9349,9 +9349,10 @@ public class SqlOptimiser implements Mutable {
                         model = desugarCadenceSubsample(model, nested, subsample, timestamp);
                     }
                 } else if (subsample.paramCount == 2
-                        && Chars.equalsIgnoreCase(subsample.token, "m4")) {
-                    // Migrate m4(value, target) to the m4 keep-flag window function only when the
-                    // window path is byte-identical to the old cursor:
+                        && (Chars.equalsIgnoreCase(subsample.token, "m4")
+                        || Chars.equalsIgnoreCase(subsample.token, "minmax"))) {
+                    // Migrate m4(value, target) / minmax(value, target) to their keep-flag window
+                    // function only when the window path is byte-identical to the old cursor:
                     //  - target (arg 1) is a compile-time constant in [2, MAX_INT]. A bind-variable /
                     //    runtime-constant / out-of-range / non-integer target, and the 3-arg
                     //    m4(value, target, extra) error shape (paramCount != 2), all fall through to the
@@ -9365,7 +9366,7 @@ public class SqlOptimiser implements Mutable {
                     if (timestamp != null
                             && !isAggregationContext(model, nested)
                             && isConstantUniformTarget(targetNode, sqlExecutionContext)) {
-                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, "m4");
+                        model = desugarValueInspectingSubsample(model, nested, subsample, timestamp, subsample.token);
                     }
                 }
             }

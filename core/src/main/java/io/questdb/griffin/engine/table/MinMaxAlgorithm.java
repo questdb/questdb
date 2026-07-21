@@ -43,8 +43,8 @@ import io.questdb.std.Unsafe;
  *
  * @see SubsampleAlgorithm
  */
-class MinMaxAlgorithm implements SubsampleAlgorithm {
-    static final MinMaxAlgorithm INSTANCE = new MinMaxAlgorithm();
+public class MinMaxAlgorithm implements SubsampleAlgorithm {
+    public static final MinMaxAlgorithm INSTANCE = new MinMaxAlgorithm();
 
     @Override
     public void select(long buffer, int bufferSize, int targetPoints,
