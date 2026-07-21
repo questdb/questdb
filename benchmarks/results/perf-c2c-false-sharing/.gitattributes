@@ -1,0 +1,4 @@
+c2c-*-stats.txt whitespace=-blank-at-eol
+*.csv whitespace=-blank-at-eol
+jmh-processes/*.json whitespace=-blank-at-eof
+perf-*-header.txt whitespace=-blank-at-eol

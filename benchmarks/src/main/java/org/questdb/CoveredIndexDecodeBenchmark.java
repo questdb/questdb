@@ -82,7 +82,8 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * The data is built ONCE in {@link #main} into a fixed db root and reused by every trial's engine.
  * Tunables (system properties): {@code covered.bench.rows} (default 50,000,000),
- * {@code covered.bench.workers} (default 8).
+ * {@code covered.bench.workers} (default 8), and {@code covered.bench.skipBuild} (default false;
+ * set true to reuse data created by an earlier process).
  * <p>
  * Build (note {@code -am} so the benchmark links the in-tree core, not the installed jar) and run
  * via this class's {@code main} (which builds the data first), passing the module flags the worker
@@ -158,48 +159,50 @@ public class CoveredIndexDecodeBenchmark {
     public static void main(String[] args) throws Exception {
         // The engine requires its root directory to exist before it opens.
         java.nio.file.Files.createDirectories(java.nio.file.Paths.get(ROOT));
-        // Build the data once into the shared root; trials reopen the same root.
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            final SqlExecutionContext ctx = newContext(engine, 1);
-            engine.execute("DROP TABLE IF EXISTS cov", ctx);
-            engine.execute("DROP TABLE IF EXISTS ref", ctx);
-            engine.execute(
-                    "CREATE TABLE cov (" +
-                            "  ts TIMESTAMP," +
-                            "  sym SYMBOL INDEX TYPE POSTING INCLUDE (px, qty, grp, tag)," +
-                            "  px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
-            engine.execute(
-                    "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR)" +
-                            " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
-            // Spread the rows over ~16 day-partitions (so frames distribute across workers without
-            // drowning in per-partition overhead), regardless of the configured row count.
-            final long spacingUs = Math.max(1L, 16L * 86_400_000_000L / ROWS);
-            // Controlled selectivity via permille (x % 1000) buckets: each value of the selectivity
-            // @Param maps to a distinct symbol present at exactly that fraction of rows, so a single
-            // table serves the whole sweep. 0.1% + 1% + 5% + 10% + 25% + 50% = 91.1%; the remaining
-            // ~8.9% spreads over 64 noise keys (a realistic symbol table, not one giant key).
-            final String gen =
-                    "SELECT" +
-                            " ('2024-01-01'::TIMESTAMP + (x - 1) * " + spacingUs + "L)::timestamp," +
-                            " (CASE" +
-                            "   WHEN (x % 1000) = 0 THEN 'sel0_1'" +
-                            "   WHEN (x % 1000) BETWEEN 1 AND 10 THEN 'sel1'" +
-                            "   WHEN (x % 1000) BETWEEN 11 AND 60 THEN 'sel5'" +
-                            "   WHEN (x % 1000) BETWEEN 61 AND 160 THEN 'sel10'" +
-                            "   WHEN (x % 1000) BETWEEN 161 AND 410 THEN 'sel25'" +
-                            "   WHEN (x % 1000) BETWEEN 411 AND 910 THEN 'sel50'" +
-                            "   ELSE 'noise' || (x % 64) END)::symbol," +
-                            " (x % 997)::double," +
-                            " (x % 1000)::long," +
-                            " ('G' || (x % 8))::symbol," +
-                            " ('T' || (x % 8))::varchar" +
-                            " FROM long_sequence(" + ROWS + ")";
-            final long t0 = System.nanoTime();
-            engine.execute("INSERT INTO cov " + gen, ctx);
-            engine.execute("INSERT INTO ref " + gen, ctx);
-            engine.releaseAllWriters();
-            System.out.println("covered-bench data built: " + ROWS + " rows/table in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
+        // Build the data once into the shared root; independent JVM trials can reuse it.
+        if (!Boolean.getBoolean("covered.bench.skipBuild")) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = newContext(engine, 1);
+                engine.execute("DROP TABLE IF EXISTS cov", ctx);
+                engine.execute("DROP TABLE IF EXISTS ref", ctx);
+                engine.execute(
+                        "CREATE TABLE cov (" +
+                                "  ts TIMESTAMP," +
+                                "  sym SYMBOL INDEX TYPE POSTING INCLUDE (px, qty, grp, tag)," +
+                                "  px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR" +
+                                ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute(
+                        "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, qty LONG, grp SYMBOL, tag VARCHAR)" +
+                                " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                // Spread the rows over ~16 day-partitions (so frames distribute across workers without
+                // drowning in per-partition overhead), regardless of the configured row count.
+                final long spacingUs = Math.max(1L, 16L * 86_400_000_000L / ROWS);
+                // Controlled selectivity via permille (x % 1000) buckets: each value of the selectivity
+                // @Param maps to a distinct symbol present at exactly that fraction of rows, so a single
+                // table serves the whole sweep. 0.1% + 1% + 5% + 10% + 25% + 50% = 91.1%; the remaining
+                // ~8.9% spreads over 64 noise keys (a realistic symbol table, not one giant key).
+                final String gen =
+                        "SELECT" +
+                                " ('2024-01-01'::TIMESTAMP + (x - 1) * " + spacingUs + "L)::timestamp," +
+                                " (CASE" +
+                                "   WHEN (x % 1000) = 0 THEN 'sel0_1'" +
+                                "   WHEN (x % 1000) BETWEEN 1 AND 10 THEN 'sel1'" +
+                                "   WHEN (x % 1000) BETWEEN 11 AND 60 THEN 'sel5'" +
+                                "   WHEN (x % 1000) BETWEEN 61 AND 160 THEN 'sel10'" +
+                                "   WHEN (x % 1000) BETWEEN 161 AND 410 THEN 'sel25'" +
+                                "   WHEN (x % 1000) BETWEEN 411 AND 910 THEN 'sel50'" +
+                                "   ELSE 'noise' || (x % 64) END)::symbol," +
+                                " (x % 997)::double," +
+                                " (x % 1000)::long," +
+                                " ('G' || (x % 8))::symbol," +
+                                " ('T' || (x % 8))::varchar" +
+                                " FROM long_sequence(" + ROWS + ")";
+                final long t0 = System.nanoTime();
+                engine.execute("INSERT INTO cov " + gen, ctx);
+                engine.execute("INSERT INTO ref " + gen, ctx);
+                engine.releaseAllWriters();
+                System.out.println("covered-bench data built: " + ROWS + " rows/table in " + (System.nanoTime() - t0) / 1_000_000 + "ms");
+            }
         }
 
         // Pass JMH CLI args through when provided (e.g. "CoveredIndexDecodeBenchmark -p shape=sum
@@ -207,8 +210,12 @@ public class CoveredIndexDecodeBenchmark {
         final Options opt = args.length > 0
                 ? new org.openjdk.jmh.runner.options.CommandLineOptions(args)
                 : new OptionsBuilder().include(CoveredIndexDecodeBenchmark.class.getSimpleName()).build();
-        new Runner(opt).run();
-        LogFactory.haltInstance();
+        try {
+            new Runner(opt).run();
+        } finally {
+            closeSharedResources();
+            LogFactory.haltInstance();
+        }
     }
 
     @Benchmark
@@ -310,6 +317,21 @@ public class CoveredIndexDecodeBenchmark {
         serPool.start();
         serCompiler = serEngine.getSqlCompiler();
         serCtx = newContext(serEngine, 1);
+    }
+
+    private static void closeSharedResources() {
+        parCompiler = Misc.free(parCompiler);
+        serCompiler = Misc.free(serCompiler);
+        if (parPool != null) {
+            parPool.halt();
+            parPool = null;
+        }
+        if (serPool != null) {
+            serPool.halt();
+            serPool = null;
+        }
+        parEngine = Misc.free(parEngine);
+        serEngine = Misc.free(serEngine);
     }
 
     private static String keyFor(String selectivity) {

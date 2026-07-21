@@ -1,0 +1,43 @@
+Fresh JVMs with QuestDB's bundled jemalloc preloaded, 17 live
+SimpleMapValue(1) allocations, sorted by address.
+Command: JShell 25.0.3 with the named shaded jar on the class path.
+
+baseline.jar (32 requested bytes)
+
+ 0 0x72cf474e31c0
+ 1 0x72cf474e31e0 delta=32
+ 2 0x72cf474e3200 delta=32
+ 3 0x72cf474e3220 delta=32
+ 4 0x72cf474e3240 delta=32
+ 5 0x72cf474e3260 delta=32
+ 6 0x72cf474e3280 delta=32
+ 7 0x72cf474e32a0 delta=32
+ 8 0x72cf474e32c0 delta=32
+ 9 0x72cf474e32e0 delta=32
+10 0x72cf474e3300 delta=32
+11 0x72cf474e3320 delta=32
+12 0x72cf474e3340 delta=32
+13 0x72cf474e3360 delta=32
+14 0x72cf474e3380 delta=32
+15 0x72cf474e33a0 delta=32
+16 0x72cf474e33c0 delta=32
+
+fixed.jar (96 requested bytes)
+
+ 0 0x727f652167a0
+ 1 0x727f65216800 delta=96
+ 2 0x727f65216860 delta=96
+ 3 0x727f652168c0 delta=96
+ 4 0x727f65216920 delta=96
+ 5 0x727f65216980 delta=96
+ 6 0x727f652169e0 delta=96
+ 7 0x727f65216a40 delta=96
+ 8 0x727f65216aa0 delta=96
+ 9 0x727f65216b00 delta=96
+10 0x727f65216b60 delta=96
+11 0x727f65216bc0 delta=96
+12 0x727f65216c20 delta=96
+13 0x727f65216c80 delta=96
+14 0x727f65216ce0 delta=96
+15 0x727f65216d40 delta=96
+16 0x727f65216da0 delta=96

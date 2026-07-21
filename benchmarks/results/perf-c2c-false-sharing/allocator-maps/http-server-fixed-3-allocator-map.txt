@@ -1,0 +1,5 @@
+7b8b98e00000-7b8b98e09000 r--p 00000000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+7b8b98e09000-7b8b98eae000 r-xp 00009000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+7b8b98eae000-7b8b98ec8000 r--p 000ae000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+7b8b98ec8000-7b8b98ece000 r--p 000c7000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+7b8b98ece000-7b8b98ecf000 rw-p 000cd000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so

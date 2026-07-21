@@ -1,0 +1,589 @@
+# ========
+# captured on    : Tue Jul 21 10:57:57 2026
+# header version : 1
+# data offset    : 808
+# data size      : 20000176
+# feat offset    : 20000984
+# hostname : domapc
+# os release : 7.0.0-27-generic
+# perf version : 7.0.12
+# arch : x86_64
+# nrcpus online : 32
+# nrcpus avail : 32
+# cpudesc : AMD Ryzen 9 9950X 16-Core Processor
+# cpuid : AuthenticAMD,26,68,0
+# total memory : 93828032 kB
+# cmdline : /usr/bin/perf 
+# event : name = ibs_op/ldlat=0/, , id = { 248492, 248493, 248494, 248495, 248496, 248497, 248498, 248499, 248500, 248501, 248502, 248503, 248504, 248505, 248506, 248507 }, type = 11 (ibs_op), size = 144, config = 0, { sample_period, sample_freq } = 4000, sample_type = IP|TID|TIME|ADDR|CPU|PERIOD|IDENTIFIER|DATA_SRC|PHYS_ADDR|WEIGHT_STRUCT, read_format = ID|LOST, disabled = 1, freq = 1, sample_id_all = 1
+# event : name = dummy:u, , id = { 248508, 248509, 248510, 248511, 248512, 248513, 248514, 248515, 248516, 248517, 248518, 248519, 248520, 248521, 248522, 248523, 248524, 248525, 248526, 248527, 248528, 248529, 248530, 248531, 248532, 248533, 248534, 248535, 248536, 248537, 248538, 248539 }, type = 1 (PERF_TYPE_SOFTWARE), size = 144, config = 0x9 (PERF_COUNT_SW_DUMMY), { sample_period, sample_freq } = 1, sample_type = IP|TID|TIME|ADDR|CPU|IDENTIFIER|DATA_SRC|PHYS_ADDR|WEIGHT_STRUCT, read_format = ID|LOST, exclude_kernel = 1, exclude_hv = 1, mmap = 1, comm = 1, task = 1, mmap_data = 1, sample_id_all = 1, exclude_guest = 1, mmap2 = 1, comm_exec = 1, ksymbol = 1, bpf_event = 1, build_id = 1
+# sibling sockets : 0-31
+# sibling dies    : 0-7,16-23
+# sibling dies    : 8-15,24-31
+# sibling threads : 0,16
+# sibling threads : 1,17
+# sibling threads : 2,18
+# sibling threads : 3,19
+# sibling threads : 4,20
+# sibling threads : 5,21
+# sibling threads : 6,22
+# sibling threads : 7,23
+# sibling threads : 8,24
+# sibling threads : 9,25
+# sibling threads : 10,26
+# sibling threads : 11,27
+# sibling threads : 12,28
+# sibling threads : 13,29
+# sibling threads : 14,30
+# sibling threads : 15,31
+# CPU 0: Core ID 0, Die ID 0, Socket ID 0
+# CPU 1: Core ID 1, Die ID 0, Socket ID 0
+# CPU 2: Core ID 2, Die ID 0, Socket ID 0
+# CPU 3: Core ID 3, Die ID 0, Socket ID 0
+# CPU 4: Core ID 4, Die ID 0, Socket ID 0
+# CPU 5: Core ID 5, Die ID 0, Socket ID 0
+# CPU 6: Core ID 6, Die ID 0, Socket ID 0
+# CPU 7: Core ID 7, Die ID 0, Socket ID 0
+# CPU 8: Core ID 8, Die ID 1, Socket ID 0
+# CPU 9: Core ID 9, Die ID 1, Socket ID 0
+# CPU 10: Core ID 10, Die ID 1, Socket ID 0
+# CPU 11: Core ID 11, Die ID 1, Socket ID 0
+# CPU 12: Core ID 12, Die ID 1, Socket ID 0
+# CPU 13: Core ID 13, Die ID 1, Socket ID 0
+# CPU 14: Core ID 14, Die ID 1, Socket ID 0
+# CPU 15: Core ID 15, Die ID 1, Socket ID 0
+# CPU 16: Core ID 0, Die ID 0, Socket ID 0
+# CPU 17: Core ID 1, Die ID 0, Socket ID 0
+# CPU 18: Core ID 2, Die ID 0, Socket ID 0
+# CPU 19: Core ID 3, Die ID 0, Socket ID 0
+# CPU 20: Core ID 4, Die ID 0, Socket ID 0
+# CPU 21: Core ID 5, Die ID 0, Socket ID 0
+# CPU 22: Core ID 6, Die ID 0, Socket ID 0
+# CPU 23: Core ID 7, Die ID 0, Socket ID 0
+# CPU 24: Core ID 8, Die ID 1, Socket ID 0
+# CPU 25: Core ID 9, Die ID 1, Socket ID 0
+# CPU 26: Core ID 10, Die ID 1, Socket ID 0
+# CPU 27: Core ID 11, Die ID 1, Socket ID 0
+# CPU 28: Core ID 12, Die ID 1, Socket ID 0
+# CPU 29: Core ID 13, Die ID 1, Socket ID 0
+# CPU 30: Core ID 14, Die ID 1, Socket ID 0
+# CPU 31: Core ID 15, Die ID 1, Socket ID 0
+# node0 meminfo  : total = 93828032 kB, free = 37015728 kB
+# node0 cpu list : 0-31
+# pmu mappings: cpu = 4, amd_iommu_0 = 12, breakpoint = 5, drm_amdgpu = 4294836224, hwmon_amdgpu = 4294901765, hwmon_k10temp = 4294901762, hwmon_nvme = 4294901761, hwmon_r8169_0_600_00 = 4294901760, hwmon_spd5118 = 4294901764, hwmon_spd5118 = 4294901763, ibs_fetch = 10, ibs_op = 11, kprobe = 8, msr = 13, power = 14, power_core = 15, software = 1, tool = 4294967294, tracepoint = 2, uprobe = 9
+# CPU cache info:
+#  L1 Data                 48K [0,16]
+#  L1 Instruction          32K [0,16]
+#  L1 Data                 48K [1,17]
+#  L1 Instruction          32K [1,17]
+#  L1 Data                 48K [2,18]
+#  L1 Instruction          32K [2,18]
+#  L1 Data                 48K [3,19]
+#  L1 Instruction          32K [3,19]
+#  L1 Data                 48K [4,20]
+#  L1 Instruction          32K [4,20]
+#  L1 Data                 48K [5,21]
+#  L1 Instruction          32K [5,21]
+#  L1 Data                 48K [6,22]
+#  L1 Instruction          32K [6,22]
+#  L1 Data                 48K [7,23]
+#  L1 Instruction          32K [7,23]
+#  L1 Data                 48K [8,24]
+#  L1 Instruction          32K [8,24]
+#  L1 Data                 48K [9,25]
+#  L1 Instruction          32K [9,25]
+#  L1 Data                 48K [10,26]
+#  L1 Instruction          32K [10,26]
+#  L1 Data                 48K [11,27]
+#  L1 Instruction          32K [11,27]
+#  L1 Data                 48K [12,28]
+#  L1 Instruction          32K [12,28]
+#  L1 Data                 48K [13,29]
+#  L1 Instruction          32K [13,29]
+#  L1 Data                 48K [14,30]
+#  L1 Instruction          32K [14,30]
+#  L1 Data                 48K [15,31]
+#  L1 Instruction          32K [15,31]
+#  L2 Unified            1024K [0,16]
+#  L2 Unified            1024K [1,17]
+#  L2 Unified            1024K [2,18]
+#  L2 Unified            1024K [3,19]
+#  L2 Unified            1024K [4,20]
+#  L2 Unified            1024K [5,21]
+#  L2 Unified            1024K [6,22]
+#  L2 Unified            1024K [7,23]
+#  L2 Unified            1024K [8,24]
+#  L2 Unified            1024K [9,25]
+#  L2 Unified            1024K [10,26]
+#  L2 Unified            1024K [11,27]
+#  L2 Unified            1024K [12,28]
+#  L2 Unified            1024K [13,29]
+#  L2 Unified            1024K [14,30]
+#  L2 Unified            1024K [15,31]
+#  L3 Unified           32768K [0-7,16-23]
+#  L3 Unified           32768K [8-15,24-31]
+# time of first sample : 689874.332975
+# time of last sample : 689877.343326
+# sample duration :   3010.350 ms
+# memory nodes (nr 1, block size 0x80000000):
+#    0 [96G]: 0-47
+# bpf_prog_info empty
+# btf info empty
+# cpu pmu capabilities: branches=16, max_precise=0
+# ibs_fetch pmu capabilities: zen4_ibs_extensions=1
+# ibs_op pmu capabilities: zen4_ibs_extensions=1, ldlat=1, dtlb_pgsize=1
+# AMD systems uses ibs_op// PMU for some precise events, e.g.: cycles:p, see the 'perf list' man page for further details.
+# schedstat version	: 17
+# Maximum sched domains	: 3
+# cpu		: 0
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00010001
+# Domain cpu list  : 0,16
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 1
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00020002
+# Domain cpu list  : 1,17
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 2
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00040004
+# Domain cpu list  : 2,18
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 3
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00080008
+# Domain cpu list  : 3,19
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 4
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00100010
+# Domain cpu list  : 4,20
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 5
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00200020
+# Domain cpu list  : 5,21
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 6
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00400040
+# Domain cpu list  : 6,22
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 7
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00800080
+# Domain cpu list  : 7,23
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 8
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 01000100
+# Domain cpu list  : 8,24
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 9
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 02000200
+# Domain cpu list  : 9,25
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 10
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 04000400
+# Domain cpu list  : 10,26
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 11
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 08000800
+# Domain cpu list  : 11,27
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 12
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 10001000
+# Domain cpu list  : 12,28
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 13
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 20002000
+# Domain cpu list  : 13,29
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 14
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 40004000
+# Domain cpu list  : 14,30
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 15
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 80008000
+# Domain cpu list  : 15,31
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 16
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00010001
+# Domain cpu list  : 0,16
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 17
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00020002
+# Domain cpu list  : 1,17
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 18
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00040004
+# Domain cpu list  : 2,18
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 19
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00080008
+# Domain cpu list  : 3,19
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 20
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00100010
+# Domain cpu list  : 4,20
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 21
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00200020
+# Domain cpu list  : 5,21
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 22
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00400040
+# Domain cpu list  : 6,22
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 23
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 00800080
+# Domain cpu list  : 7,23
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : 00ff00ff
+# Domain cpu list  : 0-7,16-23
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 24
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 01000100
+# Domain cpu list  : 8,24
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 25
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 02000200
+# Domain cpu list  : 9,25
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 26
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 04000400
+# Domain cpu list  : 10,26
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 27
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 08000800
+# Domain cpu list  : 11,27
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 28
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 10001000
+# Domain cpu list  : 12,28
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 29
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 20002000
+# Domain cpu list  : 13,29
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 30
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 40004000
+# Domain cpu list  : 14,30
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# cpu		: 31
+# nr_domains	: 3
+# Domain		: 0
+# Domain name      : SMT
+# Domain cpu map   : 80008000
+# Domain cpu list  : 15,31
+# Domain		: 1
+# Domain name      : MC
+# Domain cpu map   : ff00ff00
+# Domain cpu list  : 8-15,24-31
+# Domain		: 2
+# Domain name      : PKG
+# Domain cpu map   : ffffffff
+# Domain cpu list  : 0-31
+# e_machine : 62
+#   e_flags : 0
+# missing features: TRACING_DATA BUILD_ID BRANCH_STACK GROUP_DESC AUXTRACE STAT CLOCKID DIR_FORMAT COMPRESSED CLOCK_DATA HYBRID_TOPOLOGY 
+# ========
+#

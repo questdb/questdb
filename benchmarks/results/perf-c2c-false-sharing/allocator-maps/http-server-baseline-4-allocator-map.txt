@@ -1,0 +1,5 @@
+74c747400000-74c747409000 r--p 00000000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+74c747409000-74c7474ae000 r-xp 00009000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+74c7474ae000-74c7474c8000 r--p 000ae000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+74c7474c8000-74c7474ce000 r--p 000c7000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so
+74c7474ce000-74c7474cf000 rw-p 000cd000 103:02 115112760                 /home/jara/devel/oss/questdb-arrays/core/src/main/bin/linux-x86-64/libjemalloc.so

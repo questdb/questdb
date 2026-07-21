@@ -33,6 +33,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
@@ -45,6 +46,7 @@ import io.questdb.std.Unsafe;
  * To speed up column index-based access, each slot takes 32 bytes.
  */
 public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
+    private final long allocationSize;
     private final int columnCount;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
@@ -54,7 +56,12 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
 
     public SimpleMapValue(int columnCount) {
         this.columnCount = columnCount;
-        this.ptr = Unsafe.malloc(32L * columnCount, MemoryTag.NATIVE_FAST_MAP);
+        // The values are used as independent per-worker accumulators by parallel
+        // non-keyed GROUP BY. Keep a cache line of unused space after the live
+        // value area so two SimpleMapValue allocations cannot place their live
+        // bytes on the same cache line.
+        this.allocationSize = 32L * columnCount + Misc.CACHE_LINE_SIZE;
+        this.ptr = Unsafe.malloc(allocationSize, MemoryTag.NATIVE_FAST_MAP);
     }
 
     @Override
@@ -111,7 +118,7 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
 
     @Override
     public void close() {
-        this.ptr = Unsafe.free(ptr, 32L * columnCount, MemoryTag.NATIVE_FAST_MAP);
+        this.ptr = Unsafe.free(ptr, allocationSize, MemoryTag.NATIVE_FAST_MAP);
     }
 
     public void copy(SimpleMapValue srcValue) {

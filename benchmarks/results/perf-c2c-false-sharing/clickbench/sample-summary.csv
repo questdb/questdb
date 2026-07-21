@@ -1,0 +1,10 @@
+sample,variant,recorded_requests,sampled_loads,local_hitm,remote_hitm,total_hitm_per_1000_loads,interpretation
+calibration-refresh-baseline,baseline,239,122097,4205,778,40.812,confirmed SimpleMapValue false sharing
+calibration-refresh-fixed,fixed,352,86698,449,7,5.260,known cache-line signature removed
+q02-non-keyed-multi-aggregate,fixed,1104,94881,88,27,1.212,no concentrated query-owned line
+q08-low-cardinality-count-distinct,fixed,14,43790,184,28,4.841,no concentrated query-owned line
+q12-varchar-group-by,fixed,31,86479,276,28,3.515,no concentrated query-owned line
+q15-high-cardinality-group-by,fixed,21,90793,266,12,3.062,no concentrated query-owned line
+q32-composite-high-cardinality-group-by,fixed,5,101043,202,21,2.207,no concentrated query-owned line
+q36-filtered-url-group-by,fixed,281,88372,396,59,5.149,no cross-worker live sharing found; allocation-lifetime reuse
+q36-filtered-url-group-by-repeat,fixed,282,82334,337,96,5.259,no cross-worker live sharing found; allocation-lifetime reuse reproduced
