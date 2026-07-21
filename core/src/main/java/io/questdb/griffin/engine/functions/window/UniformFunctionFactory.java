@@ -108,7 +108,13 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         private final long target;
         private long count;          // running row counter during pass1; becomes totalRows
         private boolean keepAll;
+        private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
         private ObjList<ExpressionNode> orderBy;
+        // pass1 (count) and pass2 (pass2Ordinal/selIdx) are two separate traversals of the same
+        // partition. CachedWindowRecordCursorFactory must replay the SAME WindowSortBuffer order
+        // for both passes, or these counters (and the ordinals stashed in `selected`) desync and
+        // the wrong rows get marked kept. A future change to the cached-cursor traversal order
+        // must preserve this pass1/pass2 ordering invariant.
         private long pass2Ordinal;   // running row counter during pass2 (same traversal order as pass1)
         private long selIdx;         // monotonic cursor into `selected` during pass2
 
@@ -121,6 +127,14 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         public void close() {
             super.close();
             selected.close();
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            // Not reached in normal operation: the keep flag is materialized directly into the
+            // chain slot in pass2 (see below) and read back from there, never via getBool(). This
+            // override is purely defensive against a future caller that reads the function itself.
+            return lastKeep;
         }
 
         @Override
@@ -167,6 +181,7 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
                 }
             }
             pass2Ordinal++;
+            lastKeep = keep;
             // BOOLEAN is a 1-byte chain column (see ColumnType.TYPE_SIZE[BOOLEAN]); write a byte,
             // not a long, or we'd corrupt the next column's storage.
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), (byte) (keep ? 1 : 0));
