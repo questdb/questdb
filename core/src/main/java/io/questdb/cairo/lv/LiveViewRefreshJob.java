@@ -95,6 +95,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.Lock;
@@ -615,6 +616,64 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * every disk advance, so its lead never trails an external flush); EntLiveViewRefreshJob overrides it.
      */
     protected void reconcileLeadWithDisk(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+    }
+
+    /**
+     * Publishes one logical checkpoint root into the versioned timeline for the seal
+     * in progress, advancing the generation watermarks and the timeline WAL floor.
+     * <p>
+     * Runs for a forced seal too. A forced seal follows an O3 replay, which already
+     * retired the timeline through {@link #retireCheckpointTimelineOnO3}, so the
+     * append opens a fresh history whose single root describes the post-replay
+     * state. Skipping it - as this did while the timeline was write-only on the
+     * in-order path - leaves every replay-driven view with no timeline at all, so a
+     * restart has nothing to restore from but a full rebuild from the view's
+     * {@code START FROM} boundary.
+     */
+    private void appendCheckpointTimelineRoot(
+            LiveViewInstance instance,
+            ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            long baseSeqTxn,
+            long batchMaxTs
+    ) {
+        if (checkpointTimelineStoreWriter == null) {
+            checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
+            checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+        }
+        final long coveredLvSeqTxn = engine.getTableSequencerAPI()
+                .getTxnTracker(instance.getLiveViewToken())
+                .getWriterTxn();
+        path.of(engine.getConfiguration().getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+        }
+        final LiveViewCheckpointTimelineStoreWriter.Result timelineResult;
+        final Lock roleLock = engine.getRoleSwitchReadLock();
+        roleLock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            }
+            timelineResult = checkpointTimelineStoreWriter.append(
+                    path,
+                    functions,
+                    anchorWindow,
+                    instance.getLiveViewToken().getTableId(),
+                    coveredLvSeqTxn,
+                    baseSeqTxn,
+                    coveredLvSeqTxn,
+                    0,
+                    true,
+                    batchMaxTs,
+                    instance.getLvRowsTotal()
+            );
+        } finally {
+            roleLock.unlock();
+        }
+        instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
     }
 
     /**
@@ -2620,6 +2679,45 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (headUnsealed) {
             instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         }
+        retireCheckpointTimelineOnO3(instance);
+    }
+
+    /**
+     * Retires the whole checkpoint timeline when an out-of-order change invalidates
+     * the retained checkpoints. Invariant 2 requires every current root in a
+     * generation to be correct for one pinned base snapshot, and an O3 replay
+     * rewrites live-view output below roots that were sealed before it - so those
+     * roots no longer describe the materialization and must not survive into the
+     * next generation. Retiring is the coarse form of that guarantee: Phase 5
+     * replaces it with a range splice that re-versions only the roots in
+     * {@code [C, H)} and keeps the prefix and converged suffix. Until then a
+     * post-replay seal starts a fresh history, which mirrors what the legacy ring
+     * already does by dropping its unsealed entries and clearing the head.
+     * <p>
+     * Failure is logged and swallowed: the replay owns correctness of the durable
+     * output, and a timeline left behind is re-reconciled (and re-retired) on the
+     * next seal or restart rather than blocking the refresh.
+     */
+    private void retireCheckpointTimelineOnO3(LiveViewInstance instance) {
+        if (engine.isReadOnlyMode()) {
+            return;
+        }
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+            LiveViewCheckpointLifecycle.retireTimeline(
+                    engine.getConfiguration(),
+                    checkpointsDir,
+                    null,
+                    true
+            );
+        } catch (Throwable t) {
+            LOG.error().$("could not retire live view checkpoint timeline after O3 [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+        }
+        instance.clearCheckpointTimelineOwnership();
     }
 
     /**
@@ -4440,46 +4538,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-            if (!force) {
-                if (checkpointTimelineStoreWriter == null) {
-                    checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(engine.getConfiguration());
-                    checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
-                }
-                final long coveredLvSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken())
-                        .getWriterTxn();
-                final long createdLvSeqTxn = coveredLvSeqTxn;
-                path.of(engine.getConfiguration().getDbRoot())
-                        .concat(instance.getLiveViewToken())
-                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-                final LiveViewCheckpointTimelineStoreWriter.Result timelineResult;
-                if (engine.isReadOnlyMode()) {
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-                }
-                final Lock roleLock = engine.getRoleSwitchReadLock();
-                roleLock.lock();
-                try {
-                    if (engine.isReadOnlyMode()) {
-                        throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
-                    }
-                    timelineResult = checkpointTimelineStoreWriter.append(
-                            path,
-                            functions,
-                            anchorWindow,
-                            instance.getLiveViewToken().getTableId(),
-                            createdLvSeqTxn,
-                            baseSeqTxn,
-                            coveredLvSeqTxn,
-                            0,
-                            true,
-                            batchMaxTs,
-                            instance.getLvRowsTotal()
-                    );
-                } finally {
-                    roleLock.unlock();
-                }
-                instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
-            }
+            appendCheckpointTimelineRoot(instance, functions, anchorWindow, baseSeqTxn, batchMaxTs);
             final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
             // Test-only: omit the last N function-snapshot blocks to forge a
             // CRC-valid-but-short checkpoint. 0 in production, so the limit is
@@ -5248,11 +5307,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setLastProcessedSeqTxn(durableBaseSeqTxn);
             instance.setAppliedWatermark(durableBaseSeqTxn);
             instance.setLvRowsTotal(rebuiltLvRows);
+            // Publish the restored root as the checkpoint head, replacing the
+            // placeholder maxTs/stateBytes startup stamped from the superblock
+            // alone. writtenUs stays LONG_NULL: it marks a head this process
+            // restored rather than wrote, which is what maybeWriteHeadCheckpoint's
+            // restored-head trigger keys off to seal on the first post-restart
+            // flush.
             instance.setHeadCheckpoint(
-                    Numbers.LONG_NULL,
-                    Numbers.LONG_NULL,
-                    Numbers.LONG_NULL,
-                    0,
+                    restored.normalizedBaseSeqTxn,
+                    restored.normalizedBaseSeqTxn,
+                    restored.maxTimestamp,
+                    restored.logicalStateBytes,
                     Numbers.LONG_NULL
             );
             instance.setCheckpointRestoreSucceeded();

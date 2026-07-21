@@ -577,10 +577,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
             final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(reloaded);
+            // Startup publishes the head from the timeline generation, never from
+            // the still-present legacy .cp - it does not enumerate them. The root's
+            // own maxTs is still a placeholder here; only the first refresh tick
+            // pins the generation and reads it.
+            Assert.assertNotEquals(Numbers.LONG_NULL, reloaded.getHeadCheckpointLvSeqTxn());
             Assert.assertEquals(
                     "ACTIVE startup must not rediscover the still-present legacy .cp",
                     Numbers.LONG_NULL,
-                    reloaded.getHeadCheckpointLvSeqTxn()
+                    reloaded.getHeadCheckpointMaxTs()
             );
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -632,9 +637,19 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             }
 
             Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+            // Recovery must not swallow the apply-ahead txn: it stays above the
+            // reconciled base boundary and is classified as ordinary O3 afterwards.
+            // It resumes from the restored root rather than rebuilding from the
+            // view's START FROM boundary - the restore publishes that root's real
+            // maxTs, which is what makes the cheaper anchored arm eligible.
             Assert.assertTrue(
-                    "the apply-ahead txn must remain above recovery's base boundary and enter the ordinary O3 path",
-                    reloaded.getO3BoundaryReplayRows() > 0
+                    "the apply-ahead txn must enter the ordinary O3 path",
+                    reloaded.getO3ResumeReplayRows() > 0
+            );
+            Assert.assertEquals(
+                    "an anchored resume must not fall back to the O(view age) rebuild",
+                    0,
+                    reloaded.getO3BoundaryReplayRows()
             );
             assertQuery("select ts, sym, s from lv order by ts")
                     .expectSize()

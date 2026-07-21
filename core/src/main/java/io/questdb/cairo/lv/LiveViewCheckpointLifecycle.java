@@ -89,13 +89,14 @@ public final class LiveViewCheckpointLifecycle {
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
             if (!ff.exists(timelinePath.$())) {
                 final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, 0);
-                return result(false, -1, cleanup, 0, 0);
+                return result(false, -1, Numbers.LONG_NULL, cleanup, 0, 0);
             }
         }
 
         boolean replaceEpoch = false;
         long nextSegmentIdCeiling = 0;
         long walPurgeFloor = -1;
+        long normalizedBaseSeqTxn = Numbers.LONG_NULL;
         int purgedSegments = 0;
         int failedPurges = 0;
         try (LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)) {
@@ -107,6 +108,7 @@ public final class LiveViewCheckpointLifecycle {
                 if (!replaceEpoch) {
                     nextSegmentIdCeiling = superblock.getNextSegmentIdCeiling();
                     walPurgeFloor = metaStore.getWalPurgeFloor();
+                    normalizedBaseSeqTxn = superblock.normalizedBaseSeqTxn;
                     try (LiveViewCheckpointDataStore dataStore = new LiveViewCheckpointDataStore(
                             configuration,
                             metaStore
@@ -128,11 +130,11 @@ public final class LiveViewCheckpointLifecycle {
                         .put("could not retire live view checkpoint history epoch [path=")
                         .put(checkpointsDir).put(']');
             }
-            return new ReconcileResult(true, -1, 0, 0, 0, 0, 0);
+            return new ReconcileResult(true, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0);
         }
 
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
-        return result(false, walPurgeFloor, cleanup, purgedSegments, failedPurges);
+        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgedSegments, failedPurges);
     }
 
     /** Removes final-name orphans after a new slot durably advances past them. */
@@ -364,6 +366,7 @@ public final class LiveViewCheckpointLifecycle {
     private static ReconcileResult result(
             boolean epochReplaced,
             long walPurgeFloor,
+            long normalizedBaseSeqTxn,
             CleanupResult cleanup,
             int purgedSegments,
             int failedPurges
@@ -371,6 +374,7 @@ public final class LiveViewCheckpointLifecycle {
         return new ReconcileResult(
                 epochReplaced,
                 walPurgeFloor,
+                normalizedBaseSeqTxn,
                 cleanup.removed,
                 cleanup.failed,
                 cleanup.finalOrphanUpperBound,
@@ -390,11 +394,13 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     public static final class ReconcileResult {
-        private static final ReconcileResult NOT_OWNER = new ReconcileResult(false, -1, 0, 0, 0, 0, 0);
+        private static final ReconcileResult NOT_OWNER =
+                new ReconcileResult(false, -1, Numbers.LONG_NULL, 0, 0, 0, 0, 0);
         private final boolean epochReplaced;
         private final int failedOrphanCount;
         private final int failedPurgeCount;
         private final long finalOrphanUpperBound;
+        private final long normalizedBaseSeqTxn;
         private final int purgedSegmentCount;
         private final int removedOrphanCount;
         private final long walPurgeFloor;
@@ -402,6 +408,7 @@ public final class LiveViewCheckpointLifecycle {
         private ReconcileResult(
                 boolean epochReplaced,
                 long walPurgeFloor,
+                long normalizedBaseSeqTxn,
                 int removedOrphanCount,
                 int failedOrphanCount,
                 long finalOrphanUpperBound,
@@ -410,6 +417,7 @@ public final class LiveViewCheckpointLifecycle {
         ) {
             this.epochReplaced = epochReplaced;
             this.walPurgeFloor = walPurgeFloor;
+            this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
             this.removedOrphanCount = removedOrphanCount;
             this.failedOrphanCount = failedOrphanCount;
             this.finalOrphanUpperBound = finalOrphanUpperBound;
@@ -427,6 +435,17 @@ public final class LiveViewCheckpointLifecycle {
 
         public long getFinalOrphanUpperBound() {
             return finalOrphanUpperBound;
+        }
+
+        /**
+         * @return the selected generation's {@code normalizedBaseSeqTxn}, or
+         * {@link Numbers#LONG_NULL} when no valid slot was adopted. This is the
+         * base-transaction coordinate every current root is validated through, so
+         * startup can publish the checkpoint head before a refresh worker pins the
+         * generation and reads the root itself.
+         */
+        public long getNormalizedBaseSeqTxn() {
+            return normalizedBaseSeqTxn;
         }
 
         public int getPurgedSegmentCount() {

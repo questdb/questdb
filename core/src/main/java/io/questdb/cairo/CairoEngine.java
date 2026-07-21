@@ -1014,6 +1014,25 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 reconciliation.getWalPurgeFloor()
                                         );
                                     }
+                                    // Publish the durable checkpoint head from the
+                                    // generation's base coordinate so live_views()
+                                    // reports a real head between restart and the
+                                    // first refresh tick. maxTs and stateBytes stay
+                                    // placeholders: they belong to the selected root,
+                                    // which only the refresh worker reads, under a
+                                    // generation pin. tryRestoreFromTimeline replaces
+                                    // the whole trio with the root's own values.
+                                    final long normalizedBaseSeqTxn =
+                                            reconciliation.getNormalizedBaseSeqTxn();
+                                    if (normalizedBaseSeqTxn != Numbers.LONG_NULL) {
+                                        instance.setHeadCheckpoint(
+                                                normalizedBaseSeqTxn,
+                                                normalizedBaseSeqTxn,
+                                                Numbers.LONG_NULL,
+                                                0L,
+                                                Numbers.LONG_NULL
+                                        );
+                                    }
                                 } catch (Exception e) {
                                     LOG.error().$("could not validate live view checkpoint timeline [view=")
                                             .$(tableToken)

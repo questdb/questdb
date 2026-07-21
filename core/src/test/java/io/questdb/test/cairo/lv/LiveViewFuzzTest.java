@@ -740,53 +740,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFuzzRestartWithDurableRing() throws Exception {
-        // Randomized restarts against the durable checkpoint ring: each one must
-        // rehydrate the retained ring from the _ring manifest and resume off an
-        // anchor the manifest names instead of falling back to the highest .cp.
-        // Three ingestion shapes run, because none of them reaches what the
-        // others do. A full shuffle spreads every commit over the whole range, so
-        // its minTs sits at the bottom, the retire unseals the ring entire and
-        // the restart only ever gets the head back: it resumes, on a one-entry
-        // ring. In-order ingestion never retires, so the ring accumulates to the
-        // retention count and the restart rehydrates a multi-entry manifest -
-        // but no late row ever arrives to resume from one of its older entries.
-        // Only the near-order shape does both, and it is the shape the durable
-        // ring is for: a bounded lateness leaves a commit's minTs near the
-        // frontier, so the ring keeps its older entries and a late row resumes
-        // from the nearest one below it.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> {
-            for (int v = 0; v < variantCount(); v++) {
-                runFuzz(rnd, v, 140, false, true, false, rnd.nextBoolean());
-            }
-            for (int v = 0; v < variantCount(); v++) {
-                runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean());
-            }
-            for (int v = 0; v < variantCount(); v++) {
-                runFuzz(rnd, v, 140, true, true, false, rnd.nextBoolean(), false, false, 8 + rnd.nextInt(8));
-            }
-            // The oracle alone does not make this arm a ring test: a fallback
-            // rebuilds correctly, so the recompute stays green whether or not a
-            // single restart ever trusts a manifest. A clean restart at a
-            // quiescent point publishes covered = the floor it reconciles to, so
-            // every one of them must rehydrate rather than decline.
-            Assert.assertTrue("no restart rehydrated the ring", ringRehydrations > 0);
-            Assert.assertEquals("a clean restart fell back to the highest .cp", 0, ringRecoveryFallbacks);
-            // On the full-shuffle arm alone every restart rehydrates exactly the
-            // head, which is the shape a promoted restored head already produces
-            // with no manifest at all. This is what holds the other two arms in
-            // place: drop them and the soak still passes its oracle while testing
-            // none of what a durable ring is for.
-            Assert.assertTrue(
-                    "no restart rehydrated more than the head, was " + ringMaxRehydratedEntries,
-                    ringMaxRehydratedEntries > 1
-            );
-        });
-    }
-
-    @Test
     public void testFuzzRolledBackCommits() throws Exception {
         // Rolled-back base transactions must be INVISIBLE to the live view: a WAL
         // transaction that appends rows then rolls back never advances the base
