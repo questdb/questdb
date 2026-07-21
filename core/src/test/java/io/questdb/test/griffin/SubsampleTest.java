@@ -27,12 +27,21 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SubsampleTest extends AbstractCairoTest {
+
+    // Local restore of the plain value-only assert helper that master removed from
+    // AbstractCairoTest/TestUtils (consolidated toward fluent assertQuery). Keeps this
+    // PR's existing assertions compiling without a wholesale rewrite to the fluent style.
+    private void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
+        printSql(sql);
+        TestUtils.assertEquals(expected, sink);
+    }
 
     @Test
     public void testLttbBasic() throws Exception {
