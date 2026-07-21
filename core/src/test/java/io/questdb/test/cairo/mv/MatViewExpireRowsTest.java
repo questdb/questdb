@@ -76,10 +76,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // recompile-on-stale contract across policy transitions.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
-                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
             execute("create materialized view mv as (select * from base)");
             drainWalAndMatViewQueues();
 
@@ -159,9 +160,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "B\t5.0\n" +
-                    "D\t9.0\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t5.0
+                    D\t9.0
+                    """);
         });
     }
 
@@ -194,9 +197,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             // d1 partial (A expired, C null kept) -> 1 row; d2 fully expired -> wiped; active d3 kept.
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "C\tnull\n" +
-                    "D\t9.0\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    C\tnull
+                    D\t9.0
+                    """);
         });
     }
 
@@ -206,10 +211,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // for mat views). Here a wholly-below-threshold partition is wiped.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
-                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
@@ -229,9 +235,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // 01-01 lies wholly below the threshold -> reclaimed; 01-02 (active-protected check aside) and
             // 01-03 retained. The read filter already hid A; now its storage is gone too.
             assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "B\t2.0\n" +
-                    "C\t3.0\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t2.0
+                    C\t3.0
+                    """);
         });
     }
 
@@ -248,9 +256,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
             drainWalAndMatViewQueues();
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "B\t5.0\n" +
-                    "C\tnull\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t5.0
+                    C\tnull
+                    """);
         });
     }
 
@@ -299,10 +309,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // scan (01-01), and a boundary partition whose rows are exactly == T is expired too (01-02).
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
-                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when ts <= '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
@@ -329,8 +340,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     public void testAlterMatViewDropExpire() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
-            execute("insert into base values ('BBB', 5.0, '2024-01-09T12:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-09T12:00:00.000000Z')""");
             drainWalAndMatViewQueues();
 
             // Passthrough view, no policy yet.
@@ -340,8 +353,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // Set a policy: hide v < 2 -> only BBB visible.
             execute("alter materialized view mv set expire rows when v < 2.0");
             drainWalAndMatViewQueues();
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "BBB\t5.0\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t5.0
+                    """);
 
             // Drop the policy: all rows visible again.
             execute("alter materialized view mv drop expire");
@@ -352,9 +367,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 assertNull(metadata.getExpiryPredicate());
                 assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
             }
-            assertQuery("select sym, v from mv order by sym").expectSize().noLeakCheck().returns("sym\tv\n" +
-                    "AAA\t1.0\n" +
-                    "BBB\t5.0\n");
+            assertQuery("select sym, v from mv order by sym").expectSize().noLeakCheck().returns("""
+                    sym\tv
+                    AAA\t1.0
+                    BBB\t5.0
+                    """);
         });
     }
 
@@ -377,9 +394,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     public void testAlterMatViewSetExpire() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v < 2 -> hidden
-            execute("insert into base values ('BBB', 2.5, '2024-01-09T12:00:00.000000Z')"); // v >= 2 -> visible
-            execute("insert into base values ('CCC', 0.5, '2024-01-09T18:00:00.000000Z')"); // v < 2 -> hidden
+            execute("insert into base values " +
+                    "('AAA', 1.0, '2024-01-05T00:00:00.000000Z')," + // v < 2 -> hidden
+                    "('BBB', 2.5, '2024-01-09T12:00:00.000000Z')," + // v >= 2 -> visible
+                    "('CCC', 0.5, '2024-01-09T18:00:00.000000Z')");  // v < 2 -> hidden
             drainWalAndMatViewQueues();
 
             // Passthrough view with no policy at creation.
@@ -397,8 +415,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
 
             // The read-time filter (reading the policy from the metadata cache) hides v<2 rows.
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "BBB\t2.5\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t2.5
+                    """);
         });
     }
 
@@ -424,9 +444,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     public void testCreatePassthroughMatViewWithExpire() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v < 2 -> hidden
-            execute("insert into base values ('BBB', 2.5, '2024-01-09T12:00:00.000000Z')"); // v >= 2 -> visible
-            execute("insert into base values ('CCC', 0.5, '2024-01-09T18:00:00.000000Z')"); // v < 2 -> hidden
+            execute("insert into base values " +
+                    "('AAA', 1.0, '2024-01-05T00:00:00.000000Z')," + // v < 2 -> hidden
+                    "('BBB', 2.5, '2024-01-09T12:00:00.000000Z')," + // v >= 2 -> visible
+                    "('CCC', 0.5, '2024-01-09T18:00:00.000000Z')");  // v < 2 -> hidden
             drainWalAndMatViewQueues();
 
             // Passthrough (no SAMPLE BY) view that carries the policy from creation.
@@ -441,8 +462,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
 
             // Rows with v < 2 are hidden by the read-time filter.
-            assertQuery("select sym, v from mv2 order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "BBB\t2.5\n");
+            assertQuery("select sym, v from mv2 order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    BBB\t2.5
+                    """);
         });
     }
 
@@ -520,7 +543,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // A v < 2 row in the clone must remain visible -- the leaked read filter would have hidden it.
             execute("insert into cloned values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
             drainWalQueue();
-            assertQuery("select sym, v from cloned").expectSize().noLeakCheck().returns("sym\tv\n" + "AAA\t1.0\n");
+            assertQuery("select sym, v from cloned").expectSize().noLeakCheck().returns("sym\tv\nAAA\t1.0\n");
         });
     }
 
@@ -568,16 +591,17 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             setCurrentMicros(1_704_844_800_000_000L); // 2024-01-10T00:00:00Z
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select * from base) expire rows when ts > now()");
-            execute("insert into base values ('PAST', '2024-01-05T00:00:00.000000Z')");   // < now -> kept
-            execute("insert into base values ('FUTURE', '2024-01-20T00:00:00.000000Z')"); // > now -> hidden
+            execute("insert into base values " +
+                    "('PAST', '2024-01-05T00:00:00.000000Z')," +   // < now -> kept
+                    "('FUTURE', '2024-01-20T00:00:00.000000Z')");  // > now -> hidden
             drainWalAndMatViewQueues();
 
             // At 2024-01-10 only the past row is visible.
-            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\n" + "PAST\n");
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\nPAST\n");
 
             // Advance now() beyond the future row's ts: it reappears (it was only hidden, never deleted).
             setCurrentMicros(1_706_140_800_000_000L); // 2024-01-25T00:00:00Z
-            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\n" + "PAST\n" + "FUTURE\n");
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\nPAST\nFUTURE\n");
         });
     }
 
@@ -589,10 +613,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select * from base) expire rows when ts < cast(null as timestamp)");
-            execute("insert into base values ('A', '2024-01-05T00:00:00.000000Z')");
-            execute("insert into base values ('B', '2024-01-20T00:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('A', '2024-01-05T00:00:00.000000Z'),
+                    ('B', '2024-01-20T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
-            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\n" + "A\n" + "B\n");
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\nA\nB\n");
         });
     }
 
@@ -656,19 +682,24 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // so expired view rows are hidden from the join result.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')"); // v<2 -> expired in mv
-            execute("insert into base values ('BBB', 5.0, '2024-01-06T00:00:00.000000Z')"); // v>=2 -> live in mv
+            execute("insert into base values " +
+                    "('AAA', 1.0, '2024-01-05T00:00:00.000000Z')," + // v<2 -> expired in mv
+                    "('BBB', 5.0, '2024-01-06T00:00:00.000000Z')");  // v>=2 -> live in mv
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0");
             drainWalAndMatViewQueues();
 
             execute("create table dim (sym symbol, label string)");
-            execute("insert into dim values ('AAA', 'a')");
-            execute("insert into dim values ('BBB', 'b')");
+            execute("""
+                    insert into dim values
+                    ('AAA', 'a'),
+                    ('BBB', 'b')""");
 
             // Only BBB survives in mv (v>=2), so the join yields only BBB even though dim has AAA.
-            assertQuery("select mv.sym, mv.v, dim.label from mv join dim on mv.sym = dim.sym order by mv.sym").noLeakCheck().returns("sym\tv\tlabel\n" +
-                    "BBB\t5.0\tb\n");
+            assertQuery("select mv.sym, mv.v, dim.label from mv join dim on mv.sym = dim.sym order by mv.sym").noLeakCheck().returns("""
+                    sym\tv\tlabel
+                    BBB\t5.0\tb
+                    """);
         });
     }
 
@@ -893,10 +924,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // non-active partition.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
-                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', 3.0, '2024-01-03T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
@@ -909,9 +941,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
-            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                    "B\t2.0\n" +
-                    "C\t3.0\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("""
+                    sym\tv
+                    B\t2.0
+                    C\t3.0
+                    """);
         });
     }
 

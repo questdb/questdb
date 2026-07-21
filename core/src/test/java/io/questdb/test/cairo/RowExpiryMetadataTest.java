@@ -247,9 +247,10 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         // the assertions below FAIL. (The patch helper mirrors the walk only to find WHERE to write; the
         // verification is done entirely by the SUT reader.)
         assertMemoryLeak(() -> {
-            execute("create table t (" +
-                    "s symbol index type posting include (v), v double, ts timestamp" +
-                    ") timestamp(ts) partition by day wal");
+            execute("""
+                    create table t (
+                    s symbol index type posting include (v), v double, ts timestamp
+                    ) timestamp(ts) partition by day wal""");
 
             final TableToken token = engine.verifyTableName("t");
 

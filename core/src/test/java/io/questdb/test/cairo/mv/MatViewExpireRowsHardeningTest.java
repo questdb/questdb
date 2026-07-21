@@ -74,10 +74,11 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             // cleanup classified it monotonic and physically dropped the first two partitions.
             setCurrentMicros(-864_000_000_000L); // 1969-12-22, threshold of decreasing transform = 1970-01-11
             execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO base VALUES " +
-                    "(1.0, '1970-01-02T00:00:00.000000Z'), " +
-                    "(2.0, '1970-01-05T00:00:00.000000Z'), " +
-                    "(3.0, '1970-02-01T00:00:00.000000Z')");
+            execute("""
+                    INSERT INTO base VALUES
+                    (1.0, '1970-01-02T00:00:00.000000Z'),
+                    (2.0, '1970-01-05T00:00:00.000000Z'),
+                    (3.0, '1970-02-01T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
 
             assertMixedClockCleanupSkipped("mv_direct", "ts < now() + rnd_long()");
@@ -92,11 +93,13 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(JAN_10);
             execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z'), " +
-                    "(2.0, '2024-01-02T00:00:00.000000Z')");
+            execute("""
+                    INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-02T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
-                    "EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h""");
             drainWalAndMatViewQueues();
             engine.getMetadataCache().hydrateAllTables();
 
@@ -150,18 +153,20 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     public void testExpiryFilterAcrossCteNestedAndUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO base VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z'), " +
-                    "('B', 2.0, '2024-01-02T00:00:00.000000Z'), " +
-                    "('C', null, '2024-01-03T00:00:00.000000Z')");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('C', null, '2024-01-03T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
             drainWalAndMatViewQueues();
 
             assertQuery("WITH x AS (SELECT sym FROM mv) SELECT * FROM x UNION ALL SELECT * FROM x ORDER BY sym")
                     .noLeakCheck().returns("sym\nB\nB\nC\nC\n");
-            assertQuery("SELECT sym FROM (SELECT * FROM mv) WHERE sym IN " +
-                    "(SELECT sym FROM mv WHERE v IS NULL) ORDER BY sym")
+            assertQuery("""
+                    SELECT sym FROM (SELECT * FROM mv) WHERE sym IN
+                    (SELECT sym FROM mv WHERE v IS NULL) ORDER BY sym""")
                     .noLeakCheck().returns("sym\nC\n");
             assertQuery("SELECT sym FROM mv WHERE v = 2 UNION ALL SELECT sym FROM mv WHERE v IS NULL ORDER BY sym")
                     .noLeakCheck().returns("sym\nB\nC\n");
@@ -288,8 +293,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base SELECT 'A', x, dateadd('d', x::int, '2024-01-01'::timestamp) FROM long_sequence(4)");
             drainWalAndMatViewQueues();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
-                    "EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s""");
             drainWalAndMatViewQueues();
             final TableToken token = engine.verifyTableName("mv");
             final String predicate = RowExpiryUtil.encodeKeepBy(1, true, "v", "k");
@@ -328,8 +334,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A max=9)
                     "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
             drainWalAndMatViewQueues();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
-                    "EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s""");
             drainWalAndMatViewQueues();
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -601,8 +608,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view v as (select * from base2)");
             drainWalAndMatViewQueues();
-            execute("create materialized view m2 with base b as " +
-                    "(select b.ts, b.sym, first(v.vv) vv from b join v on (sym) sample by 1d)");
+            execute("""
+                    create materialized view m2 with base b as
+                    (select b.ts, b.sym, first(v.vv) vv from b join v on (sym) sample by 1d)""");
             drainWalAndMatViewQueues();
 
             execute("alter materialized view v set expire rows when vv < 2.0");
@@ -672,8 +680,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
-                    "EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h""");
             drainWalAndMatViewQueues();
             engine.getMetadataCache().hydrateAllTables();
 
@@ -741,8 +750,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
-                    "EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h");
+            execute("""
+                    CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)
+                    EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h""");
             drainWalAndMatViewQueues();
             engine.getMetadataCache().hydrateAllTables();
 
@@ -962,9 +972,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     public void testConditionalFenceRetriesAfterCompetingDataTxn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values " +
-                    "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
-                    "('NEW', 3.0, '2024-01-20T00:00:00.000000Z')");
+            execute("""
+                    insert into base values
+                    ('OLD', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('NEW', 3.0, '2024-01-20T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2");
             drainWalAndMatViewQueues();
