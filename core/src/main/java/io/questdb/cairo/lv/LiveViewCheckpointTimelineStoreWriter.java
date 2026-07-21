@@ -64,6 +64,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     public static final int TEST_FAIL_AFTER_METADATA_PUBLISH = 2;
 
+    private final HashSet<String> lifecycleReconciledDirs = new HashSet<>();
     private final CairoConfiguration configuration;
     private final MemoryCARW keyBuffer;
     @TestOnly
@@ -77,6 +78,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @Override
     public void close() {
         Misc.free(keyBuffer);
+        lifecycleReconciledDirs.clear();
     }
 
     public Result append(
@@ -87,11 +89,76 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long createdLvSeqTxn,
             long normalizedBaseSeqTxn,
             long coveredLvSeqTxn,
+            long historyEpoch,
+            boolean primaryOwner,
             long maxTimestamp,
             long effectiveLvRowPosition
     ) {
+        if (!primaryOwner) {
+            throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
+        }
+        final String lifecycleKey = checkpointsDir.toString();
+        boolean epochRetry = false;
+        while (true) {
+            long orphanUpperBound = 0;
+            if (!lifecycleReconciledDirs.contains(lifecycleKey)) {
+                final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
+                        LiveViewCheckpointLifecycle.reconcile(
+                                configuration,
+                                checkpointsDir,
+                                definitionTxn,
+                                historyEpoch,
+                                true
+                        );
+                orphanUpperBound = reconciliation.getFinalOrphanUpperBound();
+                if (reconciliation.getFailedOrphanCount() == 0
+                        && reconciliation.getFailedPurgeCount() == 0) {
+                    lifecycleReconciledDirs.add(lifecycleKey);
+                }
+            }
+            try {
+                return append0(
+                        checkpointsDir,
+                        functions,
+                        anchorWindow,
+                        definitionTxn,
+                        createdLvSeqTxn,
+                        normalizedBaseSeqTxn,
+                        coveredLvSeqTxn,
+                        historyEpoch,
+                        maxTimestamp,
+                        effectiveLvRowPosition,
+                        orphanUpperBound
+                );
+            } catch (HistoryEpochChangedException e) {
+                lifecycleReconciledDirs.remove(lifecycleKey);
+                if (epochRetry) {
+                    throw CairoException.critical(0).put("could not replace live view checkpoint history epoch");
+                }
+                epochRetry = true;
+            } catch (RuntimeException | Error e) {
+                lifecycleReconciledDirs.remove(lifecycleKey);
+                throw e;
+            }
+        }
+    }
+
+    private Result append0(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            long definitionTxn,
+            long createdLvSeqTxn,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn,
+            long historyEpoch,
+            long maxTimestamp,
+            long effectiveLvRowPosition,
+            long orphanUpperBound
+    ) {
         if (definitionTxn < 0
                 || createdLvSeqTxn < 0
+                || historyEpoch < 0
                 || normalizedBaseSeqTxn < 0
                 || coveredLvSeqTxn < 0
                 || effectiveLvRowPosition < 0
@@ -122,11 +189,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             timelineWriter.of(checkpointsDir);
 
             final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
-            if (metaStore.isValid() && superblock.definitionTxn != definitionTxn) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint definition identity changed")
-                        .put(" [stored=").put(superblock.definitionTxn)
-                        .put(", current=").put(definitionTxn).put(']');
+            final long protectedSegmentIdCeiling = metaStore.isValid() ? superblock.getNextSegmentIdCeiling() : 0;
+            if (metaStore.isValid() && (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch)) {
+                throw HistoryEpochChangedException.INSTANCE;
             }
             if (metaStore.isValid()
                     && (normalizedBaseSeqTxn < superblock.normalizedBaseSeqTxn
@@ -170,6 +235,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             segmentDirectory.of(checkpointsDir, oldDirectoryRoot);
 
             long nextSegmentId = metaStore.isValid() ? superblock.nextSegmentId : 0;
+            nextSegmentId = Math.max(nextSegmentId, orphanUpperBound);
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
             final long dataSegmentId = nextSegmentId++;
             dataWriter.of(checkpointsDir, dataSegmentId);
@@ -324,6 +390,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             superblock.generation = generation;
             superblock.definitionTxn = definitionTxn;
+            superblock.historyEpoch = historyEpoch;
             superblock.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
             superblock.coveredLvSeqTxn = coveredLvSeqTxn;
             superblock.nextCheckpointId = checkedIncrement(checkpointId, "checkpoint id");
@@ -335,6 +402,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
 
+            LiveViewCheckpointLifecycle.purgeFinalOrphans(
+                    configuration,
+                    checkpointsDir,
+                    protectedSegmentIdCeiling,
+                    orphanUpperBound,
+                    true
+            );
             return new Result(
                     generation,
                     checkpointId,
@@ -582,6 +656,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getWalPurgeFloor() {
             return walPurgeFloor;
+        }
+    }
+
+    private static final class HistoryEpochChangedException extends RuntimeException {
+        private static final HistoryEpochChangedException INSTANCE = new HistoryEpochChangedException();
+
+        private HistoryEpochChangedException() {
         }
     }
 }

@@ -72,6 +72,34 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         setCurrentMicros(-1);
     }
 
+    @Test
+    public void testDropRetiresTimelineAndReleasesWalOwnership() throws Exception {
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() >= 0);
+                try (Path checkpointsDir = checkpointsDir(instance); Path timelinePath = new Path()) {
+                    LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+                    Assert.assertTrue(configuration.getFilesFacade().exists(timelinePath.$()));
+
+                    execute("DROP LIVE VIEW lv");
+
+                    Assert.assertEquals(Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
+                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                    Assert.assertFalse(configuration.getFilesFacade().exists(
+                            LiveViewCheckpointLayout.metaDirPath(timelinePath, checkpointsDir).$()
+                    ));
+                    Assert.assertFalse(configuration.getFilesFacade().exists(
+                            LiveViewCheckpointLayout.dataDirPath(timelinePath, checkpointsDir).$()
+                    ));
+                }
+            }
+        });
+    }
+
     @Before
     public void setUpCheckpointCadence() {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);

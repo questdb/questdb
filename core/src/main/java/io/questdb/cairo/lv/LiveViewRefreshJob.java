@@ -4452,17 +4452,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 path.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-                final LiveViewCheckpointTimelineStoreWriter.Result timelineResult = checkpointTimelineStoreWriter.append(
-                        path,
-                        functions,
-                        anchorWindow,
-                        instance.getLiveViewToken().getTableId(),
-                        createdLvSeqTxn,
-                        baseSeqTxn,
-                        coveredLvSeqTxn,
-                        batchMaxTs,
-                        instance.getLvRowsTotal()
-                );
+                final LiveViewCheckpointTimelineStoreWriter.Result timelineResult;
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                }
+                final Lock roleLock = engine.getRoleSwitchReadLock();
+                roleLock.lock();
+                try {
+                    if (engine.isReadOnlyMode()) {
+                        throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    }
+                    timelineResult = checkpointTimelineStoreWriter.append(
+                            path,
+                            functions,
+                            anchorWindow,
+                            instance.getLiveViewToken().getTableId(),
+                            createdLvSeqTxn,
+                            baseSeqTxn,
+                            coveredLvSeqTxn,
+                            0,
+                            true,
+                            batchMaxTs,
+                            instance.getLvRowsTotal()
+                    );
+                } finally {
+                    roleLock.unlock();
+                }
                 instance.recordCheckpointTimelineWalPurgeFloor(timelineResult.getWalPurgeFloor());
             }
             final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
@@ -7223,6 +7238,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // maps. The finally clears it, so the worker's next view cannot charge this one.
         executionContext.ofRefreshingInstance(instance);
         try {
+            if (engine.isReadOnlyMode()) {
+                instance.clearCheckpointTimelineOwnership();
+            }
+
             // A definition-less stub (torn / too-new _lv or _lv.s) must never refresh -
             // it has no definition to drive from. Both refresh entry paths already
             // filter it (the fallback scan via isStub(), the by-base-table map

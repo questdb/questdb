@@ -1658,6 +1658,11 @@ public class LiveViewInstance implements QuietCloseable {
         this.headCheckpointRestoreMicros = durationUs;
     }
 
+    /** Releases this primary's local timeline WAL-retention ownership. */
+    public void clearCheckpointTimelineOwnership() {
+        checkpointTimelineWalPurgeFloor = Numbers.LONG_NULL;
+    }
+
     /**
      * Publishes the WAL floor derived from a successfully committed timeline
      * generation, or adopts the same durable value during startup. Callers must

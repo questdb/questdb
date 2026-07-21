@@ -91,6 +91,11 @@ public class LiveViewCheckpointMetaStore implements Closeable {
         return superblock.isValid();
     }
 
+    public int getActivePinCount() {
+        ensureOpen();
+        return generationTracker.getActivePinCount();
+    }
+
     /**
      * Returns the base-WAL retention floor required by both durable A/B slots
      * and every live generation pin owned by this store.

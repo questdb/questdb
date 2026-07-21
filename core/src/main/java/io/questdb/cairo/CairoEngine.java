@@ -32,8 +32,7 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
-import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -1001,22 +1000,25 @@ public class CairoEngine implements Closeable, WriterSource {
                                 liveViewDirPath.of(configuration.getDbRoot())
                                         .concat(tableToken)
                                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
-                                LiveViewCheckpointLayout.timelinePath(sweepPath, liveViewDirPath);
-                                if (configuration.getFilesFacade().exists(sweepPath.$())) {
-                                    try (LiveViewCheckpointMetaStore timelineStore =
-                                                 new LiveViewCheckpointMetaStore(configuration)) {
-                                        timelineStore.of(liveViewDirPath);
-                                        if (timelineStore.isValid()) {
-                                            instance.recordCheckpointTimelineWalPurgeFloor(
-                                                    timelineStore.getWalPurgeFloor()
+                                try {
+                                    final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
+                                            LiveViewCheckpointLifecycle.reconcile(
+                                                    configuration,
+                                                    liveViewDirPath,
+                                                    tableToken.getTableId(),
+                                                    0,
+                                                    true
                                             );
-                                        }
-                                    } catch (Exception e) {
-                                        LOG.error().$("could not validate live view checkpoint timeline [view=")
-                                                .$(tableToken)
-                                                .$(", msg=").$safe(e.getMessage())
-                                                .I$();
+                                    if (reconciliation.getWalPurgeFloor() >= 0) {
+                                        instance.recordCheckpointTimelineWalPurgeFloor(
+                                                reconciliation.getWalPurgeFloor()
+                                        );
                                     }
+                                } catch (Exception e) {
+                                    LOG.error().$("could not validate live view checkpoint timeline [view=")
+                                            .$(tableToken)
+                                            .$(", msg=").$safe(e.getMessage())
+                                            .I$();
                                 }
                             }
                             // ACTIVE-view recovery never enumerates .cp files or
@@ -1821,6 +1823,24 @@ public class CairoEngine implements Closeable, WriterSource {
             // drop.
             instance.markDroppedAndAwaitCheckpoint();
             instance.fenceRefresh();
+        }
+        if (instance != null) {
+            instance.clearCheckpointTimelineOwnership();
+        }
+        if (token != null && !isReadOnlyMode()) {
+            try (Path checkpointsDir = new Path()) {
+                checkpointsDir.of(configuration.getDbRoot())
+                        .concat(token)
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                if (!LiveViewCheckpointLifecycle.retireTimeline(
+                        configuration,
+                        checkpointsDir,
+                        null,
+                        true
+                )) {
+                    LOG.error().$("could not retire dropped live view checkpoint timeline [view=").$(token).I$();
+                }
+            }
         }
         // Now unregister: the instance is quiesced (or was never present), so a checkpoint that
         // observes it gone races nothing.

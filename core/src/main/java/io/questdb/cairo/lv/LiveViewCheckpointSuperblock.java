@@ -182,6 +182,26 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     }
 
     /**
+     * Returns the greatest next-segment id advertised by either independently
+     * checksum-valid slot. Every immutable file referenced by a valid slot has
+     * an id below this ceiling, so startup orphan cleanup may only remove final
+     * segment names at or above it. Taking the maximum (rather than the selected
+     * slot's value) protects a newer checksum-valid slot whose bounded root
+     * validation fell back to the older generation.
+     */
+    public long getNextSegmentIdCeiling() {
+        ensureOpen();
+        long ceiling = 0;
+        for (int slot = 0; slot < 2; slot++) {
+            final long base = (long) slot * SLOT_SIZE;
+            if (isSlotValid(base)) {
+                ceiling = Math.max(ceiling, mem.getLong(base + SLOT_NEXT_SEGMENT_ID_OFFSET));
+            }
+        }
+        return ceiling;
+    }
+
+    /**
      * Returns the oldest base-table transaction still required by either
      * independently valid A/B slot. The value is a WAL retention floor, not the
      * selected generation's recovery coordinate: the fallback slot remains a
